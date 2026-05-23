@@ -142,6 +142,20 @@ ORG_DOCREF_FIELDS: tuple[str, ...] = ("erp_source",)
 
 IMPORT_PII_FIELDS: tuple[str, ...] = ("source_file",)
 
+# ParseIssue.original_data may carry account names, customer aux text or
+# amounts.  When encryption is enabled we route the *entire* original_data
+# dict through the pii domain (small + variable shape — encrypting the whole
+# JSON blob is simpler and forces all PII into one place).
+PARSE_ISSUE_PII_KEYS: frozenset[str] = frozenset({
+    "account_name", "aux_text", "raw_value",
+})
+PARSE_ISSUE_AMOUNT_KEYS: frozenset[str] = frozenset({
+    "opening_debit", "opening_credit",
+    "period_debit", "period_credit",
+    "closing_debit", "closing_credit",
+    "imbalance_delta",
+})
+
 
 def split_row_fields(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Partition a trial_balance_rows dict into ``(amounts, pii)`` sub-dicts.
@@ -154,15 +168,43 @@ def split_row_fields(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any
     return amounts, pii
 
 
+def split_parse_issue_payload(original: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Partition a ParseIssue.original_data dict into ``(plain, amounts, pii)``.
+
+    Used by the route layer: ``plain`` is stored cleartext in
+    ``parse_issues.original_data`` so the UI can render it for free
+    (account code, parent code, sheet name); ``amounts`` + ``pii`` are
+    packed into a separate encrypted side-blob when the key manager is
+    enabled.  The split keeps the index columns searchable while still
+    encrypting customer names and figures.
+    """
+    plain: dict[str, Any] = {}
+    amounts: dict[str, Any] = {}
+    pii: dict[str, Any] = {}
+    for k, v in original.items():
+        if k in PARSE_ISSUE_PII_KEYS:
+            if v is not None and v != "":
+                pii[k] = v
+        elif k in PARSE_ISSUE_AMOUNT_KEYS:
+            if v is not None and v != 0 and v != 0.0:
+                amounts[k] = v
+        else:
+            plain[k] = v
+    return plain, amounts, pii
+
+
 __all__ = [
     "HEADER_LEN",
     "IMPORT_PII_FIELDS",
     "ORG_DOCREF_FIELDS",
     "ORG_PII_FIELDS",
+    "PARSE_ISSUE_AMOUNT_KEYS",
+    "PARSE_ISSUE_PII_KEYS",
     "PAYLOAD_VERSION",
     "ROW_AMOUNT_FIELDS",
     "ROW_PII_FIELDS",
     "pack_payload",
+    "split_parse_issue_payload",
     "split_row_fields",
     "unpack_payload",
 ]

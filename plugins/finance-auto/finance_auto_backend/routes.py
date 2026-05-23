@@ -64,6 +64,10 @@ from .models import (
     TrialBalanceRow,
     UploadResponse,
 )
+from .parse_issue_routes import (
+    register_parse_issue_endpoints,
+    run_parse_issue_detection_after_import,
+)
 from .parsers.xls_parser import ParsedRow, ParseResult, parse_trial_balance
 
 logger = logging.getLogger(__name__)
@@ -668,12 +672,35 @@ def build_router(service: FinanceAutoService) -> APIRouter:
                 status="ok",
                 error_message=None,
             )
+
+            # 6. (W3 Stage 1) Run the 6-class parse-issue detector and
+            # auto-apply any learning samples that match.  Failures here
+            # must not break the upload — degrade gracefully to 0 counts.
+            issue_summary = {"detected": 0, "must_fix": 0, "auto_applied": 0}
+            try:
+                issue_summary = await run_parse_issue_detection_after_import(
+                    service,
+                    org_id=org_id,
+                    period_id=period_id,
+                    import_id=imp.id,
+                    rows=result.rows,
+                    sheet_name=result.sheet_name or "余额表",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "finance-auto: parse-issue detection failed for import %s: %s",
+                    imp.id, exc,
+                )
+
             return UploadResponse(
                 import_id=imp.id,
                 row_count=len(result.rows),
                 parser_used=result.parser_used,
                 status="ok",
                 error_message=None,
+                parse_issues_detected=issue_summary.get("detected", 0),
+                parse_issues_must_fix=issue_summary.get("must_fix", 0),
+                parse_issues_auto_applied=issue_summary.get("auto_applied", 0),
             )
         finally:
             try:
@@ -708,8 +735,9 @@ def build_router(service: FinanceAutoService) -> APIRouter:
         )
         return RowListResponse(rows=rows, total=total, limit=limit, offset=offset)
 
-    # M1 W2 Stage 4 / 5 / 6 -- attach the optional endpoint families onto
-    # the same router.  Kept in separate modules so this file stays small.
+    # M1 W2 Stage 4 / 5 / 6 + W3 Stage 1 -- attach the optional endpoint
+    # families onto the same router.  Kept in separate modules so this file
+    # stays small.
     from .audit_routes import register_audit_endpoints
     from .report_routes import register_report_endpoints
     from .vat_routes import register_vat_endpoints
@@ -717,6 +745,7 @@ def build_router(service: FinanceAutoService) -> APIRouter:
     register_report_endpoints(router, service)
     register_vat_endpoints(router, service)
     register_audit_endpoints(router, service)
+    register_parse_issue_endpoints(router, service)
 
     return router
 

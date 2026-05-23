@@ -22,12 +22,14 @@ DDL statement so it does not appear here.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 """History:
 * v1 -- M1 W1 baseline (5 tables).
 * v2 -- M1 W2 Stage 4: adds ``reports`` + ``report_cells``.
 * v3 -- M1 W2 Stage 5: adds ``vat_declarations``.
 * v4 -- M1 W2 Stage 6: adds ``audit_templates``.
+* v5 -- M1 W3 Stage 1: adds ``parse_issues`` + ``learning_samples``
+        (unknown-data triage; v0.2 Part 1 §2).
 """
 
 # ---------------------------------------------------------------------------
@@ -236,6 +238,65 @@ CREATE TABLE IF NOT EXISTS audit_templates (
     _encrypted_payload       BLOB
 );
 CREATE INDEX IF NOT EXISTS idx_audit_tpl_uploaded ON audit_templates(uploaded_at);
+
+-- ===========================================================================
+-- M1 W3 Stage 1: parse issues + learning samples (v0.2 Part 1 §2).
+-- ``parse_issues`` captures every "needs human triage" finding the L1 detector
+-- emits.  ``learning_samples`` records the user's decision keyed by a stable
+-- pattern signature so the next import of the same shape can be auto-applied.
+-- ``ai_*`` columns are reserved for the M2 Part-2 worker (this stage writes
+-- them as NULL but exposes them through the API so the React front-end can
+-- begin rendering the AI suggestion slot today).
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS parse_issues (
+    id                       TEXT PRIMARY KEY,
+    org_id                   TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    period_id                TEXT NOT NULL,
+    import_id                TEXT NOT NULL REFERENCES trial_balance_imports(id) ON DELETE CASCADE,
+    row_index                INTEGER NOT NULL,
+    sheet_name               TEXT NOT NULL DEFAULT '',
+    column_name              TEXT NOT NULL DEFAULT '',
+    issue_type               TEXT NOT NULL,
+    severity                 TEXT NOT NULL,
+    pattern_signature        TEXT NOT NULL DEFAULT '',
+    original_data            TEXT NOT NULL DEFAULT '{}',         -- JSON (may contain encrypted bits via key_manager)
+    ai_suggestion            TEXT,                                -- JSON; Part-2 fills
+    ai_confidence            REAL,
+    ai_consent_id            INTEGER,                             -- v0.2 终稿契约
+    user_decision            TEXT,
+    user_decision_payload    TEXT NOT NULL DEFAULT '{}',
+    user_decided_at          TEXT,
+    user_decided_by          TEXT NOT NULL DEFAULT '',
+    applied_to_learning      INTEGER NOT NULL DEFAULT 0,
+    learning_sample_id       TEXT,
+    auto_applied             INTEGER NOT NULL DEFAULT 0,
+    auto_applied_source      TEXT,                                -- learning_sample id, if applied
+    version                  INTEGER NOT NULL DEFAULT 1,
+    created_at               TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_parse_issues_org_status
+    ON parse_issues(org_id, user_decision);
+CREATE INDEX IF NOT EXISTS idx_parse_issues_import
+    ON parse_issues(import_id, row_index);
+CREATE INDEX IF NOT EXISTS idx_parse_issues_sig
+    ON parse_issues(org_id, issue_type, pattern_signature);
+
+CREATE TABLE IF NOT EXISTS learning_samples (
+    id                  TEXT PRIMARY KEY,
+    org_id              TEXT,                                  -- NULL = global sample
+    pattern_type        TEXT NOT NULL,
+    pattern_signature   TEXT NOT NULL,
+    action              TEXT NOT NULL DEFAULT '{}',            -- JSON
+    confidence          REAL NOT NULL DEFAULT 1.0,
+    hit_count           INTEGER NOT NULL DEFAULT 0,
+    last_used_at        TEXT,
+    auto_apply          INTEGER NOT NULL DEFAULT 0,
+    source_decision_id  TEXT NOT NULL,
+    created_at          TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_learning_signature
+    ON learning_samples(IFNULL(org_id,''), pattern_type, pattern_signature);
 """
 
 # ---------------------------------------------------------------------------
@@ -247,9 +308,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_tpl_uploaded ON audit_templates(uploaded_at
 # ---------------------------------------------------------------------------
 
 MIGRATION_STEPS: tuple[tuple[int, str], ...] = (
-    (2, SCHEMA_SQL),  # Stage 4: reports + report_cells.
-    (3, SCHEMA_SQL),  # Stage 5: vat_declarations.
-    (4, SCHEMA_SQL),  # Stage 6: audit_templates.
+    (2, SCHEMA_SQL),  # W2 Stage 4: reports + report_cells.
+    (3, SCHEMA_SQL),  # W2 Stage 5: vat_declarations.
+    (4, SCHEMA_SQL),  # W2 Stage 6: audit_templates.
+    (5, SCHEMA_SQL),  # W3 Stage 1: parse_issues + learning_samples.
 )
 """Each entry: (target_version, idempotent_DDL).  All steps replay the full
 canonical SCHEMA_SQL because every CREATE TABLE in it is IF NOT EXISTS, so

@@ -297,6 +297,18 @@ class UploadResponse(BaseModel):
     parser_used: str
     status: ImportStatus
     error_message: str | None = None
+    parse_issues_detected: int = Field(
+        default=0,
+        description="W3 Stage 1: 解析阶段命中的异常条数（含 auto_applied）",
+    )
+    parse_issues_must_fix: int = Field(
+        default=0,
+        description="W3 Stage 1: 其中 severity=must_fix 的条数",
+    )
+    parse_issues_auto_applied: int = Field(
+        default=0,
+        description="W3 Stage 1: 命中 learning_sample 已自动处理的条数",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -478,3 +490,105 @@ class ReportGenerateRequest(BaseModel):
         default=None,
         description="指定使用某次导入的余额表；不传则取该 (org, period) 最新一次成功导入",
     )
+
+
+# ---------------------------------------------------------------------------
+# ParseIssue + LearningSample (M1 W3 Stage 1 — v0.2 Part 1 §2)
+# ---------------------------------------------------------------------------
+
+IssueType = Literal[
+    "unknown_code",
+    "name_ambiguity",
+    "direction_anomaly",
+    "debit_credit_imbalance",
+    "field_missing",
+    "format_corrupt",
+    "cross_period_mismatch",
+]
+"""Seven issue families.  The first six come from W3 Stage 1's L1 detector,
+the seventh is appended by W3 Stage 3's CrossPeriodValidator (v0.3 Part Biz
+§4.3)."""
+
+IssueSeverity = Literal["must_fix", "suggested", "ignorable"]
+"""``must_fix`` blocks report generation; ``suggested`` warns only;
+``ignorable`` is recorded for audit trail without UI surfacing."""
+
+UserDecisionKind = Literal["apply_ai", "manual_fix", "skip", "ignore_as_other"]
+
+
+class ParseIssue(BaseModel):
+    """One row in ``parse_issues``.
+
+    Field-level encryption: ``original_data`` may carry account names / aux
+    text which are PII — the route layer wraps the payload in the same
+    KeyManager pipeline the trial-balance rows use (see
+    ``encryption.PARSE_ISSUE_PII_FIELDS``).  The model itself stays a flat
+    Pydantic class so the API response keeps a stable JSON shape.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    org_id: str
+    period_id: str
+    import_id: str
+    row_index: int
+    sheet_name: str = ""
+    column_name: str = ""
+    issue_type: IssueType
+    severity: IssueSeverity
+    pattern_signature: str = ""
+    original_data: dict = Field(default_factory=dict)
+    ai_suggestion: dict | None = None
+    ai_confidence: float | None = None
+    ai_consent_id: int | None = None
+    user_decision: UserDecisionKind | None = None
+    user_decision_payload: dict = Field(default_factory=dict)
+    user_decided_at: str | None = None
+    user_decided_by: str = ""
+    applied_to_learning: bool = False
+    learning_sample_id: str | None = None
+    auto_applied: bool = False
+    auto_applied_source: str | None = None
+    version: int = 1
+    created_at: str
+
+
+class LearningSample(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    org_id: str | None = None
+    pattern_type: IssueType
+    pattern_signature: str
+    action: dict = Field(default_factory=dict)
+    confidence: float = 1.0
+    hit_count: int = 0
+    last_used_at: str | None = None
+    auto_apply: bool = False
+    source_decision_id: str
+    created_at: str
+
+
+class ParseIssueListResponse(BaseModel):
+    issues: list[ParseIssue]
+    total: int
+    pending: int
+    must_fix_pending: int
+
+
+class LearningSampleListResponse(BaseModel):
+    samples: list[LearningSample]
+    total: int
+
+
+class ParseIssueDecisionRequest(BaseModel):
+    decision: UserDecisionKind
+    payload: dict = Field(default_factory=dict)
+    decided_by: str = "local"
+
+
+class ParseIssueLearnRequest(BaseModel):
+    auto_apply: bool = False
+    share_globally: bool = False
+    confidence: float = Field(1.0, ge=0.0, le=1.0)
