@@ -581,7 +581,10 @@ def run() -> int:  # noqa: PLR0912, PLR0915
         finally:
             snap.close()
 
-        assert schema_version == 7, schema_version
+        # W3 baseline is schema v7; M2 workers bump it forward (AI→v8, Biz→v9).
+        # Acceptance only requires that the W3 features still work, so accept
+        # any version >= 7.
+        assert schema_version >= 7, schema_version
         assert n_parse > 0
         assert n_xperiod_issues >= 1
         assert n_learn >= 1
