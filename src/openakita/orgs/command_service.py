@@ -243,6 +243,7 @@ class OrgCommandService:
         session_manager: SessionManagerProtocol | None = None,
         gateway: ChannelGatewayProtocol | None = None,
         emitter: EventEmitterProtocol | None = None,
+        event_bus: Any | None = None,
     ) -> None:
         self._runtime = runtime
         # v1 ``OrgRuntime`` exposes ``get_org`` + the runtime
@@ -266,6 +267,93 @@ class OrgCommandService:
                 ]
             ],
         ] = {}
+        # Sprint-2 P0-2 (audit v2 §5 F1-new): per-command outcome cache
+        # populated by event-bus subscriptions so ``get_status`` and the
+        # background ``_run_minimal`` finaliser can reflect the real
+        # ``agent_run_failed`` / ``agent_run_finished`` result instead of
+        # the stale "submitted -> done" flip ``runtime.send_command``
+        # alone produces. Keyed by ``command_id``; values are a small
+        # dict ``{"event", "reason", "error", "node_id", "ts"}``.
+        self._command_outcomes: dict[str, dict[str, Any]] = {}
+        self._event_bus = event_bus
+        if event_bus is not None:
+            self._wire_event_bus(event_bus)
+
+    # ------------------------------------------------------------------
+    # Event-bus wiring (Sprint-2 P0-2 -- audit v2 §5 F1-new)
+    # ------------------------------------------------------------------
+
+    # Names of events the executor emits during the per-node agent run.
+    # We pre-list them so subscription is explicit and we do not have to
+    # rely on a wildcard ``add_tap`` (some bus impls only support the
+    # named-subscriber surface).
+    _AGENT_RUN_EVENT_NAMES: tuple[str, ...] = (
+        "agent_run_started",
+        "agent_run_finished",
+        "agent_run_failed",
+    )
+
+    def _wire_event_bus(self, event_bus: Any) -> None:
+        """Subscribe :meth:`_handle_agent_event` to the executor's events.
+
+        Failures here log + return: the v1 contract is "service must
+        not refuse to start because the event bus is missing"; in that
+        case ``get_status`` simply continues to read the legacy
+        ``_run_minimal``-only state, which is still strictly better
+        than the pre-Sprint-2 silence.
+        """
+
+        subscribe = getattr(event_bus, "subscribe", None)
+        if not callable(subscribe):
+            logger.warning(
+                "[OrgCmd] event_bus has no subscribe(); "
+                "command status reconciliation disabled"
+            )
+            return
+        for name in self._AGENT_RUN_EVENT_NAMES:
+            try:
+                subscribe(name, self._handle_agent_event)
+            except Exception:  # noqa: BLE001 -- bus must not block service init
+                logger.exception(
+                    "[OrgCmd] failed to subscribe to event %r; reconciliation degraded",
+                    name,
+                )
+
+    def _handle_agent_event(self, payload: dict[str, Any]) -> None:
+        """Cache the latest agent-run outcome for a command id.
+
+        Idempotent: handlers may fire multiple times during a single
+        run (started -> finished, started -> failed). We always keep
+        the latest payload so a started+failed sequence resolves to
+        ``failed`` and a started+finished sequence resolves to
+        ``finished``. The handler is sync (the bus accepts both sync
+        and async handlers); callers in this service are sync too,
+        so no event-loop hop is needed.
+        """
+
+        if not isinstance(payload, dict):
+            return
+        command_id = payload.get("command_id")
+        if not isinstance(command_id, str) or not command_id:
+            return
+        # Match the event name back from the payload-shape conventions
+        # used by ``AgentPipelineExecutor``: started has only org/node
+        # ids, failed adds ``reason`` + ``error``, finished adds
+        # ``output_len``.
+        if "reason" in payload or "error" in payload:
+            event = "agent_run_failed"
+        elif "output_len" in payload:
+            event = "agent_run_finished"
+        else:
+            event = "agent_run_started"
+        self._command_outcomes[command_id] = {
+            "event": event,
+            "reason": payload.get("reason"),
+            "error": payload.get("error"),
+            "node_id": payload.get("node_id"),
+            "output_len": payload.get("output_len"),
+            "ts": time.time(),
+        }
 
     # ------------------------------------------------------------------
     # Accessors (parity gate -- byte-for-byte view of v1 internals)
@@ -433,6 +521,12 @@ class OrgCommandService:
         :class:`CommandRuntimeProtocol`. Read-only, no lock --
         v1 contract: the caller may see a snapshot one event
         older than live state.
+
+        Sprint-2 P0-2 overlay: when a matching ``agent_run_failed`` /
+        ``agent_run_finished`` event has fired, surface its
+        ``event_ref`` + (for failures) the reason / error string so
+        callers can distinguish a real success from the legacy
+        "always 200 with phase=done" lie the v13 audit flagged.
         """
         cmd = self._commands.get(command_id)
         if not cmd or cmd.get("org_id") != org_id:
@@ -466,6 +560,21 @@ class OrgCommandService:
             "origin_surface": cmd.get("origin_surface"),
             "output_scope": cmd.get("output_scope"),
         }
+        outcome = self._command_outcomes.get(command_id)
+        if outcome is not None:
+            event_ref = outcome.get("event")
+            if event_ref:
+                result["event_ref"] = event_ref
+            if event_ref == "agent_run_failed" and not result.get("error"):
+                # Mirror the persisted error onto the live snapshot the
+                # frontend reads. ``_run_minimal`` already does this for
+                # finalised commands; this branch covers the read-while-
+                # running window before the finaliser flips ``cmd``.
+                reason = outcome.get("reason")
+                error = outcome.get("error")
+                rendered = " ".join(s for s in (reason, error) if s).strip()
+                if rendered:
+                    result["error"] = rendered
         if live:
             result.update(_live_snapshot_view(live))
         elif isinstance(cmd.get("result"), dict):
@@ -604,6 +713,10 @@ class OrgCommandService:
                     (cmd.get("org_id"), cmd.get("root_node_id")),
                     None,
                 )
+            # Sprint-2 P0-2: keep ``_command_outcomes`` aligned with
+            # ``_commands`` so the per-process outcome cache cannot
+            # grow unbounded once a command has aged past TTL.
+            self._command_outcomes.pop(cid, None)
 
     def _update_command_state(
         self,
@@ -727,13 +840,44 @@ class OrgCommandService:
                     request.content,
                     command_id=command_id,
                 )
-                self._update_command_state(
-                    command_id,
-                    status="done",
-                    phase="done",
-                    result=result,
-                    finished_at=time.time(),
-                )
+                # Sprint-2 P0-2: ``runtime.send_command`` returns
+                # ``"submitted"`` regardless of the actual agent run
+                # outcome (the agent dispatch callback fires inside
+                # send_command itself but its result never bubbles back
+                # via the return value -- only via the event bus).
+                # Consult the per-command outcome cache populated by the
+                # event-bus subscription before flipping the public
+                # status. Pre-fix this finaliser unconditionally wrote
+                # ``status=done, error=null`` even when events.jsonl
+                # showed ``agent_run_failed`` (audit v2 §5 F1-new).
+                outcome = self._command_outcomes.get(command_id)
+                if outcome is not None and outcome.get("event") == "agent_run_failed":
+                    rendered_error = " ".join(
+                        s
+                        for s in (
+                            outcome.get("reason") or "",
+                            outcome.get("error") or "",
+                        )
+                        if s
+                    ).strip() or "agent run failed"
+                    self._update_command_state(
+                        command_id,
+                        status="error",
+                        phase="error",
+                        result=result,
+                        error=rendered_error,
+                        event_ref="agent_run_failed",
+                        finished_at=time.time(),
+                    )
+                else:
+                    self._update_command_state(
+                        command_id,
+                        status="done",
+                        phase="done",
+                        result=result,
+                        event_ref=(outcome or {}).get("event") if outcome else None,
+                        finished_at=time.time(),
+                    )
             except Exception as exc:
                 self._update_command_state(
                     command_id,

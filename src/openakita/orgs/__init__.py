@@ -146,6 +146,7 @@
 
 from __future__ import annotations
 
+from ._default_agent_builder import BuilderUnavailable, DefaultAgentBuilder
 from ._runtime_agent_pipeline import (
     ORG_STATE_ACTIVE,
     ORG_STATE_PAUSED,
@@ -311,12 +312,14 @@ __all__ = [
     "AgentSpec",
     "BlackboardBackendProtocol",
     "BrainProtocol",
+    "BuilderUnavailable",
     "CLEAN_THRESHOLD",
     "ChannelGatewayProtocol",
     "CommandDispatchManager",
     "CommandDispatcher",
     "CommandRuntimeProtocol",
     "CommandWatchdog",
+    "DefaultAgentBuilder",
     "EdgeType",
     "EventBusProtocol",
     "EventEmitterProtocol",

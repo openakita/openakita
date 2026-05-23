@@ -377,6 +377,7 @@ def create_app(
                     logger.warning("Failed to mount pending UI for plugin '%s': %s", plugin_id, e)
 
     # Initialize OrgManager & OrgRuntime
+    from openakita.orgs._default_agent_builder import DefaultAgentBuilder
     from openakita.orgs._runtime_agent_pipeline import (
         AgentCache,
         AgentPipelineExecutor,
@@ -400,13 +401,31 @@ def create_app(
     # ``llm_usage`` events flow through the same H4 persist + stream
     # bridges OrgRuntime installs in ``__init__``.
     #
-    # ``AgentCache`` keeps the default ``_NullAgentBuilder``; commands
-    # therefore emit ``agent_run_failed`` (which is still infinitely
-    # better than the pre-fix "no event at all" silence) until a real
-    # ``AgentBuilderProtocol`` implementation lands. That is Sprint-1
-    # D2 work in the audit roadmap and out of scope for this commit.
+    # Sprint-2 P0-1 (audit ``_orgs_business_capability_audit_v2.md``
+    # §5 / §8): the v13 run found H1-H4 wired correctly but every
+    # orgs_v2 command bouncing off ``_NullAgentBuilder`` (60+ commands,
+    # 0 LLM calls). We now inject :class:`DefaultAgentBuilder` whose
+    # node agents reuse the desktop ``Agent``'s ``Brain`` for a real
+    # single-shot LLM call. The brain is read lazily via
+    # ``app.state.agent`` because the lifespan composes the runtime
+    # *before* ``main.py`` finishes building the desktop Agent; the
+    # closure picks the brain up on first ``build()`` call. If the
+    # desktop Agent is still missing (early cold-boot races, headless
+    # tests) ``DefaultAgentBuilder`` raises ``BuilderUnavailable`` and
+    # the executor turns that into the v1-parity ``agent_run_failed
+    # reason=agent_build_failed`` event -- identical observable to the
+    # legacy ``_NullAgentBuilder``.
     org_event_bus = _InMemoryEventBus()
-    agent_cache = AgentCache()
+
+    def _orgs_v2_brain_provider() -> Any:
+        candidate = getattr(app.state, "agent", None)
+        if candidate is None:
+            return None
+        return getattr(candidate, "brain", None)
+
+    agent_cache = AgentCache(
+        builder=DefaultAgentBuilder(brain_provider=_orgs_v2_brain_provider)
+    )
     profile_resolver = ProfileResolver(lookup=org_manager)
     agent_executor = AgentPipelineExecutor(
         cache=agent_cache,
@@ -447,7 +466,23 @@ def create_app(
 
     # P-RC-9 P9.4 made ``OrgCommandService.__init__`` keyword-only after
     # the leading ``runtime`` argument; pass session_manager by name.
-    org_command_service = OrgCommandService(org_runtime, session_manager=session_manager)
+    #
+    # Sprint-2 P0-2 (audit ``_orgs_business_capability_audit_v2.md`` §5
+    # F1-new): ``GET /api/v2/orgs/{id}/commands/{cid}`` was returning
+    # ``phase=done, error=null`` while ``events.jsonl`` showed
+    # ``agent_run_failed reason=agent_build_failed``. The status was
+    # written by ``_run_minimal``'s success branch (because
+    # ``runtime.send_command`` returns "submitted" before the agent
+    # dispatch callback observes failure). We now share the same
+    # ``_InMemoryEventBus`` with the service so it can subscribe to
+    # ``agent_run_*`` events keyed by command_id and reflect the real
+    # outcome back through ``get_status`` -- UI shows "failed" when the
+    # node actually failed.
+    org_command_service = OrgCommandService(
+        org_runtime,
+        session_manager=session_manager,
+        event_bus=org_event_bus,
+    )
     set_command_service(org_command_service)
     app.state.org_command_service = org_command_service
 
