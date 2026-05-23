@@ -22,14 +22,18 @@ DDL statement so it does not appear here.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 """History:
 * v1 -- M1 W1 baseline (5 tables).
 * v2 -- M1 W2 Stage 4: adds ``reports`` + ``report_cells``.
 * v3 -- M1 W2 Stage 5: adds ``vat_declarations``.
 * v4 -- M1 W2 Stage 6: adds ``audit_templates``.
-* v5 -- M1 W3 Stage 1: adds ``parse_issues`` + ``learning_samples``
-        (unknown-data triage; v0.2 Part 1 §2).
+* v5 -- M1 W3 Stage 1+2: adds ``parse_issues`` + ``learning_samples``
+        (unknown-data triage; v0.2 Part 1 §2) and widens ``report_cells``
+        with simplify metadata (v0.2 Part 1 §3).
+* v6 -- M1 W3 Stage 3: adds ``cross_period_check_results``
+        (跨期校验; v0.3 Part Biz §4).  Carries a ``version`` column to
+        satisfy the v0.3 Part Infra C3 optimistic-lock contract.
 """
 
 # ---------------------------------------------------------------------------
@@ -305,6 +309,39 @@ CREATE TABLE IF NOT EXISTS learning_samples (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_learning_signature
     ON learning_samples(IFNULL(org_id,''), pattern_type, pattern_signature);
+
+-- ===========================================================================
+-- M1 W3 Stage 3: cross-period validator results (v0.3 Part Biz §4).
+-- One row per (prior_import_id, current_import_id) pair representing a
+-- single check run.  ``differences_json`` holds the per-account diff array
+-- (rich payload; opaque to SQL).  ``version`` is the optimistic-lock token
+-- per v0.3 Part Infra C3.
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS cross_period_check_results (
+    id                  TEXT PRIMARY KEY,
+    org_id              TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    prior_period_id     TEXT NOT NULL,
+    current_period_id   TEXT NOT NULL,
+    prior_import_id     TEXT NOT NULL REFERENCES trial_balance_imports(id) ON DELETE CASCADE,
+    current_import_id   TEXT NOT NULL REFERENCES trial_balance_imports(id) ON DELETE CASCADE,
+    tolerance           REAL NOT NULL DEFAULT 1.0,
+    warn_threshold      REAL NOT NULL DEFAULT 100.0,
+    total_accounts      INTEGER NOT NULL DEFAULT 0,
+    exact_count         INTEGER NOT NULL DEFAULT 0,
+    tolerance_count     INTEGER NOT NULL DEFAULT 0,
+    warning_count       INTEGER NOT NULL DEFAULT 0,
+    error_count         INTEGER NOT NULL DEFAULT 0,
+    parse_issue_ids_json TEXT NOT NULL DEFAULT '[]',
+    differences_json    TEXT NOT NULL DEFAULT '[]',
+    status              TEXT NOT NULL DEFAULT 'ok',
+    notes               TEXT,
+    version             INTEGER NOT NULL DEFAULT 1,
+    created_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_xperiod_org ON cross_period_check_results(org_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_xperiod_imports
+    ON cross_period_check_results(prior_import_id, current_import_id);
 """
 
 # ---------------------------------------------------------------------------
@@ -339,6 +376,9 @@ MIGRATION_STEPS: tuple[tuple[int, str], ...] = (
     (4, ""),  # W2 Stage 6: audit_templates.
     (5, _V5_ALTER_REPORT_CELLS),  # W3 Stage 2: widens report_cells with
                                   # simplify metadata columns + version.
+    (6, ""),                      # W3 Stage 3: cross_period_check_results
+                                  # is a brand-new CREATE TABLE IF NOT EXISTS
+                                  # already in SCHEMA_SQL -- no ALTER needed.
 )
 """Each entry: (target_version, idempotent_DDL).  All steps replay the full
 canonical SCHEMA_SQL because every CREATE TABLE in it is IF NOT EXISTS, so

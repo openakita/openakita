@@ -642,3 +642,86 @@ class ParseIssueLearnRequest(BaseModel):
     auto_apply: bool = False
     share_globally: bool = False
     confidence: float = Field(1.0, ge=0.0, le=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Cross-period validator (M1 W3 Stage 3 — v0.3 Part Biz §4)
+# ---------------------------------------------------------------------------
+
+CrossPeriodSeverity = Literal["exact", "tolerance", "warning", "error"]
+"""Four severity buckets per v0.3 Part Biz §4.3:
+* ``exact``     — values literally equal.
+* ``tolerance`` — |delta| < ``tolerance`` (default 1元).
+* ``warning``   — tolerance ≤ |delta| < ``warn_threshold`` (default 100元).
+* ``error``     — |delta| ≥ ``warn_threshold`` (must fix; emits a ParseIssue).
+"""
+
+
+class CrossPeriodDifference(BaseModel):
+    """One per-account row in a cross-period check result."""
+
+    full_code: str
+    account_name: str | None = None
+    prior_closing: float = 0.0
+    current_opening: float = 0.0
+    delta: float = 0.0
+    severity: CrossPeriodSeverity
+    side: Literal["debit", "credit", "net"] = "net"
+    note: str | None = None
+
+
+class CrossPeriodCheckResult(BaseModel):
+    """The aggregated outcome of a single CrossPeriodValidator run."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    org_id: str
+    prior_period_id: str
+    current_period_id: str
+    prior_import_id: str
+    current_import_id: str
+    tolerance: float = 1.0
+    warn_threshold: float = 100.0
+    total_accounts: int = 0
+    exact_count: int = 0
+    tolerance_count: int = 0
+    warning_count: int = 0
+    error_count: int = 0
+    parse_issue_ids: list[str] = Field(default_factory=list)
+    differences: list[CrossPeriodDifference] = Field(default_factory=list)
+    status: str = "ok"
+    notes: str | None = None
+    version: int = 1
+    created_at: str
+
+
+class CrossPeriodCheckListItem(BaseModel):
+    """Compact summary row used by the listing endpoint."""
+
+    id: str
+    org_id: str
+    prior_period_id: str
+    current_period_id: str
+    total_accounts: int
+    error_count: int
+    warning_count: int
+    created_at: str
+
+
+class CrossPeriodCheckListResponse(BaseModel):
+    items: list[CrossPeriodCheckListItem]
+    total: int
+
+
+class CrossPeriodCheckRequest(BaseModel):
+    """Trigger a check.  If ``prior_import_id`` / ``current_import_id`` are
+    omitted we resolve the latest successful import for each period."""
+
+    prior_period_id: str
+    current_period_id: str
+    prior_import_id: str | None = None
+    current_import_id: str | None = None
+    tolerance: float = Field(1.0, ge=0.0)
+    warn_threshold: float = Field(100.0, ge=0.0)
+    emit_parse_issues: bool = True

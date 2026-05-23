@@ -739,6 +739,7 @@ def build_router(service: FinanceAutoService) -> APIRouter:
     # families onto the same router.  Kept in separate modules so this file
     # stays small.
     from .audit_routes import register_audit_endpoints
+    from .cross_period_routes import register_cross_period_endpoints
     from .report_routes import register_report_endpoints
     from .vat_routes import register_vat_endpoints
 
@@ -746,6 +747,7 @@ def build_router(service: FinanceAutoService) -> APIRouter:
     register_vat_endpoints(router, service)
     register_audit_endpoints(router, service)
     register_parse_issue_endpoints(router, service)
+    register_cross_period_endpoints(router, service)
 
     return router
 
