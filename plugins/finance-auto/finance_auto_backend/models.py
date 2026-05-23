@@ -8,7 +8,7 @@ covered in the design.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -47,7 +47,7 @@ def _new_id(prefix: str) -> str:
 
 
 def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +396,39 @@ class ReportListResponse(BaseModel):
 class ReportDetailResponse(BaseModel):
     report: ReportInstance
     cells: list[ReportCell]
+
+
+# ---------------------------------------------------------------------------
+# VAT declaration (M1 W2 Stage 5)
+# ---------------------------------------------------------------------------
+
+
+class VatDeclarationModel(BaseModel):
+    """Persisted VAT declaration row (also the API response)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    org_id: str
+    declaration_period: str
+    province: str | None
+    dialect: str
+    confidence: float
+    output_vat: float
+    input_vat: float
+    prev_credit: float
+    tax_payable: float
+    surtax_total: float
+    raw_fields: dict[str, float]
+    warnings: list[str] = Field(default_factory=list)
+    source_file: str | None
+    file_sha256: str | None
+    uploaded_at: str
+
+
+class VatDeclarationListResponse(BaseModel):
+    declarations: list[VatDeclarationModel]
+    total: int
 
 
 class ReportGenerateRequest(BaseModel):

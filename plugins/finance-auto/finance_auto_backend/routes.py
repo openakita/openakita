@@ -711,8 +711,10 @@ def build_router(service: FinanceAutoService) -> APIRouter:
     # M1 W2 Stage 4 -- attach the report-generation endpoints onto the same
     # router.  Kept in a separate module so this file stays small.
     from .report_routes import register_report_endpoints
+    from .vat_routes import register_vat_endpoints
 
     register_report_endpoints(router, service)
+    register_vat_endpoints(router, service)
 
     return router
 

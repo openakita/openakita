@@ -22,8 +22,12 @@ DDL statement so it does not appear here.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 2
-"""Bumped to 2 in M1 W2 Stage 4: adds ``reports`` + ``report_cells`` tables."""
+SCHEMA_VERSION = 3
+"""History:
+* v1 -- M1 W1 baseline (5 tables).
+* v2 -- M1 W2 Stage 4: adds ``reports`` + ``report_cells``.
+* v3 -- M1 W2 Stage 5: adds ``vat_declarations``.
+"""
 
 # ---------------------------------------------------------------------------
 # DDL — single statement string executed via ``connection.executescript``.
@@ -181,6 +185,35 @@ CREATE TABLE IF NOT EXISTS report_cells (
 );
 CREATE INDEX IF NOT EXISTS idx_cells_report  ON report_cells(report_id, target_line_no);
 CREATE INDEX IF NOT EXISTS idx_cells_refcode ON report_cells(report_id, reference_code);
+
+-- ===========================================================================
+-- M1 W2 Stage 5: VAT declarations (Golden-Tax-IV `增值税及附加税费申报表`).
+-- One row per uploaded return, plus the parsed numeric fields.  raw_fields
+-- is a JSON catch-all so future provincial fields can be persisted without
+-- a schema bump.
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS vat_declarations (
+    id                 TEXT PRIMARY KEY,
+    org_id             TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    declaration_period TEXT NOT NULL,            -- 2025-01 / 2025-Q1 etc.
+    province           TEXT,                     -- BJ / GD / SH / ...
+    dialect            TEXT NOT NULL,
+    confidence         REAL NOT NULL DEFAULT 0,
+    output_vat         REAL NOT NULL DEFAULT 0,
+    input_vat          REAL NOT NULL DEFAULT 0,
+    prev_credit        REAL NOT NULL DEFAULT 0,
+    tax_payable        REAL NOT NULL DEFAULT 0,
+    surtax_total       REAL NOT NULL DEFAULT 0,
+    raw_fields_json    TEXT NOT NULL DEFAULT '{}',
+    warnings_json      TEXT NOT NULL DEFAULT '[]',
+    source_file        TEXT,
+    file_sha256        TEXT,
+    uploaded_at        TEXT NOT NULL,
+    _encrypted_payload BLOB
+);
+CREATE INDEX IF NOT EXISTS idx_vat_org_period
+    ON vat_declarations(org_id, declaration_period);
 """
 
 # ---------------------------------------------------------------------------
@@ -192,11 +225,9 @@ CREATE INDEX IF NOT EXISTS idx_cells_refcode ON report_cells(report_id, referenc
 # ---------------------------------------------------------------------------
 
 MIGRATION_STEPS: tuple[tuple[int, str], ...] = (
-    (
-        2,
-        # M1 W2 Stage 4: adds reports + report_cells.  Idempotent because
-        # the script uses CREATE TABLE IF NOT EXISTS.
-        SCHEMA_SQL,
-    ),
+    (2, SCHEMA_SQL),  # Stage 4: reports + report_cells.
+    (3, SCHEMA_SQL),  # Stage 5: vat_declarations.
 )
-"""Each entry: (target_version, idempotent_DDL).  Replayed by db.run_migrations()."""
+"""Each entry: (target_version, idempotent_DDL).  All steps replay the full
+canonical SCHEMA_SQL because every CREATE TABLE in it is IF NOT EXISTS, so
+running an old DB through the chain just adds the new tables in-place."""
