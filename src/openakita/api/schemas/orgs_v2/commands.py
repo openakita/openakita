@@ -60,7 +60,14 @@ class CommandSubmit(BaseModel):
     target_node_id: str | None = None
     source: dict[str, Any] | None = None
     origin_surface: OrgCommandSurface = OrgCommandSurface.ORG_CONSOLE
-    output_scope: OrgOutputScope | None = None
+    # exploratory v12 §10.1: callers that omit ``output_scope`` (mobile,
+    # CLI, IM bridge default body) used to land in ``command_service``
+    # with a ``None``, which crashed on ``.value``. We default to
+    # ``INTERNAL`` here because v12 §7 E5 verified 5 concurrent
+    # internal-scope submits return 200. The field is intentionally
+    # *not* ``Optional`` so an explicit ``null`` is now a 422 (was a
+    # latent 500), which is the safer contract.
+    output_scope: OrgOutputScope = OrgOutputScope.INTERNAL
     replace_existing: bool = False
     continue_previous: bool = False
     forward_to: list[dict[str, Any]] = Field(default_factory=list)

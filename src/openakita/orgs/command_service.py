@@ -36,6 +36,7 @@ from .command_models import (
     OrgCommandConflict,
     OrgCommandError,
     OrgCommandRequest,
+    OrgOutputScope,
     new_command_id,
 )
 
@@ -334,6 +335,14 @@ class OrgCommandService:
         content = (request.content or "").strip()
         if not content:
             raise OrgCommandError("content is required")
+        # Defensive normalization (exploratory v12 §10.1 second guard).
+        # The REST endpoint now defaults ``output_scope`` to ``INTERNAL``
+        # via the Pydantic schema, but other internal callers (IM
+        # gateway, CLI, parity harness) build ``OrgCommandRequest`` by
+        # hand. If any of them slips a ``None`` through, fall back to
+        # ``INTERNAL`` instead of crashing on ``.value``.
+        if request.output_scope is None:
+            request.output_scope = OrgOutputScope.INTERNAL
 
         org = self._require_org_running(request.org_id)
         if request.target_node_id and not org.get_node(request.target_node_id):

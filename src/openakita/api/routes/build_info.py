@@ -55,6 +55,35 @@ def _resolve_build_id() -> str:
 _DEV_BUILD_ID_PATTERN = re.compile(r'"(dev-[a-z0-9]{6,12})"')
 
 
+def is_frontend_bundle_outdated(
+    bundle_build_id: str | None,
+    backend_version: str,
+) -> bool:
+    """Return ``True`` when the SPA bundle id lags the running backend.
+
+    Single source of truth for the staleness rule that powers both
+    the startup warning (server.py ``_check_frontend_bundle_freshness``)
+    and the ``/api/health`` ``frontend_bundle.outdated`` field
+    (exploratory v12 §10.2 follow-up).
+
+    Rules:
+
+    * ``None`` bundle id -> ``False`` (unknown; we never surface a
+      warning when we cannot read the bundle, mirroring the startup
+      check's "no traction, no banner" stance).
+    * ``"dev-..."`` prefix -> always ``True`` because the Vite dev
+      fallback (``dev-<base36 timestamp>``) cannot match any released
+      backend semver.
+    * Exact-match against ``backend_version`` -> ``False``; anything
+      else -> ``True``.
+    """
+    if not bundle_build_id:
+        return False
+    if bundle_build_id.startswith("dev-"):
+        return True
+    return bundle_build_id != backend_version
+
+
 def detect_frontend_bundle_build_id(dist_web: Path) -> str | None:
     """Best-effort: extract the ``__BUILD_ID__`` baked into a SPA bundle.
 

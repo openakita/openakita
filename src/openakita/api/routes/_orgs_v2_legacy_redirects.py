@@ -28,6 +28,24 @@ rewiring lands in P-RC-9 P9.8 caller migration.
 
 ADR refs: ADR-0011 (no new Protocol; shim is a thin router);
 ADR-0012 (one-window relaxation for redirect window only).
+
+Effective routes summary (verified by exploratory test v12, 2026-05-23):
+
+* ``POST /api/v2/orgs/templates/{id}/instantiate`` -- the **only**
+  shim path still reachable. The v2 runtime router does not own
+  this exact path so the 308 redirect fires for real traffic.
+* All eight remaining shim routes
+  (``GET /templates``, ``GET /templates/{id}``,
+  ``GET /``, ``POST /``, ``GET /{org_id}``,
+  ``PATCH /{org_id}``, ``DELETE /{org_id}``,
+  ``GET /{org_id}/stream``) are **shadowed** by the v2 runtime
+  router because it is registered first in
+  :func:`openakita.api.server.create_app`. Their handlers exist in
+  this file only for documentation symmetry -- they never serve
+  traffic.
+
+See ``_exploratory_test_report_v12.md`` §3.R12.7-10 and §10.4 for
+the full inventory and route-precedence audit.
 """
 
 from __future__ import annotations

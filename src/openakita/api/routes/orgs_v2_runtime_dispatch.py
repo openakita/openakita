@@ -212,9 +212,11 @@ async def send_command(request: Request, org_id: str, body: CommandSubmit) -> di
                 target_node_id=body.target_node_id,
                 source=source,
                 origin_surface=OrgCommandSurface(body.origin_surface.value),
-                output_scope=(
-                    OrgOutputScope(body.output_scope.value) if body.output_scope else None
-                ),
+                # ``body.output_scope`` is now a non-optional schema field
+                # (default ``INTERNAL``; exploratory v12 §10.1 fix), so the
+                # ``None`` branch that used to leak into ``command_service``
+                # is gone.
+                output_scope=OrgOutputScope(body.output_scope.value),
                 replace_existing=body.replace_existing,
                 continue_previous=body.continue_previous,
                 forward_to=forward,

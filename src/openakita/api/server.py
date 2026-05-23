@@ -850,6 +850,7 @@ def create_app(
             from openakita import __version__ as backend_version
             from openakita.api.routes.build_info import (
                 detect_frontend_bundle_build_id,
+                is_frontend_bundle_outdated,
             )
 
             dist = _find_web_dist()
@@ -859,9 +860,10 @@ def create_app(
             app.state.frontend_bundle_build_id = bundle_id
             if bundle_id is None:
                 return
-            # The dev fallback is unambiguously stale relative to any
-            # released backend (it never matches a semver version).
-            outdated = bundle_id.startswith("dev-") or bundle_id != backend_version
+            # Shared rule with /api/health frontend_bundle.outdated so the
+            # startup warning and the runtime field never disagree
+            # (exploratory v12 §10.2 follow-up).
+            outdated = is_frontend_bundle_outdated(bundle_id, backend_version)
             app.state.frontend_bundle_outdated = outdated
             if outdated:
                 logger.warning(

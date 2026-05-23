@@ -61,6 +61,43 @@ def _memory_subsystem_status(request: Request) -> dict:
     return {"status": "unknown", "reason": None, "details": None, "repair_available": False}
 
 
+def _frontend_bundle_status(request: Request, backend_version: str) -> dict[str, Any]:
+    """Return a structured view of the SPA bundle vs backend version.
+
+    Exposes the v11 Fix-5 startup signal (which previously lived only
+    in ``logger.warning`` lines) as a JSON field so the frontend can
+    show a "rebuild SPA" hint without scraping logs (exploratory v12
+    §10.2 follow-up).
+
+    Shape::
+
+        {
+            "build_id": "dev-mpgq6mn8" | "1.27.12" | None,
+            "backend_version": "1.27.12",
+            "outdated": True | False,
+        }
+
+    The endpoint never flips ``status`` to non-ok based on this -- the
+    field is purely informational.
+    """
+    try:
+        from .build_info import is_frontend_bundle_outdated
+
+        bundle_id = getattr(request.app.state, "frontend_bundle_build_id", None)
+        return {
+            "build_id": bundle_id,
+            "backend_version": backend_version,
+            "outdated": is_frontend_bundle_outdated(bundle_id, backend_version),
+        }
+    except Exception as exc:  # noqa: BLE001 -- never break /api/health
+        logger.debug("[Health] frontend_bundle status skipped: %s", exc)
+        return {
+            "build_id": None,
+            "backend_version": backend_version,
+            "outdated": False,
+        }
+
+
 def _read_last_shutdown_marker() -> dict:
     try:
         from openakita.config import settings
@@ -229,6 +266,7 @@ async def health(request: Request):
         "startup_phase": readiness.get("phase", "http_ready"),
         "readiness": readiness,
         "memory_subsystem": _memory_subsystem_status(request),
+        "frontend_bundle": _frontend_bundle_status(request, backend_version),
         "last_shutdown": _read_last_shutdown_marker(),
     }
 
@@ -527,9 +565,13 @@ async def legacy_shim_stats() -> dict[str, Any]:
         "removal_target": "2.1.0",
         "sunset_header": "2026-12-01",
         "advice": (
-            "When hits stay 0 for >=30 days post the Sunset marker, the "
-            "shim is safe to remove. See docs/follow-ups/"
-            "skipped-items-roadmap.md §A.3."
+            "Only POST /api/v2/orgs/templates/{id}/instantiate is "
+            "reachable today (the other 8 shim routes are shadowed by "
+            "the v2 runtime router registered first in server.py). "
+            "When hits for that one path stay 0 for >=30 days post the "
+            "Sunset marker, the shim file can be removed. See "
+            "docs/follow-ups/skipped-items-roadmap.md §A.3 and "
+            "_exploratory_test_report_v12.md §10.4."
         ),
     }
 
