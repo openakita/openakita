@@ -1,0 +1,32 @@
+# templates/industry_overrides/tech_service.yaml
+# M1 W3 Stage 5 — 科技服务业 行业覆盖
+#
+# Tech-service companies have a comparatively thin AP/AR but heavy
+# salary expense; surface the social-security manual input by default
+# and keep aux mode at 'full' so per-project receivables stay visible.
+
+industry: tech_service
+label: 科技服务业
+description: |
+  覆盖项：default aux_mode=full（保留项目级辅助核算）；强调
+  social_security_paid / interest_income 这两个手填字段，UI 可在
+  现金流抽屉里把它们排在前面。
+
+org_defaults:
+  aux_mode: full
+
+manual_inputs_overlay:
+  - key: social_security_paid
+    label: 实际缴纳社保（含个人代扣）★
+    value_type: cny
+    default_source: manual
+    source_hint: 2211 应付职工薪酬 - 社保子项借方发生额
+    required_by: [CF_EMPLOYEE_CASH_OUT]
+    priority: high
+  - key: interest_income
+    label: 当期实际收到的利息（理财 / 大额存单）★
+    value_type: cny
+    default_source: manual
+    source_hint: 6603 / 1101 短期投资收益明细
+    required_by: [CF_INTEREST_RECEIVED]
+    priority: high

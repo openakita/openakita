@@ -740,6 +740,7 @@ def build_router(service: FinanceAutoService) -> APIRouter:
     # stays small.
     from .audit_routes import register_audit_endpoints
     from .cross_period_routes import register_cross_period_endpoints
+    from .industry_routes import register_industry_endpoints
     from .manual_input_routes import register_manual_input_endpoints
     from .report_routes import register_report_endpoints
     from .vat_routes import register_vat_endpoints
@@ -750,6 +751,7 @@ def build_router(service: FinanceAutoService) -> APIRouter:
     register_parse_issue_endpoints(router, service)
     register_cross_period_endpoints(router, service)
     register_manual_input_endpoints(router, service)
+    register_industry_endpoints(router, service)
 
     return router
 
