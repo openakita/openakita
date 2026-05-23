@@ -26,7 +26,11 @@ SHIPPED_TEMPLATES = PLUGIN_ROOT / "templates" / "reports"
 
 
 def test_shipped_templates_count() -> None:
-    assert len(list_templates(SHIPPED_TEMPLATES)) == 5
+    # Baseline = 5 W1/W2 templates; M2 Biz Stage 3 adds reclassification_*
+    # YAMLs, Stage 4 adds cash_flow_*.yaml and Stage 6 adds
+    # consolidation_*.yaml.  We assert at least the W1/W2 floor so this test
+    # documents the minimum surface without breaking every new template add.
+    assert len(list_templates(SHIPPED_TEMPLATES)) >= 5
 
 
 def test_load_balance_sheet_small() -> None:
