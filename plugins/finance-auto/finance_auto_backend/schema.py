@@ -22,7 +22,9 @@ DDL statement so it does not appear here.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 7
+from .db.migrations import v8_ai_tables as _v8
+
+SCHEMA_VERSION = 8
 """History:
 * v1 -- M1 W1 baseline (5 tables).
 * v2 -- M1 W2 Stage 4: adds ``reports`` + ``report_cells``.
@@ -36,6 +38,9 @@ SCHEMA_VERSION = 7
         satisfy the v0.3 Part Infra C3 optimistic-lock contract.
 * v7 -- M1 W3 Stage 4: adds ``manual_inputs`` for the 7 cash-flow
         supplementary fields (v0.2 Part 1 §7.2 / design doc §7.2).
+* v8 -- M2 AI Stage 1: adds ``ai_consent`` + ``ai_scenarios`` +
+        ``llm_call_audit`` (v0.2 Part 2 §3 / §4 / §7 / §8).  Seeded
+        with the 6 AI scenarios S1–S6.
 """
 
 # ---------------------------------------------------------------------------
@@ -369,7 +374,7 @@ CREATE TABLE IF NOT EXISTS manual_inputs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_manual_inputs_key
     ON manual_inputs(org_id, period_id, field_key);
-"""
+""" + _v8.DDL_SQL
 
 # ---------------------------------------------------------------------------
 # Incremental migration steps.  ``run_migrations(conn, current_version)`` will
@@ -408,6 +413,10 @@ MIGRATION_STEPS: tuple[tuple[int, str], ...] = (
                                   # already in SCHEMA_SQL -- no ALTER needed.
     (7, ""),                      # W3 Stage 4: manual_inputs is a brand-new
                                   # CREATE TABLE IF NOT EXISTS in SCHEMA_SQL.
+    (8, _v8.SEED_SQL),            # M2 AI Stage 1: ai_consent / ai_scenarios /
+                                  # llm_call_audit DDL is in SCHEMA_SQL; the
+                                  # seed step inserts the 6 default scenarios
+                                  # (idempotent INSERT OR IGNORE).
 )
 """Each entry: (target_version, idempotent_DDL).  All steps replay the full
 canonical SCHEMA_SQL because every CREATE TABLE in it is IF NOT EXISTS, so

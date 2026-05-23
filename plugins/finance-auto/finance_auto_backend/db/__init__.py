@@ -1,6 +1,7 @@
-"""SQLite connection helper for finance-auto (WAL mode on, M1 W1).
+"""SQLite connection helper for finance-auto.
 
 Why a tiny module instead of an ORM?
+
 * M1 W1 needs five tables and ~5 endpoints — pulling in SQLAlchemy would
   triple the code we have to read.
 * We mirror ``plugins/fin-pulse``'s pattern (single ``aiosqlite.Connection``
@@ -11,6 +12,15 @@ Why a tiny module instead of an ORM?
 The encryption ``_encrypted_payload BLOB`` columns are present in the schema
 but always written as ``NULL`` in M1 W1 — M1 W2's KeyManager will populate
 them via a follow-up migration that simply re-encrypts the cleartext columns.
+
+History note (M2 AI Stage 1, 2026-05-23)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This module used to live at ``finance_auto_backend/db.py``.  When M2 added
+the per-version migration helpers under ``db.migrations``, the file was
+promoted to a package.  Existing imports such as ``from .db import
+FinanceAutoDB`` keep working because ``__init__.py`` re-exports the same
+symbols.  The DB lifecycle and PRAGMA dance are unchanged.
 """
 
 from __future__ import annotations
@@ -22,7 +32,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from .schema import MIGRATION_STEPS, SCHEMA_SQL, SCHEMA_VERSION
+from ..schema import MIGRATION_STEPS, SCHEMA_SQL, SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +88,6 @@ class FinanceAutoDB:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             conn = await aiosqlite.connect(self._db_path)
             conn.row_factory = aiosqlite.Row
-            # WAL + NORMAL for read-write concurrency (M1 W1 explicit ask).
             await conn.execute("PRAGMA journal_mode=WAL")
             await conn.execute("PRAGMA synchronous=NORMAL")
             await conn.execute("PRAGMA foreign_keys=ON")
@@ -160,7 +169,6 @@ def _strip_sql_line_comments(script: str) -> str:
         stripped = line.lstrip()
         if stripped.startswith("--"):
             continue
-        # Inline comment - cut from the first '--' not inside a string.
         in_single = False
         cut = -1
         for i, ch in enumerate(line):
@@ -195,3 +203,6 @@ async def _run_idempotent_script(conn: aiosqlite.Connection, script: str) -> Non
                 continue
             raise
     await conn.commit()
+
+
+__all__ = ["FinanceAutoDB"]
