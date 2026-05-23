@@ -12,6 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = ["Node", "NodeRegister", "NodeStatus"]
 
+# v10 #7 / v11 follow-up: parity with the org-level caps in
+# ``schemas/orgs_v2/orgs.py``; bound free-text node fields so the
+# desktop OrgEditor canvas does not have to truncate before render.
+_ROLE_TITLE_MAX = 200
+_ROLE_TEXT_MAX = 1000
+_DEPARTMENT_MAX = 200
+
 
 class NodeStatus(StrEnum):
     """Parity with ``orgs.models.NodeStatus``."""
@@ -50,11 +57,11 @@ class NodeRegister(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    role_title: str = Field(..., min_length=1)
-    role_goal: str = ""
-    role_backstory: str = ""
+    role_title: str = Field(..., min_length=1, max_length=_ROLE_TITLE_MAX)
+    role_goal: str = Field("", max_length=_ROLE_TEXT_MAX)
+    role_backstory: str = Field("", max_length=_ROLE_TEXT_MAX)
     agent_profile_id: str | None = None
-    department: str = ""
+    department: str = Field("", max_length=_DEPARTMENT_MAX)
     level: int = 0
     avatar: str | None = None
     skills: list[str] = Field(default_factory=list)

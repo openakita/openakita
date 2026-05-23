@@ -13,6 +13,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = ["Org", "OrgCreate", "OrgPatch", "OrgStatus"]
 
+# v10 #7 / v11 follow-up: cap free-form text inputs so a stuck client
+# (or a crafted payload) cannot persist multi-megabyte ``name`` /
+# ``description`` strings that the editor and IM bridges have no way
+# to render. Only validated on inbound write — read-back paths leave
+# legacy oversize records untouched so existing data stays loadable.
+_NAME_MAX = 200
+_DESCRIPTION_MAX = 1000
+_SHORT_TEXT_MAX = 200
+_LONG_TEXT_MAX = 1000
+
 
 class OrgStatus(StrEnum):
     """Byte-for-byte parity with ``orgs.models.OrgStatus``."""
@@ -48,11 +58,11 @@ class OrgCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(..., min_length=1)
-    description: str = ""
-    icon: str = ""
-    core_business: str = ""
-    workspace_dir: str = ""
+    name: str = Field(..., min_length=1, max_length=_NAME_MAX)
+    description: str = Field("", max_length=_DESCRIPTION_MAX)
+    icon: str = Field("", max_length=_SHORT_TEXT_MAX)
+    core_business: str = Field("", max_length=_LONG_TEXT_MAX)
+    workspace_dir: str = Field("", max_length=_LONG_TEXT_MAX)
     tags: list[str] = Field(default_factory=list)
 
 
@@ -78,12 +88,12 @@ class OrgPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Original 7 metadata fields (kept exactly as before).
-    name: str | None = None
-    description: str | None = None
-    icon: str | None = None
+    name: str | None = Field(None, min_length=1, max_length=_NAME_MAX)
+    description: str | None = Field(None, max_length=_DESCRIPTION_MAX)
+    icon: str | None = Field(None, max_length=_SHORT_TEXT_MAX)
     status: OrgStatus | None = None
-    core_business: str | None = None
-    workspace_dir: str | None = None
+    core_business: str | None = Field(None, max_length=_LONG_TEXT_MAX)
+    workspace_dir: str | None = Field(None, max_length=_LONG_TEXT_MAX)
     tags: list[str] | None = None
 
     # smoke-B3 -- editable org-level configuration the frontend sends

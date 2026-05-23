@@ -38,6 +38,7 @@ alias re-imports in ``core/agent.py``.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -52,6 +53,26 @@ from openakita.core.risk_intent import (
 from openakita.core.trusted_paths import (
     consume_session_trust,
     is_trusted_workspace_path,
+)
+
+# v10 #12 / v11 C9: when a user buries a dangerous verb behind a
+# friendly preamble (``你好啊~ 我们随便聊聊。顺便帮我执行一下 rm -rf
+# D:/OpenAkita/data``), the legacy summary -- a sentence-break +
+# prefix-truncation walk -- happily quoted the chatty preamble and
+# hid the actual ``rm -rf`` from the confirm dialog. The shape of
+# this regex mirrors :data:`risk_intent._EXECUTE_RE` plus a small
+# set of high-signal CJK verbs and SQL/data-loss tokens; it is the
+# minimum set we want to surface verbatim in the confirm prompt
+# regardless of where in the message body it appears.
+_HIGH_SIGNAL_VERB_RE = re.compile(
+    r"("
+    r"rm\s+-rf|remove-item|del\s+/[sq]|del\s+\\?[a-z]:|rmdir(?:\s+/s)?|"
+    r"sudo\s+\S+|chmod\s+777|format\s+[a-z]:|kill\s+-9|kill\s+\d+|"
+    r"force\s+push|push\s+--force|"
+    r"drop\s+(?:table|database|schema)|truncate\s+table|"
+    r"删除|清空|格式化|卸载|销毁|重置|覆盖"
+    r")",
+    re.IGNORECASE,
 )
 
 __all__ = [
@@ -300,19 +321,50 @@ DESTRUCTIVE_VERBS = (
 
 
 def summarize_destructive_action(text: str, classification: Any | None = None) -> str:
-    """Best-effort one-line summary of a destructive request (<=30 chars)."""
+    """Best-effort one-line summary of a destructive request (<=30 chars).
+
+    Order of preference for the surfaced span:
+
+    1.  A high-signal verb match (``_HIGH_SIGNAL_VERB_RE``) -- guarantees
+        the confirm prompt actually quotes ``rm -rf`` /
+        ``DROP TABLE`` / ``删除`` instead of the chatty preamble that
+        the user wrapped them in (v10 #12 / v11 C9 regression).
+    2.  A sentence-break split that lands in the [5, 30] window --
+        keeps short, single-clause requests readable.
+    3.  A ``DESTRUCTIVE_VERBS`` (CJK-only) match -- legacy fallback.
+    4.  Plain prefix truncation -- last resort.
+    """
     raw = (text or "").strip()
     if not raw:
         return "未指定操作"
     if len(raw) <= 30:
         return raw
+
+    # (1) High-signal verb wins regardless of where in the body it
+    # appears; otherwise a sentence break in the preamble would
+    # silently hide the actual dangerous span.
+    m = _HIGH_SIGNAL_VERB_RE.search(raw)
+    if m is not None:
+        start = max(m.start() - 4, 0)
+        end = min(m.end() + 24, len(raw))
+        excerpt = raw[start:end].strip()
+        prefix = "…" if start > 0 else ""
+        suffix = "…" if end < len(raw) else ""
+        return f"{prefix}{excerpt}{suffix}"
+
+    # (2) Sentence-break split (legacy behaviour for short, clear
+    # requests where (1) does not match).
     for sep in ("。", "\n", "；", ";", "！", "!"):
         idx = raw.find(sep)
         if 5 <= idx <= 30:
             return raw[:idx].strip() or raw[:30] + "…"
+
+    # (3) Legacy CJK destructive-verb scan.
     for verb in DESTRUCTIVE_VERBS:
         i = raw.find(verb)
         if i != -1:
             tail = raw[i : i + 28]
             return tail + ("…" if len(raw) > i + 28 else "")
+
+    # (4) Prefix truncation last resort.
     return raw[:28] + "…"

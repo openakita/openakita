@@ -20,6 +20,12 @@ __all__ = [
     "TaskStatus",
 ]
 
+# v10 #7 / v11 follow-up: parity with the org-level caps in
+# ``schemas/orgs_v2/orgs.py``; bound project metadata so a stuck
+# client cannot persist multi-megabyte project records.
+_NAME_MAX = 200
+_DESCRIPTION_MAX = 1000
+
 
 class ProjectType(StrEnum):
     """Parity with ``project_models.ProjectType``."""
@@ -72,8 +78,8 @@ class ProjectCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(..., min_length=1)
-    description: str = ""
+    name: str = Field(..., min_length=1, max_length=_NAME_MAX)
+    description: str = Field("", max_length=_DESCRIPTION_MAX)
     project_type: ProjectType = ProjectType.TEMPORARY
     owner_node_id: str | None = None
 
@@ -83,8 +89,8 @@ class ProjectPatch(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str | None = None
-    description: str | None = None
+    name: str | None = Field(None, min_length=1, max_length=_NAME_MAX)
+    description: str | None = Field(None, max_length=_DESCRIPTION_MAX)
     project_type: ProjectType | None = None
     status: ProjectStatus | None = None
     owner_node_id: str | None = None

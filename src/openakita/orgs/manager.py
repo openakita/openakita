@@ -522,6 +522,55 @@ class OrgManager:
         with self._write_lock:
             self._cache[org.id] = org
 
+    def update_status(self, org_id: str, status: str) -> bool:
+        """Persist a new status value for ``org_id``; idempotent.
+
+        Best-effort sibling for the v2 lifecycle dispatch route
+        (v11 #2): after ``OrgRuntime.start_org`` / ``stop_org`` /
+        ``pause_org`` / ``resume_org`` succeeds in memory, the
+        dispatch handler calls back here so the persisted spec
+        (``data/orgs/{id}/org.json``) and any subsequent
+        ``GET /api/v2/orgs/{id}`` reflect the new state -- otherwise
+        ``OrgCommandService._refuse_unless_active`` keeps reading
+        ``status="dormant"`` and rejects every command with
+        ``409 conversation_busy``.
+
+        Returns ``True`` if persisted (or already at the target),
+        ``False`` if the org does not exist. Does NOT raise on an
+        unknown enum value: callers are expected to pass canonical
+        ``OrgStatus`` strings (``"active"`` / ``"paused"`` /
+        ``"dormant"`` / ``"archived"``); unknown values fall
+        through to a no-op + WARNING log so a typo cannot wedge the
+        lifecycle write-back path.
+        """
+        try:
+            org = self._load(org_id)
+        except FileNotFoundError:
+            return False
+        try:
+            new_status = OrgStatus(status)
+        except ValueError:
+            logger.warning(
+                "[OrgManager] update_status received unknown status %r for org %s; ignoring",
+                status,
+                org_id,
+            )
+            return False
+        with self._write_lock:
+            if org.status == new_status:
+                return True
+            org.status = new_status
+        self._save(org)
+        try:
+            self._lifecycle.emit_org_updated(org.id)
+        except Exception as exc:  # noqa: BLE001 - lifecycle emit is best-effort
+            logger.debug(
+                "[OrgManager] emit_org_updated raised after status sync (org=%s): %s",
+                org_id,
+                exc,
+            )
+        return True
+
     def _init_dirs(self, org: Organization) -> None:
         """Materialise the full org directory tree.
 

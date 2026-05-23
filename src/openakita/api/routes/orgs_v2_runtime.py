@@ -82,6 +82,35 @@ def _subsystem_unavailable(subsystem: str, klass: str) -> HTTPException:
     )
 
 
+def _runtime_method_not_wired(method_name: str) -> HTTPException:
+    """Return a structured 503 for a missing method on ``OrgRuntime``.
+
+    The exploratory v11 report (issue #1) flagged that several
+    runtime endpoints (status / stats / broadcast / lifecycle verbs)
+    still raised plain-string 503s like
+    ``"OrgRuntime.get_status_snapshot not wired"``, whereas the v10
+    follow-up Fix-12 only structured the subsystem-level guards and
+    the ``orgs_v2_runtime_nodes._call_runtime_method`` family. This
+    helper shares the same envelope shape as ``_subsystem_unavailable``
+    so the frontend has a single contract: ``detail.code`` is always
+    ``"subsystem_not_wired"`` and ``detail.subsystem`` is either a
+    bare subsystem name or ``"runtime_method:<name>"`` for missing
+    duck-typed runtime methods.
+    """
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "subsystem_not_wired",
+            "subsystem": f"runtime_method:{method_name}",
+            "message": (
+                f"OrgRuntime.{method_name} is not yet connected. "
+                "See PR-9.7gamma wiring."
+            ),
+            "next_milestone": _NEXT_MILESTONE,
+        },
+    )
+
+
 def _get_runtime(request: Request) -> Any:
     """Lift ``OrgRuntime`` (P9.6) off ``request.app.state``."""
     rt = getattr(request.app.state, "org_runtime", None)

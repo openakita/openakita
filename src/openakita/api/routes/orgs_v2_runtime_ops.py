@@ -35,7 +35,13 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
-from .orgs_v2_runtime import _get_manager, _get_runtime, router
+from .orgs_v2_runtime import (
+    _get_manager,
+    _get_runtime,
+    _runtime_method_not_wired,
+    _subsystem_unavailable,
+    router,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,12 +119,18 @@ async def resolve_inbox_approval(request: Request, org_id: str, msg_id: str) -> 
 
 
 def _get_scaler(request: Request) -> Any:
-    """Lift the scaler sibling off the runtime; 503 if not wired."""
+    """Lift the scaler sibling off the runtime; 503 if not wired.
+
+    The Scaler is a runtime-level subsystem (not a single duck-typed
+    method), so the structured 503 uses the bare subsystem envelope
+    rather than the ``runtime_method:<name>`` shape. Frontend can
+    branch on ``detail.subsystem == "scaler"`` for scaling panels.
+    """
     rt = _get_runtime(request)
     fn = getattr(rt, "get_scaler", None)
     scaler = fn() if callable(fn) else None
     if scaler is None:
-        raise HTTPException(503, "Scaler not initialized on OrgRuntime")
+        raise _subsystem_unavailable("scaler", "Scaler")
     return scaler
 
 
@@ -219,7 +231,7 @@ def get_org_status(request: Request, org_id: str) -> dict[str, Any]:
     rt = _get_runtime(request)
     snap = getattr(rt, "get_status_snapshot", None)
     if not callable(snap):
-        raise HTTPException(503, "OrgRuntime.get_status_snapshot not wired")
+        raise _runtime_method_not_wired("get_status_snapshot")
     payload = snap(org_id)
     if payload is None:
         raise HTTPException(404, f"Organization not found: {org_id}")
@@ -231,7 +243,7 @@ def get_org_stats(request: Request, org_id: str) -> dict[str, Any]:
     rt = _get_runtime(request)
     fn = getattr(rt, "get_stats", None)
     if not callable(fn):
-        raise HTTPException(503, "OrgRuntime.get_stats not wired")
+        raise _runtime_method_not_wired("get_stats")
     payload = fn(org_id)
     if payload is None:
         raise HTTPException(404, f"Organization not found: {org_id}")
@@ -276,6 +288,6 @@ async def generate_report(request: Request, org_id: str) -> dict[str, Any]:
     days = body.get("days", 7)
     fn = getattr(es, "generate_report_markdown", None)
     if not callable(fn):
-        raise HTTPException(503, "generate_report_markdown not wired")
+        raise _runtime_method_not_wired("generate_report_markdown")
     report_path = fn(days=days)
     return {"path": str(report_path), "ok": True}

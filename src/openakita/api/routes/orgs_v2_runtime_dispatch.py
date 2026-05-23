@@ -32,7 +32,13 @@ from fastapi import HTTPException, Request
 
 from openakita.api.schemas.orgs_v2 import CancelRequest, CommandSubmit
 
-from .orgs_v2_runtime import _get_command_service, _get_runtime, router
+from .orgs_v2_runtime import (
+    _get_command_service,
+    _get_manager,
+    _get_runtime,
+    _runtime_method_not_wired,
+    router,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +55,7 @@ def _to_dict(obj: Any) -> Any:
 async def _call_lifecycle(rt: Any, verb: str, org_id: str) -> Any:
     method = getattr(rt, f"{verb}_org", None)
     if method is None:
-        raise HTTPException(503, f"OrgRuntime.{verb}_org not wired")
+        raise _runtime_method_not_wired(f"{verb}_org")
     try:
         result = await method(org_id)
     except ValueError as exc:
@@ -57,24 +63,112 @@ async def _call_lifecycle(rt: Any, verb: str, org_id: str) -> Any:
     return _to_dict(result)
 
 
+# v11 #2: ``OrgLifecycleManager`` mutates only an in-memory state map,
+# whereas ``OrgManager.get(org_id)`` (and ``CommandService._refuse_unless_active``)
+# read the persisted ``Organization.status`` field. Without a write-back
+# the spec keeps reading "dormant" forever after a successful start, so
+# the editor shows "active" in the toast while command submit returns
+# 409 ``conversation_busy`` -- the exact regression v11 §10-#2 flagged
+# as the blocker for the from-template -> start -> command happy path.
+#
+# The mapping below is the v1 parity contract (``OrgStatus`` enum has
+# no ``stopped``; runtime STOPPED collapses to ``dormant`` on the spec
+# side because both states refuse new commands and re-allow start).
+_LIFECYCLE_TO_SPEC_STATUS: dict[str, str] = {
+    "start": "active",
+    "stop": "dormant",
+    "pause": "paused",
+    "resume": "active",
+}
+
+
+def _sync_spec_status_after_lifecycle(request: Request, org_id: str, verb: str) -> None:
+    """Best-effort spec ``status`` write-back after a successful lifecycle verb.
+
+    Failures are logged at WARNING and swallowed: the runtime side
+    of the transition has already succeeded, so refusing to ack the
+    HTTP call would be worse than letting the next ``GET /{id}``
+    show a slightly stale spec status.
+    """
+    target = _LIFECYCLE_TO_SPEC_STATUS.get(verb)
+    if target is None:
+        return
+    try:
+        mgr = _get_manager(request)
+    except HTTPException:
+        # Manager subsystem missing -- leave the spec alone; the runtime
+        # transition already succeeded so we surface the runtime envelope.
+        return
+    update_status = getattr(mgr, "update_status", None)
+    if update_status is None:
+        return
+    try:
+        update_status(org_id, target)
+    except Exception as exc:  # noqa: BLE001 - sync is best-effort
+        logger.warning(
+            "[OrgLifecycle] failed to sync spec status after %s_org(%s): %s",
+            verb,
+            org_id,
+            exc,
+        )
+
+
 @router.post("/{org_id}/start", summary="B34 start organization")
 async def start_org(request: Request, org_id: str) -> Any:
-    return await _call_lifecycle(_get_runtime(request), "start", org_id)
+    result = await _call_lifecycle(_get_runtime(request), "start", org_id)
+    _sync_spec_status_after_lifecycle(request, org_id, "start")
+    return result
 
 
 @router.post("/{org_id}/stop", summary="B35 stop organization")
 async def stop_org(request: Request, org_id: str) -> Any:
-    return await _call_lifecycle(_get_runtime(request), "stop", org_id)
+    result = await _call_lifecycle(_get_runtime(request), "stop", org_id)
+    _sync_spec_status_after_lifecycle(request, org_id, "stop")
+    return result
 
 
 @router.post("/{org_id}/pause", summary="B36 pause organization")
 async def pause_org(request: Request, org_id: str) -> Any:
-    return await _call_lifecycle(_get_runtime(request), "pause", org_id)
+    result = await _call_lifecycle(_get_runtime(request), "pause", org_id)
+    _sync_spec_status_after_lifecycle(request, org_id, "pause")
+    return result
 
 
 @router.post("/{org_id}/resume", summary="B37 resume organization")
 async def resume_org(request: Request, org_id: str) -> Any:
-    return await _call_lifecycle(_get_runtime(request), "resume", org_id)
+    """Resume a paused org back to ACTIVE.
+
+    Source-state guard (v11 #5): the underlying lifecycle state machine
+    historically allowed STOPPED -> ACTIVE because ``start_org`` and
+    ``resume_org`` shared the same target transition table. Semantically
+    a stopped org has drained its mailboxes and cancelled in-flight
+    work; bringing it back online should go through ``start_org`` so
+    the per-node spin-up path runs from scratch. We surface a 400
+    illegal-transition envelope here instead of silently aliasing
+    resume to start, mirroring how the rest of the dispatch surface
+    speaks ``{code, ...}`` instead of plain strings.
+    """
+    rt = _get_runtime(request)
+    state_fn = getattr(rt, "_state", None)
+    current: str | None = None
+    if state_fn is not None and hasattr(state_fn, "get_org_state"):
+        try:
+            current = state_fn.get_org_state(org_id)
+        except Exception:  # noqa: BLE001 - best-effort pre-check; let lifecycle decide on error
+            current = None
+    if current is not None and current.upper() == "STOPPED":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "illegal_transition",
+                "from": "stopped",
+                "action": "resume",
+                "hint": "use /start instead",
+            },
+        )
+    result = await _call_lifecycle(rt, "resume", org_id)
+    _sync_spec_status_after_lifecycle(request, org_id, "resume")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +275,6 @@ async def broadcast_to_org(request: Request, org_id: str) -> dict[str, Any]:
     rt = _get_runtime(request)
     broadcast = getattr(rt, "broadcast_to_org", None) or getattr(rt, "broadcast", None)
     if broadcast is None:
-        raise HTTPException(503, "OrgRuntime.broadcast not wired")
+        raise _runtime_method_not_wired("broadcast")
     result = await broadcast(org_id, content)
     return {"result": result}

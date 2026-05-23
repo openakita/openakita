@@ -1375,18 +1375,36 @@ def _archive_removed_template(path: Path) -> None:
     path.replace(target)
     logger.info("[Templates] Archived removed built-in template: %s -> %s", path.name, target.name)
 
+_REMOVED_BUILTIN_TEMPLATES: tuple[str, ...] = (
+    # Pre-HappyHorse AIGC stub kept for migration shape only.
+    "happyhorse-video-studio",
+    # Phantom builtin surfaced by exploratory test runs (v11 #4): the
+    # name appeared in early test fixtures and on a few prior dev
+    # snapshots, but no factory was ever registered in
+    # ``ALL_TEMPLATES`` / ``runtime.templates.builtin``. Listing it here
+    # makes the absence enforceable: if a stale ``ai-engineering-team.json``
+    # ever lands in ``data/org_templates/`` (e.g. from importing an old
+    # workspace), it is archived on next bootstrap so the runtime list
+    # cannot expose a template that ``from-template`` would 404 on.
+    "ai-engineering-team",
+)
+
+
 def ensure_builtin_templates(templates_dir: Path) -> None:
     """Install built-in templates and migrate known stale built-ins.
 
     User-edited templates are otherwise preserved. The only overwrite here is
     the old built-in ``aigc-video-studio`` signature that shipped before the
-    HappyHorse-only 7-node refactor; the removed ``happyhorse-video-studio`` is
-    archived away from the ``*.json`` template scan.
+    HappyHorse-only 7-node refactor; entries listed in
+    ``_REMOVED_BUILTIN_TEMPLATES`` are archived away from the ``*.json``
+    template scan so the runtime list / spec registry catalogs stay in sync
+    on what counts as a real built-in.
     """
     templates_dir.mkdir(parents=True, exist_ok=True)
-    removed_happyhorse = templates_dir / "happyhorse-video-studio.json"
-    if removed_happyhorse.exists():
-        _archive_removed_template(removed_happyhorse)
+    for stale_name in _REMOVED_BUILTIN_TEMPLATES:
+        stale_path = templates_dir / f"{stale_name}.json"
+        if stale_path.exists():
+            _archive_removed_template(stale_path)
 
     for tid, tpl in ALL_TEMPLATES.items():
         p = templates_dir / f"{tid}.json"
