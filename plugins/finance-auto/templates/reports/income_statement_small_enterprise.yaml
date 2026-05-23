@@ -1,0 +1,99 @@
+# templates/reports/income_statement_small_enterprise.yaml
+# 利润表 · 小企业会计准则
+# Source: _finance_plugin_design.md §16.1.2 (16 rows).
+template_id: pl_se_v1
+name: 利润表
+sheet_kind: income_statement
+accounting_standard: small_enterprise
+industry: general
+xltpl_file: templates/excel/利润表_小企业会计准则.xlsx
+version: 1
+
+rules:
+  - { reference_code: PL_REVENUE, target_line_no: 1, target_label: 一、营业收入,
+      indent_level: 0, data_source: account, code: "6001|6051",
+      account_filter: "^(6001|6051)", balance_kind: ytd_credit, sign: 1,
+      notes: "主营业务收入 + 其他业务收入（取贷方累计）" }
+
+  - { reference_code: PL_COST, target_line_no: 2, target_label: 减：营业成本,
+      indent_level: 1, data_source: account, code: "6401|6402",
+      account_filter: "^(6401|6402)", balance_kind: ytd_debit, sign: -1,
+      notes: "主营业务成本 + 其他业务成本（取借方累计，符号取反）" }
+
+  - { reference_code: PL_TAX_SURCHARGE, target_line_no: 3, target_label: 营业税金及附加,
+      indent_level: 1, data_source: account, code: "6403|6405",
+      account_filter: "^(6403|6405)", balance_kind: ytd_debit, sign: -1 }
+
+  - { reference_code: PL_SELLING, target_line_no: 4, target_label: 销售费用,
+      indent_level: 1, data_source: account, code: "6601",
+      account_filter: "^6601", balance_kind: ytd_debit, sign: -1 }
+
+  - { reference_code: PL_ADMIN, target_line_no: 5, target_label: 管理费用,
+      indent_level: 1, data_source: account, code: "6602",
+      account_filter: "^6602", balance_kind: ytd_debit, sign: -1 }
+
+  - { reference_code: PL_RD, target_line_no: 6,
+      target_label: "其中：研究费用",
+      indent_level: 2, data_source: account, code: "6602.研发|5301",
+      account_filter: "^(6602.研发|5301)",
+      balance_kind: ytd_debit, sign: -1 }
+
+  - { reference_code: PL_FINANCE, target_line_no: 7, target_label: 财务费用,
+      indent_level: 1, data_source: formula, code: "6603",
+      formula: "{{ ACCOUNT('6603','ytd_debit') - ACCOUNT('6603','ytd_credit') }}",
+      sign: -1 }
+
+  - { reference_code: PL_INVEST_INCOME, target_line_no: 8,
+      target_label: 加：投资收益,
+      indent_level: 1, data_source: formula, code: "6111",
+      formula: "{{ ACCOUNT('6111','ytd_credit') - ACCOUNT('6111','ytd_debit') }}",
+      sign: 1 }
+
+  - { reference_code: PL_OPERATING_PROFIT, target_line_no: 9,
+      target_label: 二、营业利润,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "OP_PROFIT",
+      formula: "{{ LINE('PL_REVENUE') + LINE('PL_COST') + LINE('PL_TAX_SURCHARGE') + LINE('PL_SELLING') + LINE('PL_ADMIN') + LINE('PL_FINANCE') + LINE('PL_INVEST_INCOME') }}",
+      sign: 1 }
+
+  - { reference_code: PL_NON_OP_INCOME, target_line_no: 10,
+      target_label: 加：营业外收入,
+      indent_level: 1, data_source: account, code: "6301",
+      account_filter: "^6301", balance_kind: ytd_credit, sign: 1 }
+
+  - { reference_code: PL_NON_OP_EXPENSE, target_line_no: 11,
+      target_label: 减：营业外支出,
+      indent_level: 1, data_source: account, code: "6711",
+      account_filter: "^6711", balance_kind: ytd_debit, sign: -1 }
+
+  - { reference_code: PL_TOTAL_PROFIT, target_line_no: 12,
+      target_label: 三、利润总额,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "TOTAL_PROFIT",
+      formula: "{{ LINE('PL_OPERATING_PROFIT') + LINE('PL_NON_OP_INCOME') + LINE('PL_NON_OP_EXPENSE') }}",
+      sign: 1 }
+
+  - { reference_code: PL_INCOME_TAX, target_line_no: 13,
+      target_label: 减：所得税费用,
+      indent_level: 1, data_source: account, code: "6801",
+      account_filter: "^6801", balance_kind: ytd_debit, sign: -1 }
+
+  - { reference_code: PL_NET_PROFIT, target_line_no: 14,
+      target_label: 四、净利润,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "NET_PROFIT",
+      formula: "{{ LINE('PL_TOTAL_PROFIT') + LINE('PL_INCOME_TAX') }}",
+      sign: 1 }
+
+  - { reference_code: PL_RETAIN_BEGIN, target_line_no: 17,
+      target_label: 加：年初未分配利润,
+      indent_level: 1, data_source: cross_year, code: "RETAIN_BEGIN",
+      formula: "{{ REPORT_PREV('balance_sheet','BS_4104','closing') }}",
+      sign: 1, notes: "跨期引用上一期 BS_4104；M1 W3 真正接入 cross_year DSL" }
+
+  - { reference_code: PL_RETAIN_END, target_line_no: 28,
+      target_label: 八、年末未分配利润,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "RETAIN_END",
+      formula: "{{ LINE('PL_NET_PROFIT') + LINE('PL_RETAIN_BEGIN') }}",
+      sign: 1, notes: "（暂未减提取/利润分配；M1 W3 引入 manual_inputs 后补全）" }

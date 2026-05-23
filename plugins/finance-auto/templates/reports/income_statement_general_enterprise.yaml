@@ -1,0 +1,50 @@
+# templates/reports/income_statement_general_enterprise.yaml
+# 利润表 · 企业会计准则
+#
+# Source: _finance_plugin_design_v0.3_part_biz.md §3.3 (6 new PL lines).
+# Inherits the small-enterprise PL baseline; overlays the v0.3 differences.
+template_id: pl_ge_v1
+name: 利润表
+sheet_kind: income_statement
+accounting_standard: general_enterprise
+industry: general
+xltpl_file: templates/excel/利润表_企业会计准则.xlsx
+version: 1
+extends: income_statement_small_enterprise.yaml
+
+rules:
+  - { reference_code: PL_GE_6117, target_line_no: 4,
+      target_label: 加：其他收益,
+      indent_level: 1, data_source: formula, code: "6117",
+      formula: "{{ ACCOUNT('6117','ytd_credit') - ACCOUNT('6117','ytd_debit') }}",
+      sign: 1, notes: "CAS 16 政府补助（2017）" }
+
+  - { reference_code: PL_GE_6101, target_line_no: 8,
+      target_label: 加：公允价值变动损益,
+      indent_level: 1, data_source: formula, code: "6101",
+      formula: "{{ ACCOUNT('6101','ytd_credit') - ACCOUNT('6101','ytd_debit') }}",
+      sign: 1, notes: "损失为负" }
+
+  - { reference_code: PL_GE_6111_AS, target_line_no: 9,
+      target_label: 加：对联营/合营企业投资收益,
+      indent_level: 1, data_source: formula, code: "6111.联营|6111.合营",
+      formula: "{{ (ACCOUNT('6111.联营','ytd_credit') - ACCOUNT('6111.联营','ytd_debit')) + (ACCOUNT('6111.合营','ytd_credit') - ACCOUNT('6111.合营','ytd_debit')) }}",
+      sign: 1, notes: "与一般投资收益 PL_INVEST_INCOME 分行" }
+
+  - { reference_code: PL_GE_6112, target_line_no: 10,
+      target_label: 加：净敞口套期收益,
+      indent_level: 1, data_source: formula, code: "6112",
+      formula: "{{ ACCOUNT('6112','ytd_credit') - ACCOUNT('6112','ytd_debit') }}",
+      sign: 1, notes: "CAS 24 套期会计" }
+
+  - { reference_code: PL_GE_6601_CIL, target_line_no: 11,
+      target_label: 减：信用减值损失,
+      indent_level: 1, data_source: account, code: "6601",
+      account_filter: "^6601", balance_kind: ytd_debit, sign: -1,
+      notes: "CAS 22（2017）；损失填负数" }
+
+  - { reference_code: PL_GE_6701, target_line_no: 12,
+      target_label: 减：资产减值损失,
+      indent_level: 1, data_source: account, code: "6701",
+      account_filter: "^6701", balance_kind: ytd_debit, sign: -1,
+      notes: "非金融资产减值；损失填负数" }
