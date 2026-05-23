@@ -753,6 +753,15 @@ def build_router(service: FinanceAutoService) -> APIRouter:
     register_manual_input_endpoints(router, service)
     register_industry_endpoints(router, service)
 
+    # M2 AI endpoints (Stage 3+ -- consent dialog channel, scenario admin,
+    # consent listing, audit-log).  WebSocket lives at /ws under the same
+    # plugin prefix; REST endpoints land under /ai/.  Wired last so the
+    # `/health` and W1/W2/W3 surface keep their numerical ordering.
+    from .ai.routes import register_ai_endpoints
+    from .ai.ws import register_ws_endpoint
+    register_ws_endpoint(router)
+    register_ai_endpoints(router, service)
+
     return router
 
 

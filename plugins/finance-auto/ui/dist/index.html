@@ -187,7 +187,7 @@
               <span className="brand-icon">财</span>
               <div>
                 <div className="topbar-title">财务自动化</div>
-                <div className="topbar-subtitle">M1 W3 · 首版界面</div>
+                <div className="topbar-subtitle">M2 · AI 协作 / 多审计师 / 合并报表</div>
               </div>
               {crumbs && crumbs.length > 0 && (
                 <div className="crumb" style={{ marginLeft: 16 }}>
@@ -1412,6 +1412,435 @@
         );
       }
 
+      // ═══════════════════════════════════════════════════════════════════
+      //  M2 STAGE 1 · AI consent 弹窗 + WebSocket 客户端
+      //
+      //  按 v0.2 Part 2 §11 附录 TS 接口 + v0.3 Part Infra §4 实现。
+      //
+      //  与 M2 AI 后端 sibling 已落地的契约（`finance_auto_backend/ai/`）：
+      //    * WS endpoint：`/api/plugins/finance-auto/ws`（**插件本地** WS）
+      //    * 事件 payload 扁平：
+      //        { event: "ai_consent_request", dialog_id, scenario_id,
+      //          sensitivity_level, preview_payload, model_provider, model_name,
+      //          is_local_endpoint, estimated_tokens, requested_at }
+      //    * 回执 POST `/api/plugins/finance-auto/ai/consent/respond`
+      //        body { dialog_id, decision, skip_desensitize? }
+      //    * `decision ∈ { "deny" | "allow_once" | "allow_permanent" }`
+      //
+      //  AI sibling worker 的路由 (`ai/routes.py`) 与 WS (`ai/ws.py`) 已写完代码
+      //  但**尚未在 routes.py::build_router 里 register_ai_endpoints / WS**。
+      //  因此 UI 当前走「优雅降级 + mock 模式」：
+      //    - 在 URL 加 `?ai_mock=1` 自动注入示例请求
+      //    - AI 设置页里有一个「触发 mock consent」按钮
+      //    - 真正 WS 通了之后，前端零改动即可切换
+      // ═══════════════════════════════════════════════════════════════════
+
+      const SENSITIVITY_META = {
+        metadata:   { icon: "🟢", label: "元数据",   color: "var(--success)", desc: "仅字段名 / 量级 / 比率，无原始金额或客户名" },
+        aggregated: { icon: "🟡", label: "聚合数据", color: "var(--warning)", desc: "已脱敏 / 量级化 / 比率化，仍保留结构关联" },
+        raw:        { icon: "🔴", label: "原始数据", color: "var(--danger)",  desc: "完整明细，仅在本地模型 / 用户主动确认下使用" },
+      };
+
+      // ----- FinanceWSClient（按 v0.3 Part Infra §4.1 实现） -----
+      // 心跳 30 s / 指数退避重连（max 30 s）/ BroadcastChannel 跨标签页广播 /
+      // localStorage leader 锁避免同一 dialog_id 在多个标签页同时弹窗。
+      //
+      // AI sibling 的 ws.py 接的是 plugin-local WS，路径
+      //   /api/plugins/finance-auto/ws
+      // 该端点欢迎信第一帧 = `{event: "finance_ws_hello", subscriptions: [...]}`，
+      // 之后所有事件按 ConsentRequestEvent 等 BaseModel 直接 JSON dump（扁平结构）。
+      function makeFinanceWSClient(url, { onEvent, onConnState, debug } = {}) {
+        let ws = null;
+        let retry = 0;
+        let heartbeat = null;
+        let destroyed = false;
+        let bc = null;
+        try { bc = new BroadcastChannel("finance.ws"); } catch { bc = null; }
+
+        const log = (...a) => debug && console.debug("[finance-ws]", ...a);
+
+        const dispatch = (msg) => {
+          if (!msg || typeof msg !== "object") return;
+          if (msg.event === "ai_consent_request") {
+            const did = msg.dialog_id;
+            if (did && !tryLeader(did)) return; // 让位给其他标签页
+          }
+          try { onEvent && onEvent(msg); } catch (e) { console.error(e); }
+        };
+
+        const tryLeader = (dialogId) => {
+          const key = `finance.leader.${dialogId}`;
+          try {
+            if (localStorage.getItem(key)) return false;
+            localStorage.setItem(key, String(Date.now()));
+            setTimeout(() => { try { localStorage.removeItem(key); } catch {} }, 5000);
+          } catch { /* localStorage 不可用时所有标签页都展示 */ }
+          return true;
+        };
+
+        if (bc) bc.onmessage = (ev) => dispatch(ev.data);
+
+        const scheduleReconnect = () => {
+          if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+          if (destroyed) return;
+          // 4 次重连失败（≈ 8s+）后认为无 WS 可用 → 视作 mock 模式
+          // （v0.3 Part Infra §4.5 优雅降级：WS → SSE → 长轮询 → 手刷新）
+          const delay = Math.min(30000, 500 * Math.pow(2, retry++));
+          log("scheduling reconnect in", delay, "ms (retry", retry, ")");
+          setTimeout(connect, delay);
+        };
+
+        const connect = () => {
+          if (destroyed) return;
+          try {
+            ws = new WebSocket(url);
+          } catch (e) {
+            log("WebSocket ctor failed", e);
+            onConnState && onConnState({ state: "error", error: String(e) });
+            scheduleReconnect();
+            return;
+          }
+          onConnState && onConnState({ state: "connecting" });
+          ws.onopen = () => {
+            retry = 0;
+            onConnState && onConnState({ state: "open" });
+            log("ws open");
+            heartbeat = setInterval(() => {
+              try { ws && ws.readyState === 1 && ws.send("ping"); } catch {}
+            }, 30000);
+          };
+          ws.onmessage = (e) => {
+            let msg = null;
+            try { msg = JSON.parse(e.data); } catch { return; }
+            if (!msg || msg.event === "pong" || msg.event === "ping") return;
+            // 欢迎信不分发（仅做连接确认日志）
+            if (msg.event === "finance_ws_hello") {
+              log("hello, subscriptions:", msg.subscriptions);
+              return;
+            }
+            dispatch(msg);
+            if (bc) try { bc.postMessage(msg); } catch {}
+          };
+          ws.onclose = () => {
+            log("ws close");
+            onConnState && onConnState({ state: "closed" });
+            scheduleReconnect();
+          };
+          ws.onerror = (ev) => {
+            log("ws error", ev);
+            try { ws && ws.close(); } catch {}
+          };
+        };
+
+        connect();
+        return {
+          close() {
+            destroyed = true;
+            if (heartbeat) clearInterval(heartbeat);
+            try { ws && ws.close(); } catch {}
+            try { bc && bc.close(); } catch {}
+          },
+        };
+      }
+
+      // ----- useFinanceWS hook：组件级订阅 -----
+      function useFinanceWS({ onEvent } = {}) {
+        const [conn, setConn] = useState({ state: "init" });
+        const handlerRef = useRef(onEvent);
+        handlerRef.current = onEvent;
+        useEffect(() => {
+          // 插件本地 WS。location.host 在 iframe 内 = 主壳 host（同源静态挂载）。
+          const wsBase = (() => {
+            const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+            const host = window.location.host || "127.0.0.1:18900";
+            return `${proto}//${host}/api/plugins/${PLUGIN_ID}/ws`;
+          })();
+          const client = makeFinanceWSClient(wsBase, {
+            onEvent: (m) => handlerRef.current && handlerRef.current(m),
+            onConnState: (s) => setConn(s),
+            debug: false,
+          });
+          return () => client.close();
+        }, []);
+        return conn;
+      }
+
+      // ----- 当前用户上下文（M2 单本机仍用 'local'，Stage 4 用户切换器会改写） -----
+      const UserCtx = React.createContext({
+        userId: "local",
+        displayName: "本机用户",
+        role: "auditor",
+        setRole: () => {},
+        setUser: () => {},
+      });
+      function useUser() { return React.useContext(UserCtx); }
+
+      // ─────────────────────────────────────────────────────────────────
+      //  AIConsentDialog —— 单个授权请求的展示组件（v0.2 Part 2 §11 附录）
+      //
+      //  Props 与 v0.2 终稿 TS 接口字面量对齐。`onDecision(decision)` 是唯一
+      //  外暴露事件，决策值在 deny / allow_once / allow_permanent 三选一。
+      // ─────────────────────────────────────────────────────────────────
+      function AIConsentDialog({
+        open, title, scenario, scenarioDescription,
+        sensitivityLevel, previewPayload,
+        modelProvider, modelName, isLocalEndpoint, estimatedTokens,
+        onDecision, onCancel,
+      }) {
+        const [previewOpen, setPreviewOpen] = useState(false);
+        const [submitting, setSubmitting] = useState(false);
+        const [permLockedUntil, setPermLockedUntil] = useState(0);
+
+        // R1 缓解：永久允许按钮 5 秒倒计时禁用，逼用户至少看完弹窗内容
+        useEffect(() => {
+          if (!open) return;
+          setPreviewOpen(false);
+          setSubmitting(false);
+          setPermLockedUntil(Date.now() + 5000);
+        }, [open]);
+        const [, _tick] = useState(0);
+        useEffect(() => {
+          if (!open) return;
+          const t = setInterval(() => _tick((x) => x + 1), 250);
+          return () => clearInterval(t);
+        }, [open]);
+
+        if (!open) return null;
+        const meta = SENSITIVITY_META[sensitivityLevel] || SENSITIVITY_META.metadata;
+        const permRemain = Math.max(0, Math.ceil((permLockedUntil - Date.now()) / 1000));
+
+        const decide = async (d) => {
+          if (submitting) return;
+          setSubmitting(true);
+          try { await onDecision(d); }
+          finally { setSubmitting(false); }
+        };
+
+        return (
+          <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !submitting) onCancel && onCancel(); }}>
+            <div className="modal" style={{ maxWidth: 520 }} onMouseDown={(e) => e.stopPropagation()}>
+              <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 18 }}>{meta.icon}</span>
+                <span>{title || "AI 数据使用授权"}</span>
+                <span className="badge info" style={{ fontWeight: 400 }}>
+                  {isLocalEndpoint ? "🏠 本地" : "☁️ 云端"}
+                </span>
+              </h3>
+              <p className="sub" style={{ marginBottom: 12 }}>
+                场景 <strong>{scenario}</strong> · 敏感度
+                <span style={{ color: meta.color, fontWeight: 600, marginLeft: 4 }}>
+                  {meta.label}
+                </span>
+                {scenarioDescription && <> · {scenarioDescription}</>}
+              </p>
+
+              <div className="card" style={{ padding: 12, background: "var(--bg-soft)", border: "1px solid var(--border)" }}>
+                <div className="text-xs text-muted">即将发送给：</div>
+                <div style={{ marginTop: 4 }}>
+                  <strong>{modelName}</strong>
+                  <span className="text-muted"> · {modelProvider}</span>
+                  {estimatedTokens != null && (
+                    <span className="text-xs text-muted" style={{ marginLeft: 8 }}>
+                      预估 {estimatedTokens} tokens
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-muted mt-2">
+                  数据特征：{meta.desc}
+                </div>
+              </div>
+
+              <div style={{ marginTop: 12 }}>
+                <button
+                  className="btn subtle sm"
+                  onClick={() => setPreviewOpen((x) => !x)}
+                  style={{ paddingLeft: 0 }}
+                  data-testid="ai-consent-preview-toggle"
+                >
+                  {previewOpen ? "▾" : "▸"} 数据预览（脱敏后）
+                </button>
+                {previewOpen && (
+                  <pre
+                    className="mono text-xs"
+                    style={{
+                      background: "var(--bg-soft)",
+                      padding: 10, borderRadius: 6,
+                      maxHeight: 180, overflow: "auto",
+                      border: "1px solid var(--border)",
+                      whiteSpace: "pre-wrap", wordBreak: "break-word",
+                    }}
+                    data-testid="ai-consent-preview-payload"
+                  >
+                    {previewPayload || "(无内容)"}
+                  </pre>
+                )}
+              </div>
+
+              <div className="modal-actions" style={{ flexDirection: "column", gap: 8, alignItems: "stretch" }}>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button
+                    className="btn"
+                    disabled={submitting}
+                    onClick={() => decide("deny")}
+                    data-testid="ai-consent-deny"
+                  >
+                    不允许，取消
+                  </button>
+                  <button
+                    className="btn primary"
+                    disabled={submitting}
+                    onClick={() => decide("allow_once")}
+                    data-testid="ai-consent-allow-once"
+                  >
+                    {submitting && <Spinner />}仅本次允许
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={submitting || permRemain > 0}
+                    onClick={() => decide("allow_permanent")}
+                    title={permRemain > 0 ? `请先看完弹窗内容（${permRemain}s）` : "授权后下次同场景同敏感度自动放行"}
+                    data-testid="ai-consent-allow-perm"
+                  >
+                    永久允许此场景{permRemain > 0 && `（${permRemain}s）`}
+                  </button>
+                </div>
+                <div className="text-xs text-muted" style={{ textAlign: "right" }}>
+                  ⓘ 永久授权可在「AI 设置 / 授权管理」随时撤销。
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // ─────────────────────────────────────────────────────────────────
+      //  AIConsentBridge —— 把 WS event 对接到 AIConsentDialog
+      //
+      //  - 内部维护 pending 队列（同时来 N 个请求时按 FIFO 出队）
+      //  - 用户决策后 POST /ai/consent/{event_id}/respond
+      //    若后端尚未就绪（404）则只 console.warn，UI 不阻塞
+      //  - 暴露 `setMockRequest()` 给 Stage 6 的「触发 mock」调试按钮
+      // ─────────────────────────────────────────────────────────────────
+      const _mockBus = {
+        listeners: new Set(),
+        push(req) { this.listeners.forEach((l) => l(req)); },
+      };
+      function pushMockConsent(req) { _mockBus.push(req); }
+
+      function AIConsentBridge({ toast }) {
+        const [queue, setQueue] = useState([]);
+        const [conn, setConn] = useState({ state: "init" });
+        const user = useUser();
+
+        const onWSEvent = useCallback((msg) => {
+          if (msg.event !== "ai_consent_request") return;
+          if (!msg.dialog_id) return;
+          setQueue((q) => q.find((x) => x.dialog_id === msg.dialog_id) ? q : [...q, msg]);
+        }, []);
+
+        const wsConn = useFinanceWS({ onEvent: onWSEvent });
+        useEffect(() => setConn(wsConn), [wsConn.state]);
+
+        useEffect(() => {
+          const handler = (req) => setQueue((q) => [...q, req]);
+          _mockBus.listeners.add(handler);
+          return () => _mockBus.listeners.delete(handler);
+        }, []);
+
+        // 进入页面时若 URL 带 `?ai_mock=1`，自动注入一个示例请求
+        useEffect(() => {
+          if (new URLSearchParams(window.location.search).get("ai_mock") === "1") {
+            setTimeout(() => pushMockConsent(buildSampleConsentRequest()), 800);
+          }
+        }, []);
+
+        const current = queue[0];
+        const respond = async (decision) => {
+          if (!current) return;
+          const isMock = String(current.dialog_id || "").startsWith("mock_");
+          try {
+            // 与 AI sibling `ai/routes.py::respond_consent` 契约：
+            //   POST /ai/consent/respond  body={dialog_id, decision, skip_desensitize?}
+            await api(
+              "POST",
+              "/ai/consent/respond",
+              {
+                dialog_id: current.dialog_id,
+                decision,
+                skip_desensitize: false,
+              },
+              { timeoutMs: 8000 },
+            );
+            toast(decision === "deny" ? "已拒绝 AI 请求" : "授权已记录", decision === "deny" ? "warn" : "ok");
+          } catch (e) {
+            // mock 模式（后端未注册路由 = 404）下仅 console，不打扰用户
+            if (isMock || e.status === 404) {
+              console.info("[ai-consent] mock-mode respond:", { dialog_id: current.dialog_id, decision });
+              toast(`决策「${decision}」已发出（mock 模式 · 后端 ai 路由待注册）`, "warn");
+            } else {
+              toast(`回执失败：${e.message}`, "err");
+            }
+          } finally {
+            setQueue((q) => q.slice(1));
+          }
+        };
+
+        const cancel = () => {
+          if (!current) return;
+          // 关闭等同 deny（后端 30s 超时也会按 deny 处理）
+          respond("deny");
+        };
+
+        return (
+          <>
+            {current && (
+              <AIConsentDialog
+                open
+                title={current.title || "AI 数据使用授权"}
+                scenario={current.scenario_id || current.scenario || "—"}
+                scenarioDescription={current.scenario_description || ""}
+                sensitivityLevel={current.sensitivity_level || "metadata"}
+                previewPayload={current.preview_payload || "(empty)"}
+                modelProvider={current.model_provider || "—"}
+                modelName={current.model_name || "—"}
+                isLocalEndpoint={!!current.is_local_endpoint}
+                estimatedTokens={current.estimated_tokens ?? 0}
+                onDecision={respond}
+                onCancel={cancel}
+              />
+            )}
+            {/* 隐藏角标：WS 连接状态（开发可见，端到端 e2e 也可读） */}
+            <div
+              data-testid="ws-conn-state"
+              data-state={conn.state}
+              style={{ display: "none" }}
+            />
+          </>
+        );
+      }
+
+      function buildSampleConsentRequest() {
+        // 给 mock 模式提供一个能完整跑通弹窗的样例请求（脱敏后）。
+        // 字段名严格对齐后端 `ConsentRequestEvent` 的 snake_case schema。
+        return {
+          event: "ai_consent_request",
+          dialog_id: `mock_${Date.now()}`,
+          scenario_id: "account_classify",
+          scenario_description: "S2 · 未识别科目归类",
+          sensitivity_level: "metadata",
+          preview_payload: JSON.stringify({
+            account_names: ["应收-客户A", "应收-客户B保证金"],
+            magnitudes: ["万元级", "千元级"],
+          }, null, 2),
+          model_provider: "anthropic",
+          model_name: "claude-3-5-sonnet",
+          is_local_endpoint: false,
+          estimated_tokens: 280,
+          requested_at: new Date().toISOString(),
+          title: "AI 数据使用授权（演示）",
+        };
+      }
+
       // ─────────────────────────────────────────────────────────────────
       //  Root：极简 hash router（#/orgs / #/orgs/<id> / #/orgs/<id>/reports/<rid>）
       // ─────────────────────────────────────────────────────────────────
@@ -1419,6 +1848,21 @@
         const [route, setRoute] = useState(window.location.hash || "#/orgs");
         const [period, setPeriod] = useState("2025-FY");
         const toasts = useToasts();
+
+        // Stage 4 · 用户上下文（M2 单本机仍是占位切换器；多用户后端接入留 v0.3）
+        const [userId, setUserId] = useState(() => localStorage.getItem("finance.user.id") || "local");
+        const [displayName, setDisplayName] = useState(() => localStorage.getItem("finance.user.name") || "本机用户");
+        const [role, setRole] = useState(() => localStorage.getItem("finance.user.role") || "auditor");
+        const userCtxValue = useMemo(() => ({
+          userId, displayName, role,
+          setRole: (r) => { setRole(r); localStorage.setItem("finance.user.role", r); },
+          setUser: (u) => {
+            setUserId(u.id); setDisplayName(u.name); setRole(u.role);
+            localStorage.setItem("finance.user.id", u.id);
+            localStorage.setItem("finance.user.name", u.name);
+            localStorage.setItem("finance.user.role", u.role);
+          },
+        }), [userId, displayName, role]);
 
         useEffect(() => {
           const onHash = () => setRoute(window.location.hash || "#/orgs");
@@ -1477,22 +1921,25 @@
         }
 
         return (
-          <div className="app">
-            <TopBar
-              crumbs={crumbs}
-              right={
-                <>
-                  <span>期间</span>
-                  <select className="field" style={{ width: 110, padding: "3px 8px" }} value={period} onChange={(e) => setPeriod(e.target.value)}>
-                    <option value="2025-FY">2025 年度</option>
-                    <option value="2024-FY">2024 年度</option>
-                  </select>
-                </>
-              }
-            />
-            <div className="main">{body}</div>
-            {toasts.view}
-          </div>
+          <UserCtx.Provider value={userCtxValue}>
+            <div className="app">
+              <TopBar
+                crumbs={crumbs}
+                right={
+                  <>
+                    <span>期间</span>
+                    <select className="field" style={{ width: 110, padding: "3px 8px" }} value={period} onChange={(e) => setPeriod(e.target.value)}>
+                      <option value="2025-FY">2025 年度</option>
+                      <option value="2024-FY">2024 年度</option>
+                    </select>
+                  </>
+                }
+              />
+              <div className="main">{body}</div>
+              {toasts.view}
+              <AIConsentBridge toast={toasts.push} />
+            </div>
+          </UserCtx.Provider>
         );
       }
 
