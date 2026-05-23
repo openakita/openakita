@@ -184,6 +184,14 @@ CREATE TABLE IF NOT EXISTS report_cells (
     formula         TEXT,                                   -- raw YAML formula (unevaluated)
     notes           TEXT,
     source_rows     TEXT,                                   -- JSON: list of trial_balance_row.id
+    -- W3 Stage 2 simplification metadata.  ``source_rows`` always carries
+    -- the *full* detail set; the columns below describe the visible slice.
+    simplified            INTEGER NOT NULL DEFAULT 0,
+    simplified_top_n      INTEGER NOT NULL DEFAULT 0,
+    simplify_config_json  TEXT,                              -- JSON SimplifyConfig
+    merged_row_ids_json   TEXT,                              -- JSON list[str]
+    footnote              TEXT,
+    version               INTEGER NOT NULL DEFAULT 1,
     _encrypted_payload BLOB
 );
 CREATE INDEX IF NOT EXISTS idx_cells_report  ON report_cells(report_id, target_line_no);
@@ -307,11 +315,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_learning_signature
 # here is 2.
 # ---------------------------------------------------------------------------
 
+_V5_ALTER_REPORT_CELLS = """
+-- W3 Stage 2: ALTER TABLE additions for report_cells.  Wrapped in a separate
+-- statement so older v2 databases (which already had report_cells without
+-- these columns) gain them on upgrade.  ``run_migrations`` catches the
+-- "duplicate column" error for re-runs.
+ALTER TABLE report_cells ADD COLUMN simplified           INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE report_cells ADD COLUMN simplified_top_n     INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE report_cells ADD COLUMN simplify_config_json TEXT;
+ALTER TABLE report_cells ADD COLUMN merged_row_ids_json  TEXT;
+ALTER TABLE report_cells ADD COLUMN footnote             TEXT;
+ALTER TABLE report_cells ADD COLUMN version              INTEGER NOT NULL DEFAULT 1;
+"""
+
 MIGRATION_STEPS: tuple[tuple[int, str], ...] = (
-    (2, SCHEMA_SQL),  # W2 Stage 4: reports + report_cells.
-    (3, SCHEMA_SQL),  # W2 Stage 5: vat_declarations.
-    (4, SCHEMA_SQL),  # W2 Stage 6: audit_templates.
-    (5, SCHEMA_SQL),  # W3 Stage 1: parse_issues + learning_samples.
+    # All CREATE TABLE in SCHEMA_SQL already use IF NOT EXISTS and are applied
+    # unconditionally by db.init() before this chain runs, so old databases
+    # automatically pick up any newly added tables (e.g. parse_issues /
+    # learning_samples in v5).  We therefore only register *delta* statements
+    # here -- typically ALTERs that SQLite cannot express with IF NOT EXISTS.
+    (2, ""),  # W2 Stage 4: reports + report_cells.
+    (3, ""),  # W2 Stage 5: vat_declarations.
+    (4, ""),  # W2 Stage 6: audit_templates.
+    (5, _V5_ALTER_REPORT_CELLS),  # W3 Stage 2: widens report_cells with
+                                  # simplify metadata columns + version.
 )
 """Each entry: (target_version, idempotent_DDL).  All steps replay the full
 canonical SCHEMA_SQL because every CREATE TABLE in it is IF NOT EXISTS, so

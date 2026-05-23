@@ -176,10 +176,24 @@ rules:
       indent_level: 1, data_source: account, code: "2201",
       account_filter: "^2201", balance_kind: closing_credit, sign: 1 }
 
-  - { reference_code: BS_2202, target_line_no: 34, target_label: 应付账款,
-      indent_level: 1, data_source: account, code: "2202",
-      account_filter: "^2202", balance_kind: subaccount_credit_positive, sign: 1,
-      notes: "+ 重分类自 BS_1123 预付账款" }
+  - reference_code: BS_2202
+    target_line_no: 34
+    target_label: 应付账款
+    indent_level: 1
+    data_source: account
+    code: "2202"
+    account_filter: "^2202"
+    balance_kind: subaccount_credit_positive
+    sign: 1
+    notes: "+ 重分类自 BS_1123 预付账款"
+    simplify:
+      enabled: false                # 默认关闭；UI 可 PATCH 翻开
+      strategy: top_n
+      top_n: 10
+      sort_by: amount_desc
+      merge_label: 其他供应商
+      keep_negative_separate: true
+      footnote_template: "其他 {count} 家供应商合计 {amount} 元"
 
   - { reference_code: BS_2203, target_line_no: 35, target_label: 预收账款,
       indent_level: 1, data_source: account, code: "2203",

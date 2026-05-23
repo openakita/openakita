@@ -90,7 +90,7 @@ class FinanceAutoDB:
             current_version = await _read_recorded_version(conn)
             for target_version, step_sql in MIGRATION_STEPS:
                 if target_version > current_version:
-                    await conn.executescript(step_sql)
+                    await _run_idempotent_script(conn, step_sql)
                     logger.info(
                         "finance-auto: migrated schema %d -> %d",
                         current_version,
@@ -149,3 +149,49 @@ async def _read_recorded_version(conn: aiosqlite.Connection) -> int:
         if row is None:
             return 0
         return int(row[0])
+
+
+def _strip_sql_line_comments(script: str) -> str:
+    """Strip ``--`` line comments without touching anything inside quoted
+    strings.  Block comments (``/* */``) are not used in our migrations, so
+    we keep this simple."""
+    out: list[str] = []
+    for line in script.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("--"):
+            continue
+        # Inline comment - cut from the first '--' not inside a string.
+        in_single = False
+        cut = -1
+        for i, ch in enumerate(line):
+            if ch == "'":
+                in_single = not in_single
+            elif ch == "-" and not in_single and i + 1 < len(line) and line[i + 1] == "-":
+                cut = i
+                break
+        if cut >= 0:
+            line = line[:cut].rstrip()
+        if line.strip():
+            out.append(line)
+    return "\n".join(out)
+
+
+async def _run_idempotent_script(conn: aiosqlite.Connection, script: str) -> None:
+    """Replay a migration script tolerating "duplicate column" /
+    "table already exists" errors so the chain is safe to re-apply.
+
+    SQLite has no ``ADD COLUMN IF NOT EXISTS``, so we split the script into
+    statements and swallow only the two specific errors that indicate a
+    re-run.  Any other error propagates so genuine bugs surface fast.
+    """
+    cleaned = _strip_sql_line_comments(script)
+    statements = [s.strip() for s in cleaned.split(";") if s.strip()]
+    for stmt in statements:
+        try:
+            await conn.execute(stmt)
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "duplicate column" in msg or "already exists" in msg:
+                continue
+            raise
+    await conn.commit()

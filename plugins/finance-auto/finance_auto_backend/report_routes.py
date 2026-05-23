@@ -27,15 +27,24 @@ from fastapi.responses import FileResponse
 
 from .config.yaml_loader import LoadedTemplate, load_template
 from .models import (
+    CellDetailRow,
+    CellDetailsResponse,
+    CellSimplifyPatchRequest,
     ReportCell,
     ReportDetailResponse,
     ReportGenerateRequest,
     ReportInstance,
     ReportListResponse,
 )
+from .renderers.simplifier import (
+    DetailRow,
+    SimplifyConfig,
+    simplify_aux_details,
+)
 from .report_generator import (
     GeneratedReport,
     TrialBalanceLine,
+    _balance_kind_to_amount,
     generate_report,
 )
 
@@ -135,6 +144,7 @@ async def _load_balance_lines(
             period_credit=r.period_credit,
             closing_debit=r.closing_debit,
             closing_credit=r.closing_credit,
+            aux_text=r.aux_text,
         )
         for r in rows_typed
     ]
@@ -174,8 +184,9 @@ async def _persist_report(
     await service.db.conn.executemany(
         "INSERT INTO report_cells(id, report_id, reference_code, target_line_no, "
         "target_label, indent_level, data_source, code, value, sign, is_total, "
-        "is_tbd, formula, notes, source_rows) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "is_tbd, formula, notes, source_rows, simplified, simplified_top_n, "
+        "simplify_config_json, merged_row_ids_json, footnote, version) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
             (
                 c.id,
@@ -193,6 +204,16 @@ async def _persist_report(
                 c.formula,
                 c.notes,
                 json.dumps(c.source_rows, ensure_ascii=False),
+                int(c.simplified),
+                c.simplified_top_n,
+                (
+                    json.dumps(c.simplify_config, ensure_ascii=False)
+                    if c.simplify_config
+                    else None
+                ),
+                json.dumps(c.merged_row_ids, ensure_ascii=False) if c.merged_row_ids else None,
+                c.footnote,
+                1,  # initial version
             )
             for c in generated.cells
         ],
@@ -222,6 +243,19 @@ def _row_to_report(row: Any) -> ReportInstance:
 
 def _row_to_cell(row: Any) -> ReportCell:
     sources = json.loads(row["source_rows"] or "[]")
+    keys = row.keys()
+    simplified_cfg = None
+    if "simplify_config_json" in keys and row["simplify_config_json"]:
+        try:
+            simplified_cfg = json.loads(row["simplify_config_json"])
+        except json.JSONDecodeError:
+            simplified_cfg = None
+    merged_ids: list[str] = []
+    if "merged_row_ids_json" in keys and row["merged_row_ids_json"]:
+        try:
+            merged_ids = json.loads(row["merged_row_ids_json"]) or []
+        except json.JSONDecodeError:
+            merged_ids = []
     return ReportCell(
         id=row["id"],
         report_id=row["report_id"],
@@ -238,6 +272,11 @@ def _row_to_cell(row: Any) -> ReportCell:
         formula=row["formula"],
         notes=row["notes"],
         source_rows=sources,
+        simplified=bool(row["simplified"]) if "simplified" in keys else False,
+        simplified_top_n=int(row["simplified_top_n"] or 0) if "simplified_top_n" in keys else 0,
+        simplify_config=simplified_cfg,
+        merged_row_ids=merged_ids,
+        footnote=row["footnote"] if "footnote" in keys else None,
     )
 
 
@@ -281,6 +320,9 @@ def _build_workbook(template: LoadedTemplate, instance: ReportInstance,
     total_font = Font(bold=True)
     total_fill = PatternFill("solid", fgColor="FFF2CC")
     tbd_fill = PatternFill("solid", fgColor="F8CBAD")
+    # W3 Stage 2: 简化行 (含"其他"合并) 用灰色背景 + 斜体 区分
+    simplified_fill = PatternFill("solid", fgColor="EEEEEE")
+    simplified_font = Font(italic=True, color="595959")
 
     row_idx = 3
     for cell in cells_sorted:
@@ -293,6 +335,8 @@ def _build_workbook(template: LoadedTemplate, instance: ReportInstance,
         notes = cell.notes or ""
         if cell.is_tbd:
             notes = f"[TBD] {notes}".strip()
+        if cell.simplified and cell.footnote:
+            notes = (f"{notes} | {cell.footnote}").strip(" |")
         ws.cell(row=row_idx, column=4, value=notes)
         if cell.data_source == "section":
             ws.cell(row=row_idx, column=1).font = section_font
@@ -303,12 +347,16 @@ def _build_workbook(template: LoadedTemplate, instance: ReportInstance,
         if cell.is_tbd:
             for col in range(1, 5):
                 ws.cell(row=row_idx, column=col).fill = tbd_fill
+        if cell.simplified and not cell.is_total:
+            for col in range(1, 5):
+                ws.cell(row=row_idx, column=col).fill = simplified_fill
+                ws.cell(row=row_idx, column=col).font = simplified_font
         row_idx += 1
 
     ws.column_dimensions["A"].width = 28
     ws.column_dimensions["B"].width = 16
     ws.column_dimensions["C"].width = 16
-    ws.column_dimensions["D"].width = 36
+    ws.column_dimensions["D"].width = 40
     wb.save(str(out))
     wb.close()
     return out
@@ -397,6 +445,205 @@ def register_report_endpoints(
             cell_rows = await cur.fetchall()
         cells = [_row_to_cell(r) for r in cell_rows]
         return ReportDetailResponse(report=instance, cells=cells)
+
+    @router.patch(
+        "/orgs/{org_id}/reports/{report_id}/cells/{cell_id}/simplify",
+        summary="单 cell 切换 / 调整简化开关 (W3 Stage 2)",
+    )
+    async def patch_cell_simplify(
+        org_id: str,
+        report_id: str,
+        cell_id: str,
+        payload: CellSimplifyPatchRequest,
+    ) -> ReportCell:
+        await service.get_org(org_id)
+        async with service.db.conn.execute(
+            "SELECT * FROM reports WHERE org_id=? AND id=?",
+            (org_id, report_id),
+        ) as cur:
+            r_row = await cur.fetchone()
+        if r_row is None:
+            raise HTTPException(status_code=404, detail="report not found")
+        async with service.db.conn.execute(
+            "SELECT * FROM report_cells WHERE id=? AND report_id=?",
+            (cell_id, report_id),
+        ) as cur:
+            c_row = await cur.fetchone()
+        if c_row is None:
+            raise HTTPException(status_code=404, detail="cell not found")
+
+        # Look the underlying account_filter + balance_kind back up from the
+        # template so we can re-run the simplifier with the new config.
+        instance = _row_to_report(r_row)
+        template = load_template(
+            _resolve_template_path(instance.sheet_kind, instance.accounting_standard)
+        )
+        rule = template.rule_by_code(c_row["reference_code"])
+        if rule is None or rule.data_source != "account":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "cell does not back onto a simplifiable account rule; "
+                    "only data_source=account rules support simplify toggle"
+                ),
+            )
+        if not (rule.account_filter and rule.balance_kind):
+            raise HTTPException(
+                status_code=400,
+                detail="rule lacks account_filter / balance_kind",
+            )
+
+        # Reload the source detail rows (W2 already encrypted/decrypted).
+        balance_lines, _src = await _load_balance_lines(
+            service,
+            org_id=org_id,
+            period_id=instance.period_id,
+            source_import_id=instance.source_import_id,
+        )
+        from .report_generator import _filter_by_pattern  # local to avoid cycle
+        matched = _filter_by_pattern(balance_lines, rule.account_filter)
+        detail_rows = [
+            DetailRow(
+                row_id=ln.id,
+                name=(ln.aux_text or ln.account_name or ln.full_code) or ln.full_code,
+                amount=_balance_kind_to_amount(ln, rule.balance_kind),
+                extra={"account_code": ln.full_code, "aux_text": ln.aux_text},
+            )
+            for ln in matched
+        ]
+        cfg = SimplifyConfig(
+            enabled=payload.enabled,
+            strategy=payload.strategy,
+            top_n=payload.top_n,
+            sort_by=payload.sort_by,
+            merge_label=payload.merge_label,
+            min_threshold=payload.min_threshold,
+            keep_negative_separate=payload.keep_negative_separate,
+            footnote_template=payload.footnote_template,
+        )
+        result = simplify_aux_details(detail_rows, cfg)
+        merged_ids_json = (
+            json.dumps(result.merged_row_ids, ensure_ascii=False)
+            if result.merged_row_ids
+            else None
+        )
+        cfg_json = json.dumps(cfg.to_dict(), ensure_ascii=False)
+        new_simplified = bool(result.merged_count > 0)
+        current_version = int(c_row["version"] or 1) if "version" in c_row.keys() else 1
+        await service.db.conn.execute(
+            "UPDATE report_cells SET simplified=?, simplified_top_n=?, "
+            "simplify_config_json=?, merged_row_ids_json=?, footnote=?, "
+            "version=version+1 WHERE id=? AND report_id=?",
+            (
+                int(new_simplified),
+                cfg.top_n,
+                cfg_json,
+                merged_ids_json,
+                result.footnote or None,
+                cell_id,
+                report_id,
+            ),
+        )
+        await service.db.conn.commit()
+        async with service.db.conn.execute(
+            "SELECT * FROM report_cells WHERE id=?", (cell_id,),
+        ) as cur:
+            updated = await cur.fetchone()
+        _ = current_version  # reserved for future optimistic-lock 409 path
+        return _row_to_cell(updated)
+
+    @router.get(
+        "/orgs/{org_id}/reports/{report_id}/cells/{cell_id}/details",
+        summary="展开报表 cell 的完整明细（含 \"其他\" 行的合并细节）",
+    )
+    async def get_cell_details(
+        org_id: str, report_id: str, cell_id: str
+    ) -> CellDetailsResponse:
+        await service.get_org(org_id)
+        async with service.db.conn.execute(
+            "SELECT * FROM report_cells WHERE id=? AND report_id=?",
+            (cell_id, report_id),
+        ) as cur:
+            c_row = await cur.fetchone()
+        if c_row is None:
+            raise HTTPException(status_code=404, detail="cell not found")
+        cell = _row_to_cell(c_row)
+
+        async with service.db.conn.execute(
+            "SELECT org_id, period_id, source_import_id, sheet_kind, "
+            "accounting_standard FROM reports WHERE id=?", (report_id,),
+        ) as cur:
+            r_row = await cur.fetchone()
+        if r_row is None:
+            raise HTTPException(status_code=404, detail="report not found")
+        instance_period = r_row["period_id"]
+        source_import = r_row["source_import_id"]
+
+        template = load_template(
+            _resolve_template_path(r_row["sheet_kind"], r_row["accounting_standard"])
+        )
+        rule = template.rule_by_code(cell.reference_code)
+        full_rows: list[CellDetailRow] = []
+        visible_rows: list[CellDetailRow] = []
+
+        if rule and rule.data_source == "account" and rule.account_filter and rule.balance_kind:
+            balance_lines, _src = await _load_balance_lines(
+                service,
+                org_id=org_id,
+                period_id=instance_period,
+                source_import_id=source_import,
+            )
+            from .report_generator import _filter_by_pattern
+            matched = _filter_by_pattern(balance_lines, rule.account_filter)
+            by_id = {ln.id: ln for ln in matched}
+            for ln in matched:
+                full_rows.append(CellDetailRow(
+                    trial_balance_row_id=ln.id,
+                    name=(ln.aux_text or ln.account_name or ln.full_code) or ln.full_code,
+                    amount=_balance_kind_to_amount(ln, rule.balance_kind),
+                    aux_text=ln.aux_text,
+                    account_code=ln.full_code,
+                ))
+            if cell.simplified:
+                merged_set = set(cell.merged_row_ids or [])
+                for ln in matched:
+                    if ln.id in merged_set:
+                        continue
+                    visible_rows.append(CellDetailRow(
+                        trial_balance_row_id=ln.id,
+                        name=(ln.aux_text or ln.account_name or ln.full_code) or ln.full_code,
+                        amount=_balance_kind_to_amount(ln, rule.balance_kind),
+                        aux_text=ln.aux_text,
+                        account_code=ln.full_code,
+                    ))
+                if merged_set:
+                    merged_amount = sum(
+                        _balance_kind_to_amount(by_id[mid], rule.balance_kind)
+                        for mid in merged_set
+                        if mid in by_id
+                    )
+                    visible_rows.append(CellDetailRow(
+                        trial_balance_row_id=None,
+                        name=(cell.simplify_config or {}).get("merge_label", "其他"),
+                        amount=round(merged_amount, 2),
+                        is_merged=True,
+                        merged_count=len(merged_set),
+                        merged_row_ids=list(merged_set),
+                    ))
+            else:
+                visible_rows = list(full_rows)
+
+        return CellDetailsResponse(
+            report_id=report_id,
+            cell_id=cell_id,
+            reference_code=cell.reference_code,
+            target_label=cell.target_label,
+            simplified=cell.simplified,
+            simplify_config=cell.simplify_config,
+            visible_rows=visible_rows,
+            full_rows=full_rows,
+            footnote=cell.footnote,
+        )
 
     @router.get(
         "/orgs/{org_id}/reports/{report_id}/export",

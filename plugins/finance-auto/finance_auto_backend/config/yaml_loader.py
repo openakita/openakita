@@ -81,6 +81,9 @@ class ReportRule:
     is_total: bool = False
     is_reclassification: bool = False
     notes: str | None = None
+    simplify: dict[str, Any] | None = None
+    """W3 Stage 2: optional v0.2 Part 1 §3 simplification config.  The
+    generator passes this verbatim to :class:`renderers.SimplifyConfig`."""
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -282,8 +285,12 @@ def _build_rule(
         "is_total",
         "is_reclassification",
         "notes",
+        "simplify",
     }
     extra = {k: v for k, v in raw.items() if k not in known_keys}
+
+    simplify_raw = raw.get("simplify")
+    simplify = dict(simplify_raw) if isinstance(simplify_raw, dict) else None
 
     rule = ReportRule(
         reference_code=reference_code,
@@ -299,6 +306,7 @@ def _build_rule(
         is_total=is_total,
         is_reclassification=is_reclassification,
         notes=str(notes) if notes else None,
+        simplify=simplify,
         extra=extra,
     )
     return rule, warnings

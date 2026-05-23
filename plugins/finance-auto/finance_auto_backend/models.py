@@ -336,6 +336,11 @@ class ReportCell(BaseModel):
     document calls out as essential for audit-trail UX: it carries the IDs of
     every ``trial_balance_rows`` row that fed the cell's value.  Aggregations
     span all matching rows; section headers / formulas leave it empty.
+
+    W3 Stage 2: ``simplified`` / ``simplified_top_n`` / ``simplify_config`` /
+    ``merged_row_ids`` / ``footnote`` capture the v0.2 Part 1 §3 simplifier
+    state.  ``source_rows`` keeps the **full** detail set even when
+    simplification hides rows in the visible report.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -355,6 +360,11 @@ class ReportCell(BaseModel):
     formula: str | None = None
     notes: str | None = None
     source_rows: list[str] = Field(default_factory=list)
+    simplified: bool = False
+    simplified_top_n: int = 0
+    simplify_config: dict | None = None
+    merged_row_ids: list[str] = Field(default_factory=list)
+    footnote: str | None = None
 
 
 class ReportInstance(BaseModel):
@@ -408,6 +418,46 @@ class ReportListResponse(BaseModel):
 class ReportDetailResponse(BaseModel):
     report: ReportInstance
     cells: list[ReportCell]
+
+
+class CellDetailRow(BaseModel):
+    """One row of source detail returned by the cell-details endpoint.
+
+    Either ``trial_balance_row_id`` is set (kept rows) OR ``is_merged`` is
+    True (the synthetic "其他" row); the front-end uses the flag to render
+    the row with a grey-italic style and an expandable child list."""
+
+    trial_balance_row_id: str | None = None
+    name: str
+    amount: float
+    is_merged: bool = False
+    merged_count: int = 0
+    merged_row_ids: list[str] = Field(default_factory=list)
+    aux_text: str | None = None
+    account_code: str | None = None
+
+
+class CellDetailsResponse(BaseModel):
+    report_id: str
+    cell_id: str
+    reference_code: str
+    target_label: str
+    simplified: bool
+    simplify_config: dict | None
+    visible_rows: list[CellDetailRow]
+    full_rows: list[CellDetailRow]
+    footnote: str | None
+
+
+class CellSimplifyPatchRequest(BaseModel):
+    enabled: bool
+    strategy: Literal["top_n", "threshold", "both"] = "top_n"
+    top_n: int = Field(default=10, ge=1, le=500)
+    sort_by: Literal["amount_desc", "amount_abs_desc"] = "amount_desc"
+    merge_label: str = "其他"
+    min_threshold: float | None = None
+    keep_negative_separate: bool = True
+    footnote_template: str = "其他 {count} 项合计 {amount}"
 
 
 # ---------------------------------------------------------------------------

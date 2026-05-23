@@ -15,12 +15,22 @@ is the single integration point per Part Biz contract C1.
 from .base import RenderResult, ReportRenderer
 from .factory import make_renderer
 from .openpyxl_writer import OpenpyxlDirectRenderer
+from .simplifier import (
+    DetailRow,
+    SimplifyConfig,
+    SimplifyResult,
+    simplify_aux_details,
+)
 from .xltpl_renderer import XltplRenderer
 
 __all__ = [
+    "DetailRow",
     "OpenpyxlDirectRenderer",
     "RenderResult",
     "ReportRenderer",
+    "SimplifyConfig",
+    "SimplifyResult",
     "XltplRenderer",
     "make_renderer",
+    "simplify_aux_details",
 ]

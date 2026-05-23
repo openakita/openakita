@@ -39,6 +39,12 @@ from typing import Any
 
 from .config.yaml_loader import TBD_SENTINEL, LoadedTemplate, ReportRule
 from .models import ReportCell, ReportInstance
+from .renderers.simplifier import (
+    DetailRow,
+    SimplifyConfig,
+    SimplifyResult,
+    simplify_aux_details,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +81,7 @@ class TrialBalanceLine:
     period_credit: float
     closing_debit: float
     closing_credit: float
+    aux_text: str | None = None
 
 
 def _balance_value(line: TrialBalanceLine, kind: str) -> float:
@@ -348,6 +355,16 @@ def generate_report(
     return GeneratedReport(instance=instance, cells=cells, warnings=warnings)
 
 
+def _balance_kind_to_amount(line: TrialBalanceLine, kind: str) -> float:
+    """Map a balance_kind to a per-row signed amount that the simplifier
+    can rank.  Same semantics as :func:`_aggregate` but applied row-wise."""
+    if kind == "subaccount_debit_positive":
+        return max(line.closing_debit - line.closing_credit, 0.0)
+    if kind == "subaccount_credit_positive":
+        return max(line.closing_credit - line.closing_debit, 0.0)
+    return _balance_value(line, kind)
+
+
 def _resolve_rule(
     *,
     rule: ReportRule,
@@ -360,6 +377,7 @@ def _resolve_rule(
     is_tbd = rule.code == TBD_SENTINEL
     sources: list[str] = []
     value = 0.0
+    simplify_result: SimplifyResult | None = None
 
     if rule.data_source == "section":
         value = 0.0
@@ -373,6 +391,21 @@ def _resolve_rule(
             matched = _filter_by_pattern(balance_lines, rule.account_filter)
             total, sources = _aggregate(matched, rule.balance_kind)
             value = total * (rule.sign or 1)
+            cfg = SimplifyConfig.from_yaml(rule.simplify)
+            if cfg.enabled and matched:
+                detail_rows = [
+                    DetailRow(
+                        row_id=ln.id,
+                        name=(ln.aux_text or ln.account_name or ln.full_code) or ln.full_code,
+                        amount=_balance_kind_to_amount(ln, rule.balance_kind),
+                        extra={
+                            "account_code": ln.full_code,
+                            "aux_text": ln.aux_text,
+                        },
+                    )
+                    for ln in matched
+                ]
+                simplify_result = simplify_aux_details(detail_rows, cfg)
         else:
             warnings.append(
                 f"{rule.reference_code} data_source=account but missing "
@@ -419,4 +452,10 @@ def _resolve_rule(
         notes=rule.notes,
         source_rows=sorted(set(sources)),
     )
+    if simplify_result is not None and simplify_result.config_used is not None:
+        cell.simplified = simplify_result.merged_count > 0
+        cell.simplified_top_n = simplify_result.config_used.top_n
+        cell.simplify_config = simplify_result.config_used.to_dict()
+        cell.merged_row_ids = list(simplify_result.merged_row_ids)
+        cell.footnote = simplify_result.footnote or None
     return cell, value, cell.source_rows
