@@ -377,13 +377,57 @@ def create_app(
                     logger.warning("Failed to mount pending UI for plugin '%s': %s", plugin_id, e)
 
     # Initialize OrgManager & OrgRuntime
+    from openakita.orgs._runtime_agent_pipeline import (
+        AgentCache,
+        AgentPipelineExecutor,
+        ProfileResolver,
+    )
     from openakita.orgs._runtime_templates import ensure_builtin_templates
     from openakita.orgs.manager import OrgManager
-    from openakita.orgs.runtime import OrgRuntime
+    from openakita.orgs.runtime import OrgRuntime, _InMemoryEventBus
 
     org_manager = OrgManager(data_dir)
     ensure_builtin_templates(data_dir / "org_templates")
     app.state.org_manager = org_manager
+    # H3 fix (audit ``_orgs_business_capability_audit_v1.md`` §3.2 P0):
+    # build the AgentPipelineExecutor BEFORE OrgRuntime and inject its
+    # ``activate_and_run`` as the ``agent_dispatch`` callback. Pre-fix
+    # ``CommandDispatchManager._agent_dispatch`` was ``None`` for every
+    # process, so every user command landed only on the tracker and the
+    # in-memory event-bus -- no agent ever ran. We share a single
+    # ``_InMemoryEventBus`` between the executor and the runtime so the
+    # executor's ``agent_run_started`` / ``agent_run_failed`` /
+    # ``llm_usage`` events flow through the same H4 persist + stream
+    # bridges OrgRuntime installs in ``__init__``.
+    #
+    # ``AgentCache`` keeps the default ``_NullAgentBuilder``; commands
+    # therefore emit ``agent_run_failed`` (which is still infinitely
+    # better than the pre-fix "no event at all" silence) until a real
+    # ``AgentBuilderProtocol`` implementation lands. That is Sprint-1
+    # D2 work in the audit roadmap and out of scope for this commit.
+    org_event_bus = _InMemoryEventBus()
+    agent_cache = AgentCache()
+    profile_resolver = ProfileResolver(lookup=org_manager)
+    agent_executor = AgentPipelineExecutor(
+        cache=agent_cache,
+        resolver=profile_resolver,
+        lookup=org_manager,
+        event_bus=org_event_bus,
+    )
+
+    async def _agent_dispatch(
+        org_id: str,
+        target_node_id: str,
+        command_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        return await agent_executor.activate_and_run(
+            org_id=org_id,
+            node_id=target_node_id,
+            content=content,
+            command_id=command_id,
+        )
+
     # P-RC-9 P9.6 made ``OrgRuntime.__init__`` keyword-only with required
     # ``lookup`` / ``persistence`` / ``lifecycle_emitter`` Protocols.  The
     # v2 ``OrgManager`` itself implements ``OrgLookupProtocol`` and owns
@@ -394,8 +438,11 @@ def create_app(
         lookup=org_manager,
         persistence=org_manager._persistence,
         lifecycle_emitter=org_manager._lifecycle,
+        event_bus=org_event_bus,
+        agent_dispatch=_agent_dispatch,
     )
     app.state.org_runtime = org_runtime
+    app.state.org_agent_executor = agent_executor
     from openakita.orgs.command_service import OrgCommandService, set_command_service
 
     # P-RC-9 P9.4 made ``OrgCommandService.__init__`` keyword-only after

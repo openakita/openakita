@@ -40,8 +40,9 @@ P9.6beta / P9.6gamma.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -52,6 +53,17 @@ from .node_scheduler import NodeSchedulerProtocol
 
 if TYPE_CHECKING:  # pragma: no cover -- forward ref only
     from ._runtime_dispatch import CommandDispatchManager
+
+_LOGGER = logging.getLogger(__name__)
+
+# H3 / H4 (audit ``_orgs_business_capability_audit_v1.md`` §3.2):
+# callback signatures wired through ``OrgRuntime.__init__`` into the
+# dispatch sibling. They live here (not in ``_runtime_dispatch``) so
+# the runtime composition root can name them in keyword arguments
+# without dragging the dispatch import into the public surface.
+_AgentDispatchCb = Callable[[str, str, str, str], Awaitable[dict[str, Any]]]
+_ChainCancelCb = Callable[[str, str, str], Awaitable[None]]
+_EventTap = Callable[[str, dict[str, Any]], Any]
 
 
 # =====================================================================
@@ -202,16 +214,38 @@ class _InMemoryNodeLifecycle:
 
 
 class _InMemoryEventBus:
-    """In-process :class:`EventBusProtocol` (default)."""
+    """In-process :class:`EventBusProtocol` (default).
+
+    H4 fix (audit ``_orgs_business_capability_audit_v1.md`` §3.2):
+    in addition to the per-event-name pub/sub surface required by
+    :class:`EventBusProtocol`, this default backend now exposes a
+    wildcard "tap" surface (:meth:`add_tap` / :meth:`remove_tap`)
+    so the runtime composition root can plug bridges that observe
+    every event regardless of name (persist to ``OrgEventStore``,
+    forward to per-org ``StreamBus``). Taps are isolated by
+    try/except so a failing sink cannot poison the dispatch loop.
+    The named subscriber surface is unchanged for back-compat with
+    existing P9.6gamma contract tests.
+    """
 
     def __init__(self) -> None:
         self._subs: dict[str, list[Callable[[dict[str, Any]], Any]]] = defaultdict(list)
+        self._taps: list[_EventTap] = []
 
     async def emit(self, event: str, payload: dict[str, Any]) -> None:
         for handler in list(self._subs.get(event, ())):
             res = handler(payload)
             if asyncio.iscoroutine(res):
                 await res
+        for tap in list(self._taps):
+            try:
+                res = tap(event, payload)
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:  # noqa: BLE001 -- taps must not poison dispatch
+                _LOGGER.warning(
+                    "event-bus tap raised for event=%r; sink isolated", event, exc_info=True
+                )
 
     async def broadcast_ws(self, event: str, data: dict[str, Any]) -> None:
         # P9.6a: default backend is a no-op; production wiring overrides
@@ -224,6 +258,21 @@ class _InMemoryEventBus:
     def unsubscribe(self, event: str, handler: Callable[[dict[str, Any]], Any]) -> None:
         if handler in self._subs.get(event, ()):
             self._subs[event].remove(handler)
+
+    def add_tap(self, tap: _EventTap) -> None:
+        """Register a wildcard observer that sees every emitted event.
+
+        Tap signature: ``(event_name: str, payload: dict) -> None |
+        Awaitable[None]``. The bus catches and logs any exception so a
+        failing sink cannot block other taps or the named subscribers.
+        H4 hook for OrgEventStore / StreamBus forwarding.
+        """
+
+        self._taps.append(tap)
+
+    def remove_tap(self, tap: _EventTap) -> None:
+        if tap in self._taps:
+            self._taps.remove(tap)
 
 
 # =====================================================================
@@ -267,6 +316,14 @@ class OrgRuntime:
         # CommandRuntimeProtocol methods. Defaults to a
         # locally-constructed in-process dispatch sibling.
         dispatch: CommandDispatchManager | None = None,
+        # H3 / H4 (audit ``_orgs_business_capability_audit_v1.md`` §3.2):
+        # composition-root hooks the API server lifespan plugs in so the
+        # AgentPipelineExecutor actually fires per dispatch and so the
+        # in-memory bus events get forwarded to OrgEventStore / StreamBus.
+        # All optional + default-None to keep every existing OrgRuntime
+        # callsite (contract / parity / api wiring tests) working.
+        agent_dispatch: _AgentDispatchCb | None = None,
+        chain_cancel: _ChainCancelCb | None = None,
     ) -> None:
         self._lookup = lookup
         self._persistence = persistence
@@ -281,6 +338,8 @@ class OrgRuntime:
         self._event_bus: EventBusProtocol = (
             event_bus if event_bus is not None else _InMemoryEventBus()
         )
+        self._agent_dispatch = agent_dispatch
+        self._chain_cancel = chain_cancel
         # P9.6beta -- compose the dispatch sibling so the
         # 4 CommandRuntimeProtocol methods below have a
         # real backing manager (no more NotImplementedError).
@@ -298,6 +357,8 @@ class OrgRuntime:
                 command_service=self._command_service,
                 lookup=self._lookup,
                 event_bus=self._event_bus,
+                agent_dispatch=agent_dispatch,
+                chain_cancel=chain_cancel,
             )
         )
         # smoke-B5 -- compose the lifecycle sibling so the
@@ -320,6 +381,27 @@ class OrgRuntime:
         self._watchdog_tasks: dict[str, asyncio.Task[None]] = {}
         self._idle_probe_tasks: dict[str, asyncio.Task[None]] = {}
 
+        # H4 fix (audit ``_orgs_business_capability_audit_v1.md`` §3.2):
+        # bridge the in-process dispatch event-bus to two long-lived
+        # sinks the rest of the API expects to see populated:
+        #
+        # * ``OrgEventStore`` (per-org JSONL at
+        #   ``data/orgs/<id>/logs/events.jsonl``) -- backs
+        #   ``GET /api/v2/orgs/{id}/{events,activity,audit-log}``.
+        # * Per-org ``StreamBus`` (built lazily by
+        #   ``runtime/stream_registry.py``) -- backs
+        #   ``GET /api/v2/orgs-spec/{id}/stream`` (SSE).
+        #
+        # Pre-fix both sinks were idle for every command (24 mint orgs
+        # all had 0-line events.jsonl; the SSE stream only emitted
+        # ``: ping``). Duck-typed against ``add_tap`` so injected
+        # bus implementations that don't support wildcard observation
+        # silently skip the bridge instead of raising.
+        register_tap = getattr(self._event_bus, "add_tap", None)
+        if callable(register_tap):
+            register_tap(self._persist_event_tap)
+            register_tap(self._stream_event_tap)
+
     # ------------------------------------------------------------------
     # OrgLookupProtocol delegation (Protocol satisfied via composition)
     # ------------------------------------------------------------------
@@ -331,10 +413,30 @@ class OrgRuntime:
     # CommandRuntimeProtocol -- 6 stub methods (P9.6beta fills bodies)
     # ------------------------------------------------------------------
 
-    async def send_command(self, org_id: str, target_node_id: str, content: str) -> dict[str, Any]:
-        """v1 ``OrgRuntime.send_command`` parity (delegates to dispatch sibling P9.6e)."""
+    async def send_command(
+        self,
+        org_id: str,
+        target_node_id: str,
+        content: str,
+        *,
+        command_id: str | None = None,
+    ) -> dict[str, Any]:
+        """v1 ``OrgRuntime.send_command`` parity (delegates to dispatch sibling P9.6e).
 
-        return await self._dispatch.send_command(org_id, target_node_id, content)
+        H2 fix (audit ``_orgs_business_capability_audit_v1.md`` §3.2):
+        accept the optional ``command_id`` kwarg and forward it to the
+        dispatch sibling so the OrgCommandService-minted id stays
+        attached to the tracker. ``None`` preserves the legacy
+        submit-or-mint fallback for callsites (node-scheduler /
+        contract tests) that do not pre-mint an id.
+        """
+
+        return await self._dispatch.send_command(
+            org_id,
+            target_node_id,
+            content,
+            command_id=command_id,
+        )
 
     async def cancel_user_command(self, org_id: str, command_id: str) -> dict[str, Any] | None:
         """v1 ``OrgRuntime.cancel_user_command`` parity (delegates to dispatch sibling P9.6e)."""
@@ -451,6 +553,73 @@ class OrgRuntime:
 
     def get_inbox(self, org_id: str) -> Any:
         return self._inboxes.get(org_id)
+
+    # ------------------------------------------------------------------
+    # H4 event-bus bridges (see ``__init__`` docstring + audit §3.2 P0)
+    # ------------------------------------------------------------------
+
+    def _persist_event_tap(self, event_name: str, payload: dict[str, Any]) -> None:
+        """Persist every dispatch event onto the org's :class:`OrgEventStore`.
+
+        Idempotently lazy-mints the per-org store via
+        :meth:`register_event_store`. Best-effort: any I/O / lookup
+        failure logs a warning and returns; the dispatch loop must
+        never see the exception.
+        """
+
+        if not isinstance(payload, dict):
+            return
+        org_id = payload.get("org_id")
+        if not isinstance(org_id, str) or not org_id:
+            return
+        try:
+            store = self.register_event_store(org_id)
+            record = dict(payload)
+            record.setdefault("type", event_name)
+            store.append(record)
+        except Exception as exc:  # noqa: BLE001 -- bridge must not poison dispatch
+            _LOGGER.warning(
+                "OrgRuntime persist tap failed for event=%r org=%s: %s",
+                event_name,
+                org_id,
+                exc,
+            )
+
+    async def _stream_event_tap(self, event_name: str, payload: dict[str, Any]) -> None:
+        """Forward every dispatch event to the org's :class:`StreamBus`.
+
+        Emits on the ``lifecycle`` channel (one of the four channels
+        the v2 SSE route subscribes to by default; see
+        ``api/routes/orgs_v2_stream.py``). Imports the registry
+        lazily because ``openakita.runtime`` pulls a chunk of the
+        IM stack that we don't need at module import time.
+        """
+
+        if not isinstance(payload, dict):
+            return
+        org_id = payload.get("org_id")
+        if not isinstance(org_id, str) or not org_id:
+            return
+        try:
+            from openakita.runtime.stream_registry import (
+                get_or_create_org_stream_bus,
+            )
+
+            stream_bus = get_or_create_org_stream_bus(org_id)
+            await stream_bus.emit(
+                "lifecycle",
+                event_name,
+                dict(payload),
+                command_id=str(payload.get("command_id") or ""),
+                org_id=org_id,
+            )
+        except Exception as exc:  # noqa: BLE001 -- bridge must not poison dispatch
+            _LOGGER.warning(
+                "OrgRuntime stream tap failed for event=%r org=%s: %s",
+                event_name,
+                org_id,
+                exc,
+            )
 
 
 def get_runtime() -> OrgRuntime | None:

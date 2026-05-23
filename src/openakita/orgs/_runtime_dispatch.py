@@ -177,7 +177,14 @@ class CommandDispatchManager:
     # CommandRuntimeProtocol surface (P9.4 contract)
     # ------------------------------------------------------------------
 
-    async def send_command(self, org_id: str, target_node_id: str, content: str) -> dict[str, Any]:
+    async def send_command(
+        self,
+        org_id: str,
+        target_node_id: str,
+        content: str,
+        *,
+        command_id: str | None = None,
+    ) -> dict[str, Any]:
         """v1 ``OrgRuntime.send_command`` parity (144 LOC -> ~40 LOC).
 
         Steps:
@@ -189,44 +196,57 @@ class CommandDispatchManager:
            callback (fire-and-forget; the pipeline sibling
            awaits the agent run in its own task).
         5. Return a v1-shaped dict.
+
+        H2 fix (audit ``_orgs_business_capability_audit_v1.md`` §3.2):
+        when callers (notably ``OrgCommandService._run_minimal``) have
+        already minted a command id at the service layer, accept it as
+        a kwarg and use it as the tracker id verbatim instead of
+        re-minting a fresh id here. This keeps the user-visible
+        command_id (the one returned from ``OrgCommandService.submit``
+        and used by ``GET /commands/{cid}``) identical to the tracker
+        id, so live snapshot lookups actually resolve. The original
+        no-kwarg call path (e.g. node-scheduler dispatch with no
+        upstream id) is preserved: ``None`` falls back to the legacy
+        submit-or-mint dance.
         """
 
         org = self._lookup.get_org(org_id)
         if org is None:
             return {"status": "error", "reason": "org_not_found", "org_id": org_id}
-        # Submit through OrgCommandService -> get a command_id.
-        if self._cmd is not None:
+        if command_id:
+            tracker_command_id = command_id
+        elif self._cmd is not None:
             try:
                 resp = await self._cmd.submit(
                     org_id=org_id,
                     target_node_id=target_node_id,
                     content=content,
                 )
-                command_id = str(resp.get("command_id") or "")
+                tracker_command_id = str(resp.get("command_id") or "")
             except Exception:  # noqa: BLE001 (v1 parity: never crash dispatch)
                 _LOGGER.exception("command_service.submit raised; falling back to inline id")
-                command_id = f"cmd_{int(time() * 1000)}"
+                tracker_command_id = f"cmd_{int(time() * 1000)}"
         else:
-            command_id = f"cmd_{int(time() * 1000)}"
+            tracker_command_id = f"cmd_{int(time() * 1000)}"
         tracker = _CommandTracker(
             org_id=org_id,
-            command_id=command_id,
+            command_id=tracker_command_id,
             root_node_id=target_node_id,
             root_intent=content,
         )
         self._registry.register(tracker)
         await self._bus.emit(
             "user_command_submitted",
-            {"org_id": org_id, "command_id": command_id, "node_id": target_node_id},
+            {"org_id": org_id, "command_id": tracker_command_id, "node_id": target_node_id},
         )
         if self._agent_dispatch is not None:
             try:
-                await self._agent_dispatch(org_id, target_node_id, command_id, content)
+                await self._agent_dispatch(org_id, target_node_id, tracker_command_id, content)
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("agent_dispatch failed (org=%s node=%s)", org_id, target_node_id)
         return {
             "status": "submitted",
-            "command_id": command_id,
+            "command_id": tracker_command_id,
             "org_id": org_id,
             "node_id": target_node_id,
         }
