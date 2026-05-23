@@ -1147,6 +1147,12 @@
         );
         const [drawerCell, setDrawerCell] = useState(null);
         const [exporting, setExporting] = useState(false);
+        // Stage 3 · 简化展开/折叠状态 + 明细缓存 + 右键菜单 + 导出菜单
+        const [expanded, setExpanded] = useState({});             // {cellId: true}
+        const [cellDetails, setCellDetails] = useState({});        // {cellId: CellDetailsResponse}
+        const [detailLoading, setDetailLoading] = useState({});    // {cellId: bool}
+        const [ctxMenu, setCtxMenu] = useState(null);              // {cell, x, y}
+        const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
         const report = data && data.report;
         const cells = (data && data.cells) || [];
@@ -1184,12 +1190,15 @@
           return () => { cancelled = true; };
         }, [orgId, sourceImportId]);
 
-        const onExport = async () => {
+        // mode = "view" 按当前 visible 视图（后端默认）/ "full" 强制展开全部
+        const onExport = async (mode = "view") => {
           setExporting(true);
+          setExportMenuOpen(false);
           try {
+            const qs = mode === "full" ? "?format=xlsx&expand=full" : "?format=xlsx";
             const resp = await api(
               "GET",
-              `/orgs/${orgId}/reports/${reportId}/export?format=xlsx`,
+              `/orgs/${orgId}/reports/${reportId}/export${qs}`,
               null,
               { raw: true, timeoutMs: 60000 },
             );
@@ -1200,7 +1209,7 @@
             const blob = await resp.blob();
             // 从 Content-Disposition 解析后端设置的文件名；解析失败则用 reportId 兜底
             const disp = resp.headers.get("content-disposition") || "";
-            let filename = `${reportId}.xlsx`;
+            let filename = `${reportId}${mode === "full" ? "_full" : ""}.xlsx`;
             const m = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
             if (m) filename = decodeURIComponent(m[1]);
             const url = URL.createObjectURL(blob);
@@ -1211,13 +1220,63 @@
             a.click();
             a.remove();
             setTimeout(() => URL.revokeObjectURL(url), 1500);
-            toast(`已下载 ${filename}`);
+            toast(`已下载 ${filename}（${mode === "full" ? "完整明细" : "当前视图"}）`);
           } catch (e) {
             toast(`导出失败：${e.message}`, "err");
           } finally {
             setExporting(false);
           }
         };
+
+        // Stage 3 · 展开/折叠某 cell：第一次 expand 拉取明细，之后用缓存
+        const toggleExpand = useCallback(async (cell) => {
+          const cid = cell.id;
+          if (expanded[cid]) {
+            setExpanded((m) => { const n = { ...m }; delete n[cid]; return n; });
+            return;
+          }
+          setExpanded((m) => ({ ...m, [cid]: true }));
+          if (cellDetails[cid]) return;
+          setDetailLoading((m) => ({ ...m, [cid]: true }));
+          try {
+            const r = await api("GET", `/orgs/${orgId}/reports/${reportId}/cells/${cid}/details`);
+            setCellDetails((m) => ({ ...m, [cid]: r }));
+          } catch (e) {
+            toast(`明细加载失败：${e.message}`, "err");
+            setExpanded((m) => { const n = { ...m }; delete n[cid]; return n; });
+          } finally {
+            setDetailLoading((m) => { const n = { ...m }; delete n[cid]; return n; });
+          }
+        }, [orgId, reportId, expanded, cellDetails, toast]);
+
+        const onSimplifyToggle = useCallback(async (cell, enabled) => {
+          setCtxMenu(null);
+          try {
+            await api(
+              "PATCH",
+              `/orgs/${orgId}/reports/${reportId}/cells/${cell.id}/simplify`,
+              {
+                enabled,
+                strategy: cell.simplify_config?.strategy || "top_n",
+                top_n: cell.simplified_top_n || cell.simplify_config?.top_n || 10,
+                sort_by: cell.simplify_config?.sort_by || "amount_desc",
+                merge_label: cell.simplify_config?.merge_label || "其他",
+                min_threshold: cell.simplify_config?.min_threshold ?? null,
+                keep_negative_separate: cell.simplify_config?.keep_negative_separate !== false,
+                footnote_template: cell.simplify_config?.footnote_template || "其他 {count} 项合计 {amount}",
+              },
+            );
+            toast(enabled ? "已启用简化" : "已禁用简化");
+            // 清缓存重拉
+            setCellDetails((m) => { const n = { ...m }; delete n[cell.id]; return n; });
+            reload();
+          } catch (e) {
+            // 后端 400「cell does not back onto a simplifiable account rule」
+            // 是预期错误（公式 / section / TBD 行），用 warn 而非 err
+            if (e.status === 400) toast(e.message, "warn");
+            else toast(`切换失败：${e.message}`, "err");
+          }
+        }, [orgId, reportId, reload, toast]);
 
         if (error) {
           return (
@@ -1251,10 +1310,45 @@
               <div className="flex gap-2">
                 <button className="btn" onClick={onBack}>← 返回账套</button>
                 <button className="btn" onClick={reload}>{loading ? <Spinner /> : "刷新"}</button>
-                <button className="btn primary" onClick={onExport} disabled={exporting || loading}>
-                  {exporting && <Spinner />}
-                  {exporting ? "导出中…" : "导出 Excel"}
-                </button>
+                <div style={{ position: "relative" }}>
+                  <button
+                    className="btn primary"
+                    onClick={() => setExportMenuOpen((x) => !x)}
+                    disabled={exporting || loading}
+                    data-testid="export-menu-btn"
+                  >
+                    {exporting && <Spinner />}
+                    {exporting ? "导出中…" : "导出 Excel ▾"}
+                  </button>
+                  {exportMenuOpen && (
+                    <div
+                      style={{
+                        position: "absolute", right: 0, top: "100%", marginTop: 4,
+                        background: "var(--bg-card)", border: "1px solid var(--border-strong)",
+                        borderRadius: "var(--radius)", boxShadow: "0 4px 18px rgba(15,23,42,0.12)",
+                        minWidth: 200, zIndex: 50,
+                      }}
+                      onMouseLeave={() => setExportMenuOpen(false)}
+                    >
+                      <button
+                        className="btn subtle sm"
+                        style={{ display: "block", width: "100%", textAlign: "left", borderRadius: 0 }}
+                        onClick={() => onExport("view")}
+                        data-testid="export-view"
+                      >
+                        按当前视图导出
+                      </button>
+                      <button
+                        className="btn subtle sm"
+                        style={{ display: "block", width: "100%", textAlign: "left", borderRadius: 0 }}
+                        onClick={() => onExport("full")}
+                        data-testid="export-full"
+                      >
+                        导出完整明细
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1280,17 +1374,39 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {cells.map((c) => {
+                    {cells.flatMap((c) => {
                       const isSection = c.data_source === "section";
                       const isLeaf = !isSection;
                       const tdLabelCls = `label indent-${Math.min(c.indent_level || 0, 3)}`;
                       const trCls = isSection ? "section" : (c.is_total ? "total" : "");
                       const sourcesCount = (c.source_rows || []).length;
-                      // 只有非 section / 非 TBD 且有源行的 cell 才点击有意义。
-                      // 但允许任何叶子点击，方便用户即使 source_rows=[] 也能看公式。
-                      return (
-                        <tr key={c.id} className={trCls}>
+                      const canExpand = isLeaf && (c.simplified || sourcesCount > 0) && !c.is_tbd;
+                      const isOpen = !!expanded[c.id];
+                      const dets = cellDetails[c.id];
+                      const dLoading = !!detailLoading[c.id];
+                      const rows = [];
+                      rows.push(
+                        <tr
+                          key={c.id}
+                          className={trCls}
+                          onContextMenu={(e) => {
+                            if (!isLeaf) return;
+                            e.preventDefault();
+                            setCtxMenu({ cell: c, x: e.clientX, y: e.clientY });
+                          }}
+                        >
                           <td className={tdLabelCls}>
+                            {canExpand && (
+                              <button
+                                className="btn subtle sm"
+                                style={{ marginRight: 6, padding: "0 6px", lineHeight: "1.6" }}
+                                onClick={(e) => { e.stopPropagation(); toggleExpand(c); }}
+                                aria-label={isOpen ? "折叠" : "展开"}
+                                data-testid={`expand-${c.reference_code || c.id}`}
+                              >
+                                {isOpen ? "[−]" : "[+]"}
+                              </button>
+                            )}
                             {isLeaf
                               ? (
                                   <span
@@ -1300,6 +1416,7 @@
                                   >
                                     {c.target_label}
                                     {sourcesCount > 0 && <span className="text-xs text-muted" style={{ marginLeft: 6 }}>· {sourcesCount} 源</span>}
+                                    {c.simplified && <span className="badge info" style={{ marginLeft: 6 }} title={`Top ${c.simplified_top_n}，已简化`}>简化</span>}
                                   </span>
                                 )
                               : <strong>{c.target_label}</strong>}
@@ -1308,9 +1425,50 @@
                           <td className={`num ${c.is_tbd ? "tbd" : ""}`}>
                             {isSection ? "" : (c.is_tbd ? "[TBD]" : fmtMoney(c.value))}
                           </td>
-                          <td className="text-xs text-muted">{c.notes || (c.is_total ? "合计" : "")}</td>
-                        </tr>
+                          <td className="text-xs text-muted">
+                            {c.notes || (c.is_total ? "合计" : "")}
+                            {c.footnote && <div style={{ fontStyle: "italic", marginTop: 2 }}>{c.footnote}</div>}
+                          </td>
+                        </tr>,
                       );
+                      if (isOpen) {
+                        if (dLoading) {
+                          rows.push(
+                            <tr key={c.id + ":loading"}>
+                              <td colSpan={4} style={{ paddingLeft: 36, fontSize: 11, color: "var(--text-muted)" }}>
+                                <Spinner /> 加载明细中…
+                              </td>
+                            </tr>,
+                          );
+                        } else if (dets) {
+                          const list = dets.visible_rows || [];
+                          if (!list.length) {
+                            rows.push(
+                              <tr key={c.id + ":empty"}>
+                                <td colSpan={4} style={{ paddingLeft: 36, fontSize: 11, color: "var(--text-muted)" }}>
+                                  无可展开明细
+                                </td>
+                              </tr>,
+                            );
+                          }
+                          list.forEach((dr, di) => {
+                            rows.push(
+                              <tr key={c.id + ":d:" + di} style={{ background: dr.is_merged ? "var(--bg-soft)" : "transparent" }}>
+                                <td style={{ paddingLeft: 48, fontStyle: dr.is_merged ? "italic" : "normal", color: dr.is_merged ? "var(--text-muted)" : "inherit" }}>
+                                  {dr.is_merged ? "▸ " : "· "}{dr.name}
+                                  {dr.is_merged && (
+                                    <span className="text-xs text-muted" style={{ marginLeft: 6 }}>（共 {dr.merged_count} 项）</span>
+                                  )}
+                                </td>
+                                <td className="mono text-xs">{dr.account_code || ""}</td>
+                                <td className="num text-xs">{fmtMoney(dr.amount)}</td>
+                                <td className="text-xs text-muted">{dr.aux_text || ""}</td>
+                              </tr>,
+                            );
+                          });
+                        }
+                      }
+                      return rows;
                     })}
                   </tbody>
                 </table>
@@ -1326,7 +1484,59 @@
               rowMapLoading={rowMapLoading}
               onClose={() => setDrawerCell(null)}
             />
+
+            {ctxMenu && (
+              <CellContextMenu
+                cell={ctxMenu.cell}
+                x={ctxMenu.x}
+                y={ctxMenu.y}
+                onClose={() => setCtxMenu(null)}
+                onSimplifyToggle={onSimplifyToggle}
+              />
+            )}
           </>
+        );
+      }
+
+      // 右键菜单：单元格简化开关 + 添加评论占位（评论由 Stage 4 填充）
+      function CellContextMenu({ cell, x, y, onClose, onSimplifyToggle }) {
+        useEffect(() => {
+          const off = () => onClose();
+          window.addEventListener("click", off);
+          window.addEventListener("scroll", off, true);
+          window.addEventListener("contextmenu", off, true);
+          return () => {
+            window.removeEventListener("click", off);
+            window.removeEventListener("scroll", off, true);
+            window.removeEventListener("contextmenu", off, true);
+          };
+        }, [onClose]);
+        const style = {
+          position: "fixed", left: Math.min(x, window.innerWidth - 220), top: Math.min(y, window.innerHeight - 120),
+          background: "var(--bg-card)", border: "1px solid var(--border-strong)",
+          borderRadius: "var(--radius)", boxShadow: "0 6px 20px rgba(15,23,42,0.18)",
+          minWidth: 200, zIndex: 200, padding: 4,
+        };
+        return (
+          <div style={style} onClick={(e) => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }} data-testid="cell-context-menu">
+            <button
+              className="btn subtle sm"
+              style={{ display: "block", width: "100%", textAlign: "left", borderRadius: 0 }}
+              onClick={() => onSimplifyToggle(cell, !cell.simplified)}
+              data-testid="ctx-toggle-simplify"
+            >
+              {cell.simplified ? "禁用简化" : "启用简化"}（仅辅助核算项）
+            </button>
+            <div className="divider" />
+            <button
+              className="btn subtle sm"
+              style={{ display: "block", width: "100%", textAlign: "left", borderRadius: 0 }}
+              onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("finance.cell.add_comment", { detail: { cellId: cell.id } })); }}
+              data-testid="ctx-add-comment"
+            >
+              添加评论…（Stage 4 评论侧栏）
+            </button>
+          </div>
         );
       }
 
