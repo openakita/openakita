@@ -297,3 +297,114 @@ class UploadResponse(BaseModel):
     parser_used: str
     status: ImportStatus
     error_message: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Report instance + per-cell trace (M1 W2 Stage 4)
+# ---------------------------------------------------------------------------
+
+
+SheetKind = Literal[
+    "balance_sheet",
+    "income_statement",
+    "owners_equity",
+    "cash_flow",
+]
+"""Statutory statements supported by the report-generation pipeline."""
+
+AccountingStandard = Literal["small_enterprise", "general_enterprise"]
+"""Two YAML-template-backed standards.  Maps to ``Organization.standard``
+via ``cas`` -> general_enterprise, ``small`` -> small_enterprise."""
+
+
+class ReportCell(BaseModel):
+    """One line in a generated statement.
+
+    The ``source_rows`` field is the cell-level traceability layer the design
+    document calls out as essential for audit-trail UX: it carries the IDs of
+    every ``trial_balance_rows`` row that fed the cell's value.  Aggregations
+    span all matching rows; section headers / formulas leave it empty.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    report_id: str
+    reference_code: str
+    target_line_no: int = 0
+    target_label: str
+    indent_level: int = 0
+    data_source: str
+    code: str | None = None
+    value: float = 0.0
+    sign: int = 1
+    is_total: bool = False
+    is_tbd: bool = False
+    formula: str | None = None
+    notes: str | None = None
+    source_rows: list[str] = Field(default_factory=list)
+
+
+class ReportInstance(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    org_id: str
+    period_id: str
+    sheet_kind: SheetKind
+    accounting_standard: AccountingStandard
+    template_id: str
+    template_version: int = 1
+    status: Literal["ok", "failed"] = "ok"
+    cell_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    source_import_id: str | None = None
+    backend_used: str | None = None
+    output_path: str | None = None
+    generated_at: str
+
+    @classmethod
+    def new(
+        cls,
+        *,
+        org_id: str,
+        period_id: str,
+        sheet_kind: SheetKind,
+        accounting_standard: AccountingStandard,
+        template_id: str,
+        template_version: int,
+        source_import_id: str | None,
+    ) -> ReportInstance:
+        return cls(
+            id=_new_id("rep"),
+            org_id=org_id,
+            period_id=period_id,
+            sheet_kind=sheet_kind,
+            accounting_standard=accounting_standard,
+            template_id=template_id,
+            template_version=template_version,
+            source_import_id=source_import_id,
+            generated_at=_utcnow_iso(),
+        )
+
+
+class ReportListResponse(BaseModel):
+    reports: list[ReportInstance]
+    total: int
+
+
+class ReportDetailResponse(BaseModel):
+    report: ReportInstance
+    cells: list[ReportCell]
+
+
+class ReportGenerateRequest(BaseModel):
+    period_id: str = Field(..., description="生成报表所基于的会计期间")
+    accounting_standard: AccountingStandard | None = Field(
+        default=None,
+        description="覆盖账套默认准则；不传则使用 Organization.standard 推断",
+    )
+    source_import_id: str | None = Field(
+        default=None,
+        description="指定使用某次导入的余额表；不传则取该 (org, period) 最新一次成功导入",
+    )

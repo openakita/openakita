@@ -22,7 +22,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from .schema import SCHEMA_SQL, SCHEMA_VERSION
+from .schema import MIGRATION_STEPS, SCHEMA_SQL, SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,21 @@ class FinanceAutoDB:
             await conn.execute("PRAGMA journal_mode=WAL")
             await conn.execute("PRAGMA synchronous=NORMAL")
             await conn.execute("PRAGMA foreign_keys=ON")
+            # Always apply the full canonical schema first (idempotent thanks
+            # to ``IF NOT EXISTS``).  Then replay any migration steps whose
+            # target version exceeds the current recorded one -- this lets
+            # databases created at v1 pick up the v2 additions in-place.
             await conn.executescript(SCHEMA_SQL)
+            current_version = await _read_recorded_version(conn)
+            for target_version, step_sql in MIGRATION_STEPS:
+                if target_version > current_version:
+                    await conn.executescript(step_sql)
+                    logger.info(
+                        "finance-auto: migrated schema %d -> %d",
+                        current_version,
+                        target_version,
+                    )
+                    current_version = target_version
             now = _utcnow_iso()
             await conn.execute(
                 "INSERT INTO schema_version(component, version, applied_at) "
@@ -125,3 +139,13 @@ class FinanceAutoDB:
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+async def _read_recorded_version(conn: aiosqlite.Connection) -> int:
+    async with conn.execute(
+        "SELECT version FROM schema_version WHERE component='finance_auto'"
+    ) as cur:
+        row = await cur.fetchone()
+        if row is None:
+            return 0
+        return int(row[0])

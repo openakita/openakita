@@ -512,6 +512,21 @@ class FinanceAutoService:
             raise HTTPException(status_code=404, detail="import not found")
         return _row_to_import(row, self.key_manager)
 
+    async def list_all_rows(
+        self, *, org_id: str, import_id: str
+    ) -> list[TrialBalanceRow]:
+        """Return every row of an import.  Used by the report generator
+        (Stage 4) to feed the full balance set into the rule engine without
+        paginating."""
+        await self.get_import(org_id=org_id, import_id=import_id)
+        async with self.db.conn.execute(
+            "SELECT * FROM trial_balance_rows WHERE import_id=? "
+            "ORDER BY row_index ASC",
+            (import_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [_row_to_balance_row(r, self.key_manager) for r in rows]
+
     async def list_rows(
         self,
         *,
@@ -692,6 +707,12 @@ def build_router(service: FinanceAutoService) -> APIRouter:
             offset=offset,
         )
         return RowListResponse(rows=rows, total=total, limit=limit, offset=offset)
+
+    # M1 W2 Stage 4 -- attach the report-generation endpoints onto the same
+    # router.  Kept in a separate module so this file stays small.
+    from .report_routes import register_report_endpoints
+
+    register_report_endpoints(router, service)
 
     return router
 

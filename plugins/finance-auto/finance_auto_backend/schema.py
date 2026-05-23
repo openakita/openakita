@@ -22,7 +22,8 @@ DDL statement so it does not appear here.
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+"""Bumped to 2 in M1 W2 Stage 4: adds ``reports`` + ``report_cells`` tables."""
 
 # ---------------------------------------------------------------------------
 # DDL — single statement string executed via ``connection.executescript``.
@@ -132,4 +133,70 @@ CREATE TABLE IF NOT EXISTS trial_balance_rows (
 );
 CREATE INDEX IF NOT EXISTS idx_rows_import     ON trial_balance_rows(import_id, row_index);
 CREATE INDEX IF NOT EXISTS idx_rows_code       ON trial_balance_rows(org_id, full_code);
+
+-- ===========================================================================
+-- M1 W2 Stage 4: report instances + per-cell traceability.
+-- A ReportInstance materialises one (org, period, template) generation; the
+-- ReportCells underneath give cell-level provenance back to the trial-balance
+-- rows.  This is the data model the desktop UI's audit-trail panel renders.
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS reports (
+    id              TEXT PRIMARY KEY,
+    org_id          TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    period_id       TEXT NOT NULL,
+    sheet_kind      TEXT NOT NULL,                          -- balance_sheet | income_statement
+    accounting_standard TEXT NOT NULL,                      -- small_enterprise | general_enterprise
+    template_id     TEXT NOT NULL,
+    template_version INTEGER NOT NULL DEFAULT 1,
+    status          TEXT NOT NULL DEFAULT 'ok',             -- ok | failed
+    cell_count      INTEGER NOT NULL DEFAULT 0,
+    warnings_json   TEXT,                                   -- JSON list of strings
+    source_import_id TEXT REFERENCES trial_balance_imports(id) ON DELETE SET NULL,
+    backend_used    TEXT,                                   -- xltpl | openpyxl | inline
+    output_path     TEXT,                                   -- last exported xlsx path (if any)
+    generated_at    TEXT NOT NULL,
+    _encrypted_payload BLOB
+);
+CREATE INDEX IF NOT EXISTS idx_reports_org_period
+    ON reports(org_id, period_id, sheet_kind);
+
+CREATE TABLE IF NOT EXISTS report_cells (
+    id              TEXT PRIMARY KEY,
+    report_id       TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    reference_code  TEXT NOT NULL,                          -- e.g. BS_1001
+    target_line_no  INTEGER NOT NULL DEFAULT 0,
+    target_label    TEXT NOT NULL,
+    indent_level    INTEGER NOT NULL DEFAULT 0,
+    data_source     TEXT NOT NULL,                          -- section | account | formula | cross_year
+    code            TEXT,                                   -- raw account code expression
+    value           REAL NOT NULL DEFAULT 0,
+    sign            INTEGER NOT NULL DEFAULT 1,
+    is_total        INTEGER NOT NULL DEFAULT 0,
+    is_tbd          INTEGER NOT NULL DEFAULT 0,
+    formula         TEXT,                                   -- raw YAML formula (unevaluated)
+    notes           TEXT,
+    source_rows     TEXT,                                   -- JSON: list of trial_balance_row.id
+    _encrypted_payload BLOB
+);
+CREATE INDEX IF NOT EXISTS idx_cells_report  ON report_cells(report_id, target_line_no);
+CREATE INDEX IF NOT EXISTS idx_cells_refcode ON report_cells(report_id, reference_code);
 """
+
+# ---------------------------------------------------------------------------
+# Incremental migration steps.  ``run_migrations(conn, current_version)`` will
+# replay every step whose key > current_version, in order.  Each step is a
+# tuple of (target_version, sql) so the bookkeeping stays declarative.  The
+# v0 -> v1 transition is implicit (initial creation), so the smallest key
+# here is 2.
+# ---------------------------------------------------------------------------
+
+MIGRATION_STEPS: tuple[tuple[int, str], ...] = (
+    (
+        2,
+        # M1 W2 Stage 4: adds reports + report_cells.  Idempotent because
+        # the script uses CREATE TABLE IF NOT EXISTS.
+        SCHEMA_SQL,
+    ),
+)
+"""Each entry: (target_version, idempotent_DDL).  Replayed by db.run_migrations()."""

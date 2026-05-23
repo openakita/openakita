@@ -178,6 +178,9 @@ indentity_compiler.txt
 create_report*.py
 fix_report.py
 !src/openakita/api/routes/bug_report.py
+!plugins/**/test_report_*.py
+!plugins/**/report_generator.py
+!plugins/**/report_routes.py
 
 # Image classification scripts (temporary)
 classify_*.py
