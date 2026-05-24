@@ -2,7 +2,7 @@
 
 > **版本**：v1.0.0-rc1 (Release Candidate 1)
 > **协议**：AGPL-3.0-only（随 OpenAkita 主体）
-> **状态**：91 个 REST 路由 + 1 个 WebSocket，10/10 acceptance suite 全绿
+> **状态**：92 个 REST 路由 + 1 个 WebSocket（双挂 `/ws` + `/v1/ws`），10/10 acceptance suite 全绿
 > **设计参考**：`_finance_plugin_design_v0.3_INDEX.md` / `_finance_plugin_final_handover.md`
 
 ---
@@ -73,9 +73,10 @@ pip install -r plugins/finance-auto/requirements.txt
 
 ### 3.2 数据库初始化
 
-无需手动迁移。首次启动时插件会自动执行 `v0 → v1 → … → v13` 全链
+无需手动迁移。首次启动时插件会自动执行 `v0 → v1 → … → v14` 全链
 schema 升级（idempotent；fix-round-3 引入 v12 extended permissions
-seeds + v13 reclassification undo history）。
+seeds + v13 reclassification undo history；v1.0.0-rc1 引入 v14
+`org.delete` 权限种子）。
 
 ### 3.3 加密密钥种子
 
@@ -94,8 +95,10 @@ seeds + v13 reclassification undo history）。
 # 启动 OpenAkita 后端（finance-auto 自动加载）
 openakita serve
 
-# 验证插件已注册（应见 91 /api/plugins/finance-auto/* 路由）
-curl http://127.0.0.1:18900/api/plugins/finance-auto/health
+# 验证插件已注册（应见 92 /api/plugins/finance-auto/v1/* 路由 + 兼容 308 redirect）
+curl http://127.0.0.1:18900/api/plugins/finance-auto/v1/health
+# 老路径会 308 跳到 /v1/ 下：
+curl -i http://127.0.0.1:18900/api/plugins/finance-auto/health  # → 308 Location: .../v1/health
 ```
 
 桌面端打开 OpenAkita Setup Center → 侧边栏 **应用**（apps）分组下点
@@ -144,8 +147,9 @@ curl http://127.0.0.1:18900/api/plugins/finance-auto/health
 | 13 | 同业 Peer 对比（12 行业基准）| ✅ | Peer 对比 | `/orgs/{id}/peer/*` |
 | 14 | 密钥轮换 + 加密备份/恢复 | ✅ | 密钥管理 | `/admin/key-*`, `/backups/*` |
 
-> 完整 91 路由清单见 `routes.build_router_and_service` 入口及
-> `_finance_plugin_final_handover.md` §3。
+> 完整 92 路由清单见 `routes.build_router_and_service` 入口及
+> `_finance_plugin_final_handover.md` §3。所有路由现挂在 `/v1/` 子
+> 路径下，老路径自动 308 redirect（详 §6.4）。
 
 ---
 
@@ -194,13 +198,19 @@ RBAC 模型沿 v0.3 Part Biz §1.1：
 
 ### 6.4 API 路径约定（v1.0 RC + v2 升级路径）
 
-- v1.0 RC：所有 endpoint 直接挂在 `/api/plugins/finance-auto/`
-  下（无 `/v1/` 前缀）。
+- v1.0.0-rc1：所有 endpoint 挂在 `/api/plugins/finance-auto/v1/`
+  下；老的无 `/v1/` 路径自动 308 redirect 到 `/v1/` 等价路径
+  （保留 method + body + query string），实现零 breaking change
+  迁移。
+- WebSocket 双挂：`/ws`（老路径，向后兼容）+ `/v1/ws`（新路径）。
+  浏览器 WS 客户端不能跟随 HTTP 308，因此后端两个 mount 共用同一
+  `WSManager` 单例。新 UI bundle 已切到 `/v1/ws`；缓存的老 bundle
+  继续走 `/ws` 直到用户刷新。
 - v1.x → v2 升级策略：未来引入破坏性 schema 时，将通过
-  `/api/plugins/finance-auto/v2/` 子路由 + v1 路径保留兼容 308
-  重定向的方式滚动升级（参考 host 的 `orgs_v2_legacy_redirects.py`
-  pattern）。详见 `_finance_plugin_audit_extended_report.md`
-  EX-P2-13 + `CHANGELOG.md` v1.0.x 段落。
+  `/api/plugins/finance-auto/v2/` 子路由 + v1 路径继续 308 重定向
+  到 v2 的方式滚动升级。详见
+  `_finance_plugin_audit_extended_report.md` EX-P2-13 +
+  `CHANGELOG.md` v1.0.0-rc1 段落。
 
 ---
 
@@ -256,15 +266,11 @@ docker run -d --name openakita \
 6. **WebSocket 无 message replay**：v1.0 RC 已加客户端 cursor +
    `?since=` query 占位 + reconnecting badge 状态机；服务端 replay
    逻辑（按 cursor 重发未消费事件）在 v1.x 路线。
-7. **无 `DELETE /orgs/{id}` endpoint**：账套清理需通过手动 SQL；
-   计划 v1.0.x 加入（EX-P2-10）。
-8. **无 `/v1/` URL 前缀**：当前直接挂 `/api/plugins/finance-auto/`，
-   未来 v2 升级将通过 308 兼容引入 `/v1/` 子路径（EX-P2-13）。
-9. **Docker 镜像未本机 build 验证**：`docs/DEPLOY_DOCKER.md` 提供
+7. **Docker 镜像未本机 build 验证**：`docs/DEPLOY_DOCKER.md` 提供
    compose / k8s 模板，但官方 image push 在 v1.0 GA 完成。
-10. **多用户密钥协商**：当前组件密钥按 `key_meta` 全局共享，无
-    per-user 子密钥协商；v1.1 计划。
-11. **CHANGELOG**：完整变更见 [`CHANGELOG.md`](./CHANGELOG.md)。
+8. **多用户密钥协商**：当前组件密钥按 `key_meta` 全局共享，无
+   per-user 子密钥协商；v1.1 计划。
+9. **CHANGELOG**：完整变更见 [`CHANGELOG.md`](./CHANGELOG.md)。
 
 ---
 
@@ -335,9 +341,11 @@ docker run -d --name openakita \
   不构成原创作品；用户上传的会计师事务所内部模板版权归原作者。
 - **插件版本**：`v1.0.0-rc1`（见 [`plugin.json`](./plugin.json)
   + [`CHANGELOG.md`](./CHANGELOG.md)）。
-- **后端 schema 版本**：v13（migration 自动执行；含 v12 extended
-  permissions seeds + v13 reclassification undo history）。
-- **REST 路由数**：91 + WebSocket 1。
+- **后端 schema 版本**：v14（migration 自动执行；含 v12 extended
+  permissions seeds + v13 reclassification undo history + v14
+  `org.delete` 权限种子）。
+- **REST 路由数**：92（含 `DELETE /orgs/{id}`）+ WebSocket 1
+  （双挂 `/ws` + `/v1/ws`）。
 
 ### 10.1 前端开发者补充
 
