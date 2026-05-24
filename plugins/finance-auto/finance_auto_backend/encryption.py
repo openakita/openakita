@@ -74,6 +74,18 @@ def pack_payload(
     return header + b"".join(parts)
 
 
+class DecryptionError(RuntimeError):
+    """Raised when an encrypted payload cannot be decrypted / parsed.
+
+    EX-P2-6 (`_finance_plugin_audit_extended_report.md` §4.2): the
+    plugin previously caught this kind of failure inside read paths
+    and silently returned the raw blob / empty dicts.  The new
+    contract is to surface decryption failures so callers can
+    decide whether to refuse the read (default) or to opt in to
+    corrupted-data inspection via an explicit query flag.
+    """
+
+
 def unpack_payload(km: KeyManager, blob: bytes) -> dict[str, dict[str, Any]]:
     """Inverse of :func:`pack_payload`.
 
@@ -194,6 +206,7 @@ def split_parse_issue_payload(original: dict[str, Any]) -> tuple[dict[str, Any],
 
 
 __all__ = [
+    "DecryptionError",
     "HEADER_LEN",
     "IMPORT_PII_FIELDS",
     "ORG_DOCREF_FIELDS",

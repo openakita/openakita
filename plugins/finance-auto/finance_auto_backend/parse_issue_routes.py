@@ -24,7 +24,12 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from .encryption import pack_payload, split_parse_issue_payload, unpack_payload
+from .encryption import (
+    DecryptionError,
+    pack_payload,
+    split_parse_issue_payload,
+    unpack_payload,
+)
 from .models import (
     IssueType,
     LearningSample,
@@ -123,10 +128,19 @@ async def _persist_detected_issues(
 
 
 def _decode_original_data(
-    service: FinanceAutoService, raw_json: str
+    service: FinanceAutoService,
+    raw_json: str,
+    *,
+    accept_corrupted: bool = False,
 ) -> dict[str, Any]:
     """Reverse the encryption split.  Reads back any ``__enc_blob__`` hex
     payload and merges the decrypted fields back into the plain dict.
+
+    EX-P2-6: decryption failures now raise :class:`encryption.DecryptionError`
+    unless the caller explicitly opts in via ``accept_corrupted=True``
+    (typically wired to a ``?accept_corrupted=true`` query string).
+    The opt-in branch logs a WARNING so the audit trail keeps a record
+    of the silent fallback.
     """
     try:
         plain = json.loads(raw_json or "{}")
@@ -143,15 +157,30 @@ def _decode_original_data(
                 plain[k] = v
             for k, v in (decoded.get("pii") or {}).items():
                 plain[k] = v
-        except Exception as exc:  # noqa: BLE001 — never break the read path
-            logger.warning(
-                "finance-auto: parse_issue original_data decrypt failed: %s", exc
-            )
+        except Exception as exc:  # noqa: BLE001 — re-wrap into DecryptionError
+            if accept_corrupted:
+                logger.warning(
+                    "finance-auto: parse_issue original_data decrypt failed "
+                    "(accept_corrupted=true): %s",
+                    exc,
+                )
+            else:
+                logger.error(
+                    "finance-auto: parse_issue original_data decrypt failed: %s",
+                    exc,
+                )
+                raise DecryptionError(
+                    "parse_issue original_data decrypt failed: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
     return plain
 
 
 def _row_to_parse_issue(
-    service: FinanceAutoService, row: Any
+    service: FinanceAutoService,
+    row: Any,
+    *,
+    accept_corrupted: bool = False,
 ) -> ParseIssue:
     return ParseIssue(
         id=row["id"],
@@ -164,7 +193,9 @@ def _row_to_parse_issue(
         issue_type=row["issue_type"],
         severity=row["severity"],
         pattern_signature=row["pattern_signature"] or "",
-        original_data=_decode_original_data(service, row["original_data"]),
+        original_data=_decode_original_data(
+            service, row["original_data"], accept_corrupted=accept_corrupted
+        ),
         ai_suggestion=(json.loads(row["ai_suggestion"]) if row["ai_suggestion"] else None),
         ai_confidence=row["ai_confidence"],
         ai_consent_id=row["ai_consent_id"],
@@ -319,6 +350,13 @@ def register_parse_issue_endpoints(
         issue_type: IssueType | None = Query(default=None),
         limit: int = Query(default=200, ge=1, le=1000),
         offset: int = Query(default=0, ge=0),
+        accept_corrupted: bool = Query(
+            default=False,
+            description=(
+                "EX-P2-6 灾难恢复：明确接受损坏密文；缺省 false 下"
+                "decrypt 失败抛 500/decrypt_failed"
+            ),
+        ),
     ) -> ParseIssueListResponse:
         await service.get_org(org_id)
         clauses = ["org_id=?"]
@@ -339,7 +377,18 @@ def register_parse_issue_endpoints(
             (*args, limit, offset),
         ) as cur:
             rows = await cur.fetchall()
-        issues = [_row_to_parse_issue(service, r) for r in rows]
+        try:
+            issues = [
+                _row_to_parse_issue(
+                    service, r, accept_corrupted=accept_corrupted
+                )
+                for r in rows
+            ]
+        except DecryptionError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "decrypt_failed", "message": str(exc)},
+            ) from exc
 
         async with service.db.conn.execute(
             "SELECT COUNT(*) AS total, "

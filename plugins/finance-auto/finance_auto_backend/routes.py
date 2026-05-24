@@ -47,6 +47,7 @@ from .encryption import (
     IMPORT_PII_FIELDS,
     ORG_DOCREF_FIELDS,
     ORG_PII_FIELDS,
+    DecryptionError,
     pack_payload,
     unpack_payload,
 )
@@ -81,17 +82,41 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _maybe_unpack(km: KeyManager | None, blob: Any) -> dict[str, dict[str, Any]]:
+def _maybe_unpack(
+    km: KeyManager | None,
+    blob: Any,
+    *,
+    accept_corrupted: bool = False,
+) -> dict[str, dict[str, Any]]:
     """Return a normalised ``{amounts, pii, docrefs}`` dict from a row's
-    ``_encrypted_payload`` BLOB (or empty dicts if the BLOB / KeyManager is
-    unusable)."""
+    ``_encrypted_payload`` BLOB.
+
+    EX-P2-6 (extended audit §4.2): decryption failures are no longer
+    silently swallowed.  Any error inside :func:`unpack_payload` now
+    bubbles up as :class:`encryption.DecryptionError` unless the
+    caller explicitly opts in to corruption-tolerant reads (typically
+    via the route-level ``?accept_corrupted=true`` query string).
+    The opt-in branch still logs at WARNING so the audit trail
+    records the silent fallback.
+    """
     if km is None or not km.is_enabled() or not blob:
         return {"amounts": {}, "pii": {}, "docrefs": {}}
     try:
         return unpack_payload(km, bytes(blob))
-    except Exception as exc:  # noqa: BLE001 — never break list endpoints
-        logger.warning("finance-auto: encrypted payload decrypt failed: %s", exc)
-        return {"amounts": {}, "pii": {}, "docrefs": {}}
+    except Exception as exc:  # noqa: BLE001 — re-wrap into DecryptionError
+        if accept_corrupted:
+            logger.warning(
+                "finance-auto: encrypted payload decrypt failed "
+                "(accept_corrupted=true): %s",
+                exc,
+            )
+            return {"amounts": {}, "pii": {}, "docrefs": {}}
+        logger.error(
+            "finance-auto: encrypted payload decrypt failed: %s", exc
+        )
+        raise DecryptionError(
+            f"encrypted payload decrypt failed: {type(exc).__name__}: {exc}"
+        ) from exc
 
 
 def _prefer(enc_value: Any, raw_value: Any) -> Any:
@@ -114,8 +139,19 @@ def _has_blob(row) -> bool:
         return False
 
 
-def _row_to_organization(row, km: KeyManager | None = None) -> Organization:
-    payload = _maybe_unpack(km, row["_encrypted_payload"]) if _has_blob(row) else {"pii": {}, "docrefs": {}}
+def _row_to_organization(
+    row,
+    km: KeyManager | None = None,
+    *,
+    accept_corrupted: bool = False,
+) -> Organization:
+    payload = (
+        _maybe_unpack(
+            km, row["_encrypted_payload"], accept_corrupted=accept_corrupted
+        )
+        if _has_blob(row)
+        else {"pii": {}, "docrefs": {}}
+    )
     pii = payload.get("pii") or {}
     docrefs = payload.get("docrefs") or {}
     return Organization(
@@ -132,8 +168,19 @@ def _row_to_organization(row, km: KeyManager | None = None) -> Organization:
     )
 
 
-def _row_to_import(row, km: KeyManager | None = None) -> TrialBalanceImport:
-    payload = _maybe_unpack(km, row["_encrypted_payload"]) if _has_blob(row) else {"pii": {}}
+def _row_to_import(
+    row,
+    km: KeyManager | None = None,
+    *,
+    accept_corrupted: bool = False,
+) -> TrialBalanceImport:
+    payload = (
+        _maybe_unpack(
+            km, row["_encrypted_payload"], accept_corrupted=accept_corrupted
+        )
+        if _has_blob(row)
+        else {"pii": {}}
+    )
     pii = payload.get("pii") or {}
     return TrialBalanceImport(
         id=row["id"],
@@ -151,8 +198,19 @@ def _row_to_import(row, km: KeyManager | None = None) -> TrialBalanceImport:
     )
 
 
-def _row_to_balance_row(row, km: KeyManager | None = None) -> TrialBalanceRow:
-    payload = _maybe_unpack(km, row["_encrypted_payload"]) if _has_blob(row) else {"amounts": {}, "pii": {}}
+def _row_to_balance_row(
+    row,
+    km: KeyManager | None = None,
+    *,
+    accept_corrupted: bool = False,
+) -> TrialBalanceRow:
+    payload = (
+        _maybe_unpack(
+            km, row["_encrypted_payload"], accept_corrupted=accept_corrupted
+        )
+        if _has_blob(row)
+        else {"amounts": {}, "pii": {}}
+    )
     amounts = payload.get("amounts") or {}
     pii = payload.get("pii") or {}
 
@@ -281,21 +339,32 @@ class FinanceAutoService:
             raise HTTPException(status_code=500, detail=f"create_org failed: {exc}") from exc
         return org
 
-    async def list_orgs(self) -> list[Organization]:
+    async def list_orgs(
+        self, *, accept_corrupted: bool = False
+    ) -> list[Organization]:
         async with self.db.conn.execute(
             "SELECT * FROM organizations ORDER BY created_at ASC"
         ) as cur:
             rows = await cur.fetchall()
-        return [_row_to_organization(r, self.key_manager) for r in rows]
+        return [
+            _row_to_organization(
+                r, self.key_manager, accept_corrupted=accept_corrupted
+            )
+            for r in rows
+        ]
 
-    async def get_org(self, org_id: str) -> Organization:
+    async def get_org(
+        self, org_id: str, *, accept_corrupted: bool = False
+    ) -> Organization:
         async with self.db.conn.execute(
             "SELECT * FROM organizations WHERE id = ?", (org_id,)
         ) as cur:
             row = await cur.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail=f"org not found: {org_id}")
-        return _row_to_organization(row, self.key_manager)
+        return _row_to_organization(
+            row, self.key_manager, accept_corrupted=accept_corrupted
+        )
 
     # ----------------------- accounting periods (helper) --------------------
 
@@ -497,14 +566,19 @@ class FinanceAutoService:
             )
         await self.db.conn.commit()
 
-    async def list_imports(self, org_id: str) -> list[TrialBalanceImport]:
+    async def list_imports(
+        self, org_id: str, *, accept_corrupted: bool = False
+    ) -> list[TrialBalanceImport]:
         async with self.db.conn.execute(
             "SELECT * FROM trial_balance_imports WHERE org_id=? "
             "ORDER BY uploaded_at DESC",
             (org_id,),
         ) as cur:
             rows = await cur.fetchall()
-        return [_row_to_import(r, self.key_manager) for r in rows]
+        return [
+            _row_to_import(r, self.key_manager, accept_corrupted=accept_corrupted)
+            for r in rows
+        ]
 
     async def get_import(self, *, org_id: str, import_id: str) -> TrialBalanceImport:
         async with self.db.conn.execute(
@@ -517,7 +591,11 @@ class FinanceAutoService:
         return _row_to_import(row, self.key_manager)
 
     async def list_all_rows(
-        self, *, org_id: str, import_id: str
+        self,
+        *,
+        org_id: str,
+        import_id: str,
+        accept_corrupted: bool = False,
     ) -> list[TrialBalanceRow]:
         """Return every row of an import.  Used by the report generator
         (Stage 4) to feed the full balance set into the rule engine without
@@ -529,7 +607,12 @@ class FinanceAutoService:
             (import_id,),
         ) as cur:
             rows = await cur.fetchall()
-        return [_row_to_balance_row(r, self.key_manager) for r in rows]
+        return [
+            _row_to_balance_row(
+                r, self.key_manager, accept_corrupted=accept_corrupted
+            )
+            for r in rows
+        ]
 
     async def list_rows(
         self,
@@ -538,6 +621,7 @@ class FinanceAutoService:
         import_id: str,
         limit: int,
         offset: int,
+        accept_corrupted: bool = False,
     ) -> tuple[list[TrialBalanceRow], int]:
         # First validate ownership (otherwise a wrong org_id silently returns []).
         await self.get_import(org_id=org_id, import_id=import_id)
@@ -552,7 +636,12 @@ class FinanceAutoService:
             (import_id, limit, offset),
         ) as cur:
             rows = await cur.fetchall()
-        return [_row_to_balance_row(r, self.key_manager) for r in rows], total
+        return [
+            _row_to_balance_row(
+                r, self.key_manager, accept_corrupted=accept_corrupted
+            )
+            for r in rows
+        ], total
 
 
 # ---------------------------------------------------------------------------
@@ -589,8 +678,22 @@ def build_router(service: FinanceAutoService) -> APIRouter:
         "/orgs",
         summary="列出账套",
     )
-    async def list_orgs() -> OrgListResponse:
-        rows = await service.list_orgs()
+    async def list_orgs(
+        accept_corrupted: bool = Query(
+            default=False,
+            description=(
+                "EX-P2-6 灾难恢复：明确接受损坏密文（默认 false 时静默"
+                "fallback 已禁用，解密失败抛 500/decrypt_failed）"
+            ),
+        ),
+    ) -> OrgListResponse:
+        try:
+            rows = await service.list_orgs(accept_corrupted=accept_corrupted)
+        except DecryptionError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "decrypt_failed", "message": str(exc)},
+            ) from exc
         return OrgListResponse(organizations=rows, total=len(rows))
 
     @router.post(
@@ -712,9 +815,20 @@ def build_router(service: FinanceAutoService) -> APIRouter:
         "/orgs/{org_id}/imports",
         summary="列出某账套的导入记录",
     )
-    async def list_imports(org_id: str) -> ImportListResponse:
+    async def list_imports(
+        org_id: str,
+        accept_corrupted: bool = Query(default=False),
+    ) -> ImportListResponse:
         await service.get_org(org_id)
-        imps = await service.list_imports(org_id)
+        try:
+            imps = await service.list_imports(
+                org_id, accept_corrupted=accept_corrupted
+            )
+        except DecryptionError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "decrypt_failed", "message": str(exc)},
+            ) from exc
         return ImportListResponse(imports=imps, total=len(imps))
 
     @router.get(
@@ -726,13 +840,21 @@ def build_router(service: FinanceAutoService) -> APIRouter:
         import_id: str,
         limit: int = Query(default=20, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
+        accept_corrupted: bool = Query(default=False),
     ) -> RowListResponse:
-        rows, total = await service.list_rows(
-            org_id=org_id,
-            import_id=import_id,
-            limit=limit,
-            offset=offset,
-        )
+        try:
+            rows, total = await service.list_rows(
+                org_id=org_id,
+                import_id=import_id,
+                limit=limit,
+                offset=offset,
+                accept_corrupted=accept_corrupted,
+            )
+        except DecryptionError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "decrypt_failed", "message": str(exc)},
+            ) from exc
         return RowListResponse(rows=rows, total=total, limit=limit, offset=offset)
 
     # M1 W2 Stage 4 / 5 / 6 + W3 Stage 1 + M2 Biz Stage 2 / 3 / 6 -- attach
