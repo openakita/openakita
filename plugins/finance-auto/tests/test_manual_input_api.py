@@ -158,6 +158,87 @@ async def test_cash_flow_report_consumes_manual_inputs(api):
 
 
 @pytest.mark.asyncio
+async def test_put_with_expected_version_rejects_stale_write(api):
+    """Optimistic-lock path (P2-2 audit fix): a stale ``expected_version``
+    must surface as 409 instead of silently overwriting."""
+    client, _ = api
+    base = "/api/plugins/finance-auto"
+
+    r = client.post(
+        f"{base}/orgs",
+        json={"name": "并发测试", "code": "MI_LOCK", "industry": "general",
+              "standard": "small"},
+    )
+    org_id = r.json()["id"]
+
+    # Initial PUT — no version yet, server picks v1.
+    r = client.put(
+        f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/interest_paid",
+        json={"value": "1000.00", "decided_by": "tester"},
+    )
+    assert r.status_code == 200
+    assert r.json()["version"] == 1
+
+    # Simulate two concurrent clients that both observe v1.
+    # Client A wins — version goes to 2.
+    r = client.put(
+        f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/interest_paid",
+        json={"value": "2000.00", "decided_by": "A", "expected_version": 1},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["version"] == 2
+
+    # Client B still believes v1 → conflict.
+    r = client.put(
+        f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/interest_paid",
+        json={"value": "3000.00", "decided_by": "B", "expected_version": 1},
+    )
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["error"] == "version_conflict"
+    assert detail["expected_version"] == 1
+    assert detail["current_version"] == 2
+
+    # Stored value still reflects A's write.
+    r = client.get(f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs")
+    body = r.json()
+    slot = next(s for s in body["slots"] if s["key"] == "interest_paid")
+    assert slot["record"]["value"] == "2000.00"
+    assert slot["record"]["version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_put_with_expected_version_on_empty_slot(api):
+    """expected_version=0 on a brand-new slot succeeds; expected_version=5
+    on the same brand-new slot fails."""
+    client, _ = api
+    base = "/api/plugins/finance-auto"
+    r = client.post(
+        f"{base}/orgs",
+        json={"name": "新建插槽测试", "code": "MI_NEW", "industry": "general",
+              "standard": "small"},
+    )
+    org_id = r.json()["id"]
+
+    # expected_version=0 → treated as "I confirm slot is empty" — succeeds.
+    r = client.put(
+        f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/interest_paid",
+        json={"value": "100", "expected_version": 0},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["version"] == 1
+
+    # Fresh slot for another field — expected_version=7 (unrealistic) →
+    # immediate 409 without an INSERT side-effect.
+    r = client.put(
+        f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/vat_output",
+        json={"value": "999", "expected_version": 7},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["current_version"] == 0
+
+
+@pytest.mark.asyncio
 async def test_cash_flow_warns_on_missing_manual_inputs(api):
     client, service = api
     base = "/api/plugins/finance-auto"

@@ -794,6 +794,13 @@ class ManualInputSubmitRequest(BaseModel):
     source: ManualInputSource = "manual"
     notes: str | None = None
     decided_by: str = "local"
+    expected_version: int | None = None
+    """Optional optimistic-lock token. Pass the ``version`` returned by a
+    prior GET / PUT to detect concurrent writes — when present and the
+    stored row's ``version`` differs the server returns HTTP 409 with the
+    actual current version so the client can re-fetch + retry. Leaving
+    the field unset preserves the old read-modify-write behaviour for
+    callers that have not been updated yet."""
 
 
 # ---------------------------------------------------------------------------
