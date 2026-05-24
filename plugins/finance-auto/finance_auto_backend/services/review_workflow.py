@@ -201,21 +201,36 @@ class ReviewWorkflowService:
 
         set_clause = ", ".join(f"{k}=?" for k in updates) + ", version=version+1"
         args = list(updates.values()) + [workflow_id, int(row["version"])]
-        cur = await self.conn.execute(
-            f"UPDATE review_workflows SET {set_clause} "
-            f"WHERE workflow_id=? AND version=?",
-            tuple(args),
-        )
-        if cur.rowcount == 0:
-            await self.conn.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"workflow {workflow_id} version changed during transition "
-                    "(optimistic-lock contention); reload and retry"
-                ),
+        # EX-P2-5: surround the optimistic-lock UPDATE in an explicit
+        # try/commit/except/rollback so any error between the rowcount
+        # check and the commit (e.g. CHECK constraint failure on an
+        # extra column injected via ``extra_updates``) leaves the
+        # workflow row untouched on disk.
+        try:
+            cur = await self.conn.execute(
+                f"UPDATE review_workflows SET {set_clause} "
+                f"WHERE workflow_id=? AND version=?",
+                tuple(args),
             )
-        await self.conn.commit()
+            if cur.rowcount == 0:
+                await self.conn.rollback()
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"workflow {workflow_id} version changed during "
+                        "transition (optimistic-lock contention); reload "
+                        "and retry"
+                    ),
+                )
+            await self.conn.commit()
+        except HTTPException:
+            raise
+        except Exception:
+            try:
+                await self.conn.rollback()
+            except Exception:  # noqa: BLE001 — rollback best-effort
+                pass
+            raise
         updated = await self._load(workflow_id)
         return _row_to_workflow(updated)
 

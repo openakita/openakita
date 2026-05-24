@@ -319,25 +319,39 @@ class IndirectCashFlowEngine:
         data_source.  Skips keys whose value is exactly zero (so the
         generator's "rendered as 0" warning still fires for unfilled
         manual inputs)."""
+        # EX-P2-5: persist all keys atomically — historically a UNIQUE
+        # CHECK failure on the 17th key would leave the first 16
+        # upserts committed in autocommit mode.  Guard the whole loop
+        # in a single try/commit/except/rollback envelope so a
+        # mid-batch crash backs out everything and the caller sees
+        # the original exception.
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         written = 0
-        for key, val in computed.items():
-            row_id = f"mi_{org_id[-4:]}_{period_id}_{key}"
-            await self._conn.execute(
-                "INSERT INTO manual_inputs(id, org_id, period_id, field_key, "
-                "field_label, value, value_type, source, notes, decided_by, "
-                "decided_at, version) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,1) "
-                "ON CONFLICT(org_id, period_id, field_key) DO UPDATE SET "
-                "value=excluded.value, source=excluded.source, "
-                "decided_at=excluded.decided_at, version=manual_inputs.version+1",
-                (
-                    row_id, org_id, period_id, key, key, str(val), "cny",
-                    "indirect_cf_engine", None, decided_by, now,
-                ),
-            )
-            written += 1
-        await self._conn.commit()
+        try:
+            for key, val in computed.items():
+                row_id = f"mi_{org_id[-4:]}_{period_id}_{key}"
+                await self._conn.execute(
+                    "INSERT INTO manual_inputs(id, org_id, period_id, "
+                    "field_key, field_label, value, value_type, source, "
+                    "notes, decided_by, decided_at, version) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,1) "
+                    "ON CONFLICT(org_id, period_id, field_key) DO UPDATE "
+                    "SET value=excluded.value, source=excluded.source, "
+                    "decided_at=excluded.decided_at, "
+                    "version=manual_inputs.version+1",
+                    (
+                        row_id, org_id, period_id, key, key, str(val),
+                        "cny", "indirect_cf_engine", None, decided_by, now,
+                    ),
+                )
+                written += 1
+            await self._conn.commit()
+        except Exception:
+            try:
+                await self._conn.rollback()
+            except Exception:  # noqa: BLE001 — rollback best-effort
+                pass
+            raise
         return written
 
 

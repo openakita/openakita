@@ -315,32 +315,44 @@ class ConsolidationService:
         ]
 
         # ----- persist ----------------------------------------------
+        # EX-P2-5: wrap the multi-statement write in try/commit/except/
+        # rollback.  ``run`` writes one row to ``consolidated_reports``
+        # plus (via callers downstream) potentially several into
+        # ``elimination_entries``.  If aiosqlite raises mid-write we
+        # leave NO partial consolidated_reports row behind.
         now = _utcnow()
-        cur = await self._conn.execute(
-            "INSERT INTO consolidated_reports(group_id, period_id, kind, "
-            "accounting_standard, status, cells_json, minority_interest, "
-            "consolidation_meta, member_orgs_snapshot, elimination_ids_json, "
-            "warnings_json, generated_at, generated_by, version) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
-            (
-                group_id, payload.period_id, payload.kind,
-                payload.accounting_standard or "small_enterprise",
-                "ok",
-                json.dumps(cells_out, ensure_ascii=False),
-                str(minority_interest),
-                json.dumps({
-                    "group_name": group.name, "member_count": len(members),
-                    "elimination_count": len(elim_ids),
-                }, ensure_ascii=False),
-                json.dumps(member_snapshots, ensure_ascii=False),
-                json.dumps(elim_ids),
-                json.dumps(warnings, ensure_ascii=False),
-                now, payload.actor_user_id,
-            ),
-        )
-        rid = cur.lastrowid
-        await cur.close()
-        await self._conn.commit()
+        try:
+            cur = await self._conn.execute(
+                "INSERT INTO consolidated_reports(group_id, period_id, kind, "
+                "accounting_standard, status, cells_json, minority_interest, "
+                "consolidation_meta, member_orgs_snapshot, elimination_ids_json, "
+                "warnings_json, generated_at, generated_by, version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
+                (
+                    group_id, payload.period_id, payload.kind,
+                    payload.accounting_standard or "small_enterprise",
+                    "ok",
+                    json.dumps(cells_out, ensure_ascii=False),
+                    str(minority_interest),
+                    json.dumps({
+                        "group_name": group.name, "member_count": len(members),
+                        "elimination_count": len(elim_ids),
+                    }, ensure_ascii=False),
+                    json.dumps(member_snapshots, ensure_ascii=False),
+                    json.dumps(elim_ids),
+                    json.dumps(warnings, ensure_ascii=False),
+                    now, payload.actor_user_id,
+                ),
+            )
+            rid = cur.lastrowid
+            await cur.close()
+            await self._conn.commit()
+        except Exception:
+            try:
+                await self._conn.rollback()
+            except Exception:  # noqa: BLE001 — rollback best-effort
+                pass
+            raise
         return await self.get_report(consolidated_report_id=rid)
 
     async def get_report(

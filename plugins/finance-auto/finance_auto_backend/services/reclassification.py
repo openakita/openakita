@@ -242,81 +242,96 @@ class ReclassificationService:
             f"input rows={len(rows)}"
         )
 
-        # Persist run header.
-        cur = await self._conn.execute(
-            "INSERT INTO reclassification_runs (org_id, period_id, import_id, "
-            "mode, rules_count, items_count, total_amount, parse_issue_ids_json, "
-            "started_at, finished_at, triggered_by, status, notes, version) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
-            (
-                org_id,
-                payload.period_id,
-                import_id,
-                mode,
-                len(rules),
-                len(items),
-                str(total_amount),
-                "[]",
-                started,
-                None,
-                payload.triggered_by,
-                "ok",
-                notes,
-            ),
-        )
-        run_id = cur.lastrowid
-        await cur.close()
-
-        # EX-P2-3: per-item rows go through executemany so a 1000-item
-        # batch issues a single round-trip into SQLite instead of N
-        # individual INSERTs.  This both cuts wall-clock for large
-        # reclassification runs and makes the implicit transaction
-        # boundary more obvious — every item lands atomically with
-        # the run header inside the existing autocommit-off transaction.
-        if items:
-            batch_rows = [
+        # EX-P2-5: wrap the multi-table mutation in a try/commit /
+        # except/rollback envelope so any failure mid-batch (e.g. an
+        # FK violation on parse_issues, or aiosqlite raising during
+        # executemany) leaves the run header AND its items rolled
+        # back together.  Without this the run row would survive on
+        # disk with 0 items, surfaced as a half-written run in the UI.
+        try:
+            # Persist run header.
+            cur = await self._conn.execute(
+                "INSERT INTO reclassification_runs (org_id, period_id, "
+                "import_id, mode, rules_count, items_count, total_amount, "
+                "parse_issue_ids_json, started_at, finished_at, "
+                "triggered_by, status, notes, version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
                 (
-                    run_id, it["rule_id"], it["rule_name"], it["source_account"],
-                    it["target_account"], it["amount"], it["direction"],
-                    it["reason"], it["matched_row_id"], started,
-                )
-                for it in items
-            ]
-            await self._conn.executemany(
-                "INSERT INTO reclassification_run_items (run_id, rule_id, "
-                "rule_name, source_account, target_account, amount, direction, "
-                "reason, matched_row_id, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                batch_rows,
+                    org_id,
+                    payload.period_id,
+                    import_id,
+                    mode,
+                    len(rules),
+                    len(items),
+                    str(total_amount),
+                    "[]",
+                    started,
+                    None,
+                    payload.triggered_by,
+                    "ok",
+                    notes,
+                ),
             )
+            run_id = cur.lastrowid
+            await cur.close()
 
-        # Apply mode: write ParseIssue rows when amount > threshold.
-        parse_issue_ids: list[str] = []
-        if mode == "apply":
-            for it in items:
-                if Decimal(it["amount"]) > it["_threshold_for_issue"]:
-                    pid = await self._emit_parse_issue(
-                        org_id=org_id,
-                        period_id=payload.period_id,
-                        import_id=import_id,
-                        rule_id=it["rule_id"],
-                        rule_name=it["rule_name"],
-                        amount=it["amount"],
-                        source=it["source_account"],
-                        target=it["target_account"],
-                        severity=it["_severity"],
-                        triggered_by=payload.triggered_by,
+            # EX-P2-3: per-item rows go through executemany so a 1000-item
+            # batch issues a single round-trip into SQLite instead of N
+            # individual INSERTs.  This both cuts wall-clock for large
+            # reclassification runs and makes the implicit transaction
+            # boundary more obvious — every item lands atomically with
+            # the run header inside the existing autocommit-off transaction.
+            if items:
+                batch_rows = [
+                    (
+                        run_id, it["rule_id"], it["rule_name"],
+                        it["source_account"], it["target_account"],
+                        it["amount"], it["direction"], it["reason"],
+                        it["matched_row_id"], started,
                     )
-                    if pid:
-                        parse_issue_ids.append(pid)
+                    for it in items
+                ]
+                await self._conn.executemany(
+                    "INSERT INTO reclassification_run_items (run_id, "
+                    "rule_id, rule_name, source_account, target_account, "
+                    "amount, direction, reason, matched_row_id, "
+                    "created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    batch_rows,
+                )
 
-        finished = _utcnow()
-        await self._conn.execute(
-            "UPDATE reclassification_runs SET finished_at=?, "
-            "parse_issue_ids_json=?, version=version+1 WHERE run_id=?",
-            (finished, json.dumps(parse_issue_ids), run_id),
-        )
-        await self._conn.commit()
+            # Apply mode: write ParseIssue rows when amount > threshold.
+            parse_issue_ids: list[str] = []
+            if mode == "apply":
+                for it in items:
+                    if Decimal(it["amount"]) > it["_threshold_for_issue"]:
+                        pid = await self._emit_parse_issue(
+                            org_id=org_id,
+                            period_id=payload.period_id,
+                            import_id=import_id,
+                            rule_id=it["rule_id"],
+                            rule_name=it["rule_name"],
+                            amount=it["amount"],
+                            source=it["source_account"],
+                            target=it["target_account"],
+                            severity=it["_severity"],
+                            triggered_by=payload.triggered_by,
+                        )
+                        if pid:
+                            parse_issue_ids.append(pid)
+
+            finished = _utcnow()
+            await self._conn.execute(
+                "UPDATE reclassification_runs SET finished_at=?, "
+                "parse_issue_ids_json=?, version=version+1 WHERE run_id=?",
+                (finished, json.dumps(parse_issue_ids), run_id),
+            )
+            await self._conn.commit()
+        except Exception:
+            try:
+                await self._conn.rollback()
+            except Exception:  # noqa: BLE001 — rollback best-effort
+                pass
+            raise
 
         return await self.get_run(run_id=run_id)
 
