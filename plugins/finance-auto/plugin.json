@@ -1,25 +1,30 @@
 {
   "id": "finance-auto",
   "name": "Finance Auto",
-  "version": "0.1.0",
+  "version": "1.0.0-rc1",
   "display_name_zh": "财务自动化",
   "display_name_en": "Finance Auto",
-  "description": "Finance automation — multi-org books, trial balance import, accounting reports",
+  "description": "Finance automation v1.0 RC — 90 REST routes + 1 WS, multi-org books, trial-balance import with 3-tier .xls parser, GAAP+CAS reports, multi-auditor RBAC, AI-assisted scenarios with consent dialog, encrypted backup + key rotation, peer benchmarks, notes auto-generation",
   "description_i18n": {
-    "zh": "财务自动化 — 多账套管理、余额表导入解析、报表自动生成（M1 W1：账套 + 余额表导入闭环）",
-    "en": "Finance automation — multi-org books, trial-balance import & parsing, automated reports (M1 W1: org + trial-balance import loop)"
+    "zh": "财务自动化 v1.0 RC — 多账套管理 / 余额表导入 / 资产负债表 + 利润表 + 现金流报表自动生成 / 多审计师协作 / AI 三档敏感度 + 用户授权 / 加密备份 + 密钥轮换 / 同业 Peer 对比 / 附注自动生成（90 路由 + 1 WS）",
+    "en": "Finance automation v1.0 RC — multi-org books, trial-balance import (3-tier .xls parser), automated GAAP+CAS reports, multi-auditor RBAC workflow, AI scenarios with consent dialog, encrypted backup + key rotation, peer benchmarks, automatic notes (90 routes + 1 WS)"
   },
   "type": "python",
   "entry": "plugin.py",
   "author": "OpenAkita",
   "category": "productivity",
-  "tags": ["finance", "accounting", "trial-balance", "audit"],
+  "tags": ["finance", "accounting", "trial-balance", "audit", "ai-assisted", "multi-tenant"],
   "permissions": [
     "log",
     "routes.register",
     "config.read",
     "config.write",
-    "data.own"
+    "data.own",
+    "file.read",
+    "file.write",
+    "keyring",
+    "native.dialog",
+    "websocket.serve"
   ],
   "requires": {
     "openakita": ">=1.27.0",
@@ -27,6 +32,16 @@
     "plugin_ui_api": "~1",
     "python": ">=3.11"
   },
+  "min_python_version": "3.11",
+  "python_dependencies": [
+    "openpyxl>=3.1.5,<4.0",
+    "xlrd==1.2.0",
+    "xltpl>=0.30,<1.0",
+    "keyring>=24.0,<26.0",
+    "pywin32>=306; sys_platform == \"win32\"",
+    "cryptography>=42.0,<46.0"
+  ],
+  "python_dependencies_file": "requirements.txt",
   "provides": {
     "routes": true
   },
