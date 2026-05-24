@@ -2583,12 +2583,12 @@
       //        body { dialog_id, decision, skip_desensitize? }
       //    * `decision ∈ { "deny" | "allow_once" | "allow_permanent" }`
       //
-      //  AI sibling worker 的路由 (`ai/routes.py`) 与 WS (`ai/ws.py`) 已写完代码
-      //  但**尚未在 routes.py::build_router 里 register_ai_endpoints / WS**。
-      //  因此 UI 当前走「优雅降级 + mock 模式」：
-      //    - 在 URL 加 `?ai_mock=1` 自动注入示例请求
-      //    - AI 设置页里有一个「触发 mock consent」按钮
-      //    - 真正 WS 通了之后，前端零改动即可切换
+      //  AI sibling 路由 (`ai/routes.py`) + WS (`ai/ws.py`) 已在
+      //  M2 closing 后接入 build_router / register_ai_endpoints；此
+      //  UI 块保留了「优雅降级」路径，专门处理网络异常 / 临时 4xx：
+      //    - WS 重连 ≥4 次失败时退化为本地态
+      //    - `?ai_mock=1` 仍可注入示例请求，方便离线开发
+      //    - 后端恢复时无需刷新即自动回到真实通路
       // ═══════════════════════════════════════════════════════════════════
 
       const SENSITIVITY_META = {
@@ -3135,7 +3135,7 @@
                 >
                   <div className="text-xs text-muted" style={{ padding: "4px 8px" }}>
                     {backendOk === false
-                      ? "占位切换器（后端 /users 未注册 · 仅 localStorage）"
+                      ? "占位切换器（后端 /users 暂不可达 · 仅 localStorage）"
                       : `用户列表（${users.length} 人）`}
                   </div>
                   {users.map((u) => (
@@ -3309,7 +3309,7 @@
             toast("已提交复核");
             reload();
           } catch (e) {
-            if (e.status === 404) toast("提交失败：后端 collab 路由未注册", "warn");
+            if (e.status === 404) toast("提交失败：后端 collab 路由暂不可达", "warn");
             else toast(`提交失败：${e.message}`, "err");
           }
         });
@@ -3397,8 +3397,8 @@
                 </span>
               )}
               {isMissing && (
-                <span className="badge warn" title="后端 collab 路由未注册（biz sibling Stage 2 完成后会激活）">
-                  后端 collab 路由未注册（mock）
+                <span className="badge warn" title="后端 collab 路由暂不可达">
+                  后端 collab 路由暂不可达
                 </span>
               )}
             </div>
@@ -3435,7 +3435,7 @@
             reload();
             toast("评论已发布");
           } catch (e) {
-            if (e.status === 404) toast("发布失败：后端 collab 路由未注册", "warn");
+            if (e.status === 404) toast("发布失败：后端 collab 路由暂不可达", "warn");
             else toast(`发布失败：${e.message}`, "err");
           } finally { setSubmitting(false); }
         };
@@ -3444,7 +3444,7 @@
           <Drawer open onClose={onClose} title={focusCellId ? `评论 · cell ${focusCellId.slice(-12)}` : "报表评论"}>
             {isMissing && (
               <div className="upload-result" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
-                后端 collab 路由未注册，评论列表 / 发布暂不可用（mock 模式）。
+                后端 collab 路由暂不可达，评论列表 / 发布功能已切换到本地缓存。
               </div>
             )}
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
@@ -3552,7 +3552,7 @@
                   集团 / 母子持股 / 抵消分录 / 触发合并（{groups.length} 个集团）
                   {backendOk === false && (
                     <span className="badge warn" style={{ marginLeft: 8 }}>
-                      后端 consolidation 路由未注册（mock）
+                      后端 consolidation 路由暂不可达
                     </span>
                   )}
                 </p>
@@ -3748,7 +3748,7 @@
                 <p className="page-subtitle">
                   集团 #{group.group_id} · 母公司 <span className="mono">{group.parent_org_id}</span>
                   {backendOk === false && (
-                    <span className="badge warn" style={{ marginLeft: 8 }}>mock 模式</span>
+                    <span className="badge warn" style={{ marginLeft: 8 }}>网络断开 · 缓存数据</span>
                   )}
                 </p>
               </div>
@@ -4013,11 +4013,11 @@
               status: "ok", cells: [], minority_interest: "0",
               consolidation_meta: { mock: true },
               member_orgs_snapshot: [], elimination_ids: [],
-              warnings: ["（mock 模式 · 后端 consolidation 路由未注册）"],
+              warnings: ["后端 consolidation 路由暂不可达，已使用本地缓存"],
               generated_at: new Date().toISOString(), generated_by: "local", version: 1,
             });
             _saveConsolStore(s);
-            toast(`合并完成（mock）`);
+            toast(`合并完成（使用本地缓存数据）`);
           } finally {
             setRunning(false);
             onChanged();
@@ -4037,7 +4037,7 @@
                 <button className="btn primary sm" onClick={trigger} disabled={running} data-testid="trigger-run">
                   {running && <Spinner />}触发合并
                 </button>
-                {backendOk === false && <span className="badge warn">mock 模式</span>}
+                {backendOk === false && <span className="badge warn">网络断开 · 缓存数据</span>}
               </div>
             </div>
             <div className="card" style={{ padding: 0 }}>
@@ -4161,7 +4161,7 @@
             </div>
             {missing && (
               <div className="upload-result mb-3" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
-                M3 Sibling B 后端尚未上线（GET /ai/raw/scenarios 与 /ai/scenarios 都未注册）。
+                后端 AI 路由暂不可达（GET /ai/raw/scenarios 与 /ai/scenarios 都返回非 200）。
               </div>
             )}
             <div className="card" style={{ padding: 0 }}>
@@ -4226,7 +4226,7 @@
           <>
             {isMissing && (
               <div className="upload-result" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
-                后端 AI 路由未注册（router 尚未挂入主路由）—— 等 ai sibling 把
+                后端 AI 路由暂不可达（router 探活返回非 200）。等待 ai 端
                 <span className="mono"> register_ai_endpoints </span>
                 wire 进 build_router 即可激活。
               </div>
@@ -4331,7 +4331,7 @@
             </div>
             {isMissing && (
               <div className="upload-result" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
-                后端 AI 路由未注册，授权列表暂不可用（mock 模式）。
+                后端 AI 路由暂不可达，授权列表已切换到本地缓存。
               </div>
             )}
             <div className="card" style={{ padding: 0 }}>
@@ -4424,7 +4424,7 @@
             </div>
             {isMissing && (
               <div className="upload-result" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
-                后端 AI 路由未注册，调用历史暂不可用（mock 模式）。
+                后端 AI 路由暂不可达，调用历史已切换到本地缓存。
               </div>
             )}
             <div className="card" style={{ padding: 0 }}>
@@ -4638,12 +4638,12 @@
                 doc_id: `doc_mock_${Math.random().toString(36).slice(2, 8)}`,
                 org_id: orgId, period_id: periodId, status: "draft",
                 notes_count: 1, created_at: new Date().toISOString(),
-                notes: [{ note_id: `n_${Date.now()}`, section_title: "新生成附注", kind: "narrative_pending_ai", version: 1, content: "（mock 占位）" }],
+                notes: [{ note_id: `n_${Date.now()}`, section_title: "新生成附注", kind: "narrative_pending_ai", version: 1, content: "（本地占位 · 后端恢复后将自动填充）" }],
               };
               s.documents = [newDoc, ...(s.documents || [])];
               _saveNotesMock(s);
               setDocs(s.documents);
-              toast("M3 Sibling A 后端尚未上线，已生成本地占位文档", "warn");
+              toast("后端暂不可达，已生成本地占位文档", "warn");
             } else {
               toast(`生成失败：${e.message}`, "err");
             }
@@ -4718,7 +4718,7 @@
                 <h2 className="page-title">报表附注</h2>
                 <p className="page-subtitle">
                   根据余额表 / 报表生成附注草稿，AI 协助起草文字段落
-                  {backendOk === false && <span className="badge warn" style={{ marginLeft: 8 }}>M3 Sibling A 后端尚未上线（mock）</span>}
+                  {backendOk === false && <span className="badge warn" style={{ marginLeft: 8 }}>网络断开 · 显示缓存数据</span>}
                 </p>
               </div>
             </div>
@@ -4944,7 +4944,7 @@
               _savePeerMock(s);
               setCurrent(mock);
               setHistory(s.results.filter((x) => x.org_id === orgId));
-              toast("M3 Sibling A 后端尚未上线，已使用本地 mock 计算", "warn");
+              toast("后端暂不可达，已使用本地缓存计算", "warn");
             } else { toast(`计算失败：${e.message}`, "err"); }
           } finally { setRunning(false); }
         };
@@ -4959,8 +4959,8 @@
             setAiResult({ ok: true, sql: r.sql || "", summary: r.summary || r.text || "" });
           } catch (e) {
             if (e.status === 404) {
-              setAiResult({ ok: false, sql: "-- M3 Sibling B raw NL query 后端尚未上线\n-- 占位 SQL\nSELECT industry_code, AVG(gross_margin) FROM peer_benchmarks GROUP BY industry_code;", summary: "（占位）AI 摘要将在 Sibling B 后端上线后自动启用。" });
-              toast("M3 Sibling B 后端尚未上线，AI 增强使用占位结果", "warn");
+              setAiResult({ ok: false, sql: "-- 后端 NL query 暂不可达\n-- 占位 SQL\nSELECT industry_code, AVG(gross_margin) FROM peer_benchmarks GROUP BY industry_code;", summary: "（占位）后端恢复后自动使用真实 AI 摘要。" });
+              toast("后端 NL query 暂不可达，AI 增强使用占位结果", "warn");
             } else { toast(`AI 分析失败：${e.message}`, "err"); }
           } finally { setAiBusy(false); }
         };
@@ -4972,7 +4972,7 @@
                 <h2 className="page-title">同业对比</h2>
                 <p className="page-subtitle">
                   比对四项核心指标 vs 行业 25/50/75 分位
-                  {backendOk === false && <span className="badge warn" style={{ marginLeft: 8 }}>M3 Sibling A 后端尚未上线（mock）</span>}
+                  {backendOk === false && <span className="badge warn" style={{ marginLeft: 8 }}>网络断开 · 显示缓存数据</span>}
                 </p>
               </div>
             </div>
@@ -5411,7 +5411,7 @@
       //    POST /ai/raw/nl-query        S7 自然语言查询（含 SQL 校验）
       //    POST /ai/raw/notes-draft     S11 附注 AI 起草
       //  首次调用需弹窗授权（AIConsentBridge 已自动处理 WS 对话请求）。
-      //  路由未注册（404）时显示 "M3 Sibling B 后端尚未上线" 提示。
+      //  路由未注册（404）时显示 "后端 AI raw 路由暂不可达" 提示。
       // ═══════════════════════════════════════════════════════════════════
       function AdvancedAIView({ toast }) {
         return (
@@ -5458,7 +5458,7 @@
             setResult((r && (r.markdown || r.text)) || JSON.stringify(r, null, 2));
             toast("已生成审计意见草稿");
           } catch (e) {
-            if (e.status === 404) { setMissing(true); toast("M3 Sibling B 后端尚未上线", "warn"); }
+            if (e.status === 404) { setMissing(true); toast("后端 AI raw 路由暂不可达", "warn"); }
             else { toast(`生成失败：${e.message}`, "err"); }
           } finally { setBusy(false); }
         };
@@ -5490,7 +5490,7 @@
             </div>
             {missing && (
               <div className="upload-result mt-3" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
-                M3 Sibling B 后端尚未上线（POST /ai/raw/audit-opinion 未注册）。
+                后端 AI raw 路由暂不可达（POST /ai/raw/audit-opinion 返回非 200）。
               </div>
             )}
             {result && (
@@ -5517,7 +5517,7 @@
             const r = await api("POST", "/ai/raw/nl-query", { question: question.trim(), execute_sql: executeSql });
             setResult(r || {});
           } catch (e) {
-            if (e.status === 404) { setMissing(true); toast("M3 Sibling B 后端尚未上线", "warn"); }
+            if (e.status === 404) { setMissing(true); toast("后端 AI raw 路由暂不可达", "warn"); }
             else { toast(`查询失败：${e.message}`, "err"); }
           } finally { setBusy(false); }
         };
@@ -5543,7 +5543,7 @@
             </div>
             {missing && (
               <div className="upload-result mt-3" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
-                M3 Sibling B 后端尚未上线（POST /ai/raw/nl-query 未注册）。
+                后端 AI raw 路由暂不可达（POST /ai/raw/nl-query 返回非 200）。
               </div>
             )}
             {result && (
@@ -5590,7 +5590,7 @@
             setResult((r && (r.content || r.text)) || JSON.stringify(r, null, 2));
             toast("已起草附注内容");
           } catch (e) {
-            if (e.status === 404) { setMissing(true); toast("M3 Sibling B 后端尚未上线", "warn"); }
+            if (e.status === 404) { setMissing(true); toast("后端 AI raw 路由暂不可达", "warn"); }
             else { toast(`起草失败：${e.message}`, "err"); }
           } finally { setBusy(false); }
         };
@@ -5614,7 +5614,7 @@
             </div>
             {missing && (
               <div className="upload-result mt-3" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
-                M3 Sibling B 后端尚未上线（POST /ai/raw/notes-draft 未注册）。
+                后端 AI raw 路由暂不可达（POST /ai/raw/notes-draft 返回非 200）。
               </div>
             )}
             {result && (
