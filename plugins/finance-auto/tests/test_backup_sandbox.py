@@ -1,17 +1,25 @@
-"""Tests for backup/restore sandbox + overwrite policy (EX-P1-1).
+"""Tests for backup/restore sandbox + KDF + overwrite policy.
 
 Covers:
 
-* ``dest_dir`` (create) and ``target_db_path`` (restore) path-traversal
-  sandbox enforcement.
-* 409 ``target_already_exists`` guard with ``overwrite=true``
-  confirmation flag.
+* **EX-P1-1** ``dest_dir`` (create) and ``target_db_path`` (restore)
+  path-traversal sandbox enforcement.
+* **EX-P1-1** 409 ``target_already_exists`` guard with
+  ``overwrite=true`` confirmation flag.
+* **EX-P1-3 / EX-P2-2** PBKDF2 default lifted to OWASP-2023's 600k
+  while older 200k archives still decrypt via the per-archive
+  ``manifest.json["kdf_iterations"]`` field; env-var override is
+  honoured for dev / CI scenarios.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import tarfile
 from pathlib import Path
+from unittest import mock
 
 import pytest
 from fastapi import HTTPException
@@ -131,3 +139,78 @@ def test_restore_target_outside_sandbox_rejected(
         )
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail["error"] == "path_outside_sandbox"
+
+
+# ---------------------------------------------------------------------------
+# EX-P1-3 / EX-P2-2 — PBKDF2 600k + env override + backward compat
+# ---------------------------------------------------------------------------
+
+
+def test_default_kdf_is_owasp_600k(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(br.BACKUP_KDF_ITERATIONS_ENV, raising=False)
+    assert br._resolve_kdf_iterations() == 600_000
+
+
+def test_kdf_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(br.BACKUP_KDF_ITERATIONS_ENV, "150000")
+    assert br._resolve_kdf_iterations() == 150_000
+    # Below-floor values fall back to the default.
+    monkeypatch.setenv(br.BACKUP_KDF_ITERATIONS_ENV, "1234")
+    assert br._resolve_kdf_iterations() == 600_000
+
+
+def test_old_200k_backup_still_decrypts(service_and_sandbox) -> None:
+    """Force a 200k archive (simulating an existing pre-RC backup) and
+    confirm restore reads the iterations back from manifest.json."""
+    _service, svc, sandbox, _db = service_and_sandbox
+    # Lower the iterations env var so create_backup uses 200_000.
+    with mock.patch.dict(
+        os.environ, {br.BACKUP_KDF_ITERATIONS_ENV: "200000"}
+    ):
+        result = asyncio.run(svc.create_backup(passphrase=PASSPHRASE))
+    archive = Path(result["backup_path"])
+    # Sanity: manifest records 200000.
+    with tarfile.open(archive, "r:gz") as tf:
+        f = tf.extractfile("manifest.json")
+        assert f is not None
+        manifest = json.loads(f.read().decode("utf-8"))
+    assert manifest["kdf_iterations"] == 200_000
+
+    # Restore (dry-run) succeeds under the default 600k env, proving
+    # the iteration count is read from the manifest, not the constant.
+    with mock.patch.dict(
+        os.environ, {br.BACKUP_KDF_ITERATIONS_ENV: "600000"}
+    ):
+        restored = asyncio.run(
+            svc.restore_backup(
+                backup_id=result["id"],
+                passphrase=PASSPHRASE,
+                dry_run=True,
+            )
+        )
+    assert restored["ok"] is True
+    assert restored["verified"] is True
+    assert restored["kdf_iterations"] == 200_000
+
+
+def test_new_600k_backup_round_trips(
+    service_and_sandbox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(br.BACKUP_KDF_ITERATIONS_ENV, raising=False)
+    _service, svc, _sandbox, _db = service_and_sandbox
+    result = asyncio.run(svc.create_backup(passphrase=PASSPHRASE))
+    archive = Path(result["backup_path"])
+    with tarfile.open(archive, "r:gz") as tf:
+        f = tf.extractfile("manifest.json")
+        assert f is not None
+        manifest = json.loads(f.read().decode("utf-8"))
+    assert manifest["kdf_iterations"] == 600_000
+    decrypted = asyncio.run(
+        svc.restore_backup(
+            backup_id=result["id"],
+            passphrase=PASSPHRASE,
+            dry_run=True,
+        )
+    )
+    assert decrypted["ok"] is True
+    assert decrypted["kdf_iterations"] == 600_000

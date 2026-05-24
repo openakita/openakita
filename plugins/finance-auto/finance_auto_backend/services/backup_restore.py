@@ -57,7 +57,58 @@ logger = logging.getLogger(__name__)
 
 # Constants chosen per Stage 3 specification (cf. ``finance_plugin
 # design v0.3 part infra § 2.4`` plus the M3 Infra worker brief).
-BACKUP_KDF_ITERATIONS = 200_000
+#
+# Extended-audit EX-P1-3 / EX-P2-2 (2026-05): bumped default PBKDF2
+# iteration count from 200_000 to 600_000 per OWASP 2023 minimum for
+# PBKDF2-HMAC-SHA256.  The actual iteration count used by each archive
+# is recorded in ``manifest.json["kdf_iterations"]`` so older backups
+# created with 200k can still be decrypted by reading the manifest
+# value back; the constant is only consulted when writing a fresh
+# archive.  An override env var ``OPENAKITA_FINANCE_AUTO_KDF_ITERATIONS``
+# allows lower values in dev / CI without code changes.
+BACKUP_DEFAULT_KDF_ITERATIONS = 600_000
+BACKUP_KDF_ITERATIONS_ENV = "OPENAKITA_FINANCE_AUTO_KDF_ITERATIONS"
+
+
+def _resolve_kdf_iterations() -> int:
+    """Return the iteration count to use when *creating* a new archive.
+
+    Reads ``OPENAKITA_FINANCE_AUTO_KDF_ITERATIONS`` first (truthy int
+    only); falls back to :data:`BACKUP_DEFAULT_KDF_ITERATIONS`.  Values
+    below 100_000 are rejected to prevent foot-guns; ``decrypt`` paths
+    still honour whatever is stored in the archive header for backward
+    compatibility with existing 200k backups.
+    """
+    raw = os.environ.get(BACKUP_KDF_ITERATIONS_ENV)
+    if raw:
+        try:
+            value = int(raw.strip())
+        except ValueError:
+            logger.warning(
+                "finance-auto: ignoring non-integer %s=%r",
+                BACKUP_KDF_ITERATIONS_ENV,
+                raw,
+            )
+        else:
+            if value < 100_000:
+                logger.warning(
+                    "finance-auto: %s=%d is below the 100k floor; "
+                    "using default %d instead",
+                    BACKUP_KDF_ITERATIONS_ENV,
+                    value,
+                    BACKUP_DEFAULT_KDF_ITERATIONS,
+                )
+            else:
+                return value
+    return BACKUP_DEFAULT_KDF_ITERATIONS
+
+
+# Back-compat alias for any caller still expecting the old constant
+# name.  Tests + external scripts can keep importing it; the value now
+# reflects the OWASP-aligned default but lookups always go through
+# :func:`_resolve_kdf_iterations` so env overrides win.
+BACKUP_KDF_ITERATIONS = BACKUP_DEFAULT_KDF_ITERATIONS
+
 BACKUP_SALT_LEN = 32
 BACKUP_NONCE_LEN = 12
 BACKUP_AAD = b"openakita-finance-backup-v1"
@@ -134,19 +185,40 @@ def _derive_backup_key(passphrase: str, salt: bytes, iterations: int) -> bytes:
     return kdf.derive(passphrase.encode("utf-8"))
 
 
-def _encrypt_keys_blob(passphrase: str, plaintext: bytes) -> bytes:
-    """Return ``salt || nonce || ciphertext`` per Stage 3 layout."""
+def _encrypt_keys_blob(
+    passphrase: str,
+    plaintext: bytes,
+    *,
+    iterations: int | None = None,
+) -> tuple[bytes, int]:
+    """Return ``(salt || nonce || ciphertext, iterations_used)``.
+
+    ``iterations`` defaults to whatever :func:`_resolve_kdf_iterations`
+    decides — the caller must record the returned ``iterations_used``
+    in the archive manifest so the decrypt path can replay the same
+    KDF run later (backward compatibility with older 200k archives).
+    """
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+    iterations_used = int(iterations) if iterations else _resolve_kdf_iterations()
     salt = secrets.token_bytes(BACKUP_SALT_LEN)
     nonce = secrets.token_bytes(BACKUP_NONCE_LEN)
-    key = _derive_backup_key(passphrase, salt, BACKUP_KDF_ITERATIONS)
+    key = _derive_backup_key(passphrase, salt, iterations_used)
     ct = AESGCM(key).encrypt(nonce, plaintext, BACKUP_AAD)
-    return salt + nonce + ct
+    return salt + nonce + ct, iterations_used
 
 
-def _decrypt_keys_blob(passphrase: str, blob: bytes) -> bytes:
-    """Inverse of :func:`_encrypt_keys_blob`.  Raises on wrong passphrase."""
+def _decrypt_keys_blob(
+    passphrase: str,
+    blob: bytes,
+    *,
+    iterations: int,
+) -> bytes:
+    """Inverse of :func:`_encrypt_keys_blob`.  ``iterations`` MUST come
+    from the archive manifest so we replay the exact KDF run that
+    produced the ciphertext (older archives used 200k, newer use 600k).
+    Raises on wrong passphrase / wrong iterations.
+    """
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
     if len(blob) < BACKUP_SALT_LEN + BACKUP_NONCE_LEN + 16:
@@ -154,7 +226,7 @@ def _decrypt_keys_blob(passphrase: str, blob: bytes) -> bytes:
     salt = blob[:BACKUP_SALT_LEN]
     nonce = blob[BACKUP_SALT_LEN : BACKUP_SALT_LEN + BACKUP_NONCE_LEN]
     ct = blob[BACKUP_SALT_LEN + BACKUP_NONCE_LEN :]
-    key = _derive_backup_key(passphrase, salt, BACKUP_KDF_ITERATIONS)
+    key = _derive_backup_key(passphrase, salt, int(iterations))
     return AESGCM(key).decrypt(nonce, ct, BACKUP_AAD)
 
 
@@ -241,6 +313,15 @@ class BackupRestoreService:
                 (r["key_version"] for r in key_versions_rows),
                 default=(1 if meta and meta.enabled else 0),
             )
+            # 4. Encrypt key_versions JSON into keys.bin (independent of DB).
+            #    The iterations used for THIS archive are recorded in the
+            #    manifest below so restore can replay the same KDF run
+            #    (back-compat with older 200k backups).
+            keys_json = json.dumps(key_versions_rows, ensure_ascii=False)
+            keys_bin, kdf_iters = _encrypt_keys_blob(
+                passphrase, keys_json.encode("utf-8")
+            )
+
             manifest = {
                 "schema_version": SCHEMA_VERSION,
                 "key_version": current_key_version,
@@ -248,17 +329,13 @@ class BackupRestoreService:
                 "org_id": org_id,
                 "table_counts": counts,
                 "source_db_hash": source_db_hash,
-                "kdf_iterations": BACKUP_KDF_ITERATIONS,
+                "kdf_iterations": kdf_iters,
                 "kdf_algo": "PBKDF2-HMAC-SHA256",
                 "cipher": "AES-256-GCM",
                 "aad": BACKUP_AAD.decode("ascii"),
                 "encryption_enabled": bool(meta and meta.enabled),
                 "key_meta_seed_source": (meta.seed_source if meta else None),
             }
-
-            # 4. Encrypt key_versions JSON into keys.bin (independent of DB).
-            keys_json = json.dumps(key_versions_rows, ensure_ascii=False)
-            keys_bin = _encrypt_keys_blob(passphrase, keys_json.encode("utf-8"))
 
             # 5. Build the tar.gz archive.
             with tarfile.open(backup_path, mode="w:gz") as tf:
@@ -389,8 +466,15 @@ class BackupRestoreService:
             ) from exc
 
         # 1. Verify the passphrase by trying to decrypt keys.bin.
+        # Pull the actual KDF iteration count from the manifest so
+        # older archives written with 200k still decrypt cleanly.
+        kdf_iters = int(
+            manifest.get("kdf_iterations") or BACKUP_DEFAULT_KDF_ITERATIONS
+        )
         try:
-            keys_pt = _decrypt_keys_blob(passphrase, keys_bin)
+            keys_pt = _decrypt_keys_blob(
+                passphrase, keys_bin, iterations=kdf_iters
+            )
             key_versions_rows = json.loads(keys_pt.decode("utf-8"))
             verified = True
         except Exception as exc:  # noqa: BLE001 — covers InvalidTag
@@ -399,6 +483,7 @@ class BackupRestoreService:
                 "verified": False,
                 "error": "wrong passphrase",
                 "detail": str(exc),
+                "kdf_iterations": kdf_iters,
             }
 
         if dry_run:
@@ -408,6 +493,7 @@ class BackupRestoreService:
                 "dry_run": True,
                 "manifest": manifest,
                 "key_versions_count": len(key_versions_rows),
+                "kdf_iterations": kdf_iters,
             }
 
         # 2. Resolve the materialised DB path with sandbox + overwrite
@@ -694,7 +780,9 @@ def _row_to_backup_dict(row) -> dict:
 
 __all__ = [
     "BACKUP_AAD",
+    "BACKUP_DEFAULT_KDF_ITERATIONS",
     "BACKUP_KDF_ITERATIONS",
+    "BACKUP_KDF_ITERATIONS_ENV",
     "BACKUP_MIN_SIZE_BYTES",
     "BACKUP_ROOT_ENV",
     "BackupRestoreError",
@@ -703,4 +791,5 @@ __all__ = [
     "_default_backup_root",
     "_ensure_within_sandbox",
     "_is_within",
+    "_resolve_kdf_iterations",
 ]
