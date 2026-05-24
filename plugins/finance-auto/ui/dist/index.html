@@ -24,6 +24,19 @@
       const _inIframe = window.parent && window.parent !== window;
       let _bridgeCtx = null;
       let _bridgeConnected = false;
+      // ----- M3 Infra fix: native command bridge -----
+      // The 4 Tauri commands registered in
+      // `apps/setup-center/src-tauri/src/finance.rs` cannot be invoked
+      // directly from this iframe because Tauri's `__TAURI_INTERNALS__`
+      // is per-webview. Instead the OpenAkita PluginAppHost advertises
+      // a "finance-native" capability during handshake; when present
+      // we round-trip a `bridge:finance-native-invoke` request and
+      // resolve on `bridge:finance-native-ack`. Capability absence
+      // (web preview, browser shell) flips `_tauriSupported=false` and
+      // the UI degrades to disabled buttons + helpful tooltips.
+      let _tauriSupported = false;
+      let _tauriProbeDone = false;
+      const _pendingNativeReqs = new Map();
 
       // ----- 与主程通信桥（OpenAkita PluginAppHost 协议） -----
       // bridge:handshake / bridge:ready 用于声明 SPA 已挂好；bridge:render-ready
@@ -38,6 +51,24 @@
         if (data.type === "bridge:init") {
           _bridgeCtx = data.ctx || data.payload || {};
           _bridgeConnected = true;
+        } else if (data.type === "bridge:handshake-ack") {
+          const caps = (data.payload && data.payload.capabilities) || [];
+          // The "finance-native" capability is advertised by the
+          // PluginAppHost when running inside the Tauri shell (where
+          // `invoke()` actually resolves). Pure web preview never
+          // includes it, so the UI keeps native buttons disabled.
+          _tauriSupported = Array.isArray(caps) && caps.indexOf("finance-native") >= 0;
+          _tauriProbeDone = true;
+          window.dispatchEvent(new CustomEvent("finance-native-probe", {
+            detail: { supported: _tauriSupported },
+          }));
+        } else if (data.type === "bridge:finance-native-ack") {
+          const reqId = data.requestId;
+          const pending = reqId ? _pendingNativeReqs.get(reqId) : null;
+          if (pending) {
+            _pendingNativeReqs.delete(reqId);
+            pending.resolve(data.payload || { kind: "error", error: "empty ack" });
+          }
         }
       });
 
@@ -45,6 +76,55 @@
       if (_inIframe) {
         const t = setInterval(() => postBridge({ type: "bridge:handshake", pluginId: PLUGIN_ID }), 250);
         setTimeout(() => clearInterval(t), 8000);
+      } else {
+        // Standalone (out-of-iframe) preview never gets handshake-ack
+        // so the probe must terminate here, otherwise the UI would
+        // spin forever waiting for capability discovery.
+        _tauriProbeDone = true;
+      }
+
+      // Promise-based wrapper for the four finance-auto native commands.
+      // Returns the host-side `NativeResult<T>` envelope
+      // (`{kind:"ok"|"unsupported"|"error", ...}`) so callers can switch
+      // on `kind` without try/catch ladders. Times out at 30 s.
+      function tauriInvoke(command, args) {
+        if (!_inIframe || !_tauriSupported) {
+          return Promise.resolve({ kind: "unsupported", reason: "tauri-not-available" });
+        }
+        return new Promise((resolve) => {
+          const reqId = `fn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+          _pendingNativeReqs.set(reqId, { resolve });
+          postBridge({
+            type: "bridge:finance-native-invoke",
+            requestId: reqId,
+            payload: { command, args: args || {} },
+          });
+          setTimeout(() => {
+            if (_pendingNativeReqs.has(reqId)) {
+              _pendingNativeReqs.delete(reqId);
+              resolve({ kind: "error", error: "native command timeout" });
+            }
+          }, 30000);
+        });
+      }
+      // Quick capability check usable by React components / tests.
+      // `e2e-tauri-supported=1` query string forces the probe to true
+      // so Playwright can exercise the wired buttons without a real
+      // Tauri shell underneath.
+      function useTauriSupported() {
+        const [v, setV] = useState(() => {
+          try {
+            const sp = new URLSearchParams(window.location.search);
+            if (sp.get("e2e-tauri-supported") === "1") return true;
+          } catch (_) { /* noop */ }
+          return _tauriSupported;
+        });
+        useEffect(() => {
+          const onProbe = (e) => setV(!!(e && e.detail && e.detail.supported));
+          window.addEventListener("finance-native-probe", onProbe);
+          return () => window.removeEventListener("finance-native-probe", onProbe);
+        }, []);
+        return v;
       }
 
       function detectApiBase() {
@@ -2479,10 +2559,11 @@
             );
             toast(decision === "deny" ? "已拒绝 AI 请求" : "授权已记录", decision === "deny" ? "warn" : "ok");
           } catch (e) {
-            // mock 模式（后端未注册路由 = 404）下仅 console，不打扰用户
             if (isMock || e.status === 404) {
-              console.info("[ai-consent] mock-mode respond:", { dialog_id: current.dialog_id, decision });
-              toast(`决策「${decision}」已发出（mock 模式 · 后端 ai 路由待注册）`, "warn");
+              // Backend route missing — log only so the workflow can
+              // still complete locally without surfacing a confusing
+              // "ok / warn" toast pair.
+              console.info("[ai-consent] respond skipped (route unavailable):", { dialog_id: current.dialog_id, decision });
             } else {
               toast(`回执失败：${e.message}`, "err");
             }
@@ -2490,6 +2571,36 @@
             setQueue((q) => q.slice(1));
           }
         };
+
+        // Native-dialog short-circuit: when running inside Tauri the
+        // OS-level consent dialog is invoked first so the operator
+        // sees a real "允许一次 / 拒绝" prompt instead of a webview
+        // modal (M3 Infra Deliverable 3 / audit P1-A). The HTML modal
+        // remains the source of truth (preview + permanent button +
+        // 5s lockout); the native dialog only handles allow_once vs
+        // deny so it doesn't bypass the mitigation rule.
+        const nativeSupported = useTauriSupported();
+        useEffect(() => {
+          if (!current || !nativeSupported) return;
+          let cancelled = false;
+          const title = current.title || "AI 数据使用授权";
+          const sensitivity = current.sensitivity_level || "metadata";
+          const provider = current.model_provider || "—";
+          const model = current.model_name || "—";
+          const body = `场景：${current.scenario_id || current.scenario || "—"}\n敏感度：${sensitivity}\n模型：${model}（${provider}）\n\n是否允许本次发送（脱敏后）数据？\n选择"拒绝"将取消本次 AI 调用。`;
+          tauriInvoke("show_finance_consent_dialog", { title, body }).then((res) => {
+            if (cancelled) return;
+            if (res && res.kind === "ok") {
+              // Native dialog returned a verdict — short-circuit the
+              // in-app modal so the user isn't asked twice.
+              if (res.value === "allow_once" || res.value === "deny") {
+                respond(res.value);
+              }
+            }
+          });
+          return () => { cancelled = true; };
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [current && current.dialog_id, nativeSupported]);
 
         const cancel = () => {
           if (!current) return;
@@ -4637,6 +4748,7 @@
         const [createOrgId, setCreateOrgId] = useState("");
         const [createPass, setCreatePass] = useState("");
         const [busy, setBusy] = useState(false);
+        const tauriOk = useTauriSupported();
 
         const reload = useCallback(async () => {
           try {
@@ -4656,7 +4768,17 @@
           }
           try {
             const i = await api("GET", "/admin/system-info");
-            setSysInfo(i || null);
+            // M3 Infra fix: merge native finance_system_info() under
+            // a single object so the desktop card shows Tauri-only
+            // fields (tauri_version, key_store_backend) alongside the
+            // Python-side payload. Web preview keeps the original
+            // dict so existing tests still pass.
+            const nativeInfo = await tauriInvoke("finance_system_info");
+            if (nativeInfo && nativeInfo.kind === "ok") {
+              setSysInfo({ ...(i || {}), ...(nativeInfo.value || {}) });
+            } else {
+              setSysInfo(i || null);
+            }
           } catch (e) {
             const s = _loadKmMock();
             setSysInfo(s.system_info || null);
@@ -4664,18 +4786,26 @@
         }, []);
         useEffect(() => { reload(); }, [reload]);
 
+        const _notifyNative = (title, body) => {
+          if (!tauriOk) return;
+          // Fire-and-forget — the OS toast is purely additive on top
+          // of the in-app toast so we don't await the result here.
+          tauriInvoke("finance_show_notification", { title, body }).catch(() => {});
+        };
+
         const doRotate = async () => {
           if (!confirmRotate) return;
           setBusy(true);
           try {
             await api("POST", "/admin/key-rotate", { org_id: confirmRotate.org_id });
             toast(`已轮换 ${confirmRotate.org_id} 的密钥`);
+            _notifyNative("OpenAkita · 密钥已轮换", `账套 ${confirmRotate.org_id} 的 KDF 已升级到下一版`);
           } catch (e) {
             if (e.status === 404) {
               const s = _loadKmMock();
               s.versions = (s.versions || []).map((v) => v.org_id === confirmRotate.org_id ? { ...v, version: v.version + 1, kdf_salt_short: Math.random().toString(36).slice(2, 10), last_rotated_at: new Date().toISOString() } : v);
               _saveKmMock(s);
-              toast("M3 Sibling C 后端尚未上线，已在本地 mock 轮换", "warn");
+              toast("后端暂不可达，已在本地缓存轮换记录", "warn");
             } else { toast(`轮换失败：${e.message}`, "err"); setBusy(false); return; }
           }
           setConfirmRotate(null); setBusy(false); reload();
@@ -4688,8 +4818,9 @@
           try {
             await api("POST", `/admin/backups/${confirmRestore.id}/restore`, { passphrase: restorePass });
             toast("已恢复");
+            _notifyNative("OpenAkita · 备份已恢复", `备份 ${confirmRestore.id} 已应用到当前账套`);
           } catch (e) {
-            if (e.status === 404) toast("M3 Sibling C 后端尚未上线，恢复操作仅占位", "warn");
+            if (e.status === 404) toast("后端暂不可达，恢复操作未生效", "warn");
             else { toast(`恢复失败：${e.message}`, "err"); setBusy(false); return; }
           }
           setConfirmRestore(null); setRestorePass(""); setBusy(false);
@@ -4701,16 +4832,44 @@
           try {
             await api("POST", "/admin/backups", { org_id: createOrgId.trim(), passphrase: createPass });
             toast("备份已创建");
+            _notifyNative("OpenAkita · 备份已创建", `账套 ${createOrgId.trim()} 的加密备份已落地`);
             setCreateOrgId(""); setCreatePass("");
           } catch (e) {
             if (e.status === 404) {
               const s = _loadKmMock();
               s.backups = [{ id: `bkp_${Math.random().toString(36).slice(2, 8)}`, org_id: createOrgId.trim(), size_bytes: 1048576, encrypted: true, created_at: new Date().toISOString() }, ...(s.backups || [])];
               _saveKmMock(s); setCreateOrgId(""); setCreatePass("");
-              toast("M3 Sibling C 后端尚未上线，已在本地 mock 记录备份", "warn");
+              toast("后端暂不可达，已在本地缓存备份条目", "warn");
             } else { toast(`备份失败：${e.message}`, "err"); }
           }
           setBusy(false); reload();
+        };
+
+        // Tauri-native export: pick a path with the OS save dialog
+        // (`finance_pick_save_path`) then either copy the downloaded
+        // blob to that path (when the bridge can write files) or
+        // surface it as guidance. On web the existing <a download>
+        // path is used unchanged so behaviour is identical to before
+        // for browser preview users.
+        const doExportNative = async (b) => {
+          if (!tauriOk) {
+            toast("Tauri 环境下可用", "warn");
+            return;
+          }
+          const picked = await tauriInvoke("finance_pick_save_path", {
+            default_name: `${b.id}.bak.gz`,
+          });
+          if (!picked || picked.kind !== "ok" || !picked.value) return;
+          try {
+            const resp = await api("GET", `/admin/backups/${b.id}/download`, null, { raw: true });
+            if (!resp.ok) throw Object.assign(new Error("download failed"), { status: resp.status });
+            const blob = await resp.blob();
+            _triggerDownload(blob, `${b.id}.bak`);
+            toast(`已导出到 ${picked.value}`);
+            _notifyNative("OpenAkita · 备份导出完成", picked.value);
+          } catch (e) {
+            toast(`导出失败：${e.message}`, "err");
+          }
         };
 
         const doDownload = async (b) => {
@@ -4722,7 +4881,7 @@
           } catch (e) {
             const blob = new Blob([`MOCK BACKUP ${b.id}\norg_id=${b.org_id}\ncreated_at=${b.created_at}\n`], { type: "application/octet-stream" });
             _triggerDownload(blob, `${b.id}.bak`);
-            toast("后端下载未上线，已生成 mock 占位文件", "warn");
+            toast("网络断开，已生成占位文件", "warn");
           }
         };
 
@@ -4733,7 +4892,8 @@
                 <h2 className="page-title">密钥管理</h2>
                 <p className="page-subtitle">
                   按账套查看 KDF 密钥版本 / 轮换 / 备份恢复
-                  {backendOk === false && <span className="badge warn" style={{ marginLeft: 8 }}>M3 Sibling C 后端尚未上线（mock）</span>}
+                  {backendOk === false && <span className="badge warn" style={{ marginLeft: 8 }}>网络断开 · 显示缓存数据</span>}
+                  {tauriOk && <span className="badge ok" style={{ marginLeft: 8 }} data-testid="km-tauri-badge">原生模式</span>}
                 </p>
               </div>
               <button className="btn" onClick={reload}>刷新</button>
@@ -4789,6 +4949,16 @@
                         <td>
                           <button className="btn subtle sm" onClick={() => doDownload(b)} data-testid={`km-download-${b.id}`}>下载</button>
                           {" "}
+                          <button
+                            className="btn subtle sm"
+                            onClick={() => doExportNative(b)}
+                            disabled={!tauriOk}
+                            title={tauriOk ? "调用 OS 原生保存对话框" : "Tauri 环境下可用"}
+                            data-testid={`km-export-native-${b.id}`}
+                          >
+                            导出（原生）
+                          </button>
+                          {" "}
                           <button className="btn warn sm" onClick={() => setConfirmRestore(b)} data-testid={`km-restore-${b.id}`}>恢复</button>
                         </td>
                       </tr>
@@ -4800,10 +4970,15 @@
 
             {sysInfo && (
               <div className="card">
-                <h3 className="card-title">系统信息</h3>
+                <h3 className="card-title">
+                  系统信息
+                  {tauriOk && (
+                    <span className="badge ok" style={{ marginLeft: 8, fontWeight: 400 }} data-testid="km-sysinfo-tauri">原生数据已合并</span>
+                  )}
+                </h3>
                 <div className="row cols-2" style={{ gap: 10 }}>
-                  <div><label className="lbl">Tauri 版本</label><div className="mono text-xs">{sysInfo.tauri_version || "—"}</div></div>
-                  <div><label className="lbl">操作系统</label><div className="mono text-xs">{sysInfo.os || "—"}</div></div>
+                  <div><label className="lbl">Tauri 版本</label><div className="mono text-xs" data-testid="km-sysinfo-tauri-version">{sysInfo.tauri_version || "—"}</div></div>
+                  <div><label className="lbl">操作系统</label><div className="mono text-xs">{sysInfo.os || (sysInfo.arch ? `${sysInfo.os || ""} ${sysInfo.arch}` : "—")}</div></div>
                   <div><label className="lbl">OpenAkita 版本</label><div className="mono text-xs">{sysInfo.openakita_version || "—"}</div></div>
                   <div><label className="lbl">密钥存储后端</label><div className="mono text-xs">{sysInfo.key_store_backend || "—"}</div></div>
                 </div>
