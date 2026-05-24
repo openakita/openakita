@@ -620,6 +620,7 @@
                 <PendingIssuesBadge orgId={orgId} />
               </button>
               <button className={`tab ${tab === "reclass" ? "active" : ""}`} onClick={() => setTab("reclass")} data-testid="tab-reclass">重分类规则</button>
+              <button className={`tab ${tab === "xperiod" ? "active" : ""}`} onClick={() => setTab("xperiod")} data-testid="tab-xperiod">跨期校验</button>
             </div>
 
             {tab === "import" && (
@@ -636,6 +637,9 @@
             )}
             {tab === "reclass" && (
               <ReclassificationView orgId={orgId} period={period} toast={toast} />
+            )}
+            {tab === "xperiod" && (
+              <CrossPeriodView orgId={orgId} period={period} toast={toast} />
             )}
           </>
         );
@@ -807,6 +811,116 @@
                 </table>
               )}
             </div>
+          </>
+        );
+      }
+
+      // ═══════════════════════════════════════════════════════════════════
+      //  Tab · 跨期校验 (M1 W3 Stage 3)
+      //
+      //  Backend contract (`cross_period_routes.py`, 3 endpoints):
+      //    POST /orgs/{id}/cross-period-checks                - trigger check
+      //    GET  /orgs/{id}/cross-period-checks                - list history
+      //    GET  /orgs/{id}/cross-period-checks/{check_id}     - detail diffs
+      //
+      //  Audit P1-B: shipped without front-end. This view lets the auditor
+      //  trigger a new check (prior_period_id → current_period_id) and
+      //  inspect the resulting differences ranked by severity.
+      // ═══════════════════════════════════════════════════════════════════
+      function CrossPeriodView({ orgId, period, toast }) {
+        const [refresh, setRefresh] = useState(0);
+        const [priorPeriod, setPriorPeriod] = useState("2024-FY");
+        const [busy, setBusy] = useState(false);
+        const [selected, setSelected] = useState(null);
+        const list = useFetch(`/orgs/${orgId}/cross-period-checks`, [orgId, refresh]);
+        const detail = useFetch(selected ? `/orgs/${orgId}/cross-period-checks/${selected}` : null, [orgId, selected]);
+
+        const trigger = async () => {
+          if (!priorPeriod || !period) { toast("请填写期初 / 期末 period", "warn"); return; }
+          setBusy(true);
+          try {
+            const r = await api("POST", `/orgs/${orgId}/cross-period-checks`, {
+              prior_period_id: priorPeriod,
+              current_period_id: period,
+              tolerance: 1.0,
+              warn_threshold: 100.0,
+              emit_parse_issues: false,
+            });
+            toast(`校验完成：${r.error_count || 0} 项 error / ${r.warning_count || 0} 项 warning`);
+            setSelected(r.id);
+            setRefresh((x) => x + 1);
+          } catch (e) {
+            if (e.status === 404) toast("缺少 prior/current 期的成功导入", "warn");
+            else toast(`触发失败：${e.message}`, "err");
+          } finally { setBusy(false); }
+        };
+
+        return (
+          <>
+            <div className="card mb-3">
+              <h3 className="card-title">触发新校验</h3>
+              <div className="row" style={{ gap: 10, alignItems: "flex-end" }}>
+                <div><label className="lbl">期初 period_id</label><input className="field" style={{ width: 160 }} value={priorPeriod} onChange={(e) => setPriorPeriod(e.target.value)} data-testid="xperiod-prior" /></div>
+                <div><label className="lbl">期末 period_id</label><input className="field" style={{ width: 160 }} value={period} disabled /></div>
+                <button className="btn primary" disabled={busy} onClick={trigger} data-testid="xperiod-trigger">校验</button>
+              </div>
+              <div className="text-xs text-muted mt-2">规则：上一期末 closing == 本期初 opening（容差 ±1.0；100 以上记 warning，超过则 error）。</div>
+            </div>
+
+            <div className="card mb-3">
+              <h3 className="card-title">历史校验</h3>
+              {list.loading ? <div className="text-sm text-muted">加载中…</div> :
+               list.error ? <div className="upload-result err">{list.error.message}</div> :
+               ((list.data && list.data.items) || []).length === 0 ? <EmptyState title="暂无校验记录" /> : (
+                <table className="report-table">
+                  <thead><tr><th>Check</th><th>期初 → 期末</th><th>账户总数</th><th>Error</th><th>Warning</th><th>创建</th><th></th></tr></thead>
+                  <tbody>
+                    {list.data.items.map((it) => (
+                      <tr key={it.id} data-testid={`xperiod-row-${it.id}`}>
+                        <td className="mono text-xs">{it.id}</td>
+                        <td className="text-xs">{it.prior_period_id} → {it.current_period_id}</td>
+                        <td className="num">{it.total_accounts}</td>
+                        <td>{it.error_count > 0 ? <span className="badge err">{it.error_count}</span> : <span className="text-xs text-muted">0</span>}</td>
+                        <td>{it.warning_count > 0 ? <span className="badge warn">{it.warning_count}</span> : <span className="text-xs text-muted">0</span>}</td>
+                        <td className="text-xs text-muted">{fmtTs(it.created_at)}</td>
+                        <td><button className="btn subtle sm" onClick={() => setSelected(it.id)} data-testid={`xperiod-detail-${it.id}`}>详情</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {selected && (
+              <div className="card" data-testid="xperiod-detail-panel">
+                <h3 className="card-title">校验差异 · <span className="mono text-xs">{selected}</span></h3>
+                {detail.loading ? <div className="text-sm text-muted">加载中…</div> :
+                 detail.error ? <div className="upload-result err">{detail.error.message}</div> :
+                 (detail.data && (detail.data.differences || []).length === 0) ? <EmptyState title="该次校验无差异（全部 exact 匹配）" /> : (
+                  <table className="report-table">
+                    <thead><tr><th>科目</th><th>名称</th><th className="num">期末 closing</th><th className="num">期初 opening</th><th className="num">Δ</th><th>severity</th><th>备注</th></tr></thead>
+                    <tbody>
+                      {(detail.data && detail.data.differences || []).slice(0, 200).map((d, i) => (
+                        <tr key={`${d.full_code}-${i}`}>
+                          <td className="mono text-xs">{d.full_code}</td>
+                          <td>{d.account_name || "—"}</td>
+                          <td className="num">{fmtMoney(d.prior_closing)}</td>
+                          <td className="num">{fmtMoney(d.current_opening)}</td>
+                          <td className="num">{fmtMoney(d.delta)}</td>
+                          <td>
+                            {d.severity === "error" ? <span className="badge err">error</span> :
+                             d.severity === "warning" ? <span className="badge warn">warning</span> :
+                             d.severity === "tolerance" ? <span className="badge info">tolerance</span> :
+                             <span className="badge ok">exact</span>}
+                          </td>
+                          <td className="text-xs text-muted">{d.note || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
           </>
         );
       }
