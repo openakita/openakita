@@ -1204,3 +1204,124 @@ class ConsolidatedReportModel(BaseModel):
 class ConsolidatedReportListResponse(BaseModel):
     reports: list[ConsolidatedReportModel]
     total: int
+
+
+# ---------------------------------------------------------------------------
+# M3 Biz Stage 1+2 — report notes registry + per-document persistence
+# (schema v10 tables; see ``db/migrations/v10_notes_peer.py``).
+#
+# The audit (§4.2) flagged that the 5 tables introduced by M3 lacked
+# Pydantic counterparts, so the route layer returned bare ``dict[str,
+# Any]`` payloads.  These models give callers a stable JSON shape and
+# let the OpenAPI schema show the field set.  They are intentionally
+# kept as ``model_config = ConfigDict(from_attributes=True)`` so the
+# existing dict-based callers (``NotesGenerator._row_to_doc`` etc.)
+# can keep flowing dicts while typed callers get the strict version.
+# ---------------------------------------------------------------------------
+
+NoteTemplateFormat = Literal["markdown", "excel"]
+NoteTemplateDataSource = Literal["data_driven", "narrative", "hybrid"]
+NoteAccountingStandard = Literal["small_enterprise", "general_enterprise"]
+NoteDocumentStatus = Literal["draft", "in_review", "finalized"]
+ReportNoteKind = Literal[
+    "data", "narrative", "hybrid",
+    "narrative_pending_ai", "narrative_pending_user",
+]
+
+
+class NoteTemplateModel(BaseModel):
+    """One row of ``note_templates`` (M3 Biz Stage 1 / schema v10)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    note_section: str
+    note_item_code: str
+    template_format: NoteTemplateFormat = "markdown"
+    template_path: str
+    data_source: NoteTemplateDataSource
+    auto_fill_pct: int = 0
+    requires_ai: bool = False
+    ai_scenario_id: str | None = None
+    accounting_standard: NoteAccountingStandard = "small_enterprise"
+    version: int = 1
+    created_at: str | None = None
+
+
+class NoteDocumentModel(BaseModel):
+    """One row of ``note_documents`` — owns a generation per (org, period)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    org_id: str
+    period_id: str
+    status: NoteDocumentStatus = "draft"
+    accounting_standard: NoteAccountingStandard = "small_enterprise"
+    version: int = 1
+    created_at: str
+    updated_at: str
+
+
+class ReportNoteModel(BaseModel):
+    """One row of ``report_notes`` — attaches one rendered section to a
+    document, optionally referencing an ``llm_call_audit`` row."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    document_id: int
+    template_id: int
+    note_section: str
+    note_item_code: str
+    content: str = ""
+    kind: ReportNoteKind = "data"
+    ai_audit_id: int | None = None
+    version: int = 1
+    created_at: str
+    updated_at: str
+
+
+# ---------------------------------------------------------------------------
+# M3 Biz Stage 3 — peer comparison.
+# ---------------------------------------------------------------------------
+
+
+class PeerBenchmarkModel(BaseModel):
+    """One quartile-bench row from ``peer_benchmarks``."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    industry_code: str
+    metric_code: str
+    metric_name: str
+    period_label: str = "2024"
+    p25: float = 0.0
+    p50: float = 0.0
+    p75: float = 0.0
+    sample_size: int = 0
+    source: str = "seed"
+    accounting_standard: NoteAccountingStandard = "small_enterprise"
+    version: int = 1
+    created_at: str | None = None
+
+
+class PeerComparisonResultModel(BaseModel):
+    """One row of ``peer_comparison_results`` — caches one run of the
+    PeerComparisonService for an (org, period, industry)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    org_id: str
+    period_id: str
+    industry_code: str
+    metrics: list[dict] = Field(default_factory=list)
+    """Decoded ``metrics_json`` payload — list of per-metric quartile
+    assessments.  Kept as ``list[dict]`` so the schema stays open while
+    Sibling B's S5 evolves the per-metric shape."""
+    ai_summary: str = ""
+    ai_audit_id: int | None = None
+    version: int = 1
+    created_at: str
