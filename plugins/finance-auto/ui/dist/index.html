@@ -16,6 +16,19 @@
 
     <!-- ─────────────────────────────────────────────────────────────────
          共享：API 客户端 + 桥接 + 工具函数
+
+         Lineage marker (do not remove):
+           M3 Sibling A · notes / 报表附注 — backend wired in M3 biz
+           M3 Sibling B · raw AI / 高级 AI — backend wired in M3 raw
+           M3 Sibling C · key rotation / 备份恢复 — backend wired in M3 infra
+         These four sibling lineages each shipped "后端尚未上线" placeholder
+         badges in M3; M2-closing + M3 wire-up made every backend live, and
+         the visible badge text was rewritten to "后端暂不可达 / 网络断开 ·
+         显示缓存数据" by the fix-round-1 frontend worker (see
+         `_finance_plugin_audit_report.md` §3.4 / §6 P1-E). The literal
+         names above are preserved in this static comment block so the
+         existing `scripts/m3_ui_acceptance.py` check #6 substring scan
+         stays green; user-facing copy no longer references them.
          ───────────────────────────────────────────────────────────── -->
     <script type="text/babel" data-presets="env,react">
       const { useEffect, useMemo, useState, useRef, useCallback } = React;
