@@ -54,22 +54,40 @@ async def _make_comment(
 
 
 @pytest.mark.asyncio
-async def test_resolve_comment_legacy_path_still_works(tmp_path: Path):
-    """No expected_version → legacy idempotent behaviour preserved so the
-    M2 UI which hasn't been updated yet still resolves cleanly."""
+async def test_resolve_comment_without_expected_version_now_rejects(tmp_path: Path):
+    """Round-2 optimisation #1: the opt-in fallback was deleted, so a
+    call that omits ``expected_version`` must now raise HTTP 409
+    ``missing_expected_version`` instead of silently winning."""
     db, _svc, org_id, review = await _bootstrap(tmp_path)
     try:
         cid = await _make_comment(review, org_id=org_id)
-        # First resolve flips resolved=1 and bumps version 1 → 2.
+        with pytest.raises(HTTPException) as exc_info:
+            await review.resolve_comment(
+                comment_id=cid, actor_id="local",
+            )
+        assert exc_info.value.status_code == 409
+        detail = exc_info.value.detail
+        assert detail["error"] == "missing_expected_version"
+        assert detail["comment_id"] == cid
+
+        # Comment must still be unresolved at v1.
+        async with db.conn.execute(
+            "SELECT resolved, version FROM comments WHERE id=?", (cid,),
+        ) as cur:
+            row = await cur.fetchone()
+        assert row["resolved"] == 0
+        assert row["version"] == 1
+
+        # Strict path still works (and is idempotent on a second call).
         resolved = await review.resolve_comment(
-            comment_id=cid, actor_id="local",
+            comment_id=cid, actor_id="local", expected_version=1,
         )
         assert resolved.resolved is True
         assert resolved.version == 2
-        assert resolved.resolved_by == "local"
-        # Idempotent on a second call — already resolved.
+        # Second resolve already-resolved → no-op idempotent return,
+        # even without expected_version (no UPDATE is executed).
         again = await review.resolve_comment(
-            comment_id=cid, actor_id="local",
+            comment_id=cid, actor_id="local", expected_version=2,
         )
         assert again.version == 2
     finally:

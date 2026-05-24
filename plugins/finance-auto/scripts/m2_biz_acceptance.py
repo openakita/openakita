@@ -309,7 +309,9 @@ def main() -> int:
         for k, v in manual_keys.items():
             r = client.put(
                 f"{BASE}/orgs/{primary_org}/periods/{period_id}/manual-inputs/{k}",
-                json={"value": v, "source": "manual"},
+                # Round-2 #1: ``expected_version`` is now required on every
+                # PUT; fresh slots use 0.
+                json={"value": v, "source": "manual", "expected_version": 0},
             )
             assert r.status_code in (200, 201), f"{k}: {r.status_code} {r.text}"
         # Compute + persist via the indirect engine.

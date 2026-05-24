@@ -519,16 +519,29 @@ class ReviewWorkflowService:
     ) -> CommentModel:
         """Resolve a comment.
 
-        Optimistic-lock contract (P2-6 fix): when ``expected_version`` is
-        supplied the UPDATE includes ``WHERE id=? AND version=?`` so a
-        concurrent resolver loses the race with HTTP 409 instead of
-        silently winning.  ``schema.py`` already declares the
-        ``comments.version`` column but the original implementation only
-        did ``SET version=version+1`` without gating WHERE — that's the
-        gap §2.4 of the M3 audit reported.  When ``expected_version`` is
-        None the legacy idempotent behaviour is preserved (already-
-        resolved → no-op return).
+        Optimistic-lock contract (P2-6, hardened in round-2 #1):
+        ``expected_version`` is now **mandatory**.  Callers MUST first
+        GET the comment, capture ``comment.version``, and pass it back
+        on the resolve call.  Missing the token short-circuits with HTTP
+        409 ``missing_expected_version`` — the silent-overwrite race
+        flagged in M3 audit §2.4 is now structurally impossible because
+        every UPDATE goes through ``WHERE id=? AND version=?`` and the
+        opt-in fallback has been deleted.  Already-resolved comments are
+        still idempotent (no-op return) so retries stay safe.
         """
+        if expected_version is None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "missing_expected_version",
+                    "comment_id": comment_id,
+                    "detail": (
+                        "expected_version is required on every resolve_comment "
+                        "call.  Fetch the comment first to obtain its current "
+                        "version then retry."
+                    ),
+                },
+            )
         async with self.conn.execute(
             "SELECT * FROM comments WHERE id=?", (comment_id,),
         ) as cur:
@@ -547,10 +560,7 @@ class ReviewWorkflowService:
         if row["resolved"]:
             return _row_to_comment(row)
         current_version = int(row["version"] or 1)
-        if (
-            expected_version is not None
-            and expected_version != current_version
-        ):
+        if expected_version != current_version:
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -561,36 +571,29 @@ class ReviewWorkflowService:
                 },
             )
         now = _utcnow_iso()
-        if expected_version is not None:
-            cur = await self.conn.execute(
-                "UPDATE comments SET resolved=1, resolved_by=?, resolved_at=?, "
-                "updated_at=?, version=version+1 WHERE id=? AND version=?",
-                (actor_id, now, now, comment_id, current_version),
-            )
-            rowcount = cur.rowcount
-            await cur.close()
-            if rowcount == 0:
-                # Another resolver beat us between SELECT and UPDATE.
-                async with self.conn.execute(
-                    "SELECT version, resolved FROM comments WHERE id=?",
-                    (comment_id,),
-                ) as cur:
-                    live = await cur.fetchone()
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "error": "version_conflict",
-                        "comment_id": comment_id,
-                        "expected_version": expected_version,
-                        "current_version": int(live["version"])
-                        if live else None,
-                    },
-                )
-        else:
-            await self.conn.execute(
-                "UPDATE comments SET resolved=1, resolved_by=?, resolved_at=?, "
-                "updated_at=?, version=version+1 WHERE id=?",
-                (actor_id, now, now, comment_id),
+        cur = await self.conn.execute(
+            "UPDATE comments SET resolved=1, resolved_by=?, resolved_at=?, "
+            "updated_at=?, version=version+1 WHERE id=? AND version=?",
+            (actor_id, now, now, comment_id, current_version),
+        )
+        rowcount = cur.rowcount
+        await cur.close()
+        if rowcount == 0:
+            # Another resolver beat us between SELECT and UPDATE.
+            async with self.conn.execute(
+                "SELECT version, resolved FROM comments WHERE id=?",
+                (comment_id,),
+            ) as cur:
+                live = await cur.fetchone()
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "version_conflict",
+                    "comment_id": comment_id,
+                    "expected_version": expected_version,
+                    "current_version": int(live["version"])
+                    if live else None,
+                },
             )
         await self.conn.commit()
         async with self.conn.execute(

@@ -507,7 +507,13 @@ def run() -> int:  # noqa: PLR0912, PLR0915
         for k, v in seed_values.items():
             r = client.put(
                 f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/{k}",
-                json={"value": v, "decided_by": "acceptance-script"},
+                json={
+                    "value": v,
+                    "decided_by": "acceptance-script",
+                    # Round-2 #1: ``expected_version`` is now required on every
+                    # PUT.  Fresh slots use 0.
+                    "expected_version": 0,
+                },
             )
             assert r.status_code == 200, r.text
         # Now relist; every slot must be filled.

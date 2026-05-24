@@ -148,6 +148,26 @@ def register_manual_input_endpoints(
         preset = presets[field_key]
         now = _utcnow_iso()
 
+        # Round-2 optimisation #1: ``expected_version`` is now mandatory.
+        # Brand-new slots must pass ``expected_version=0``; updates must
+        # echo back the version returned by the previous GET / PUT.  This
+        # closes the silent-overwrite race that the M3 audit §2.4 (P2-2)
+        # flagged and lifts the lock from opt-in to strict-enforce.
+        if payload.expected_version is None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "missing_expected_version",
+                    "field_key": field_key,
+                    "detail": (
+                        "expected_version is required on every manual_inputs "
+                        "PUT.  Fetch the current version via GET "
+                        "/orgs/{org_id}/periods/{period_id}/manual-inputs "
+                        "first (use 0 for an empty slot) and resubmit."
+                    ),
+                },
+            )
+
         # Try update first; if no row exists, insert a fresh one.
         async with service.db.conn.execute(
             "SELECT id, version FROM manual_inputs "
@@ -156,13 +176,10 @@ def register_manual_input_endpoints(
         ) as cur:
             existing = await cur.fetchone()
         if existing is None:
-            # No row yet — caller may pass ``expected_version`` to assert
-            # "I believe this slot is unset"; mismatch (expected != None
-            # AND != 0) means another writer raced ahead of us.
-            if (
-                payload.expected_version is not None
-                and payload.expected_version not in (0, None)
-            ):
+            # No row yet — ``expected_version`` must be 0 (the convention
+            # for "I observed an empty slot"); any other value means
+            # another writer raced ahead of us between GET and PUT.
+            if payload.expected_version != 0:
                 raise HTTPException(
                     status_code=409,
                     detail={
@@ -192,66 +209,50 @@ def register_manual_input_endpoints(
             rid = existing["id"]
             current_version = int(existing["version"] or 1)
             new_version = current_version + 1
-            # Optimistic lock: when the caller supplies expected_version
-            # the UPDATE includes ``WHERE id=? AND version=?`` so a stale
-            # write is caught by SQLite's rowcount=0 result.  Without the
-            # token we fall back to the old read-modify-write behaviour
-            # to preserve compatibility with the M2 UI which doesn't yet
-            # surface version numbers in the cash-flow补录 panel.
-            if payload.expected_version is not None:
-                if payload.expected_version != current_version:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "error": "version_conflict",
-                            "field_key": field_key,
-                            "expected_version": payload.expected_version,
-                            "current_version": current_version,
-                        },
-                    )
-                cur = await service.db.conn.execute(
-                    "UPDATE manual_inputs SET field_label=?, value=?, value_type=?, "
-                    "source=?, notes=?, decided_by=?, decided_at=?, version=? "
-                    "WHERE id=? AND version=?",
-                    (
-                        preset.label, payload.value,
-                        payload.value_type or preset.value_type,
-                        payload.source or preset.default_source,
-                        payload.notes, payload.decided_by, now, new_version,
-                        rid, current_version,
-                    ),
+            # Strict optimistic lock: every UPDATE includes
+            # ``WHERE id=? AND version=?`` so a stale write loses the
+            # SQLite rowcount-0 race instead of silently winning.
+            if payload.expected_version != current_version:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "version_conflict",
+                        "field_key": field_key,
+                        "expected_version": payload.expected_version,
+                        "current_version": current_version,
+                    },
                 )
-                rowcount = cur.rowcount
-                await cur.close()
-                if rowcount == 0:
-                    # Another writer flipped the row between SELECT and
-                    # UPDATE — re-read to surface the live version.
-                    async with service.db.conn.execute(
-                        "SELECT version FROM manual_inputs WHERE id=?",
-                        (rid,),
-                    ) as cur:
-                        live = await cur.fetchone()
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "error": "version_conflict",
-                            "field_key": field_key,
-                            "expected_version": payload.expected_version,
-                            "current_version": int(live["version"])
-                            if live else None,
-                        },
-                    )
-            else:
-                await service.db.conn.execute(
-                    "UPDATE manual_inputs SET field_label=?, value=?, value_type=?, "
-                    "source=?, notes=?, decided_by=?, decided_at=?, version=? "
-                    "WHERE id=?",
-                    (
-                        preset.label, payload.value,
-                        payload.value_type or preset.value_type,
-                        payload.source or preset.default_source,
-                        payload.notes, payload.decided_by, now, new_version, rid,
-                    ),
+            cur = await service.db.conn.execute(
+                "UPDATE manual_inputs SET field_label=?, value=?, value_type=?, "
+                "source=?, notes=?, decided_by=?, decided_at=?, version=? "
+                "WHERE id=? AND version=?",
+                (
+                    preset.label, payload.value,
+                    payload.value_type or preset.value_type,
+                    payload.source or preset.default_source,
+                    payload.notes, payload.decided_by, now, new_version,
+                    rid, current_version,
+                ),
+            )
+            rowcount = cur.rowcount
+            await cur.close()
+            if rowcount == 0:
+                # Another writer flipped the row between SELECT and
+                # UPDATE — re-read to surface the live version.
+                async with service.db.conn.execute(
+                    "SELECT version FROM manual_inputs WHERE id=?",
+                    (rid,),
+                ) as cur:
+                    live = await cur.fetchone()
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "version_conflict",
+                        "field_key": field_key,
+                        "expected_version": payload.expected_version,
+                        "current_version": int(live["version"])
+                        if live else None,
+                    },
                 )
         await service.db.conn.commit()
         async with service.db.conn.execute(

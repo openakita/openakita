@@ -57,19 +57,19 @@ async def test_list_initially_empty_then_put_fills_slots(api):
         "social_security_paid",
     } == keys
 
-    # PUT a value
+    # PUT a value — fresh slot ⇒ expected_version=0 is required.
     r = client.put(
         f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/interest_paid",
-        json={"value": "1250.50", "decided_by": "tester"},
+        json={"value": "1250.50", "decided_by": "tester", "expected_version": 0},
     )
     assert r.status_code == 200, r.text
     assert r.json()["value"] == "1250.50"
     assert r.json()["version"] == 1
 
-    # Update — version bumps.
+    # Update — version bumps; client must echo back the live version.
     r = client.put(
         f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/interest_paid",
-        json={"value": "1500.00", "decided_by": "tester"},
+        json={"value": "1500.00", "decided_by": "tester", "expected_version": 1},
     )
     assert r.status_code == 200
     assert r.json()["version"] == 2
@@ -82,10 +82,10 @@ async def test_list_initially_empty_then_put_fills_slots(api):
     assert filled["filled"] is True
     assert filled["record"]["value"] == "1500.00"
 
-    # Reject unknown key
+    # Reject unknown key (400 takes precedence over the missing-version 409).
     r = client.put(
         f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/totally_made_up",
-        json={"value": "1"},
+        json={"value": "1", "expected_version": 0},
     )
     assert r.status_code == 400
 
@@ -135,7 +135,7 @@ async def test_cash_flow_report_consumes_manual_inputs(api):
     for k, v in fields.items():
         r = client.put(
             f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/{k}",
-            json={"value": str(v)},
+            json={"value": str(v), "expected_version": 0},
         )
         assert r.status_code == 200, r.text
 
@@ -171,10 +171,10 @@ async def test_put_with_expected_version_rejects_stale_write(api):
     )
     org_id = r.json()["id"]
 
-    # Initial PUT — no version yet, server picks v1.
+    # Initial PUT — fresh slot ⇒ expected_version=0; server picks v1.
     r = client.put(
         f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/interest_paid",
-        json={"value": "1000.00", "decided_by": "tester"},
+        json={"value": "1000.00", "decided_by": "tester", "expected_version": 0},
     )
     assert r.status_code == 200
     assert r.json()["version"] == 1
@@ -205,6 +205,49 @@ async def test_put_with_expected_version_rejects_stale_write(api):
     slot = next(s for s in body["slots"] if s["key"] == "interest_paid")
     assert slot["record"]["value"] == "2000.00"
     assert slot["record"]["version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_put_without_expected_version_returns_409_missing_token(api):
+    """Round-2 optimisation #1: ``expected_version`` is now mandatory.
+    Any PUT that omits it must return HTTP 409 with the structured
+    ``missing_expected_version`` error so legacy clients fail loudly
+    instead of silently overwriting newer data."""
+    client, _ = api
+    base = "/api/plugins/finance-auto"
+    r = client.post(
+        f"{base}/orgs",
+        json={"name": "强制版本测试", "code": "MI_STRICT", "industry": "general",
+              "standard": "small"},
+    )
+    org_id = r.json()["id"]
+
+    # Empty slot, no version supplied → 409 with missing_expected_version.
+    r = client.put(
+        f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/interest_paid",
+        json={"value": "100", "decided_by": "legacy_client"},
+    )
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["error"] == "missing_expected_version"
+    assert detail["field_key"] == "interest_paid"
+    assert "expected_version" in detail["detail"]
+
+    # Seed a row legitimately so we can re-verify the strict path on an
+    # existing slot too.
+    r = client.put(
+        f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/interest_paid",
+        json={"value": "100", "expected_version": 0},
+    )
+    assert r.status_code == 200
+
+    # Existing slot, no version supplied → still 409.
+    r = client.put(
+        f"{base}/orgs/{org_id}/periods/2025-FY/manual-inputs/interest_paid",
+        json={"value": "200"},
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"]["error"] == "missing_expected_version"
 
 
 @pytest.mark.asyncio
