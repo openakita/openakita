@@ -325,6 +325,50 @@ class ReclassificationService:
                 "parse_issue_ids_json=?, version=version+1 WHERE run_id=?",
                 (finished, json.dumps(parse_issue_ids), run_id),
             )
+            # EX-P2-9: snapshot the inverse delta for ``apply`` runs so a
+            # later POST /undo can roll the effect back.  We persist:
+            # (a) the parse_issue_ids we just created (these are the
+            # only persistent side-effect of the run today) and (b) the
+            # rule_id grouped by the items that actually matched, so a
+            # future "redo same rule" can recognise the supersession.
+            # Preview runs don't get a history row (nothing to undo).
+            if mode == "apply":
+                # Mark any prior history rows for the same (rule_id,
+                # period_id) as ``superseded`` — undoing the newest
+                # apply is the supported flow; older runs can no
+                # longer reach into the parse_issue rows they spawned
+                # without an explicit ``run_id``.
+                rule_ids_in_run = sorted({
+                    it["rule_id"] for it in items if it.get("rule_id")
+                })
+                for rid in rule_ids_in_run:
+                    await self._conn.execute(
+                        "UPDATE reclassification_history SET "
+                        "status='superseded', version=version+1 "
+                        "WHERE rule_id=? AND org_id=? AND period_id=? "
+                        "AND status='recorded'",
+                        (rid, org_id, payload.period_id),
+                    )
+                inverse_delta = {
+                    "parse_issue_ids": parse_issue_ids,
+                    "rule_ids": rule_ids_in_run,
+                    "items_count": len(items),
+                }
+                await self._conn.execute(
+                    "INSERT INTO reclassification_history(run_id, "
+                    "rule_id, org_id, period_id, applied_at, "
+                    "applied_by, inverse_delta_json, status, "
+                    "version, created_at) "
+                    "VALUES (?,?,?,?,?,?,?,'recorded',1,?)",
+                    (
+                        run_id,
+                        rule_ids_in_run[0] if rule_ids_in_run else None,
+                        org_id, payload.period_id,
+                        finished, payload.triggered_by,
+                        json.dumps(inverse_delta, ensure_ascii=False),
+                        finished,
+                    ),
+                )
             await self._conn.commit()
         except Exception:
             try:
@@ -391,6 +435,98 @@ class ReclassificationService:
         async with self._conn.execute(sql, params) as cur:
             ids = [row[0] for row in await cur.fetchall()]
         return [await self.get_run(run_id=rid) for rid in ids]
+
+    # --- undo (EX-P2-9) ---------------------------------------------------
+
+    async def undo_rule(
+        self,
+        *,
+        org_id: str,
+        rule_id: int,
+        actor_id: str = "local",
+    ) -> dict[str, Any]:
+        """Undo the most recent applied run of ``rule_id`` for ``org_id``.
+
+        Walks the inverse delta stored in ``reclassification_history``:
+        deletes the spawned ``parse_issues`` rows (they are the only
+        persistent side-effect of an apply today), flips the history
+        row to ``undone``, and bumps the run's status to ``undone``.
+
+        Raises ``ReclassificationError`` when no eligible history row
+        is found (no apply for the rule yet, or the most recent one
+        is already undone / superseded).
+        """
+        async with self._conn.execute(
+            "SELECT * FROM reclassification_history WHERE org_id=? "
+            "AND rule_id=? AND status='recorded' "
+            "ORDER BY applied_at DESC, history_id DESC LIMIT 1",
+            (org_id, rule_id),
+        ) as cur:
+            row = await cur.fetchone()
+            cols = [d[0] for d in cur.description] if cur.description else []
+        if row is None:
+            raise ReclassificationError(
+                f"no undoable apply found for rule {rule_id} in org {org_id}"
+            )
+        hist = dict(zip(cols, row))
+        try:
+            inverse = json.loads(hist["inverse_delta_json"] or "{}")
+        except json.JSONDecodeError:
+            inverse = {}
+        parse_issue_ids: list[str] = list(inverse.get("parse_issue_ids") or [])
+
+        # EX-P2-5: wrap the multi-table mutation in a single
+        # try/commit/except/rollback envelope so we never leave the
+        # history row flipped to "undone" while parse_issues still
+        # exist (or vice-versa).
+        now = _utcnow()
+        try:
+            deleted_count = 0
+            if parse_issue_ids:
+                # Best-effort delete — a parse_issue might already be
+                # gone if the user manually trashed it from the UI.
+                qmarks = ",".join("?" for _ in parse_issue_ids)
+                cur2 = await self._conn.execute(
+                    f"DELETE FROM parse_issues WHERE id IN ({qmarks})",
+                    tuple(parse_issue_ids),
+                )
+                deleted_count = cur2.rowcount or 0
+                await cur2.close()
+            await self._conn.execute(
+                "UPDATE reclassification_history SET status='undone', "
+                "undone_at=?, undone_by=?, version=version+1 "
+                "WHERE history_id=?",
+                (now, actor_id, int(hist["history_id"])),
+            )
+            # The v9 ``reclassification_runs.status`` CHECK constraint
+            # only allows ('ok','failed','partial') so we don't flip
+            # the column to 'undone' — instead we annotate the
+            # ``notes`` field with an audit marker that downstream
+            # listings can render.  The authoritative "is undone?"
+            # signal lives in ``reclassification_history.status``.
+            await self._conn.execute(
+                "UPDATE reclassification_runs SET "
+                "notes=COALESCE(notes,'') || ?, version=version+1 "
+                "WHERE run_id=?",
+                (f"\n[undone at {now} by {actor_id}]", int(hist["run_id"])),
+            )
+            await self._conn.commit()
+        except Exception:
+            try:
+                await self._conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
+
+        return {
+            "ok": True,
+            "history_id": int(hist["history_id"]),
+            "run_id": int(hist["run_id"]),
+            "rule_id": rule_id,
+            "deleted_parse_issues": deleted_count,
+            "undone_at": now,
+            "undone_by": actor_id,
+        }
 
     # --- helpers ---------------------------------------------------------
 

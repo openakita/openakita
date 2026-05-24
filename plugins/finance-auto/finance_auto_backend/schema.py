@@ -28,8 +28,9 @@ from .db.migrations import v9_consolidation as _v9_consol
 from .db.migrations import v9_reclassification as _v9_reclass
 from .db.migrations import v10_notes_peer as _v10
 from .db.migrations import v11_key_rotation_backup as _v11
+from .db.migrations import v13_reclassification_history as _v13
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 13
 """History:
 * v1 -- M1 W1 baseline (5 tables).
 * v2 -- M1 W2 Stage 4: adds ``reports`` + ``report_cells``.
@@ -66,6 +67,14 @@ SCHEMA_VERSION = 11
         produced by ``BackupRestoreService``).  All three tables carry a
         ``version`` column per Part Infra C3.  v0.3 Part Infra §2.5
         (密钥轮换) + §2.4 (备份/迁移) row.
+* v12 -- fix-round-3 RBAC: extended permission seeds across the 9 write
+        modules (admin, reclass, cashflow, xperiod, audit-tpl, manual,
+        consol, parse, notes, peer).  DDL-only seed migration that fills
+        the existing v9 ``permissions`` table — see
+        ``v12_extended_permissions.py``.  EX-P1-2.
+* v13 -- fix-round-3 reclassification undo (EX-P2-9): adds
+        ``reclassification_history`` (one row per applied run, carrying
+        the inverse delta).  See ``v13_reclassification_history.py``.
 """
 
 # ---------------------------------------------------------------------------
@@ -399,7 +408,7 @@ CREATE TABLE IF NOT EXISTS manual_inputs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_manual_inputs_key
     ON manual_inputs(org_id, period_id, field_key);
-""" + _v8.DDL_SQL + _v9_collab.DDL_SQL + _v9_consol.DDL_SQL + _v9_reclass.DDL_SQL + _v10.DDL_SQL + _v11.DDL_SQL
+""" + _v8.DDL_SQL + _v9_collab.DDL_SQL + _v9_consol.DDL_SQL + _v9_reclass.DDL_SQL + _v10.DDL_SQL + _v11.DDL_SQL + _v13.DDL_SQL
 
 # ---------------------------------------------------------------------------
 # Incremental migration steps.  ``run_migrations(conn, current_version)`` will
@@ -462,6 +471,15 @@ MIGRATION_STEPS: tuple[tuple[int, str], ...] = (
                                   # non-empty step to replay.  The real v1
                                   # key_versions row is materialised lazily by
                                   # KeyRotationService on first rotate / preview.
+    (13, _v13.DDL_SQL),           # fix-round-3 EX-P2-9: reclassification undo
+                                  # history.  DDL is already in SCHEMA_SQL via
+                                  # the append above; we replay the same DDL
+                                  # here so existing v9-or-later databases pick
+                                  # up the new table without a full re-init.
+                                  # (No v12 schema migration entry — v12 only
+                                  # extends ``permissions`` seeds, which the
+                                  # collaboration service idempotently inserts
+                                  # on every startup.)
 )
 """Each entry: (target_version, idempotent_DDL).  All steps replay the full
 canonical SCHEMA_SQL because every CREATE TABLE in it is IF NOT EXISTS, so

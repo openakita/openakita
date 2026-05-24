@@ -97,5 +97,25 @@ def register_reclassification_endpoints(
     ) -> list[ReclassificationRunModel]:
         return await _svc().list_runs(org_id=org_id, period_id=period_id)
 
+    # EX-P2-9: undo the most recent apply of a rule.  Implemented as a
+    # POST on the rule resource because callers usually have the
+    # rule_id from the rules list page; the service finds the latest
+    # ``recorded`` history row internally.
+    @router.post(
+        "/orgs/{org_id}/reclassification-rules/{rule_id}/undo",
+        status_code=200,
+    )
+    async def undo_rule(
+        org_id: str,
+        rule_id: int,
+        actor_id: str = Query(default="local"),
+    ) -> dict:
+        try:
+            return await _svc().undo_rule(
+                org_id=org_id, rule_id=rule_id, actor_id=actor_id
+            )
+        except ReclassificationError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
 
 __all__ = ["register_reclassification_endpoints"]
