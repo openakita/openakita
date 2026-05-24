@@ -4403,6 +4403,10 @@
       function PeerComparisonView({ toast }) {
         const { data: orgsData } = useFetch("/orgs?limit=200", []);
         const orgs = (orgsData && orgsData.organizations) || [];
+        // 同业基准数据库由 Sibling A 提供：GET /peer-benchmarks?industry_code=...
+        // 后端就绪后可改为基于该接口动态填充行业下拉与默认基准。
+        const { data: benchmarksData } = useFetch("/peer-benchmarks", []);
+        const benchmarks = (benchmarksData && benchmarksData.benchmarks) || [];
         const [orgId, setOrgId] = useState("");
         const [periodId, setPeriodId] = useState("2025-FY");
         const [industryCode, setIndustryCode] = useState("manufacturing");
