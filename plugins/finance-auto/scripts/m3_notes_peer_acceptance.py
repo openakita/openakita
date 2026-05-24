@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -461,4 +462,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    rc = main()
+    # Audit P2-5: TestClient + uvicorn lifespan path spawns a non-daemon
+    # thread (anyio task group + httpx transport) that lingers after
+    # main() returns, wedging the interpreter.  Bypass shutdown.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(rc)

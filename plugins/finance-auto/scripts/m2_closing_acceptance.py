@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -556,4 +557,15 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    rc = main()
+    # Audit P2-5: TestClient.websocket_connect spins up a non-daemon
+    # ASGI worker thread (anyio + httpx) that does not exit cleanly when
+    # the script's main coroutine finishes.  Without this os._exit the
+    # interpreter wedges forever waiting for the thread, forcing CI to
+    # kill the job via timeout.  Print the summary first via sys.stdout
+    # flush so PowerShell / CI captures it, then bypass atexit handlers
+    # entirely — every meaningful artefact (JSON summary, console output)
+    # has already been written by ``run()`` at this point.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(rc)
