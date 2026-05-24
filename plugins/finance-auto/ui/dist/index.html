@@ -3605,17 +3605,107 @@
             <div className="flex items-center justify-between mb-3">
               <div>
                 <h2 className="page-title">AI 设置</h2>
-                <p className="page-subtitle">场景默认值 / 永久授权 / 调用历史</p>
+                <p className="page-subtitle">场景默认值 / 永久授权 / 调用历史 / raw 级场景开关</p>
               </div>
             </div>
             <div className="tabs" style={{ marginBottom: 12 }}>
               <button className={`tab ${tab === "scenarios" ? "active" : ""}`} onClick={() => setTab("scenarios")} data-testid="tab-ai-scenarios">场景设置</button>
+              <button className={`tab ${tab === "raw" ? "active" : ""}`}       onClick={() => setTab("raw")}       data-testid="tab-ai-raw">🔴 raw 高级场景</button>
               <button className={`tab ${tab === "consent" ? "active" : ""}`}   onClick={() => setTab("consent")}   data-testid="tab-ai-consent">授权管理</button>
               <button className={`tab ${tab === "audit" ? "active" : ""}`}     onClick={() => setTab("audit")}     data-testid="tab-ai-audit">调用历史</button>
             </div>
             {tab === "scenarios" && <AIScenariosTab toast={toast} />}
+            {tab === "raw" && <AIRawScenariosTab toast={toast} />}
             {tab === "consent" && <AIConsentTab toast={toast} />}
             {tab === "audit" && <AIAuditTab toast={toast} />}
+          </>
+        );
+      }
+
+      function AIRawScenariosTab({ toast }) {
+        const [scenarios, setScenarios] = useState([]);
+        const [error, setError] = useState(null);
+        const [loading, setLoading] = useState(true);
+        const [missing, setMissing] = useState(false);
+
+        const reload = useCallback(async () => {
+          setLoading(true); setError(null); setMissing(false);
+          try {
+            const r = await api("GET", "/ai/raw/scenarios");
+            setScenarios((r && r.scenarios) || []);
+            setLoading(false);
+          } catch (e) {
+            try {
+              const r2 = await api("GET", "/ai/scenarios");
+              const all = (r2 && r2.scenarios) || [];
+              setScenarios(all.filter((s) => s.default_sensitivity === "raw"));
+              setLoading(false);
+            } catch (e2) {
+              setError(e2);
+              if (e2.status === 404) setMissing(true);
+              setLoading(false);
+            }
+          }
+        }, []);
+        useEffect(() => { reload(); }, [reload]);
+
+        const patch = async (sid, body) => {
+          try {
+            await api("PATCH", `/ai/scenarios/${sid}`, body);
+            toast("已保存");
+            reload();
+          } catch (e) { toast(`保存失败：${e.message}`, "err"); }
+        };
+
+        if (loading) return <div className="card"><Spinner /> 加载 raw 场景中…</div>;
+
+        return (
+          <>
+            <div className="upload-result mb-3" style={{ background: "rgba(220,38,38,0.06)", borderColor: "rgba(220,38,38,0.30)" }}>
+              🔴 raw 级场景会向 LLM 发送原始数据。请确认合规性后再启用。首次调用需弹窗授权 (allow_once / allow_permanent)。
+            </div>
+            {missing && (
+              <div className="upload-result mb-3" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
+                M3 Sibling B 后端尚未上线（GET /ai/raw/scenarios 与 /ai/scenarios 都未注册）。
+              </div>
+            )}
+            <div className="card" style={{ padding: 0 }}>
+              {scenarios.length === 0 && !missing ? <EmptyState title="暂无 raw 场景" /> : (
+                <table className="report-table">
+                  <thead>
+                    <tr><th>场景</th><th>说明</th><th>启用</th><th>敏感度</th></tr>
+                  </thead>
+                  <tbody>
+                    {scenarios.map((s) => {
+                      const effective = s.sensitivity_override || s.default_sensitivity;
+                      const enabled = (s.enabled_override === null || s.enabled_override === undefined) ? s.default_enabled : s.enabled_override;
+                      return (
+                        <tr key={s.scenario_id}>
+                          <td>
+                            <div><strong>🔴 {s.name}</strong></div>
+                            <div className="text-xs text-muted mono">{s.scenario_id}</div>
+                          </td>
+                          <td className="text-xs">{s.description || "—"}</td>
+                          <td>
+                            <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                              <input type="checkbox" checked={enabled} onChange={(e) => patch(s.scenario_id, { enabled: e.target.checked })} data-testid={`raw-enabled-${s.scenario_id}`} />
+                              {enabled ? "已启用" : "已停用"}
+                            </label>
+                          </td>
+                          <td>
+                            <select className="field" style={{ width: 120 }} value={effective} onChange={(e) => patch(s.scenario_id, { sensitivity_override: e.target.value })} data-testid={`raw-sens-${s.scenario_id}`}>
+                              {Object.keys(SENSITIVITY_META).map((v) => (
+                                <option key={v} value={v}>{SENSITIVITY_META[v].icon} {SENSITIVITY_META[v].label}</option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </>
         );
       }
@@ -4752,8 +4842,230 @@
         );
       }
 
+      // ═══════════════════════════════════════════════════════════════════
+      //  M3 · 高级 AI（Advanced AI raw 场景入口）—— Sibling B 后端：
+      //    POST /ai/raw/audit-opinion   S6 审计意见草稿
+      //    POST /ai/raw/nl-query        S7 自然语言查询（含 SQL 校验）
+      //    POST /ai/raw/notes-draft     S11 附注 AI 起草
+      //  首次调用需弹窗授权（AIConsentBridge 已自动处理 WS 对话请求）。
+      //  路由未注册（404）时显示 "M3 Sibling B 后端尚未上线" 提示。
+      // ═══════════════════════════════════════════════════════════════════
+      function AdvancedAIView({ toast }) {
+        return (
+          <>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h2 className="page-title">高级 AI</h2>
+                <p className="page-subtitle">3 个 raw 级 AI 场景：S6 审计意见 / S7 自然语言查询 / S11 附注起草</p>
+              </div>
+            </div>
+            <div className="upload-result mb-3" style={{ background: "rgba(220,38,38,0.06)", borderColor: "rgba(220,38,38,0.30)" }}>
+              🔴 raw 级 AI 调用 — 请确认合规性。首次使用需弹窗授权 (allow_once / allow_permanent)。
+            </div>
+            <div className="grid" style={{ gap: 12 }}>
+              <AuditOpinionCard toast={toast} />
+              <NlQueryCard toast={toast} />
+              <NotesDraftCard toast={toast} />
+            </div>
+          </>
+        );
+      }
+
+      function AuditOpinionCard({ toast }) {
+        const [orgId, setOrgId] = useState("");
+        const [periodLabel, setPeriodLabel] = useState("2025 年度");
+        const [validationsJson, setValidationsJson] = useState('{"unmatched_entries":0,"warnings":[]}');
+        const [templateText, setTemplateText] = useState("根据审计程序，我们认为...");
+        const [busy, setBusy] = useState(false);
+        const [result, setResult] = useState("");
+        const [missing, setMissing] = useState(false);
+
+        const submit = async () => {
+          let v;
+          try { v = JSON.parse(validationsJson); }
+          catch { toast("validations_json 不是有效 JSON", "warn"); return; }
+          setBusy(true); setResult(""); setMissing(false);
+          try {
+            const r = await api("POST", "/ai/raw/audit-opinion", {
+              org_id: orgId || null,
+              period_label: periodLabel,
+              validations: v,
+              template_text: templateText,
+            });
+            setResult((r && (r.markdown || r.text)) || JSON.stringify(r, null, 2));
+            toast("已生成审计意见草稿");
+          } catch (e) {
+            if (e.status === 404) { setMissing(true); toast("M3 Sibling B 后端尚未上线", "warn"); }
+            else { toast(`生成失败：${e.message}`, "err"); }
+          } finally { setBusy(false); }
+        };
+
+        return (
+          <div className="card">
+            <h3 className="card-title">🔴 S6 · 审计意见草稿</h3>
+            <p className="card-sub">基于校验结果与意见模板生成审计意见草稿（raw 级）</p>
+            <div className="row" style={{ gap: 10, alignItems: "flex-end", marginTop: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label className="lbl">账套 ID（可选）</label>
+                <input className="field" value={orgId} onChange={(e) => setOrgId(e.target.value)} data-testid="adv-s6-org" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="lbl">期间标签</label>
+                <input className="field" value={periodLabel} onChange={(e) => setPeriodLabel(e.target.value)} data-testid="adv-s6-period" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <label className="lbl">validations_json</label>
+              <textarea className="field" rows={3} value={validationsJson} onChange={(e) => setValidationsJson(e.target.value)} data-testid="adv-s6-validations" />
+            </div>
+            <div className="mt-3">
+              <label className="lbl">template_text</label>
+              <textarea className="field" rows={3} value={templateText} onChange={(e) => setTemplateText(e.target.value)} data-testid="adv-s6-template" />
+            </div>
+            <div className="flex justify-end mt-3">
+              <button className="btn primary" onClick={submit} disabled={busy} data-testid="adv-s6-go">{busy ? <Spinner /> : "生成"}</button>
+            </div>
+            {missing && (
+              <div className="upload-result mt-3" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
+                M3 Sibling B 后端尚未上线（POST /ai/raw/audit-opinion 未注册）。
+              </div>
+            )}
+            {result && (
+              <div className="card mt-3" style={{ padding: 10, background: "var(--bg-soft, rgba(0,0,0,0.03))" }}>
+                <strong>生成结果（Markdown）</strong>
+                <pre className="mono text-xs" style={{ whiteSpace: "pre-wrap", marginTop: 6 }}>{result}</pre>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      function NlQueryCard({ toast }) {
+        const [question, setQuestion] = useState("");
+        const [executeSql, setExecuteSql] = useState(true);
+        const [busy, setBusy] = useState(false);
+        const [result, setResult] = useState(null);
+        const [missing, setMissing] = useState(false);
+
+        const submit = async () => {
+          if (!question.trim()) { toast("请输入问题", "warn"); return; }
+          setBusy(true); setResult(null); setMissing(false);
+          try {
+            const r = await api("POST", "/ai/raw/nl-query", { question: question.trim(), execute_sql: executeSql });
+            setResult(r || {});
+          } catch (e) {
+            if (e.status === 404) { setMissing(true); toast("M3 Sibling B 后端尚未上线", "warn"); }
+            else { toast(`查询失败：${e.message}`, "err"); }
+          } finally { setBusy(false); }
+        };
+
+        const validation_errors = (result && result.validation_errors) || [];
+        const rows = ((result && result.rows) || []).slice(0, 50);
+        const cols = rows.length ? Object.keys(rows[0]) : [];
+
+        return (
+          <div className="card">
+            <h3 className="card-title">🔴 S7 · 自然语言查询</h3>
+            <p className="card-sub">用中文问数：模型生成 SELECT，平台自动校验后再执行（raw 级）</p>
+            <div className="mt-3">
+              <textarea className="field" rows={2} placeholder="例如：上季度毛利率最高的 5 个账套是哪些？" value={question} onChange={(e) => setQuestion(e.target.value)} data-testid="adv-s7-q" />
+            </div>
+            <div className="flex items-center mt-3" style={{ gap: 12 }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <input type="checkbox" checked={executeSql} onChange={(e) => setExecuteSql(e.target.checked)} data-testid="adv-s7-exec" />
+                校验通过后执行 SQL
+              </label>
+              <span style={{ flex: 1 }} />
+              <button className="btn primary" onClick={submit} disabled={busy} data-testid="adv-s7-go">{busy ? <Spinner /> : "查询"}</button>
+            </div>
+            {missing && (
+              <div className="upload-result mt-3" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
+                M3 Sibling B 后端尚未上线（POST /ai/raw/nl-query 未注册）。
+              </div>
+            )}
+            {result && (
+              <div className="mt-3">
+                <strong>翻译后的 SQL</strong>
+                <pre className="mono text-xs" style={{ background: "var(--bg-soft, rgba(0,0,0,0.04))", padding: 8, borderRadius: 4, overflowX: "auto", marginTop: 4 }}>{result.sql || "(无 SQL)"}</pre>
+                {validation_errors.length > 0 && (
+                  <div className="upload-result mt-3" style={{ background: "rgba(220,38,38,0.06)", borderColor: "rgba(220,38,38,0.30)" }}>
+                    <strong>validation_errors</strong>
+                    <ul style={{ marginTop: 4 }}>
+                      {validation_errors.map((err, i) => <li key={i} className="mono text-xs">{typeof err === "string" ? err : JSON.stringify(err)}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {rows.length > 0 && (
+                  <div className="card mt-3" style={{ padding: 0 }}>
+                    <div style={{ padding: 8, fontSize: 12 }}>结果（最多展示 50 行 · 共 {result.row_count ?? rows.length} 行）</div>
+                    <table className="report-table">
+                      <thead><tr>{cols.map((c) => <th key={c} className="text-xs">{c}</th>)}</tr></thead>
+                      <tbody>
+                        {rows.map((r, i) => <tr key={i}>{cols.map((c) => <td key={c} className="mono text-xs">{String(r[c] ?? "")}</td>)}</tr>)}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      function NotesDraftCard({ toast }) {
+        const [orgId, setOrgId] = useState("");
+        const [noteId, setNoteId] = useState("");
+        const [busy, setBusy] = useState(false);
+        const [result, setResult] = useState("");
+        const [missing, setMissing] = useState(false);
+
+        const submit = async () => {
+          if (!orgId.trim() || !noteId.trim()) { toast("请填写账套与附注 ID", "warn"); return; }
+          setBusy(true); setResult(""); setMissing(false);
+          try {
+            const r = await api("POST", "/ai/raw/notes-draft", { org_id: orgId.trim(), note_id: noteId.trim() });
+            setResult((r && (r.content || r.text)) || JSON.stringify(r, null, 2));
+            toast("已起草附注内容");
+          } catch (e) {
+            if (e.status === 404) { setMissing(true); toast("M3 Sibling B 后端尚未上线", "warn"); }
+            else { toast(`起草失败：${e.message}`, "err"); }
+          } finally { setBusy(false); }
+        };
+
+        return (
+          <div className="card">
+            <h3 className="card-title">🔴 S11 · 附注 AI 起草</h3>
+            <p className="card-sub">为指定附注段落生成草稿，与「报表附注」视图联动（raw 级）</p>
+            <div className="row" style={{ gap: 10, marginTop: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label className="lbl">账套 ID</label>
+                <input className="field" value={orgId} onChange={(e) => setOrgId(e.target.value)} data-testid="adv-s11-org" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="lbl">附注 ID</label>
+                <input className="field" value={noteId} onChange={(e) => setNoteId(e.target.value)} data-testid="adv-s11-note" />
+              </div>
+            </div>
+            <div className="flex justify-end mt-3">
+              <button className="btn primary" onClick={submit} disabled={busy} data-testid="adv-s11-go">{busy ? <Spinner /> : "起草"}</button>
+            </div>
+            {missing && (
+              <div className="upload-result mt-3" style={{ background: "rgba(217,119,6,0.06)", borderColor: "rgba(217,119,6,0.30)" }}>
+                M3 Sibling B 后端尚未上线（POST /ai/raw/notes-draft 未注册）。
+              </div>
+            )}
+            {result && (
+              <div className="card mt-3" style={{ padding: 10 }}>
+                <strong>更新后的附注内容</strong>
+                <pre className="mono text-xs" style={{ whiteSpace: "pre-wrap", marginTop: 6 }}>{result}</pre>
+              </div>
+            )}
+          </div>
+        );
+      }
+
       // ─────────────────────────────────────────────────────────────────
-      //  顶部导航：账套 / 合并报表 / 报表附注 / 同业对比 / 密钥管理 / AI 设置
+      //  顶部导航：账套 / 合并报表 / 报表附注 / 同业对比 / 密钥管理 / 高级AI / AI 设置
       // ─────────────────────────────────────────────────────────────────
       function MainNav({ active, navigate }) {
         const items = [
@@ -4761,6 +5073,7 @@
           { key: "consolidation",   label: "合并报表",   hash: "#/consolidation" },
           { key: "notes-editor",    label: "报表附注",   hash: "#/notes-editor" },
           { key: "peer-comparison", label: "同业对比",   hash: "#/peer-comparison" },
+          { key: "advanced-ai",     label: "高级AI",     hash: "#/advanced-ai" },
           { key: "key-management",  label: "密钥管理",   hash: "#/key-management" },
           { key: "ai-settings",     label: "AI 设置",    hash: "#/ai-settings" },
         ];
@@ -4824,6 +5137,7 @@
         const mNotes = route.match(/^#\/notes-editor\/?$/);
         const mPeer = route.match(/^#\/peer-comparison\/?$/);
         const mKM = route.match(/^#\/key-management\/?$/);
+        const mAdv = route.match(/^#\/advanced-ai\/?$/);
 
         let body, crumbs;
         let activeNav = "orgs";
@@ -4906,6 +5220,12 @@
           crumbs = [{ label: "密钥管理" }];
           body = (
             <KeyManagementView toast={toasts.push} />
+          );
+        } else if (mAdv) {
+          activeNav = "advanced-ai";
+          crumbs = [{ label: "高级AI" }];
+          body = (
+            <AdvancedAIView toast={toasts.push} />
           );
         } else {
           activeNav = "orgs";
