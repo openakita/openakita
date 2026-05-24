@@ -1,0 +1,12 @@
+### 四(三) 存货 (单位：元)
+
+| 项目 | 期末账面余额 | 跌价准备 | 期末账面价值 | 期初账面价值 |
+|---|---:|---:|---:|---:|
+{% for cat in categories %}| {{ cat.label }} | {{ cat.gross_end }} | {{ cat.provision }} | {{ cat.net_end }} | {{ cat.net_begin }} |
+{% endfor %}| **合计** | **{{ total_gross_end }}** | **{{ total_provision }}** | **{{ total_net_end }}** | **{{ total_net_begin }}** |
+
+期末存货账面价值合计 {{ total_net_end }} 元，与期初对比 {{ delta_text }}。
+{% if storage_notes %}
+
+存放地点说明：{{ storage_notes }}。
+{% endif %}

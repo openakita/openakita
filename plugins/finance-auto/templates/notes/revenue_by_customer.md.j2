@@ -1,0 +1,12 @@
+### 五(一) 营业收入按客户类别 (单位：元)
+
+| 客户类别 | 本期营收 | 占比 | 上期营收 |
+|---|---:|---:|---:|
+{% for cust in customers %}| {{ cust.label }} | {{ cust.amount }} | {{ cust.pct }}% | {{ cust.prev }} |
+{% endfor %}| **合计** | **{{ total_amount }}** | **100.00%** | **{{ total_prev }}** |
+
+本期营业收入合计 {{ total_amount }} 元；前 {{ top_n }} 大客户营收占比合计 {{ top_n_pct }}%。
+{% if concentration_notes %}
+
+集中度说明：{{ concentration_notes }}。
+{% endif %}

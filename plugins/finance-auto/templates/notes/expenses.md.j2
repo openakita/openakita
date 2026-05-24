@@ -1,0 +1,15 @@
+### 五(二) 费用明细 (单位：元)
+
+| 费用类别 | 本期金额 | 上期金额 | 同比变动 |
+|---|---:|---:|---:|
+{% for line in expense_lines %}| {{ line.label }} | {{ line.amount }} | {{ line.prev }} | {{ line.delta_pct }}% |
+{% endfor %}| **合计** | **{{ total_amount }}** | **{{ total_prev }}** | **{{ total_delta_pct }}%** |
+
+本期三大期间费用（销售/管理/财务）合计 {{ total_amount }} 元；
+{% if significant_variance %}
+其中 {{ significant_variance }} 同比变动超过 30%。
+{% endif %}
+{% if expense_notes %}
+
+补充说明：{{ expense_notes }}。
+{% endif %}
