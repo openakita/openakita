@@ -423,10 +423,49 @@ def create_app(
             return None
         return getattr(candidate, "brain", None)
 
-    agent_cache = AgentCache(
-        builder=DefaultAgentBuilder(brain_provider=_orgs_v2_brain_provider)
+    # Sprint-4 P0-1 (audit ``_orgs_business_capability_audit_v4.md``
+    # §6.2): wire the agent executor's ``dispatch_subtask`` back into
+    # ``DefaultAgentBuilder`` so per-node agents can recurse when the
+    # LLM emits ``<dispatch target="...">...</dispatch>`` blocks. The
+    # callback closure captures ``agent_executor`` *after* it is
+    # defined below; ``DefaultAgentBuilder.build`` is lazy (only fires
+    # on first node activation) so the forward reference resolves by
+    # the time anyone actually calls it.
+    #
+    # The parent ``command_id`` travels through a ContextVar
+    # (``current_command_id_var``) that the executor sets at the start
+    # of ``activate_and_run``, so the subtask callback can attribute
+    # the child run to the same id without threading it through
+    # ``agent.run(content)``. Children share the parent's command id
+    # by design: outcomes / cancellation / status are tracked at the
+    # user-command granularity, not per-node.
+    from openakita.orgs._runtime_agent_pipeline import (
+        current_command_id_var,
     )
+
     profile_resolver = ProfileResolver(lookup=org_manager)
+
+    async def _dispatch_subtask_cb(
+        *,
+        org_id: str,
+        parent_node_id: str,
+        child_node_id: str,
+        child_content: str,
+    ) -> str:
+        return await agent_executor.dispatch_subtask(
+            org_id=org_id,
+            parent_node_id=parent_node_id,
+            parent_command_id=current_command_id_var.get("") or None,
+            child_node_id=child_node_id,
+            child_content=child_content,
+        )
+
+    agent_cache = AgentCache(
+        builder=DefaultAgentBuilder(
+            brain_provider=_orgs_v2_brain_provider,
+            dispatch_callback=_dispatch_subtask_cb,
+        )
+    )
     agent_executor = AgentPipelineExecutor(
         cache=agent_cache,
         resolver=profile_resolver,

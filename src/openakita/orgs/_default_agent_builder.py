@@ -1,34 +1,62 @@
 """Default ``AgentBuilderProtocol`` -- minimum viable LLM binding for orgs_v2.
 
-Sprint-2 P0-1 (audit ``_orgs_business_capability_audit_v2.md`` §5 / §8):
-the v13 business-capability run showed every orgs_v2 command bouncing
-off ``_NullAgentBuilder`` with a ``RuntimeError`` -- 60+ commands, 0 LLM
-calls, 0 artefacts. The wire-up from H3 (executor injection) was correct
-but pointed at an empty default. This module ships the smallest possible
-real builder so a node can produce **at least one line of LLM text**:
+Sprint-2 P0-1 (audit ``_orgs_business_capability_audit_v2.md`` §5 / §8)
+shipped the bare LLM binding: every node could finally produce one line of
+LLM text instead of bouncing off ``_NullAgentBuilder``. Sprint-3 P0-1
+(audit v3 §5.2) plumbed the real entry-node id end-to-end so the executor
+stopped seeing ``node_id=None``.
 
-* :class:`DefaultAgentBuilder` -- builds one
-  :class:`_BrainBackedNodeAgent` per (org_id, node_id), reusing the main
-  chat ``Brain`` instance via a lazy provider so we don't reach into
-  ``app.state`` at builder-construction time (the API lifespan composes
-  the runtime *before* the desktop ``Agent`` is instantiated).
-* :class:`_BrainBackedNodeAgent` -- has the
-  ``_runtime_agent_pipeline_executor._AgentRunCallable`` shape:
-  ``async run(content) -> str``. Internally it feeds a single
-  user-message + persona-derived system prompt to
-  ``Brain.messages_create_async`` and extracts the text content.
+Sprint-4 P0-1 (audit ``_orgs_business_capability_audit_v4.md`` §6.2 /
+§8) tackles the remaining "single-LLM cosplay" symptom: even after
+Sprint-3 the v15 run showed 35/35 commands had only one unique node id
+in their LLM debug files (always ``producer``). The producer LLM was
+inventing screenwriter / art-director "voices" inside one call rather
+than really handing work off to those nodes.
 
-**Out of scope** (intentionally deferred to next sprint, see audit §8 P1):
+This module now supports an **explicit XML dispatch syntax** that the
+root node's system prompt teaches:
 
-* multi-node dispatcher / aggregator / delegation logging (D3 / D4 / D5)
-* tool / skill / MCP injection per node (the main chat Brain still owns
-  the 76-tool catalogue; node agents stay tool-free for now)
-* persistent agent identity (no SOUL.md / AGENT.md / USER.md layering --
-  builders compose a single-shot system prompt from
-  ``AgentSpec.persona`` + ``role`` + an "executing on behalf of org X
-  node Y" framing)
-* prompt-budget / context-window management (the node prompts are tiny
-  by construction; budgeting is part of the multi-node sprint)
+* The producer's LLM may emit zero or more
+  ``<dispatch target="screenwriter">child instruction</dispatch>``
+  blocks inside its reply.
+* :class:`_BrainBackedNodeAgent` parses up to
+  :data:`MAX_DISPATCH_BLOCKS` such blocks and, for each one, calls back
+  into the injected ``dispatch_callback`` (wired by the executor) with
+  the child node id + content.
+* The callback recurses through the same executor pipeline so each
+  child gets its own :class:`_BrainBackedNodeAgent`, its own
+  ``agent_run_started`` / ``agent_run_finished`` events, its own
+  artefact write (Sprint-4 P0-2), and its own ``context.node_id`` in
+  LLM debug.
+* Recursion is bounded by :data:`MAX_DISPATCH_DEPTH` so a runaway LLM
+  cannot trigger an unbounded fan-out. Depth tracking flows through a
+  module-level :class:`contextvars.ContextVar` set by the executor in
+  ``activate_and_run``.
+* Children run **serially** in this commit: it keeps cancel propagation
+  simple (a single ``CancelledError`` unwinds the whole tree) and makes
+  the LLM debug ordering deterministic; parallel ``asyncio.gather``
+  fan-out is reserved for the next sprint.
+
+The dispatch tutorial is only spliced into the system prompt at
+``depth == 0`` so children (and grandchildren) do not get the "you may
+dispatch" instructions and therefore cannot recurse further on their
+own initiative even before the depth gate fires.
+
+Sprint-4 P0-2 (audit v4 §5.4 / §6.2 #2) -- node artefact persistence -
+is implemented at the executor layer (see
+:mod:`._runtime_node_artifacts`), not here, because the executor is the
+only layer that already owns the post-success bookkeeping (events,
+emit, error mapping) and has clean access to the
+``get_org_dir`` lookup. The builder stays small and stateless.
+
+**Out of scope** (intentionally deferred to next sprint):
+
+* Parallel ``asyncio.gather`` child fan-out.
+* Inter-node memory retrieval at prompt time (the next node's prompt
+  does not yet read the previous node's persisted memory).
+* Node-level tool / skill / MCP injection (D4).
+* Aggregator / Router / Retriever / Persister builder classes
+  (still encoded inside this module + ``_runtime_dispatch.py``).
 
 The builder is intentionally fail-fast: if the brain provider returns
 ``None`` (lifespan ordering -- HTTP up before the desktop ``Agent`` is
@@ -42,14 +70,24 @@ keep working unchanged.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ._runtime_agent_pipeline import AgentSpec
+from ._runtime_agent_pipeline import (
+    MAX_DISPATCH_BLOCKS,
+    MAX_DISPATCH_DEPTH,
+    AgentSpec,
+    dispatch_depth_var,
+)
 
 __all__ = [
+    "MAX_DISPATCH_BLOCKS",
+    "MAX_DISPATCH_DEPTH",
     "BuilderUnavailable",
     "DefaultAgentBuilder",
+    "dispatch_depth_var",
+    "parse_dispatch_blocks",
 ]
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,6 +96,39 @@ _LOGGER = logging.getLogger(__name__)
 # dumps clearly attribute the LLM call to the orgs_v2 path (the v13
 # audit's L4.1 finding: 0 LLM debug files were tagged with orgs_v2).
 _NODE_SYSTEM_PREFIX = "[openakita orgs_v2 node agent]"
+
+
+# Sprint-4 P0-1 recursion-safety constants and the depth ContextVar
+# live in :mod:`._runtime_agent_pipeline` and are re-exported above
+# (rationale: import-cycle avoidance with the executor shard; see the
+# note next to the constant definitions in the pipeline module). The
+# ``MAX_DISPATCH_*`` numbers chosen there cover the typical
+# "producer (root) -> mid-tier (screenwriter/art-director) ->
+# workbench leaf (wb-hh-*)" three-layer pattern of the
+# ``aigc-video-studio`` template. Anything deeper is almost always
+# a hallucinated runaway; we'd rather drop the tail than burn token
+# budget on a 7-level pyramid that nobody asked for.
+
+
+# ``<dispatch target="...">...</dispatch>`` -- ``DOTALL`` so multi-line
+# child content is captured verbatim. We tolerate either quote style
+# and arbitrary whitespace between the tag name and the ``target=``
+# attribute so small LLM formatting drift (single vs double quotes,
+# leading newline inside the tag) does not silently drop the block.
+_DISPATCH_RE = re.compile(
+    r"<dispatch\s+target\s*=\s*[\"']([^\"']+)[\"']\s*>(.*?)</dispatch>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+# Type alias for the dispatch callback the executor wires in. Keeping
+# it on the module so tests / docstrings can refer to a single name.
+DispatchCallback = Callable[..., Awaitable[str]]
+
+
+# Type alias for the artefact persistor (Sprint-4 P0-2). The executor
+# wires this in too so the builder stays free of filesystem concerns.
+ArtifactPersistor = Callable[..., None]
 
 
 class BuilderUnavailable(RuntimeError):
@@ -71,12 +142,41 @@ class BuilderUnavailable(RuntimeError):
     """
 
 
-def _persona_system_prompt(spec: AgentSpec) -> str:
+def _dispatch_instructions() -> str:
+    """Return the producer-level system-prompt tutorial for child dispatch.
+
+    Kept as a single short paragraph so the per-node token budget stays
+    bounded. The format is intentionally rigid (XML attribute syntax,
+    one target per block) -- a relaxed format would let the LLM emit
+    ambiguous text that the regex either over-matches or under-matches.
+    The "do not nest" rule is enforced anyway by the depth gate; we
+    surface it in the prompt so the model does not waste tokens on a
+    nested ``<dispatch>`` the parent would just ignore.
+    """
+
+    return (
+        "If you need a specialist node to handle part of the task, you "
+        "may emit one or more dispatch blocks in your reply using EXACTLY "
+        "this XML syntax: <dispatch target=\"NODE_ID\">instruction for "
+        "that node</dispatch>. Use the literal node id (e.g. "
+        "'screenwriter', 'art-director'). Emit at most "
+        f"{MAX_DISPATCH_BLOCKS} dispatch blocks. Do not nest dispatch "
+        "blocks. After the dispatch blocks the orchestrator will append "
+        "each child's output to your reply, so your own text should "
+        "focus on coordination (which child does what and why)."
+    )
+
+
+def _persona_system_prompt(spec: AgentSpec, *, depth: int = 0) -> str:
     """Compose the per-node system prompt from the resolved spec.
 
-    Kept deliberately small (< 500 chars) so a single-shot "echo + LLM"
-    call doesn't blow the per-node token budget. Multi-line layered
-    identity composition is the multi-node sprint's job.
+    Kept deliberately small (< 1 KB) so single-shot calls don't blow
+    the per-node token budget. The Sprint-4 dispatch tutorial is only
+    spliced in at the entry level (``depth == 0``) -- children get the
+    classic Sprint-2 "stay in your lane" instruction, so even if a
+    child's LLM decided to emit a ``<dispatch>`` tag the gate would
+    skip it AND the prompt did not teach it the syntax in the first
+    place.
     """
 
     persona = (spec.persona or "").strip()
@@ -88,12 +188,16 @@ def _persona_system_prompt(spec: AgentSpec) -> str:
     ]
     if persona:
         parts.append(f"Persona: {persona}.")
-    parts.append(
-        "Reply directly to the user instruction below. Keep your answer "
-        "focused on the node's role; do not pretend to dispatch sub-tasks "
-        "to other nodes (multi-node coordination is handled by the "
-        "orchestrator, not by you)."
-    )
+    if depth == 0:
+        parts.append(_dispatch_instructions())
+    else:
+        parts.append(
+            "Reply directly to the user instruction below. Keep your "
+            "answer focused on the node's role; do not pretend to "
+            "dispatch sub-tasks to other nodes (multi-node coordination "
+            "is handled by the orchestrator at the entry level, not by "
+            "you)."
+        )
     return "\n".join(parts)
 
 
@@ -127,6 +231,79 @@ def _extract_text_from_response(resp: Any) -> str:
     return str(resp).strip()
 
 
+def parse_dispatch_blocks(text: str) -> list[tuple[str, str]]:
+    """Extract ``(target_node_id, child_content)`` pairs from an LLM reply.
+
+    Returns at most :data:`MAX_DISPATCH_BLOCKS` pairs in the order they
+    appear (LLM-ordered, not alphabetised: ordering carries intent
+    when the model says "first ask screenwriter, then art-director").
+    Target / content are stripped of leading and trailing whitespace
+    because regex captures preserve newlines around the tags. Empty
+    targets are filtered out so a malformed ``<dispatch target="">`` is
+    skipped instead of being forwarded to a non-existent node.
+    """
+
+    if not isinstance(text, str) or "<dispatch" not in text.lower():
+        return []
+    pairs: list[tuple[str, str]] = []
+    for match in _DISPATCH_RE.finditer(text):
+        target = (match.group(1) or "").strip()
+        content = (match.group(2) or "").strip()
+        if not target:
+            continue
+        pairs.append((target, content))
+        if len(pairs) >= MAX_DISPATCH_BLOCKS:
+            break
+    return pairs
+
+
+def _strip_dispatch_blocks(text: str) -> str:
+    """Replace each ``<dispatch>...</dispatch>`` block with a short marker.
+
+    The original LLM text is preserved verbatim around the dispatch
+    blocks so the parent's "coordination commentary" still surfaces to
+    the user. Pre-fix attempts to keep the raw blocks made the
+    aggregated output illegible (the user saw the XML on screen and
+    then the same child reply repeated underneath); the marker makes
+    the flow obvious ("here producer asked X, here is X's reply").
+    """
+
+    if not isinstance(text, str) or "<dispatch" not in text.lower():
+        return text
+
+    def _sub(match: re.Match[str]) -> str:
+        target = (match.group(1) or "").strip() or "?"
+        return f"[dispatched to {target}]"
+
+    return _DISPATCH_RE.sub(_sub, text)
+
+
+def _aggregate_with_children(
+    parent_text: str,
+    children: list[tuple[str, str]],
+) -> str:
+    """Combine the parent's stripped text with serial child outputs.
+
+    The aggregation format is intentionally markdown-light so it shows
+    up readably in chat UIs that escape HTML but render newlines. Each
+    child is fenced by its node id so the user can tell which voice is
+    speaking even when several children replied. Empty child outputs
+    are kept (with an explicit ``(no output)`` placeholder) because the
+    absence of output is itself signal -- pre-fix we silently dropped
+    empties and the user could not tell whether the child failed or
+    just had nothing to say.
+    """
+
+    parent_stripped = _strip_dispatch_blocks(parent_text).strip()
+    sections: list[str] = []
+    if parent_stripped:
+        sections.append(parent_stripped)
+    for target, output in children:
+        body = (output or "").strip() or "(no output)"
+        sections.append(f"[from node `{target}`]\n{body}")
+    return "\n\n".join(sections)
+
+
 class _BrainBackedNodeAgent:
     """Single-shot LLM agent for one orgs_v2 node.
 
@@ -134,14 +311,27 @@ class _BrainBackedNodeAgent:
     ``_runtime_agent_pipeline_executor._AgentRunCallable`` Protocol
     (``async run(content) -> Any``). The executor handles the rest of
     the v1-parity event lifecycle.
+
+    Sprint-4 P0-1: when an injected ``dispatch_callback`` is wired and
+    the LLM emits ``<dispatch target="...">...</dispatch>`` blocks,
+    :meth:`run` calls the callback once per block (serially), then
+    aggregates the children outputs into the returned text. Recursion
+    depth is controlled by :data:`dispatch_depth_var` (set by the
+    executor) and capped at :data:`MAX_DISPATCH_DEPTH`.
     """
 
-    __slots__ = ("_spec", "_brain", "_system_prompt")
+    __slots__ = ("_spec", "_brain", "_dispatch_callback")
 
-    def __init__(self, spec: AgentSpec, brain: Any) -> None:
+    def __init__(
+        self,
+        spec: AgentSpec,
+        brain: Any,
+        *,
+        dispatch_callback: DispatchCallback | None = None,
+    ) -> None:
         self._spec = spec
         self._brain = brain
-        self._system_prompt = _persona_system_prompt(spec)
+        self._dispatch_callback = dispatch_callback
 
     async def run(self, content: str) -> str:
         text = content if isinstance(content, str) else str(content or "")
@@ -150,6 +340,7 @@ class _BrainBackedNodeAgent:
             # blank submits) but be defensive: a noop reply keeps the
             # executor's "ok" path reachable.
             return ""
+        depth = max(0, int(dispatch_depth_var.get(0)))
         # Tag the brain's debug dump with the node identity so the v13
         # audit's "0 orgs_v2 LLM files" finding becomes verifiable on the
         # next exploratory pass.
@@ -165,20 +356,58 @@ class _BrainBackedNodeAgent:
                 )
             except Exception:  # noqa: BLE001 -- trace tagging is best-effort
                 pass
+        system_prompt = _persona_system_prompt(self._spec, depth=depth)
         messages = [
             {
                 "role": "user",
                 "content": text,
             }
         ]
-        # No tools are passed: nodes run the minimal viable LLM call for
-        # Sprint-2 P0-1. Tool / skill injection is the next sprint's job.
+        # No tools are passed: nodes run the minimal viable LLM call.
+        # Tool / skill injection is D4 (next-sprint scope).
         response = await self._brain.messages_create_async(
             messages=messages,
-            system=self._system_prompt,
+            system=system_prompt,
             tools=[],
         )
-        return _extract_text_from_response(response)
+        parent_text = _extract_text_from_response(response)
+
+        # Sprint-4 P0-1: parse + recurse on child dispatch blocks.
+        # Skip if the dispatch callback is not wired (unit tests /
+        # bare-builder users get exactly the Sprint-3 behaviour) or
+        # the current depth is at the cap (recursion would exceed
+        # MAX_DISPATCH_DEPTH).
+        if self._dispatch_callback is None or depth >= MAX_DISPATCH_DEPTH - 1:
+            return parent_text
+        blocks = parse_dispatch_blocks(parent_text)
+        if not blocks:
+            return parent_text
+
+        children: list[tuple[str, str]] = []
+        for child_target, child_content in blocks:
+            try:
+                child_output = await self._dispatch_callback(
+                    org_id=self._spec.org_id,
+                    parent_node_id=self._spec.node_id,
+                    child_node_id=child_target,
+                    child_content=child_content,
+                )
+            except Exception as exc:  # noqa: BLE001 -- one child failure
+                # must not poison siblings or the parent's reply. The
+                # executor inside the callback already emitted
+                # ``agent_run_failed`` / persisted artefacts for the
+                # surviving children; here we surface the failure
+                # textually so the aggregated reply still shows the
+                # parent "tried" all branches.
+                _LOGGER.warning(
+                    "child dispatch failed (parent=%s target=%s): %s",
+                    self._spec.node_id,
+                    child_target,
+                    exc,
+                )
+                child_output = f"[child dispatch failed: {exc}]"
+            children.append((child_target, child_output or ""))
+        return _aggregate_with_children(parent_text, children)
 
 
 class DefaultAgentBuilder:
@@ -191,12 +420,29 @@ class DefaultAgentBuilder:
     callable that the builder dereferences each :meth:`build` -- the
     desktop ``Agent`` is wired into ``app.state.agent`` later by
     ``main.py`` and the closure picks it up on first use.
+
+    Sprint-4 P0-1: optionally accepts a ``dispatch_callback`` that the
+    built :class:`_BrainBackedNodeAgent` invokes when the LLM emits
+    ``<dispatch target="...">...</dispatch>`` blocks. The callback is
+    wired by the runtime composition root to point back at
+    :meth:`AgentPipelineExecutor.dispatch_subtask`. Leaving it as
+    ``None`` (the default) restores Sprint-3 behaviour byte-for-byte,
+    so unit tests / parity gates that instantiate the builder
+    standalone keep working without changes.
     """
 
-    def __init__(self, *, brain_provider: Callable[[], Any]) -> None:
+    def __init__(
+        self,
+        *,
+        brain_provider: Callable[[], Any],
+        dispatch_callback: DispatchCallback | None = None,
+    ) -> None:
         if not callable(brain_provider):
             raise TypeError("brain_provider must be callable")
+        if dispatch_callback is not None and not callable(dispatch_callback):
+            raise TypeError("dispatch_callback must be callable when provided")
         self._brain_provider = brain_provider
+        self._dispatch_callback = dispatch_callback
 
     def build(self, spec: AgentSpec) -> Any:
         try:
@@ -228,7 +474,11 @@ class DefaultAgentBuilder:
             spec.role,
             (spec.persona or "")[:40],
         )
-        return _BrainBackedNodeAgent(spec, brain)
+        return _BrainBackedNodeAgent(
+            spec,
+            brain,
+            dispatch_callback=self._dispatch_callback,
+        )
 
     def teardown(self, agent: Any) -> None:  # noqa: ARG002
         # Brain references are shared with the main desktop Agent; we do

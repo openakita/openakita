@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from time import time
 from typing import Any, Protocol, runtime_checkable
@@ -47,6 +48,47 @@ _LOGGER = logging.getLogger(__name__)
 # v1 parity: org-state values that gate agent activation.
 ORG_STATE_ACTIVE = "active"
 ORG_STATE_PAUSED = "paused"
+
+
+# Sprint-4 P0-1 (audit ``_orgs_business_capability_audit_v4.md`` §6.2)
+# -- depth gate + ContextVar for recursive child dispatch. Defined in
+# this module (rather than the natural-home ``_default_agent_builder``)
+# because both ``_default_agent_builder`` and
+# ``_runtime_agent_pipeline_executor`` need to read them and they
+# already share this module via the executor re-export at the bottom
+# of the file. Putting them anywhere downstream would re-create the
+# ``_runtime_agent_pipeline`` <-> ``_runtime_agent_pipeline_executor``
+# import cycle that ADR-0014 explicitly carved out.
+MAX_DISPATCH_DEPTH = 3
+"""Hard cap on recursion depth: depth 0 = root, depth 1 = first-level
+children, depth 2 = grandchildren. ``dispatch_subtask`` refuses calls
+that would reach depth 3 to keep the recursion fan-out bounded."""
+
+MAX_DISPATCH_BLOCKS = 5
+"""Hard cap on dispatch blocks parsed per LLM reply, regardless of how
+many the model emits."""
+
+dispatch_depth_var: ContextVar[int] = ContextVar(
+    "openakita_orgs_v2_dispatch_depth", default=0
+)
+"""Per-task depth marker. Set by
+:meth:`AgentPipelineExecutor.activate_and_run` before invoking the
+cached node agent; read by
+:class:`._default_agent_builder._BrainBackedNodeAgent` (to gate the
+``<dispatch>`` parser) and by
+:meth:`AgentPipelineExecutor.dispatch_subtask` (to derive the child
+depth)."""
+
+current_command_id_var: ContextVar[str] = ContextVar(
+    "openakita_orgs_v2_command_id", default=""
+)
+"""Per-task command-id marker. Set by
+:meth:`AgentPipelineExecutor.activate_and_run` so the child-dispatch
+callback wired into :class:`DefaultAgentBuilder` can re-attribute
+recursive child runs to the **parent's** command id without having to
+thread it through ``agent.run(content)``. Children share the parent's
+command id by design: outcomes / cancellation / status are tracked at
+the user-command granularity, not per-node."""
 
 
 @dataclass
@@ -276,6 +318,8 @@ from ._runtime_agent_pipeline_executor import (  # noqa: E402
 )
 
 __all__ = [
+    "MAX_DISPATCH_BLOCKS",
+    "MAX_DISPATCH_DEPTH",
     "ORG_STATE_ACTIVE",
     "ORG_STATE_PAUSED",
     "AgentBuilderProtocol",
@@ -283,4 +327,6 @@ __all__ = [
     "AgentCache",
     "AgentSpec",
     "ProfileResolver",
+    "current_command_id_var",
+    "dispatch_depth_var",
 ]

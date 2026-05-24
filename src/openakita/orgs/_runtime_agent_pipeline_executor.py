@@ -19,7 +19,17 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ._runtime_agent_pipeline import ORG_STATE_PAUSED
+from ._runtime_agent_pipeline import (
+    MAX_DISPATCH_DEPTH,
+    ORG_STATE_PAUSED,
+    current_command_id_var,
+    dispatch_depth_var,
+)
+from ._runtime_dispatch import _append_delegation_log
+from ._runtime_node_artifacts import (
+    persist_node_artifact,
+    persist_node_memory,
+)
 from .command_service import OrgLookupProtocol
 
 if TYPE_CHECKING:
@@ -132,6 +142,8 @@ class AgentPipelineExecutor:
         role: str | None = None,
         persona: str | None = None,
         unattended: bool = False,
+        depth: int = 0,
+        parent_node_id: str | None = None,
     ) -> dict[str, Any]:
         """v1 ``_activate_and_run`` + ``_activate_and_run_inner`` parity.
 
@@ -140,6 +152,25 @@ class AgentPipelineExecutor:
              "command_id": str | None,
              "output": str | None,
              "reason": str | None}
+
+        Sprint-4 P0-1 (audit v4 §6.2): ``depth`` controls the
+        :data:`dispatch_depth_var` context variable so the agent's
+        ``run`` method can decide whether to parse and recurse into
+        ``<dispatch>`` blocks. Entry runs pass ``depth=0`` (the
+        default); :meth:`dispatch_subtask` re-enters this method with
+        ``depth=parent_depth + 1``. ``parent_node_id`` carries the
+        dispatcher's node id into the started / finished event
+        payloads so the SSE stream and events.jsonl reflect the
+        delegation chain (Sprint-3 only had the root entry node).
+
+        Sprint-4 P0-2 (audit v4 §5.4): after a successful agent run we
+        persist the full output to ``data/orgs/<id>/artifacts/`` and a
+        bounded summary to ``memory/`` via
+        :mod:`._runtime_node_artifacts`. Failures are swallowed by the
+        helpers themselves; the returned ``agent_run_finished`` payload
+        carries an ``artifact_path`` field (``None`` when persistence
+        is disabled / failed) so the UI can surface the path without a
+        second round-trip.
         """
 
         org = self._lookup.get_org(org_id)
@@ -158,10 +189,16 @@ class AgentPipelineExecutor:
         )
         if spec is None:
             return self._result("error", command_id, reason="profile_unresolved")
-        await self._emit(
-            "agent_run_started",
-            {"org_id": org_id, "node_id": node_id, "command_id": command_id},
-        )
+        started_payload: dict[str, Any] = {
+            "org_id": org_id,
+            "node_id": node_id,
+            "command_id": command_id,
+        }
+        if depth:
+            started_payload["depth"] = depth
+        if parent_node_id:
+            started_payload["parent_node_id"] = parent_node_id
+        await self._emit("agent_run_started", started_payload)
         try:
             agent = self._cache.get_or_create(spec)
         except Exception as exc:  # noqa: BLE001 (v1 parity: never crash dispatch)
@@ -177,6 +214,22 @@ class AgentPipelineExecutor:
                 },
             )
             return self._result("error", command_id, reason="agent_build_failed")
+        # Sprint-4 P0-1: set the depth context so the agent's
+        # ``run`` knows whether it is allowed to dispatch children
+        # (and so the system prompt picks the right tutorial slot).
+        # ContextVar.set returns a Token we reset in ``finally`` so a
+        # crash inside ``_invoke_agent`` cannot leak the depth across
+        # subsequent activations on the same event loop.
+        #
+        # The command-id context is the lane the dispatch callback
+        # uses to re-attribute child runs to the same parent command;
+        # see :data:`current_command_id_var` and the docstring of
+        # :meth:`dispatch_subtask`. We always set it (even when
+        # ``command_id`` is ``None``) so the dispatch callback gets a
+        # clean empty string rather than whatever the previous run
+        # left behind.
+        depth_token = dispatch_depth_var.set(max(0, int(depth)))
+        cid_token = current_command_id_var.set(str(command_id or ""))
         try:
             output = await self._invoke_agent(agent, content)
         except asyncio.CancelledError:
@@ -224,16 +277,174 @@ class AgentPipelineExecutor:
                 },
             )
             return self._result("error", command_id, reason="agent_run_raised")
+        finally:
+            dispatch_depth_var.reset(depth_token)
+            current_command_id_var.reset(cid_token)
+
+        # Sprint-4 P0-2: persist the artefact + memory summary BEFORE
+        # emitting agent_run_finished so the event payload can carry
+        # the resolved path. The helpers are fail-silent: ``None`` means
+        # persistence is either disabled or hit an I/O snag, never that
+        # the agent run itself failed.
+        output_text = str(output) if output else ""
+        get_org_dir = getattr(self._lookup, "get_org_dir", None)
+        artifact_path: str | None = None
+        if output_text and command_id:
+            try:
+                artifact_path = persist_node_artifact(
+                    org_id=org_id,
+                    command_id=command_id,
+                    node_id=node_id,
+                    output=output_text,
+                    parent_node_id=parent_node_id,
+                    get_org_dir=get_org_dir,
+                )
+                persist_node_memory(
+                    org_id=org_id,
+                    command_id=command_id,
+                    node_id=node_id,
+                    output=output_text,
+                    role=spec.role,
+                    parent_node_id=parent_node_id,
+                    get_org_dir=get_org_dir,
+                )
+            except Exception:  # noqa: BLE001 -- belt-and-braces
+                _LOGGER.debug(
+                    "node artefact persistence raised (org=%s node=%s)",
+                    org_id,
+                    node_id,
+                    exc_info=True,
+                )
+
+        finished_payload: dict[str, Any] = {
+            "org_id": org_id,
+            "node_id": node_id,
+            "command_id": command_id,
+            "output_len": len(output_text),
+        }
+        if depth:
+            finished_payload["depth"] = depth
+        if parent_node_id:
+            finished_payload["parent_node_id"] = parent_node_id
+        if artifact_path:
+            finished_payload["artifact_path"] = artifact_path
+        await self._emit("agent_run_finished", finished_payload)
+        return self._result("ok", command_id, output=output_text)
+
+    async def dispatch_subtask(
+        self,
+        *,
+        org_id: str,
+        parent_node_id: str,
+        parent_command_id: str | None,
+        child_node_id: str,
+        child_content: str,
+    ) -> str:
+        """Sprint-4 P0-1 -- recurse from a parent node into a child node.
+
+        Wired into :class:`DefaultAgentBuilder` so the per-node agent
+        can hand work off when its LLM emits a ``<dispatch>`` block.
+        Returns the child's textual output (already extracted by
+        :meth:`activate_and_run`) so the parent can splice it into the
+        aggregated reply.
+
+        Hard rules:
+
+        * Depth is read from :data:`dispatch_depth_var` (set by the
+          parent ``activate_and_run`` call). When
+          ``depth + 1 >= MAX_DISPATCH_DEPTH`` we refuse and return a
+          short marker string instead of recursing; the parent's
+          aggregation surfaces this so the user can see the gate
+          fired.
+        * Child must exist on the org. Unknown ``child_node_id`` logs
+          a warning, emits no events, returns a placeholder. We avoid
+          raising because one bad dispatch must not poison sibling
+          dispatches in the same parent reply.
+        * Empty / blank ``child_content`` is also skipped (a
+          ``<dispatch target="x">  </dispatch>`` is almost certainly
+          a hallucination the parent didn't mean).
+        * ``subtask_assigned`` event + ``delegation_logs/`` JSONL line
+          are emitted from here (NOT from
+          :meth:`activate_and_run`) so the parent->child edge is
+          recorded with the real parent node id, not with
+          ``parent_node_id=None`` the entry-dispatch path uses.
+        """
+
+        current_depth = max(0, int(dispatch_depth_var.get(0)))
+        next_depth = current_depth + 1
+        if next_depth >= MAX_DISPATCH_DEPTH:
+            _LOGGER.info(
+                "dispatch refused: max depth %d reached (parent=%s child=%s)",
+                MAX_DISPATCH_DEPTH,
+                parent_node_id,
+                child_node_id,
+            )
+            return f"[dispatch to `{child_node_id}` refused: max depth reached]"
+        target = (child_node_id or "").strip()
+        body = (child_content or "").strip()
+        if not target or not body:
+            return ""
+
+        org = self._lookup.get_org(org_id)
+        if org is None:
+            _LOGGER.warning(
+                "dispatch_subtask org missing (org=%s parent=%s child=%s)",
+                org_id,
+                parent_node_id,
+                target,
+            )
+            return ""
+        get_node = getattr(org, "get_node", None)
+        if callable(get_node) and get_node(target) is None:
+            _LOGGER.warning(
+                "dispatch_subtask child node missing (org=%s parent=%s child=%s)",
+                org_id,
+                parent_node_id,
+                target,
+            )
+            return f"[dispatch to `{target}` skipped: unknown node]"
+
+        preview = body[:200]
         await self._emit(
-            "agent_run_finished",
+            "subtask_assigned",
             {
                 "org_id": org_id,
-                "node_id": node_id,
-                "command_id": command_id,
-                "output_len": len(str(output or "")),
+                "command_id": parent_command_id,
+                "node_id": target,
+                "parent_node_id": parent_node_id,
+                "child_node_id": target,
+                "content_preview": preview,
+                "depth": next_depth,
+                "kind": "child_dispatch",
             },
         )
-        return self._result("ok", command_id, output=str(output) if output else "")
+        # Mirror Sprint-3's entry-dispatch delegation log shape so
+        # downstream log readers don't have to special-case child
+        # entries. ``kind`` distinguishes the two so analyses that
+        # count "real" recursive hops from "always-1" entry hops have
+        # an unambiguous discriminator.
+        _append_delegation_log(
+            {
+                "command_id": parent_command_id,
+                "org_id": org_id,
+                "parent_node": parent_node_id,
+                "child_node": target,
+                "node_id": target,
+                "kind": "child_dispatch",
+                "depth": next_depth,
+                "content_preview": preview,
+            }
+        )
+
+        result = await self.activate_and_run(
+            org_id=org_id,
+            node_id=target,
+            content=body,
+            command_id=parent_command_id,
+            depth=next_depth,
+            parent_node_id=parent_node_id,
+        )
+        return str(result.get("output") or "")
 
     async def pause_org_for_quota(self, org_id: str, *, reason: str) -> None:
         """v1 ``_pause_org_for_quota`` parity (78 LOC -> ~15 LOC).

@@ -148,6 +148,8 @@ from __future__ import annotations
 
 from ._default_agent_builder import BuilderUnavailable, DefaultAgentBuilder
 from ._runtime_agent_pipeline import (
+    MAX_DISPATCH_BLOCKS,
+    MAX_DISPATCH_DEPTH,
     ORG_STATE_ACTIVE,
     ORG_STATE_PAUSED,
     AgentBuilderProtocol,
@@ -155,6 +157,8 @@ from ._runtime_agent_pipeline import (
     AgentPipelineExecutor,
     AgentSpec,
     ProfileResolver,
+    current_command_id_var,
+    dispatch_depth_var,
 )
 from ._runtime_dispatch import (
     TRACKER_CANCELLED,
@@ -334,6 +338,8 @@ __all__ = [
     "JsonOrgStore",
     "JsonProjectStore",
     "MAX_DEPT_MEMORIES",
+    "MAX_DISPATCH_BLOCKS",
+    "MAX_DISPATCH_DEPTH",
     "MAX_FREQUENCY_FACTOR",
     "MAX_NODE_MEMORIES",
     "MAX_ORG_MEMORIES",
@@ -412,7 +418,9 @@ __all__ = [
     "build_workbench_templates",
     "collect_tool_stats_from_trace",
     "compute_next_fire_time",
+    "current_command_id_var",
     "default_scope_for_surface",
+    "dispatch_depth_var",
     "ensure_builtin_templates",
     "ext_for_url",
     "extract_accepted_chain_ids",
