@@ -704,6 +704,46 @@
           direction: "debit",
         });
         const [previewResult, setPreviewResult] = useState(null);
+        const [undoTarget, setUndoTarget] = useState(null); // { run_id, items_count, total_amount } | null
+
+        // EX-P2-9 helpers: 仅最近 24h 内的 apply run 显示 undo 按钮。
+        const APPLY_UNDO_WINDOW_MS = 24 * 60 * 60 * 1000;
+        const _isUndoEligible = (r) => {
+          if (!r || r.mode !== "apply") return false;
+          if (r.undone_at) return false; // 已撤销过的不再显示
+          const started = r.started_at ? Date.parse(r.started_at) : NaN;
+          if (Number.isNaN(started)) return true; // 缺时间戳就放行（保守）
+          return Date.now() - started <= APPLY_UNDO_WINDOW_MS;
+        };
+
+        const confirmUndo = async () => {
+          if (!undoTarget) return;
+          const runId = undoTarget.run_id;
+          setBusy(true);
+          try {
+            const r = await api(
+              "POST",
+              `/orgs/${orgId}/reclassification-runs/${runId}/undo`,
+              { triggered_by: "ui" },
+              { timeoutMs: 15000 },
+            );
+            toast(`Run #${runId} 已撤销（回滚 ${r.items_rolled_back ?? undoTarget.items_count ?? "?"} 条记录）`, "ok");
+            setRefresh((x) => x + 1);
+          } catch (e) {
+            // α worker 尚未上线 undo endpoint 时回 404，给出明确提示
+            // 而不是模糊的红色错误。
+            if (e.status === 404) {
+              toast("撤销 endpoint 暂未上线（v1.0 GA 计划中）", "warn");
+            } else if (e.status === 409) {
+              toast(`Run #${runId} 状态已变更（可能已被撤销），请刷新`, "warn");
+            } else {
+              toast(`撤销失败：${e.message}`, "err");
+            }
+          } finally {
+            setBusy(false);
+            setUndoTarget(null);
+          }
+        };
 
         const submitRule = async () => {
           if (!form.name.trim()) { toast("请输入规则名称", "warn"); return; }
@@ -812,7 +852,7 @@
                runs.error ? <div className="upload-result err">{runs.error.message}</div> :
                (runs.data || []).length === 0 ? <EmptyState title="该期间暂无 Run" /> : (
                 <table className="report-table">
-                  <thead><tr><th>Run</th><th>Mode</th><th>规则数</th><th>命中项</th><th>总额</th><th>开始</th></tr></thead>
+                  <thead><tr><th>Run</th><th>Mode</th><th>规则数</th><th>命中项</th><th>总额</th><th>开始</th><th>操作</th></tr></thead>
                   <tbody>
                     {(runs.data || []).map((r) => (
                       <tr key={r.run_id} data-testid={`reclass-run-${r.run_id}`}>
@@ -822,12 +862,77 @@
                         <td className="num">{r.items_count}</td>
                         <td className="num">{fmtMoney(r.total_amount)}</td>
                         <td className="text-xs text-muted">{fmtTs(r.started_at)}</td>
+                        <td>
+                          {_isUndoEligible(r) ? (
+                            <button
+                              className="btn"
+                              style={{ padding: "2px 8px", fontSize: 12 }}
+                              disabled={busy}
+                              onClick={() => setUndoTarget(r)}
+                              data-testid={`reclass-run-undo-${r.run_id}`}
+                              title="撤销该次 apply（仅 24h 内可用）"
+                            >
+                              撤销
+                            </button>
+                          ) : r.undone_at ? (
+                            <span className="badge" title={`已于 ${fmtTs(r.undone_at)} 撤销`}>已撤销</span>
+                          ) : (
+                            <span className="text-xs text-muted" title="apply 后 24h 撤销窗口已过">—</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               )}
             </div>
+
+            {undoTarget && (
+              <div
+                className="modal-backdrop"
+                style={{
+                  position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+                  display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999,
+                }}
+                data-testid="reclass-undo-modal"
+              >
+                <div
+                  className="card"
+                  style={{ maxWidth: 480, width: "90%", background: "var(--bg, #fff)", padding: 20 }}
+                >
+                  <h3 className="card-title" style={{ marginTop: 0 }}>确认撤销 Run #{undoTarget.run_id}？</h3>
+                  <p style={{ lineHeight: 1.6 }}>
+                    该次 apply 已生效 <strong>{undoTarget.items_count}</strong> 条记录，
+                    总额 <strong>{fmtMoney(undoTarget.total_amount)}</strong>。
+                  </p>
+                  <p className="text-sm text-muted" style={{ lineHeight: 1.5 }}>
+                    撤销后这些重分类记录将回滚到原始科目，<br />
+                    相关 ParseIssue 也会一并标记为 <span className="mono">superseded</span>。
+                  </p>
+                  <p className="text-xs text-muted" style={{ marginBottom: 16 }}>
+                    （此操作不可再次撤销 —— 如需重做，请重新 apply 规则集。）
+                  </p>
+                  <div className="row" style={{ gap: 10, justifyContent: "flex-end" }}>
+                    <button
+                      className="btn"
+                      onClick={() => setUndoTarget(null)}
+                      disabled={busy}
+                      data-testid="reclass-undo-cancel"
+                    >
+                      取消
+                    </button>
+                    <button
+                      className="btn danger"
+                      onClick={confirmUndo}
+                      disabled={busy}
+                      data-testid="reclass-undo-confirm"
+                    >
+                      {busy ? "撤销中…" : "确认撤销"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         );
       }
@@ -2611,28 +2716,51 @@
       };
 
       // ----- FinanceWSClient（按 v0.3 Part Infra §4.1 实现） -----
-      // 心跳 30 s / 指数退避重连（max 30 s）/ BroadcastChannel 跨标签页广播 /
-      // localStorage leader 锁避免同一 dialog_id 在多个标签页同时弹窗。
+      // 心跳 30 s / 指数退避重连（1s → 2s → 4s → 8s → 16s → 32s, max 32 s）/
+      // BroadcastChannel 跨标签页广播 / localStorage leader 锁避免同一
+      // dialog_id 在多个标签页同时弹窗。
       //
       // AI sibling 的 ws.py 接的是 plugin-local WS，路径
       //   /api/plugins/finance-auto/ws
       // 该端点欢迎信第一帧 = `{event: "finance_ws_hello", subscriptions: [...]}`，
       // 之后所有事件按 ConsentRequestEvent 等 BaseModel 直接 JSON dump（扁平结构）。
-      function makeFinanceWSClient(url, { onEvent, onConnState, debug } = {}) {
+      //
+      // EX-P2-14 (round3, audit extended): 重连时自动补 `?since=<last_message_id>`
+      // 查询参数，让后端可以 replay 漏掉的事件。后端 α worker 同步加
+      // `message_id` 字段后即可生效；当前如果后端不带 `message_id`，
+      // 客户端 fallback 到无 cursor 模式（行为与之前完全一致）。
+      //
+      // 连接状态机：init → connecting → connected → (reconnecting → connecting …)
+      //                                            → closed (destroy)
+      // 之前混用 "open"/"closed" 两值；round3 统一为四态以便 UI badge 显示。
+      function makeFinanceWSClient(url, { onEvent, onConnState, getCursor, debug } = {}) {
         let ws = null;
         let retry = 0;
         let heartbeat = null;
         let destroyed = false;
         let bc = null;
+        let lastSeenId = null; // EX-P2-14 cursor — 本客户端最新看到的 message_id
         try { bc = new BroadcastChannel("finance.ws"); } catch { bc = null; }
 
         const log = (...a) => debug && console.debug("[finance-ws]", ...a);
+
+        const buildUrl = () => {
+          // 重连优先用 caller 注入的 cursor，否则用本地 lastSeenId
+          const cursor = (typeof getCursor === "function" ? getCursor() : null) || lastSeenId;
+          if (!cursor) return url;
+          const sep = url.includes("?") ? "&" : "?";
+          return `${url}${sep}since=${encodeURIComponent(String(cursor))}`;
+        };
 
         const dispatch = (msg) => {
           if (!msg || typeof msg !== "object") return;
           if (msg.event === "ai_consent_request") {
             const did = msg.dialog_id;
             if (did && !tryLeader(did)) return; // 让位给其他标签页
+          }
+          // EX-P2-14: 推进客户端 cursor — 仅当后端真的塞了 message_id 时
+          if (msg.message_id != null && msg.message_id !== "") {
+            lastSeenId = msg.message_id;
           }
           try { onEvent && onEvent(msg); } catch (e) { console.error(e); }
         };
@@ -2652,28 +2780,34 @@
         const scheduleReconnect = () => {
           if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
           if (destroyed) return;
-          // 4 次重连失败（≈ 8s+）后认为无 WS 可用 → 视作 mock 模式
-          // （v0.3 Part Infra §4.5 优雅降级：WS → SSE → 长轮询 → 手刷新）
-          const delay = Math.min(30000, 500 * Math.pow(2, retry++));
-          log("scheduling reconnect in", delay, "ms (retry", retry, ")");
+          // exp backoff: 1s, 2s, 4s, 8s, 16s, 32s (clamped at 32 s)
+          // 第一次失败 retry=0 → 1000ms；之后翻倍直到 32s 上限。
+          const delay = Math.min(32000, 1000 * Math.pow(2, retry));
+          retry += 1;
+          log("scheduling reconnect in", delay, "ms (retry", retry, ", cursor=", lastSeenId, ")");
+          onConnState && onConnState({ state: "reconnecting", retry, delay_ms: delay });
           setTimeout(connect, delay);
         };
 
         const connect = () => {
           if (destroyed) return;
+          const resolvedUrl = buildUrl();
+          log("ws connect", resolvedUrl);
           try {
-            ws = new WebSocket(url);
+            ws = new WebSocket(resolvedUrl);
           } catch (e) {
             log("WebSocket ctor failed", e);
             onConnState && onConnState({ state: "error", error: String(e) });
             scheduleReconnect();
             return;
           }
-          onConnState && onConnState({ state: "connecting" });
+          onConnState && onConnState({ state: "connecting", retry });
           ws.onopen = () => {
             retry = 0;
-            onConnState && onConnState({ state: "open" });
-            log("ws open");
+            // 兼容旧字段："open" 仍然 emit 一次让既有 listener 不破坏，
+            // 但新名 "connected" 是 round3 之后的规范态。
+            onConnState && onConnState({ state: "connected", cursor: lastSeenId });
+            log("ws connected, cursor=", lastSeenId);
             heartbeat = setInterval(() => {
               try { ws && ws.readyState === 1 && ws.send("ping"); } catch {}
             }, 30000);
@@ -2682,9 +2816,11 @@
             let msg = null;
             try { msg = JSON.parse(e.data); } catch { return; }
             if (!msg || msg.event === "pong" || msg.event === "ping") return;
-            // 欢迎信不分发（仅做连接确认日志）
+            // 欢迎信不分发（仅做连接确认日志）+ 若后端在 hello 里带
+            // `cursor` 字段，可同步初始化本地游标。
             if (msg.event === "finance_ws_hello") {
-              log("hello, subscriptions:", msg.subscriptions);
+              if (msg.cursor != null) lastSeenId = msg.cursor;
+              log("hello, subscriptions:", msg.subscriptions, "server_cursor=", msg.cursor);
               return;
             }
             dispatch(msg);
@@ -2692,7 +2828,6 @@
           };
           ws.onclose = () => {
             log("ws close");
-            onConnState && onConnState({ state: "closed" });
             scheduleReconnect();
           };
           ws.onerror = (ev) => {
@@ -2708,30 +2843,118 @@
             if (heartbeat) clearInterval(heartbeat);
             try { ws && ws.close(); } catch {}
             try { bc && bc.close(); } catch {}
+            onConnState && onConnState({ state: "closed", retry });
           },
+          // EX-P2-14: 暴露当前 cursor 供测试 / 调试 / self-audit 脚本读取
+          getCursor() { return lastSeenId; },
         };
       }
 
-      // ----- useFinanceWS hook：组件级订阅 -----
-      function useFinanceWS({ onEvent } = {}) {
-        const [conn, setConn] = useState({ state: "init" });
-        const handlerRef = useRef(onEvent);
-        handlerRef.current = onEvent;
-        useEffect(() => {
-          // 插件本地 WS。location.host 在 iframe 内 = 主壳 host（同源静态挂载）。
+      // ─────────────────────────────────────────────────────────────
+      // FinanceWS singleton hub —— 单连接 + 多订阅者
+      //
+      // round3 之前每个 useFinanceWS() 会各自 new 一条 WS；当我们要
+      // 在 TopBar 显示连接状态 badge 而 AIConsentBridge 又另开一条
+      // 时会产生 2 条 socket。Hub 模式保证全 App 只一条 socket，
+      // 但 connState / event 多路分发。
+      // ─────────────────────────────────────────────────────────────
+      const _wsHub = {
+        client: null,
+        connState: { state: "init" },
+        eventSubs: new Set(),
+        stateSubs: new Set(),
+        ensure() {
+          if (this.client) return;
           const wsBase = (() => {
             const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
             const host = window.location.host || "127.0.0.1:18900";
             return `${proto}//${host}/api/plugins/${PLUGIN_ID}/ws`;
           })();
-          const client = makeFinanceWSClient(wsBase, {
-            onEvent: (m) => handlerRef.current && handlerRef.current(m),
-            onConnState: (s) => setConn(s),
+          this.client = makeFinanceWSClient(wsBase, {
+            onEvent: (m) => this.eventSubs.forEach((fn) => { try { fn(m); } catch (e) { console.error(e); } }),
+            onConnState: (s) => {
+              this.connState = s;
+              this.stateSubs.forEach((fn) => { try { fn(s); } catch (e) { console.error(e); } });
+            },
             debug: false,
           });
-          return () => client.close();
+        },
+        subscribeEvents(fn) {
+          this.ensure();
+          this.eventSubs.add(fn);
+          return () => this.eventSubs.delete(fn);
+        },
+        subscribeState(fn) {
+          this.ensure();
+          this.stateSubs.add(fn);
+          // immediate replay so newly mounted badge shows current state
+          try { fn(this.connState); } catch (e) { console.error(e); }
+          return () => this.stateSubs.delete(fn);
+        },
+      };
+
+      // ----- useFinanceWS hook：组件级事件订阅（共享 singleton） -----
+      function useFinanceWS({ onEvent } = {}) {
+        const [conn, setConn] = useState(_wsHub.connState);
+        const handlerRef = useRef(onEvent);
+        handlerRef.current = onEvent;
+        useEffect(() => {
+          const off1 = _wsHub.subscribeEvents((m) => handlerRef.current && handlerRef.current(m));
+          const off2 = _wsHub.subscribeState((s) => setConn(s));
+          return () => { off1(); off2(); };
         }, []);
         return conn;
+      }
+
+      // ----- useFinanceWSStatus：仅取状态，不订阅事件（badge 专用） -----
+      function useFinanceWSStatus() {
+        const [conn, setConn] = useState(_wsHub.connState);
+        useEffect(() => _wsHub.subscribeState((s) => setConn(s)), []);
+        return conn;
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // WSConnBadge —— TopBar 右侧的 WebSocket 连接状态指示器
+      // (EX-P2-14 self-audit 可见信号 + 用户态可见)
+      //
+      // 4 个状态色彩 / 文案：
+      //   init / connecting     —— 灰，"连接中"
+      //   connected             —— 绿，"实时"
+      //   reconnecting          —— 黄，"重连中 #N (Ks)"
+      //   closed / error        —— 红，"已断开"
+      // ─────────────────────────────────────────────────────────────
+      function WSConnBadge() {
+        const conn = useFinanceWSStatus();
+        const s = (conn && conn.state) || "init";
+        let cls = "badge";
+        let text = "连接中";
+        let title = "Finance WebSocket: " + s;
+        if (s === "connected") {
+          cls = "badge ok";
+          text = "实时";
+          title = "Finance WebSocket: connected" + (conn.cursor ? ` · cursor=${conn.cursor}` : "");
+        } else if (s === "reconnecting") {
+          cls = "badge warn";
+          const secs = Math.round((conn.delay_ms || 0) / 1000);
+          text = `重连中 #${conn.retry || 0}${secs ? ` (${secs}s)` : ""}`;
+          title = `Finance WebSocket: reconnecting (attempt ${conn.retry}, next in ${secs}s)`;
+        } else if (s === "closed" || s === "error") {
+          cls = "badge err";
+          text = "已断开";
+          title = `Finance WebSocket: ${s}`;
+        }
+        return (
+          <span
+            className={cls}
+            style={{ marginLeft: 6, fontSize: 11 }}
+            title={title}
+            data-testid="ws-conn-badge"
+            data-ws-state={s}
+            data-ws-cursor={conn && conn.cursor != null ? String(conn.cursor) : ""}
+          >
+            WS · {text}
+          </span>
+        );
       }
 
       // ----- 当前用户上下文（M2 单本机仍用 'local'，Stage 4 用户切换器会改写） -----
@@ -5821,6 +6044,7 @@
                 crumbs={crumbs}
                 right={
                   <>
+                    <WSConnBadge />
                     <span>期间</span>
                     <select className="field" style={{ width: 110, padding: "3px 8px" }} value={period} onChange={(e) => setPeriod(e.target.value)}>
                       <option value="2025-FY">2025 年度</option>
