@@ -783,6 +783,15 @@ def build_router(service: FinanceAutoService) -> APIRouter:
     register_ws_endpoint(router)
     register_ai_endpoints(router, service)
 
+    # M3 raw AI (S6/S7/S11) — 4 new endpoints + lazy seed of the 3
+    # new ai_scenarios rows.  Wired after the M2 admin surface so the
+    # GET /ai/scenarios route still returns the full registry while
+    # the /ai/raw/* family only exposes the new entries.
+    from .ai.raw_routes import register_raw_ai_endpoints
+    from .ai.scenarios.raw_notes_draft import attach_event_bus_subscriber
+    register_raw_ai_endpoints(router, service)
+    attach_event_bus_subscriber(service)
+
     return router
 
 
