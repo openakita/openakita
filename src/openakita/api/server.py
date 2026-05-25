@@ -460,10 +460,23 @@ def create_app(
             child_content=child_content,
         )
 
+    # Sprint-5 P0-1 (audit ``_orgs_business_capability_audit_v5.md`` §5.2
+    # #1 + §7.1): the node agent's tool-use round emits
+    # ``node_tool_called`` / ``node_tool_completed`` / ``node_tool_failed``
+    # events. We hand the builder a thin emit closure rather than the
+    # raw bus reference so future bus swaps (Sprint-6+ WebSocketEventBus)
+    # do not need a constructor signature change.
+    async def _node_tool_event_emit(event_name: str, payload: dict[str, Any]) -> None:
+        try:
+            await org_event_bus.emit(event_name, payload)
+        except Exception:
+            logger.debug("orgs_v2 node tool event emit failed", exc_info=True)
+
     agent_cache = AgentCache(
         builder=DefaultAgentBuilder(
             brain_provider=_orgs_v2_brain_provider,
             dispatch_callback=_dispatch_subtask_cb,
+            event_emitter=_node_tool_event_emit,
         )
     )
     agent_executor = AgentPipelineExecutor(
@@ -524,6 +537,26 @@ def create_app(
     )
     set_command_service(org_command_service)
     app.state.org_command_service = org_command_service
+
+    # Sprint-5 P0-2 (audit v5 §5.2 #1 + v15 §6.2.4 B6.4): wire the
+    # lifecycle ``on_stop_org`` callback so ``POST /api/v2/orgs/{id}/stop``
+    # cancels every per-org in-flight task instead of just flipping
+    # the spec to STOPPED while the LLM keeps burning tokens.
+    async def _on_stop_org_cancel_inflight(org_id: str, reason: str) -> None:
+        try:
+            cancelled = await org_command_service.cancel_all_for_org(
+                org_id, reason=f"stop_org:{reason}"
+            )
+            if cancelled:
+                logger.info(
+                    "stop_org cancelled %d in-flight orgs_v2 command(s) (org=%s)",
+                    len(cancelled),
+                    org_id,
+                )
+        except Exception:
+            logger.debug("stop_org cancel-all failed", exc_info=True)
+
+    org_runtime.set_on_stop_org(_on_stop_org_cancel_inflight)
 
     # Mount routes
     app.include_router(auth_routes.router, tags=["认证"])
@@ -795,6 +828,20 @@ def create_app(
                 await to_engine(app.state.org_runtime.start())
             except Exception as e:
                 logger.warning(f"OrgRuntime startup error (non-fatal): {e}")
+        # Sprint-5 unexpected-finding #2 (audit v5 §5.3): start the
+        # command watchdog so node LLM calls that run past the spec's
+        # ``watchdog_stuck_threshold_s`` (default 1800 s) get killed
+        # instead of burning tokens indefinitely. Failure here logs +
+        # continues -- the watchdog is opt-in operational armour, not
+        # required for correctness.
+        try:
+            cmd_svc = getattr(app.state, "org_command_service", None)
+            if cmd_svc is not None:
+                # Production defaults: 30 s poll, 1800 s threshold. Tests
+                # tweak via ``configure_watchdog`` before ``start_watchdog``.
+                cmd_svc.start_watchdog()
+        except Exception:
+            logger.warning("OrgCommandService watchdog start error", exc_info=True)
 
         # Endpoint health check: detect stale/broken endpoints early
         try:
@@ -840,6 +887,16 @@ def create_app(
 
     @app.on_event("shutdown")
     async def _shutdown_org_runtime():
+        # Sprint-5 unexpected-finding #2: stop the watchdog *before*
+        # tearing down the runtime so the loop does not race to log a
+        # warning on a half-disposed lookup. Bounded by stop_watchdog's
+        # own ``timeout=2.0`` to never block shutdown for long.
+        try:
+            cmd_svc = getattr(app.state, "org_command_service", None)
+            if cmd_svc is not None:
+                await cmd_svc.stop_watchdog()
+        except Exception:
+            logger.debug("OrgCommandService watchdog stop error", exc_info=True)
         if hasattr(app.state, "org_runtime") and app.state.org_runtime:
             try:
                 from openakita.core.engine_bridge import to_engine

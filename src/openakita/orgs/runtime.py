@@ -503,6 +503,114 @@ class OrgRuntime:
             raise ValueError(str(exc)) from exc
         return {"ok": ok, "status": self._state.get_org_state(org_id) or "unknown"}
 
+    def set_on_stop_org(self, callback: Any) -> None:
+        """Sprint-5 P0-2 passthrough: late-bind the stop-org callback.
+
+        The :class:`OrgLifecycleManager` already exposes the setter; this
+        wrapper hides the private ``_lifecycle`` attribute from the
+        composition root, which keeps the v1 ``OrgRuntime`` shape clean
+        and lets us evolve the lifecycle owner without touching every
+        caller. See :meth:`OrgLifecycleManager.set_on_stop_org`.
+        """
+
+        self._lifecycle.set_on_stop_org(callback)
+
+    # ------------------------------------------------------------------
+    # Sprint-5 ex-finding cleanup (audit v5 §5.2 #5): three node-query
+    # endpoints (``GET nodes/{id}/{thinking,prompt-preview,status}``)
+    # used to surface 503 / AttributeError because v2 OrgRuntime had no
+    # implementations. We add safe placeholder methods so the frontend
+    # panel can render an empty / informational view instead of crashing
+    # while the real implementations land alongside the NodeStatusController
+    # subsystem (tracked as P9.7gamma in the runtime roadmap).
+    # ------------------------------------------------------------------
+
+    def get_node_thinking(self, org_id: str, node_id: str) -> dict[str, Any]:
+        """Best-effort thinking timeline (Sprint-5 stub).
+
+        Returns recent ``command_phase`` / ``subtask_assigned`` events
+        for ``node_id`` from the per-org event store. Empty list when
+        the store is missing or empty; no AttributeError ever again.
+        """
+
+        events: list[dict[str, Any]] = []
+        try:
+            store = self.get_event_store(org_id)
+            if store is not None and hasattr(store, "query"):
+                for ev in store.query(limit=50) or []:
+                    if not isinstance(ev, dict):
+                        continue
+                    data = ev.get("data") or ev.get("payload") or {}
+                    if not isinstance(data, dict):
+                        continue
+                    if data.get("node_id") == node_id:
+                        events.append(ev)
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "org_id": org_id,
+            "node_id": node_id,
+            "thinking": events,
+            "implementation": "sprint5_stub",
+        }
+
+    def preview_node_prompt(self, org_id: str, node_id: str) -> dict[str, Any]:
+        """Render the system prompt the node would receive (Sprint-5 stub).
+
+        Reuses :class:`ProfileResolver` from the agent pipeline so the
+        previewed prompt matches what ``_BrainBackedNodeAgent.run`` will
+        feed the brain. When the spec / lookup is unavailable returns
+        a structured ``prompt=None`` payload (not a 500) so the frontend
+        panel can show an "n/a" state.
+        """
+
+        prompt_text: str | None = None
+        try:
+            from ._default_agent_builder import _persona_system_prompt
+            from ._runtime_agent_pipeline import ProfileResolver
+
+            resolver = ProfileResolver(lookup=self._lookup)
+            spec = resolver.resolve(org_id=org_id, node_id=node_id)
+            if spec is not None:
+                prompt_text = _persona_system_prompt(spec, depth=0)
+        except Exception:  # noqa: BLE001
+            prompt_text = None
+        return {
+            "org_id": org_id,
+            "node_id": node_id,
+            "prompt": prompt_text,
+            "implementation": "sprint5_stub",
+        }
+
+    def get_node_status_snapshot(self, org_id: str, node_id: str) -> dict[str, Any]:
+        """Compact per-node status (Sprint-5 stub).
+
+        Returns ``running`` when the node has any in-flight tracker
+        snapshot via the dispatch sibling; ``idle`` otherwise. The
+        ``is_active`` / ``recently_stopped`` flags piggy-back on the
+        lifecycle manager so the panel can also reflect org-state.
+        """
+
+        is_active = False
+        recently_stopped = False
+        try:
+            is_active = bool(self._state.is_org_active(org_id))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            recently_stopped = bool(self._lifecycle.is_org_recently_stopped(org_id))
+        except Exception:  # noqa: BLE001
+            pass
+        status = "active" if is_active else "idle"
+        return {
+            "org_id": org_id,
+            "node_id": node_id,
+            "status": status,
+            "is_active": is_active,
+            "recently_stopped": recently_stopped,
+            "implementation": "sprint5_stub",
+        }
+
     def register_event_store(self, org_id: str) -> Any:
         """Eagerly mint an :class:`OrgEventStore` for ``org_id``.
 

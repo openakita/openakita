@@ -80,12 +80,18 @@ from ._runtime_agent_pipeline import (
     AgentSpec,
     dispatch_depth_var,
 )
+from ._runtime_node_tools import (
+    NodeToolEmit,
+    resolve_node_tools,
+    run_with_tools,
+)
 
 __all__ = [
     "MAX_DISPATCH_BLOCKS",
     "MAX_DISPATCH_DEPTH",
     "BuilderUnavailable",
     "DefaultAgentBuilder",
+    "NodeToolEmit",
     "dispatch_depth_var",
     "parse_dispatch_blocks",
 ]
@@ -167,16 +173,53 @@ def _dispatch_instructions() -> str:
     )
 
 
+def _available_nodes_block(spec: AgentSpec) -> str:
+    """Render the closed list of dispatch targets for the producer prompt.
+
+    Sprint-5 unexpected-finding #1 (audit v5 §4.2 + §5.3): the v16 run
+    showed the producer LLM inventing a ``director`` node that did not
+    exist in the spec. The ``<dispatch target="...">`` parser tolerated
+    it (unknown_target -> skip + warning, see Sprint-4 ``Decision F``)
+    but the invention still cost one LLM round and polluted the
+    aggregated reply. Listing the *actual* node ids inline -- with their
+    role label so the LLM picks the right one -- measurably reduces
+    invention without going as far as a structured-output / JSON-mode
+    constraint that would also raise the bar for legitimate creative
+    coordination text.
+
+    Only emitted at depth 0; children get the classic "stay in your
+    lane" instruction.
+    """
+
+    if not spec.available_nodes:
+        return ""
+    lines = ["Available child nodes you may dispatch to (use the exact id):"]
+    for node_id, label in spec.available_nodes:
+        if label:
+            lines.append(f"- {node_id}: {label}")
+        else:
+            lines.append(f"- {node_id}")
+    lines.append(
+        "Do NOT invent new node ids. If none of the listed nodes fits "
+        "the user request, do the work yourself instead of dispatching."
+    )
+    return "\n".join(lines)
+
+
 def _persona_system_prompt(spec: AgentSpec, *, depth: int = 0) -> str:
     """Compose the per-node system prompt from the resolved spec.
 
-    Kept deliberately small (< 1 KB) so single-shot calls don't blow
-    the per-node token budget. The Sprint-4 dispatch tutorial is only
-    spliced in at the entry level (``depth == 0``) -- children get the
-    classic Sprint-2 "stay in your lane" instruction, so even if a
-    child's LLM decided to emit a ``<dispatch>`` tag the gate would
-    skip it AND the prompt did not teach it the syntax in the first
-    place.
+    Kept deliberately small (< 1 KB on a typical node) so single-shot
+    calls don't blow the per-node token budget. The Sprint-4 dispatch
+    tutorial is only spliced in at the entry level (``depth == 0``) --
+    children get the classic Sprint-2 "stay in your lane" instruction,
+    so even if a child's LLM decided to emit a ``<dispatch>`` tag the
+    gate would skip it AND the prompt did not teach it the syntax in
+    the first place.
+
+    Sprint-5 P0-1 / unexpected-finding #1 splices the closed list of
+    available child node ids in at depth 0 (after the dispatch
+    tutorial) so the producer LLM dispatches to real targets only.
     """
 
     persona = (spec.persona or "").strip()
@@ -190,6 +233,9 @@ def _persona_system_prompt(spec: AgentSpec, *, depth: int = 0) -> str:
         parts.append(f"Persona: {persona}.")
     if depth == 0:
         parts.append(_dispatch_instructions())
+        available_block = _available_nodes_block(spec)
+        if available_block:
+            parts.append(available_block)
     else:
         parts.append(
             "Reply directly to the user instruction below. Keep your "
@@ -318,9 +364,19 @@ class _BrainBackedNodeAgent:
     aggregates the children outputs into the returned text. Recursion
     depth is controlled by :data:`dispatch_depth_var` (set by the
     executor) and capped at :data:`MAX_DISPATCH_DEPTH`.
+
+    Sprint-5 P0-1: when the resolved :class:`AgentSpec` carries an
+    ``external_tools`` whitelist that maps to at least one known
+    handler in :data:`openakita.tools.handlers.default_handler_registry`,
+    :meth:`run` swaps the empty Sprint-4 ``tools=[]`` brain call for a
+    real one-round tool-use loop (see
+    :func:`._runtime_node_tools.run_with_tools`). The dispatch parser
+    still runs after the loop so a node can both call a tool *and*
+    dispatch to siblings in the same turn (the LLM's text after the
+    tool round may contain ``<dispatch>`` blocks too).
     """
 
-    __slots__ = ("_spec", "_brain", "_dispatch_callback")
+    __slots__ = ("_spec", "_brain", "_dispatch_callback", "_event_emitter")
 
     def __init__(
         self,
@@ -328,10 +384,12 @@ class _BrainBackedNodeAgent:
         brain: Any,
         *,
         dispatch_callback: DispatchCallback | None = None,
+        event_emitter: NodeToolEmit | None = None,
     ) -> None:
         self._spec = spec
         self._brain = brain
         self._dispatch_callback = dispatch_callback
+        self._event_emitter = event_emitter
 
     async def run(self, content: str) -> str:
         text = content if isinstance(content, str) else str(content or "")
@@ -341,9 +399,22 @@ class _BrainBackedNodeAgent:
             # executor's "ok" path reachable.
             return ""
         depth = max(0, int(dispatch_depth_var.get(0)))
-        # Tag the brain's debug dump with the node identity so the v13
-        # audit's "0 orgs_v2 LLM files" finding becomes verifiable on the
-        # next exploratory pass.
+        # Sprint-5 P0-1: resolve the per-node tools whitelist *before*
+        # we tag the trace context so the LLM debug dump can carry an
+        # accurate ``tools_count``. Workbench nodes that disable file
+        # tools (``enable_file_tools=False``) still get an empty list
+        # when their ``external_tools`` are plugin-only and not yet
+        # bridged into ``default_handler_registry`` -- consistent with
+        # the "out of scope: workbench plugin wiring" note on the
+        # module docstring.
+        tool_defs = resolve_node_tools(
+            external_tools=self._spec.external_tools,
+            enable_file_tools=self._spec.enable_file_tools,
+        )
+        # Tag the brain's debug dump with the node identity + tool
+        # count so the v13 audit's "0 orgs_v2 LLM files" finding stays
+        # verifiable AND the v17 audit can confirm tools_count > 0 on
+        # workbench dispatch.
         set_trace = getattr(self._brain, "set_trace_context", None)
         if callable(set_trace):
             try:
@@ -352,24 +423,38 @@ class _BrainBackedNodeAgent:
                         "org_id": self._spec.org_id,
                         "node_id": self._spec.node_id,
                         "caller": "orgs_v2_node_agent",
+                        "tools_count": str(len(tool_defs)),
                     }
                 )
             except Exception:  # noqa: BLE001 -- trace tagging is best-effort
                 pass
         system_prompt = _persona_system_prompt(self._spec, depth=depth)
-        messages = [
-            {
-                "role": "user",
-                "content": text,
-            }
-        ]
-        # No tools are passed: nodes run the minimal viable LLM call.
-        # Tool / skill injection is D4 (next-sprint scope).
-        response = await self._brain.messages_create_async(
-            messages=messages,
-            system=system_prompt,
-            tools=[],
-        )
+
+        # Sprint-5 P0-1: branch on whether the node has any resolved
+        # tools. Zero-tool nodes still use the Sprint-4 single-shot
+        # call (no risk of an unintended provider feature flip when
+        # ``tools`` is an empty list vs absent); >0-tool nodes go
+        # through the one-round tool-use loop helper.
+        from ._runtime_agent_pipeline import current_command_id_var
+
+        command_id_for_events = current_command_id_var.get("") or None
+        if tool_defs:
+            response, _rounds = await run_with_tools(
+                brain=self._brain,
+                system_prompt=system_prompt,
+                user_content=text,
+                tools=tool_defs,
+                org_id=self._spec.org_id,
+                node_id=self._spec.node_id,
+                command_id=command_id_for_events,
+                emit=self._event_emitter,
+            )
+        else:
+            response = await self._brain.messages_create_async(
+                messages=[{"role": "user", "content": text}],
+                system=system_prompt,
+                tools=[],
+            )
         parent_text = _extract_text_from_response(response)
 
         # Sprint-4 P0-1: parse + recurse on child dispatch blocks.
@@ -436,13 +521,17 @@ class DefaultAgentBuilder:
         *,
         brain_provider: Callable[[], Any],
         dispatch_callback: DispatchCallback | None = None,
+        event_emitter: NodeToolEmit | None = None,
     ) -> None:
         if not callable(brain_provider):
             raise TypeError("brain_provider must be callable")
         if dispatch_callback is not None and not callable(dispatch_callback):
             raise TypeError("dispatch_callback must be callable when provided")
+        if event_emitter is not None and not callable(event_emitter):
+            raise TypeError("event_emitter must be callable when provided")
         self._brain_provider = brain_provider
         self._dispatch_callback = dispatch_callback
+        self._event_emitter = event_emitter
 
     def build(self, spec: AgentSpec) -> Any:
         try:
@@ -478,6 +567,7 @@ class DefaultAgentBuilder:
             spec,
             brain,
             dispatch_callback=self._dispatch_callback,
+            event_emitter=self._event_emitter,
         )
 
     def teardown(self, agent: Any) -> None:  # noqa: ARG002

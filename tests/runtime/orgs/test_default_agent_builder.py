@@ -40,6 +40,15 @@ def _spec(**over: Any) -> AgentSpec:
         "node_id": "n1",
         "role": "worker",
         "persona": "concise reviewer",
+        # Sprint-5 P0-1 added node-context fields to ``AgentSpec``; these
+        # Sprint-2 / Sprint-3 / Sprint-4 regression tests pre-date the
+        # D4 tool injection and assert the "tools=[] zero-shot" path.
+        # Default the new flags to "no auto tools" so the assertions
+        # continue to pin the legacy single-shot behaviour byte-for-
+        # byte. Sprint-5 D4 has a dedicated test file with the new
+        # ``external_tools`` / ``enable_file_tools`` semantics.
+        "enable_file_tools": False,
+        "external_tools": (),
     }
     base.update(over)
     return AgentSpec(**base)
@@ -167,11 +176,17 @@ def test_brain_backed_node_agent_tags_trace_context_with_node_identity() -> None
     builder = DefaultAgentBuilder(brain_provider=lambda: brain)
     agent = builder.build(_spec(node_id="screenwriter"))
     asyncio.run(agent.run("draft a scene"))
+    # Sprint-5 P0-1 added ``tools_count`` to the trace dict so the LLM
+    # debug ``context`` block can be filtered by "did the node have any
+    # resolved tools?". With the helper-spec ``enable_file_tools=False``
+    # + empty whitelist the count is "0", which is still informative
+    # (proves the orgs_v2 node path *did* run the resolver path).
     assert seen == [
         {
             "org_id": "org_1",
             "node_id": "screenwriter",
             "caller": "orgs_v2_node_agent",
+            "tools_count": "0",
         }
     ]
 

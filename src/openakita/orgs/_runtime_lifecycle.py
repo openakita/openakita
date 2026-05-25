@@ -94,6 +94,29 @@ class OrgLifecycleManager:
         self._recently_stopped: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
+    def set_on_stop_org(
+        self, callback: Callable[[str, str], Awaitable[None]] | None
+    ) -> None:
+        """Late-bind the stop-org callback after construction.
+
+        Sprint-5 P0-2 (audit ``_orgs_business_capability_audit_v5.md``
+        §5.2 #1): the composition root in ``api/server.py`` constructs
+        :class:`OrgRuntime` (which builds this lifecycle manager) *before*
+        the :class:`OrgCommandService` exists, but the
+        ``stop_org_propagates_cancel`` wiring needs a reference to the
+        command service so it can iterate its ``_inflight_by_org`` index.
+        Exposing a setter avoids re-ordering the lifespan, which would
+        ripple into the executor / dispatch wiring.
+
+        The callback follows the constructor contract: async,
+        ``(org_id, reason) -> None``, exceptions are swallowed by the
+        caller (``stop_org``).
+        """
+
+        if callback is not None and not callable(callback):
+            raise TypeError("on_stop_org must be callable when provided")
+        self._on_stop_org = callback
+
     # ------------------------------------------------------------------
     # Transition primitives (private; called by the public verbs below)
     # ------------------------------------------------------------------

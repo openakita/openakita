@@ -35,7 +35,7 @@ import-path compatibility.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from time import time
@@ -100,6 +100,26 @@ class AgentSpec:
     ``openakita.agents`` at the type level. The builder
     Protocol implementation interprets these fields against
     its concrete Agent surface.
+
+    Sprint-5 P0-1 (audit ``_orgs_business_capability_audit_v5.md`` §5.2)
+    adds three node-context fields the D4 minimum-viable tool injection
+    consumes:
+
+    * ``external_tools`` carries the v1-``OrgNode``-shaped whitelist
+      (category names like ``research`` mixed with concrete tool names
+      like ``hh_storyboard_decompose``).
+    * ``enable_file_tools`` mirrors the v1 flag controlling whether the
+      four basic file tools (``write_file`` / ``read_file`` /
+      ``edit_file`` / ``list_directory``) are auto-merged into the
+      whitelist.
+    * ``available_nodes`` enumerates the sibling node ids + roles the
+      producer LLM may dispatch to, so the per-node system prompt can
+      list them explicitly and reduce LLM-invented target names
+      (audit v5 §5.3 "self-invented director node").
+
+    All three default to safe-empty values so legacy callers (parity /
+    contract tests that build :class:`AgentSpec` by hand) keep working
+    bit-for-bit.
     """
 
     org_id: str
@@ -111,6 +131,10 @@ class AgentSpec:
     profile: Mapping[str, Any] = field(default_factory=dict)
     tools: tuple[str, ...] = ()
     unattended: bool = False
+    # Sprint-5 P0-1: node-context fields for D4.
+    external_tools: tuple[str, ...] = ()
+    enable_file_tools: bool = True
+    available_nodes: tuple[tuple[str, str], ...] = ()
 
 
 @runtime_checkable
@@ -276,6 +300,16 @@ class ProfileResolver:
         resolved_role = role or self._role_for(node_obj) or "worker"
         resolved_persona = persona or self._persona_for(node_obj)
         profile = dict(extra_profile or {})
+        # Sprint-5 P0-1: lift the v1 OrgNode whitelist + flag so the
+        # D4 helper (``_runtime_node_tools.resolve_node_tools``) can
+        # build a real tools list for the brain. Missing node_obj is
+        # fine: defaults to empty whitelist + file tools on, which the
+        # helper maps to the four basic file tools only -- a v1-parity
+        # safe baseline that lets even a minimally-wired node submit
+        # a deliverable file.
+        external_tools = self._external_tools_for(node_obj)
+        enable_file_tools = self._enable_file_tools_for(node_obj)
+        available_nodes = self._available_nodes_for(org, node_id)
         return AgentSpec(
             org_id=org_id,
             node_id=node_id,
@@ -284,6 +318,9 @@ class ProfileResolver:
             workspace_dir=ws,
             profile=profile,
             unattended=unattended,
+            external_tools=external_tools,
+            enable_file_tools=enable_file_tools,
+            available_nodes=available_nodes,
         )
 
     @staticmethod
@@ -310,7 +347,92 @@ class ProfileResolver:
     def _persona_for(node: Any) -> str | None:
         if node is None:
             return None
-        return getattr(node, "persona", None) or getattr(node, "title", None)
+        # v1 OrgNode uses ``custom_prompt`` for the prose persona body
+        # while ``role_title`` is the short label. Prefer the longer
+        # prose so the LLM gets enough context to act on the role.
+        for attr in ("persona", "custom_prompt", "title", "role_title"):
+            value = getattr(node, attr, None)
+            if isinstance(value, str) and value.strip():
+                return value
+        return None
+
+    @staticmethod
+    def _external_tools_for(node: Any) -> tuple[str, ...]:
+        """Best-effort whitelist read off a v1 OrgNode / v2 NodeSpec.
+
+        v1 ``OrgNode`` exposes ``external_tools: list[str]`` (mixed
+        category + tool name). v2 ``NodeSpec`` exposes
+        ``tool_subset: tuple[str, ...] | None``. We accept both so any
+        future v2 manager that returns ``NodeSpec`` directly still gets
+        a populated whitelist without a separate code path.
+        """
+
+        if node is None:
+            return ()
+        candidates: Iterable[Any] | None = None
+        for attr in ("external_tools", "tool_subset", "tools"):
+            value = getattr(node, attr, None)
+            if value:
+                candidates = value
+                break
+        if not candidates:
+            return ()
+        out: list[str] = []
+        for item in candidates:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+        return tuple(out)
+
+    @staticmethod
+    def _enable_file_tools_for(node: Any) -> bool:
+        if node is None:
+            return True
+        value = getattr(node, "enable_file_tools", None)
+        if value is None:
+            return True
+        return bool(value)
+
+    @staticmethod
+    def _available_nodes_for(
+        org: Any, current_node_id: str
+    ) -> tuple[tuple[str, str], ...]:
+        """Enumerate sibling node ids + role labels for prompt injection.
+
+        Sprint-5 unexpected-finding #1 (audit v5 §4.2 + §5.3): v16 saw
+        the producer LLM invent a non-existent ``director`` node when
+        the spec only declared ``screenwriter`` + ``art-director``.
+        Listing the real node ids in the producer system prompt makes
+        invention measurably less likely (the LLM is given a closed
+        target set instead of having to guess).
+        """
+
+        nodes = getattr(org, "nodes", None)
+        if nodes is None:
+            return ()
+        pairs: list[tuple[str, str]] = []
+        iter_nodes: Iterable[Any] = (
+            nodes.values() if isinstance(nodes, Mapping) else nodes
+        )
+        for node in iter_nodes:
+            node_id = getattr(node, "id", None) or getattr(node, "node_id", None)
+            if not isinstance(node_id, str) or not node_id:
+                continue
+            if node_id == current_node_id:
+                # Skip the current node so the prompt does not invite
+                # self-dispatch loops. The depth gate would block them
+                # anyway, but suppressing them here saves token budget
+                # and reads more naturally.
+                continue
+            label = (
+                getattr(node, "role_title", None)
+                or getattr(node, "label", None)
+                or getattr(node, "role", None)
+                or ""
+            )
+            if not isinstance(label, str):
+                label = str(label)
+            pairs.append((node_id, label.strip()))
+        return tuple(pairs)
 
 # P-RC-10 P10.5a re-export: keep the public import path stable.
 from ._runtime_agent_pipeline_executor import (  # noqa: E402

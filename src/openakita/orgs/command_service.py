@@ -287,6 +287,29 @@ class OrgCommandService:
         # (success / failure / cancelled all converge there) so the dict
         # never leaks across commands.
         self._inflight_tasks: dict[str, asyncio.Task[Any]] = {}
+        # Sprint-5 P0-2 (audit v5 §5.2 + v15 §6.2.4 B6.4): secondary
+        # index keyed by org_id so ``cancel_all_for_org`` can stop every
+        # in-flight task for an org in O(set size) without scanning the
+        # whole command dict. Pre-fix the user pressed "stop org" and
+        # the spec flipped to STOPPED but per-command tasks kept burning
+        # tokens (3 sprints of v* audits flagged this; Sprint-4 §3
+        # explicitly punted to this commit). Populated lock-step with
+        # ``_inflight_tasks`` in ``_schedule_run`` / ``_run_minimal`` /
+        # ``_purge_old_commands`` / ``cancel_all_for_org``.
+        self._inflight_by_org: dict[str, set[str]] = {}
+        # Sprint-5 unexpected-finding #2 (audit v5 §5.3): watchdog task
+        # that scans ``_inflight_tasks`` periodically and cancels any
+        # command whose wall-clock elapsed exceeds the org's
+        # ``watchdog_stuck_threshold_s`` (default 1800 s = 30 min). The
+        # task is opt-in (caller must call :meth:`start_watchdog`) so
+        # legacy callers (contract / parity tests that construct
+        # :class:`OrgCommandService` without an event loop running for
+        # 30 s+) keep working unchanged. Default poll interval is
+        # 30 s; tests can override via constructor for fast-fire
+        # assertions.
+        self._watchdog_task: asyncio.Task[None] | None = None
+        self._watchdog_poll_interval_secs: float = 30.0
+        self._watchdog_default_threshold_secs: float = 1800.0
         self._event_bus = event_bus
         if event_bus is not None:
             self._wire_event_bus(event_bus)
@@ -396,7 +419,8 @@ class OrgCommandService:
                 event_name = "agent_run_finished"
             else:
                 event_name = "agent_run_started"
-        self._command_outcomes[command_id] = {
+        prior = self._command_outcomes.get(command_id) or {}
+        new_outcome: dict[str, Any] = {
             "event": event_name,
             "reason": payload.get("reason"),
             "error": payload.get("error"),
@@ -404,6 +428,21 @@ class OrgCommandService:
             "output_len": payload.get("output_len"),
             "ts": time.time(),
         }
+        # Sprint-5 P0-2 / unexpected-finding #2: preserve the
+        # ``cancelled_by`` (and watchdog quantities) the seed write in
+        # ``cancel_all_for_org`` / ``_watchdog_tick`` deposited, unless
+        # the inbound payload carries an explicit value. Without this
+        # the natural ``agent_run_cancelled`` event from the executor
+        # would clobber our marker the instant it arrives, and the
+        # events.jsonl reader could no longer distinguish stop-org /
+        # watchdog cancels from user-initiated cancels.
+        for key in ("cancelled_by", "elapsed_s", "threshold_s"):
+            value = payload.get(key)
+            if value is None:
+                value = prior.get(key)
+            if value is not None:
+                new_outcome[key] = value
+        self._command_outcomes[command_id] = new_outcome
 
     # ------------------------------------------------------------------
     # Accessors (parity gate -- byte-for-byte view of v1 internals)
@@ -721,6 +760,280 @@ class OrgCommandService:
         }
 
     # ------------------------------------------------------------------
+    # Sprint-5 P0-2: org-wide cancel + watchdog
+    # ------------------------------------------------------------------
+
+    async def cancel_all_for_org(
+        self, org_id: str, *, reason: str = "stop_org"
+    ) -> list[str]:
+        """Cancel every in-flight command for one org. Returns cid list.
+
+        Sprint-5 P0-2 (audit ``_orgs_business_capability_audit_v5.md``
+        §5.2 #1 + v15 §6.2.4 B6.4): pre-fix ``POST /api/v2/orgs/<id>/stop``
+        flipped the org state machine to STOPPED but per-command
+        ``_inflight_tasks`` kept the LLM connection open until natural
+        completion. We now offer this org-scoped cancel hook so the
+        lifecycle ``on_stop_org`` callback can wire propagation through
+        :class:`OrgLifecycleManager`.
+
+        Behaviour mirrors :meth:`cancel`: ``task.cancel()`` is the
+        synchronous side-effect; the ``_run_minimal`` ``CancelledError``
+        branch (Sprint-3) writes the outcome + event. Here we *also*
+        seed ``_command_outcomes`` with ``cancelled_by=stop_org`` so
+        downstream filters can tell user-cancel apart from org-stop
+        cancel even after the event arrives.
+
+        The method is async only because the caller (lifecycle manager)
+        is async; the body itself does no awaiting beyond best-effort
+        runtime ``cancel_user_command`` calls (those may await an
+        internal lock and we want to fire one per command to keep the
+        runtime tracker / dispatcher in sync).
+        """
+
+        cids = list(self._inflight_by_org.get(org_id, set()))
+        if not cids:
+            return []
+        logger.info(
+            "[OrgCmd] stop-org cancelling %d in-flight commands (org=%s, reason=%s)",
+            len(cids),
+            org_id,
+            reason,
+        )
+        for cid in cids:
+            task = self._inflight_tasks.get(cid)
+            if task is not None and not task.done():
+                task.cancel()
+            # Seed the outcome cache so ``get_status`` overlays
+            # ``phase=cancelled`` immediately even before
+            # ``_run_minimal`` catches the CancelledError. Mark the
+            # source so events.jsonl readers can distinguish
+            # user-initiated from org-stop-initiated cancels.
+            self._command_outcomes[cid] = {
+                "event": "agent_run_cancelled",
+                "reason": reason,
+                "error": None,
+                "node_id": None,
+                "output_len": None,
+                "ts": time.time(),
+                "cancelled_by": reason,
+            }
+            # Best-effort: also notify the runtime layer so the
+            # dispatch tracker / chain accounting agrees with us.
+            try:
+                await self._runtime.cancel_user_command(org_id, cid)
+            except Exception:  # noqa: BLE001 -- runtime cancel is best-effort here
+                logger.debug(
+                    "[OrgCmd] runtime cancel_user_command raised during stop-org "
+                    "(org=%s cid=%s)",
+                    org_id,
+                    cid,
+                    exc_info=True,
+                )
+        return cids
+
+    def configure_watchdog(
+        self,
+        *,
+        poll_interval_secs: float | None = None,
+        default_threshold_secs: float | None = None,
+    ) -> None:
+        """Tweak the watchdog timing knobs before :meth:`start_watchdog`.
+
+        Sprint-5 unexpected-finding #2 (audit v5 §5.3): the v16 audit's
+        ``B5 failure injection`` saw 4/6 cases time out because the
+        LLM happily burnt 600 s+ on a recursive / sleep-style prompt.
+        The org spec already exposes ``watchdog_stuck_threshold_s``
+        (default 1800) but **nothing was reading it**: the watchdog
+        loop never ran. We now ship a real loop that scans
+        ``_inflight_tasks`` and cancels stuck commands.
+
+        The two knobs let tests run a 2 s budget against a 0.1 s poll
+        instead of the production 30 s / 1800 s defaults.
+        """
+
+        if poll_interval_secs is not None:
+            self._watchdog_poll_interval_secs = max(0.05, float(poll_interval_secs))
+        if default_threshold_secs is not None:
+            self._watchdog_default_threshold_secs = max(
+                1.0, float(default_threshold_secs)
+            )
+
+    def start_watchdog(self) -> bool:
+        """Spawn the periodic stuck-task scanner. Returns ``False`` if already running.
+
+        Idempotent: a second call while the task is alive returns
+        ``False`` and leaves the live task untouched.
+        """
+
+        if self._watchdog_task is not None and not self._watchdog_task.done():
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop yet (test fixture instantiating service eagerly
+            # outside an async context). Defer; the caller can retry
+            # after the loop is up.
+            return False
+        self._watchdog_task = loop.create_task(
+            self._watchdog_loop(), name="openakita-orgs-command-watchdog"
+        )
+        logger.info(
+            "[OrgCmd] command watchdog started (poll=%.1fs, default_threshold=%.0fs)",
+            self._watchdog_poll_interval_secs,
+            self._watchdog_default_threshold_secs,
+        )
+        return True
+
+    async def stop_watchdog(self, *, timeout: float = 2.0) -> None:
+        """Cancel the watchdog task. Idempotent / safe at shutdown."""
+
+        task = self._watchdog_task
+        self._watchdog_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=max(0.1, timeout))
+        except (asyncio.CancelledError, TimeoutError):
+            pass
+        except Exception:  # noqa: BLE001
+            logger.debug("[OrgCmd] watchdog stop raised", exc_info=True)
+
+    async def _watchdog_loop(self) -> None:
+        """Periodic scan: cancel commands that exceed their per-org budget.
+
+        The loop swallows all per-iteration exceptions so a transient
+        bug (lookup raising, malformed spec) cannot poison the loop --
+        the next tick re-tries. Cancel is sticky: a command we cancel
+        gets ``cancelled_by=watchdog`` so the v17 audit can distinguish
+        wall-clock kills from user / stop-org cancels.
+        """
+
+        try:
+            while True:
+                await asyncio.sleep(self._watchdog_poll_interval_secs)
+                try:
+                    self._watchdog_tick()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "[OrgCmd] watchdog tick raised; continuing",
+                        exc_info=True,
+                    )
+        except asyncio.CancelledError:
+            return
+
+    def _watchdog_tick(self) -> None:
+        """One scan over the in-flight task table."""
+
+        now = time.time()
+        # Snapshot the keys so we can mutate the dict via cancel
+        # propagation without "dict changed size during iteration".
+        for cid in list(self._inflight_tasks.keys()):
+            task = self._inflight_tasks.get(cid)
+            if task is None or task.done():
+                continue
+            cmd = self._commands.get(cid)
+            if cmd is None:
+                continue
+            created_at = float(cmd.get("created_at") or 0.0)
+            if created_at <= 0:
+                continue
+            org_id = cmd.get("org_id")
+            threshold = self._resolve_watchdog_threshold(org_id)
+            if threshold <= 0:
+                # Org explicitly disabled watchdog.
+                continue
+            elapsed = now - created_at
+            if elapsed < threshold:
+                continue
+            logger.warning(
+                "[OrgCmd] watchdog killing stuck command (org=%s cid=%s "
+                "elapsed=%.1fs threshold=%.0fs)",
+                org_id,
+                cid,
+                elapsed,
+                threshold,
+            )
+            task.cancel()
+            # Seed the outcome cache with a watchdog-specific marker so
+            # ``get_status`` immediately reflects the kill (the
+            # ``_run_minimal`` CancelledError branch will catch up and
+            # overwrite ``cancelled_by`` to ``user`` by default; the
+            # outcome cache write here keeps the explicit
+            # ``cancelled_by=watchdog`` source for the events.jsonl
+            # reader to pick up).
+            self._command_outcomes[cid] = {
+                "event": "agent_run_watchdog_killed",
+                "reason": "watchdog_stuck_threshold_exceeded",
+                "error": None,
+                "node_id": None,
+                "output_len": None,
+                "ts": now,
+                "cancelled_by": "watchdog",
+                "elapsed_s": round(elapsed, 1),
+                "threshold_s": int(threshold),
+            }
+            # Emit the explicit event for events.jsonl (best-effort).
+            if self._event_bus is not None:
+                emit = getattr(self._event_bus, "emit", None)
+                if callable(emit):
+                    try:
+                        coro = emit(
+                            "agent_run_watchdog_killed",
+                            {
+                                "org_id": org_id,
+                                "command_id": cid,
+                                "elapsed_s": round(elapsed, 1),
+                                "threshold_s": int(threshold),
+                            },
+                        )
+                        if asyncio.iscoroutine(coro):
+                            # Schedule fire-and-forget so the watchdog
+                            # tick stays synchronous; we are already
+                            # inside the event loop because the loop
+                            # itself awaited us.
+                            try:
+                                asyncio.get_running_loop().create_task(coro)
+                            except RuntimeError:
+                                # No running loop -- drop the emit.
+                                pass
+                    except Exception:  # noqa: BLE001
+                        logger.debug(
+                            "[OrgCmd] watchdog event emit raised", exc_info=True
+                        )
+
+    def _resolve_watchdog_threshold(self, org_id: Any) -> float:
+        """Pull ``watchdog_stuck_threshold_s`` off the org spec.
+
+        Returns the v2 service-level default when the spec has the
+        watchdog disabled / threshold missing / the lookup raises
+        (best-effort -- a watchdog must never crash the service).
+        Returns ``0`` (skip cancel) iff the org explicitly disabled
+        the watchdog.
+        """
+
+        if not isinstance(org_id, str) or not org_id:
+            return self._watchdog_default_threshold_secs
+        try:
+            org = self._lookup.get_org(org_id)
+        except Exception:  # noqa: BLE001
+            return self._watchdog_default_threshold_secs
+        if org is None:
+            return self._watchdog_default_threshold_secs
+        if not bool(getattr(org, "watchdog_enabled", True)):
+            return 0.0
+        threshold = getattr(org, "watchdog_stuck_threshold_s", None)
+        try:
+            value = float(threshold)
+        except (TypeError, ValueError):
+            value = self._watchdog_default_threshold_secs
+        if value <= 0:
+            value = self._watchdog_default_threshold_secs
+        return value
+
+    # ------------------------------------------------------------------
     # Private helpers (parity with v1; lifted as-is unless ADR-0011 forces
     # a Protocol-routed rewrite)
     # ------------------------------------------------------------------
@@ -805,6 +1118,17 @@ class OrgCommandService:
             stale_task = self._inflight_tasks.pop(cid, None)
             if stale_task is not None and not stale_task.done():
                 stale_task.cancel()
+            # Sprint-5 P0-2: same hygiene for the by-org index. We do
+            # not know the org_id from the pop above (we popped first),
+            # so look it up from the previously-popped ``cmd``.
+            if cmd:
+                stale_org = cmd.get("org_id")
+                if isinstance(stale_org, str):
+                    org_cids = self._inflight_by_org.get(stale_org)
+                    if org_cids is not None:
+                        org_cids.discard(cid)
+                        if not org_cids:
+                            self._inflight_by_org.pop(stale_org, None)
 
     def _update_command_state(
         self,
@@ -1053,6 +1377,14 @@ class OrgCommandService:
                 # reference cannot accidentally re-cancel a recycled
                 # command_id.
                 self._inflight_tasks.pop(command_id, None)
+                # Sprint-5 P0-2: keep the by-org index aligned with
+                # ``_inflight_tasks``. Both are mutated only on this
+                # event loop so a discard-after-pop is safe.
+                org_cids = self._inflight_by_org.get(request.org_id)
+                if org_cids is not None:
+                    org_cids.discard(command_id)
+                    if not org_cids:
+                        self._inflight_by_org.pop(request.org_id, None)
 
         loop = asyncio.get_running_loop()
         task = loop.create_task(_run_minimal())
@@ -1061,6 +1393,11 @@ class OrgCommandService:
         # still-pending race window is closed (the dict is mutated
         # synchronously in the same event-loop tick as ``submit``).
         self._inflight_tasks[command_id] = task
+        # Sprint-5 P0-2: same pre-await registration for the by-org
+        # secondary index so ``cancel_all_for_org`` reaches the task
+        # even if the user fires ``POST /stop`` within the same tick
+        # as ``submit``.
+        self._inflight_by_org.setdefault(request.org_id, set()).add(command_id)
 
     async def _dispatch_forwards(
         self,
