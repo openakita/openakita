@@ -306,16 +306,32 @@ class OrgCommandService:
         # Sprint-5 unexpected-finding #2 (audit v5 §5.3): watchdog task
         # that scans ``_inflight_tasks`` periodically and cancels any
         # command whose wall-clock elapsed exceeds the org's
-        # ``watchdog_stuck_threshold_s`` (default 1800 s = 30 min). The
-        # task is opt-in (caller must call :meth:`start_watchdog`) so
-        # legacy callers (contract / parity tests that construct
-        # :class:`OrgCommandService` without an event loop running for
-        # 30 s+) keep working unchanged. Default poll interval is
-        # 30 s; tests can override via constructor for fast-fire
-        # assertions.
+        # ``watchdog_stuck_threshold_s``. The task is opt-in (caller
+        # must call :meth:`start_watchdog`) so legacy callers (contract
+        # / parity tests that construct :class:`OrgCommandService`
+        # without an event loop running for the full default budget)
+        # keep working unchanged. Default poll interval is 30 s; tests
+        # can override via :meth:`configure_watchdog`.
+        #
+        # Sprint-8 P0-A (v19 audit ``_orgs_business_capability_audit_v8.md``
+        # §2 + §8.1): the v19 B-module test ran 19/25 cases before
+        # crashing at L4.5 with a 14/19 done rate. Root-cause analysis
+        # showed the slow-task tail can legitimately reach 160-180 s on
+        # multi-node orgs (L3.4 was still ``running`` at the test wait
+        # cap of 180 s, then reaped by the watchdog much later). The
+        # legacy 1800 s (30 min) default left genuinely stuck commands
+        # holding the inflight slot for half an hour while burning
+        # tokens, which is far longer than the longest legitimate run
+        # observed across v13-v19 audits (~3 min). Sprint-8 tightens
+        # the default to **600 s (10 min)** so a stuck LLM gets reaped
+        # within a 5x safety margin of the slowest legit task. Tests
+        # that rely on millisecond budgets continue to inject a custom
+        # value via ``configure_watchdog(default_threshold_secs=...)``;
+        # production deployments that want the legacy 30 min envelope
+        # set ``watchdog_stuck_threshold_s=1800`` on the org spec.
         self._watchdog_task: asyncio.Task[None] | None = None
         self._watchdog_poll_interval_secs: float = 30.0
-        self._watchdog_default_threshold_secs: float = 1800.0
+        self._watchdog_default_threshold_secs: float = 600.0
         self._event_bus = event_bus
         if event_bus is not None:
             self._wire_event_bus(event_bus)
@@ -894,12 +910,14 @@ class OrgCommandService:
         ``B5 failure injection`` saw 4/6 cases time out because the
         LLM happily burnt 600 s+ on a recursive / sleep-style prompt.
         The org spec already exposes ``watchdog_stuck_threshold_s``
-        (default 1800) but **nothing was reading it**: the watchdog
-        loop never ran. We now ship a real loop that scans
-        ``_inflight_tasks`` and cancels stuck commands.
+        but **nothing was reading it**: the watchdog loop never ran.
+        We now ship a real loop that scans ``_inflight_tasks`` and
+        cancels stuck commands.
 
-        The two knobs let tests run a 2 s budget against a 0.1 s poll
-        instead of the production 30 s / 1800 s defaults.
+        Sprint-8 P0-A (v19 audit §2 + §8.1): the production default
+        is **600 s** (was 1800 s in Sprint-5 through Sprint-7). The
+        two knobs let tests run a 2 s budget against a 0.1 s poll
+        instead of the production 30 s / 600 s defaults.
         """
 
         if poll_interval_secs is not None:

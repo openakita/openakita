@@ -9,8 +9,9 @@ Two related cancel-propagation regressions audit v5 flagged:
   ``OrgLifecycleManager.on_stop_org`` -> ``cancel_all_for_org`` so the
   inflight tasks really die.
 * **Watchdog (unexpected-finding 2)** -- ``Organization`` exposes
-  ``watchdog_stuck_threshold_s`` (default 1800 s) but nothing scanned
-  it. Sprint-5 ships a background task that cancels stuck commands and
+  ``watchdog_stuck_threshold_s`` (default 600 s since Sprint-8 P0-A;
+  was 1800 s in Sprint-5 through Sprint-7) but nothing scanned it.
+  Sprint-5 ships a background task that cancels stuck commands and
   emits ``agent_run_watchdog_killed`` for the events.jsonl trail.
 
 This file pins both with focused mocks of the runtime / event bus so a
@@ -312,13 +313,65 @@ async def test_watchdog_resolve_threshold_falls_back_on_missing() -> None:
     """case id: p05.watchdog.threshold_fallback
 
     Spec without ``watchdog_stuck_threshold_s`` -> use the default
-    (1800 s in production, configurable in tests).
+    (600 s in production since Sprint-8 P0-A; was 1800 s before;
+    always configurable in tests via :meth:`configure_watchdog`).
     """
 
     rt = _make_runtime(org=_Org(threshold_s=None))
     svc = OrgCommandService(rt)
     svc.configure_watchdog(default_threshold_secs=1234.0)
     assert svc._resolve_watchdog_threshold("o1") == 1234.0
+
+
+@pytest.mark.asyncio
+async def test_watchdog_default_threshold_is_600s_after_sprint8() -> None:
+    """case id: p05.watchdog.default_is_600s
+
+    Sprint-8 P0-A (v19 audit ``_orgs_business_capability_audit_v8.md``
+    §2 + §8.1): the production default tightens from 1800 s (30 min)
+    to 600 s (10 min). The previous Sprint-5 default left genuinely
+    stuck commands holding the inflight slot for half an hour; the
+    new value still gives a 5x safety margin over the slowest
+    legitimate run observed across v13-v19 audits (~3 min).
+
+    The org spec stays the source of truth (``watchdog_stuck_threshold_s``
+    on the spec wins over the default), so deployments that explicitly
+    want the legacy 1800 s budget set it on the spec.
+    """
+
+    svc = OrgCommandService(_make_runtime())
+    assert svc._watchdog_default_threshold_secs == 600.0
+    # Spec without an explicit threshold falls back to the new default.
+    threshold = svc._resolve_watchdog_threshold("o1")
+    assert threshold == 600.0
+
+
+@pytest.mark.asyncio
+async def test_watchdog_spec_override_still_wins_over_new_default() -> None:
+    """case id: p05.watchdog.spec_override_wins
+
+    Sprint-8 P0-A regression guard: tightening the default must not
+    break the spec-side override. Orgs that explicitly set
+    ``watchdog_stuck_threshold_s=1800`` (legacy 30 min envelope) or
+    ``=120`` (aggressive 2 min envelope) keep their declared value.
+    """
+
+    rt_legacy = _make_runtime(org=_Org(threshold_s=1800.0))
+    svc_legacy = OrgCommandService(rt_legacy)
+    assert svc_legacy._resolve_watchdog_threshold("o1") == 1800.0
+
+    rt_strict = _make_runtime(org=_Org(threshold_s=120.0))
+    svc_strict = OrgCommandService(rt_strict)
+    assert svc_strict._resolve_watchdog_threshold("o1") == 120.0
+
+    # Edge: zero / negative spec values are treated as "use default" by
+    # ``_resolve_watchdog_threshold`` -- the v5 contract -- so they
+    # must now resolve to 600 (not 1800). Sprint-5 disabled-via-flag
+    # path (watchdog_enabled=False) still resolves to 0 unchanged
+    # (covered by ``test_watchdog_disabled_on_spec_means_skip``).
+    rt_zero = _make_runtime(org=_Org(threshold_s=0.0))
+    svc_zero = OrgCommandService(rt_zero)
+    assert svc_zero._resolve_watchdog_threshold("o1") == 600.0
 
 
 @pytest.mark.asyncio
