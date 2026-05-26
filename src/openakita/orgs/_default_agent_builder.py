@@ -82,6 +82,7 @@ from ._runtime_agent_pipeline import (
 )
 from ._runtime_node_tools import (
     NodeToolEmit,
+    NodeToolHostProvider,
     resolve_node_tools,
     run_with_tools,
 )
@@ -92,6 +93,7 @@ __all__ = [
     "BuilderUnavailable",
     "DefaultAgentBuilder",
     "NodeToolEmit",
+    "NodeToolHostProvider",
     "dispatch_depth_var",
     "parse_dispatch_blocks",
 ]
@@ -376,7 +378,13 @@ class _BrainBackedNodeAgent:
     tool round may contain ``<dispatch>`` blocks too).
     """
 
-    __slots__ = ("_spec", "_brain", "_dispatch_callback", "_event_emitter")
+    __slots__ = (
+        "_spec",
+        "_brain",
+        "_dispatch_callback",
+        "_event_emitter",
+        "_tool_host_provider",
+    )
 
     def __init__(
         self,
@@ -385,11 +393,13 @@ class _BrainBackedNodeAgent:
         *,
         dispatch_callback: DispatchCallback | None = None,
         event_emitter: NodeToolEmit | None = None,
+        tool_host_provider: NodeToolHostProvider | None = None,
     ) -> None:
         self._spec = spec
         self._brain = brain
         self._dispatch_callback = dispatch_callback
         self._event_emitter = event_emitter
+        self._tool_host_provider = tool_host_provider
 
     async def run(self, content: str) -> str:
         text = content if isinstance(content, str) else str(content or "")
@@ -399,17 +409,28 @@ class _BrainBackedNodeAgent:
             # executor's "ok" path reachable.
             return ""
         depth = max(0, int(dispatch_depth_var.get(0)))
-        # Sprint-5 P0-1: resolve the per-node tools whitelist *before*
-        # we tag the trace context so the LLM debug dump can carry an
-        # accurate ``tools_count``. Workbench nodes that disable file
-        # tools (``enable_file_tools=False``) still get an empty list
-        # when their ``external_tools`` are plugin-only and not yet
-        # bridged into ``default_handler_registry`` -- consistent with
-        # the "out of scope: workbench plugin wiring" note on the
-        # module docstring.
+        # Sprint-6 P0-1 / P0-3: resolve the node-bound :class:`NodeToolHost`
+        # via the lazy provider. When the desktop Agent has finished wiring
+        # the host gives us access to the populated handler registry +
+        # plugin tool catalog. When it has not we keep the Sprint-5
+        # fallback path (empty registry -> failed events), which the
+        # integration tests document explicitly.
+        tool_host = None
+        if self._tool_host_provider is not None:
+            try:
+                tool_host = self._tool_host_provider()
+            except Exception:  # noqa: BLE001 -- provider must not crash run
+                tool_host = None
+        # Sprint-5 P0-1 (extended Sprint-6 P0-3): resolve the per-node
+        # tools whitelist *before* we tag the trace context so the LLM
+        # debug dump can carry an accurate ``tools_count``. The host
+        # lookup includes plugin tools (``hh_*``) so workbench nodes
+        # (``wb-hh-*``) finally see their declared whitelist instead
+        # of having it silently dropped (Sprint-5 §3 limitation).
         tool_defs = resolve_node_tools(
             external_tools=self._spec.external_tools,
             enable_file_tools=self._spec.enable_file_tools,
+            tool_host=tool_host,
         )
         # Tag the brain's debug dump with the node identity + tool
         # count so the v13 audit's "0 orgs_v2 LLM files" finding stays
@@ -448,6 +469,7 @@ class _BrainBackedNodeAgent:
                 node_id=self._spec.node_id,
                 command_id=command_id_for_events,
                 emit=self._event_emitter,
+                tool_host=tool_host,
             )
         else:
             response = await self._brain.messages_create_async(
@@ -522,6 +544,7 @@ class DefaultAgentBuilder:
         brain_provider: Callable[[], Any],
         dispatch_callback: DispatchCallback | None = None,
         event_emitter: NodeToolEmit | None = None,
+        tool_host_provider: NodeToolHostProvider | None = None,
     ) -> None:
         if not callable(brain_provider):
             raise TypeError("brain_provider must be callable")
@@ -529,9 +552,14 @@ class DefaultAgentBuilder:
             raise TypeError("dispatch_callback must be callable when provided")
         if event_emitter is not None and not callable(event_emitter):
             raise TypeError("event_emitter must be callable when provided")
+        if tool_host_provider is not None and not callable(tool_host_provider):
+            raise TypeError(
+                "tool_host_provider must be callable when provided"
+            )
         self._brain_provider = brain_provider
         self._dispatch_callback = dispatch_callback
         self._event_emitter = event_emitter
+        self._tool_host_provider = tool_host_provider
 
     def build(self, spec: AgentSpec) -> Any:
         try:
@@ -568,6 +596,7 @@ class DefaultAgentBuilder:
             brain,
             dispatch_callback=self._dispatch_callback,
             event_emitter=self._event_emitter,
+            tool_host_provider=self._tool_host_provider,
         )
 
     def teardown(self, agent: Any) -> None:  # noqa: ARG002

@@ -472,18 +472,61 @@ def create_app(
         except Exception:
             logger.debug("orgs_v2 node tool event emit failed", exc_info=True)
 
+    # Sprint-6 P0-1 (RCA ``_v17_p1_rca.md`` §1.5): the node agent's
+    # tool execution now routes through a :class:`NodeToolHost`
+    # whose handler registry is the *populated* one from the desktop
+    # Agent (filesystem / memory / web_search / 20 system handlers +
+    # every plugin-registered tool). Without this v17 saw 0
+    # ``node_tool_completed`` events because the global
+    # ``default_handler_registry`` is empty (Sprint-5 misread of the
+    # v1 wiring; see RCA §1.2.3). The provider closure resolves the
+    # host lazily because both ``app.state.agent`` and the runtime
+    # are populated by ``main.py`` after this lifespan callback
+    # returns -- mirrors the Sprint-2 ``brain_provider`` rationale.
+    def _orgs_v2_node_tool_host_provider() -> Any:
+        rt = getattr(app.state, "org_runtime", None)
+        if rt is None:
+            return None
+        get_host = getattr(rt, "get_node_tool_host", None)
+        if not callable(get_host):
+            return None
+        return get_host()
+
     agent_cache = AgentCache(
         builder=DefaultAgentBuilder(
             brain_provider=_orgs_v2_brain_provider,
             dispatch_callback=_dispatch_subtask_cb,
             event_emitter=_node_tool_event_emit,
+            tool_host_provider=_orgs_v2_node_tool_host_provider,
         )
     )
+
+    # Sprint-6 P0-2 (RCA ``_v17_p1_rca.md`` §2.5): resolve the
+    # cancel source the outcome cache stashed
+    # (``stop_org`` / ``watchdog``) so the ``except CancelledError``
+    # branch in :meth:`AgentPipelineExecutor.activate_and_run` can
+    # stamp it on the ``agent_run_cancelled`` events.jsonl payload.
+    # The lookup is lazy because :class:`OrgCommandService` is
+    # constructed *after* the executor here; the closure picks it
+    # up on first cancel.
+    def _orgs_v2_cancel_source_provider(command_id: str) -> str | None:
+        svc = getattr(app.state, "org_command_service", None)
+        if svc is None:
+            return None
+        getter = getattr(svc, "get_cancel_source", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(command_id)
+        except Exception:  # noqa: BLE001 -- best-effort observability
+            return None
+
     agent_executor = AgentPipelineExecutor(
         cache=agent_cache,
         resolver=profile_resolver,
         lookup=org_manager,
         event_bus=org_event_bus,
+        cancel_source_provider=_orgs_v2_cancel_source_provider,
     )
 
     async def _agent_dispatch(
@@ -557,6 +600,16 @@ def create_app(
             logger.debug("stop_org cancel-all failed", exc_info=True)
 
     org_runtime.set_on_stop_org(_on_stop_org_cancel_inflight)
+
+    # Sprint-6 P0-1 (RCA ``_v17_p1_rca.md`` §1.5): mint a
+    # :class:`NodeToolHost` from the desktop Agent if one is already
+    # wired. ``main.py`` may complete Agent initialisation after this
+    # lifespan runs, in which case ``update_agent`` /
+    # ``update_runtime_refs`` re-runs the bind below. The provider
+    # closure handed to :class:`DefaultAgentBuilder` reads the host
+    # lazily from ``app.state.org_runtime``, so a late bind here is
+    # observed on the next node activation.
+    _refresh_node_tool_host(app)
 
     # Mount routes
     app.include_router(auth_routes.router, tags=["认证"])
@@ -1209,9 +1262,47 @@ async def start_api_server(
     return proxy_task
 
 
+def _refresh_node_tool_host(app: FastAPI) -> None:
+    """(Re)bind a :class:`NodeToolHost` on the org runtime if possible.
+
+    Sprint-6 P0-1 (RCA ``_v17_p1_rca.md`` §1.5): the host wraps the
+    desktop Agent's populated ``handler_registry`` so orgs_v2 node
+    tools dispatch to real handlers instead of the empty global
+    registry the Sprint-5 commit aimed at. This helper is idempotent:
+    multiple lifespan paths (``create_app`` initial bind, ``update_agent``
+    late bind, ``update_runtime_refs`` IM-gateway late bind) all
+    converge here, and each rebind disposes the previous host so the
+    source-agent reference is released for a clean rebuild on hot
+    reload.
+    """
+
+    agent = getattr(app.state, "agent", None)
+    rt = getattr(app.state, "org_runtime", None)
+    if rt is None:
+        return
+    setter = getattr(rt, "set_node_tool_host", None)
+    if not callable(setter):
+        return
+    if agent is None:
+        setter(None)
+        return
+    try:
+        from openakita.orgs._runtime_agent_host import build_node_tool_host
+    except Exception:  # noqa: BLE001 -- defensive against import-cycle
+        logger.debug(
+            "Could not import build_node_tool_host; skipping bind", exc_info=True
+        )
+        return
+    host = build_node_tool_host(agent=agent)
+    setter(host)
+
+
 def update_agent(app: FastAPI, agent: Any) -> None:
     """Update the agent reference in the running app (e.g. after initialization)."""
     app.state.agent = agent
+    # Sprint-6 P0-1: rebind the orgs_v2 NodeToolHost to the new agent
+    # so any subsequent node activation sees the populated registry.
+    _refresh_node_tool_host(app)
 
 
 def update_runtime_refs(
@@ -1236,6 +1327,10 @@ def update_runtime_refs(
         return False
     if agent is not None:
         app.state.agent = agent
+        # Sprint-6 P0-1: rebind the orgs_v2 NodeToolHost so the next
+        # node activation picks up the freshly-installed agent's
+        # populated handler registry instead of the empty global.
+        _refresh_node_tool_host(app)
     if session_manager is not None:
         app.state.session_manager = session_manager
     if gateway is not None:

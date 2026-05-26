@@ -55,11 +55,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ._runtime_agent_host import NodeToolHost
 
 __all__ = [
     "MAX_TOOL_ROUNDS",
     "NodeToolEmit",
+    "NodeToolHostProvider",
     "execute_node_tool",
     "extract_tool_use_blocks",
     "resolve_node_tools",
@@ -68,6 +72,17 @@ __all__ = [
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+# Sprint-6 P0-1 (RCA ``_v17_p1_rca.md`` §1.5): per-node-agent callable
+# that returns the currently-bound :class:`NodeToolHost` (or ``None``
+# when the desktop Agent is not yet wired). We use a provider closure
+# rather than a direct reference because :class:`DefaultAgentBuilder`
+# is constructed inside the FastAPI lifespan *before* the host can
+# exist (``app.state.agent`` is populated later by ``main.py``), so
+# the closure picks the host up on first node activation -- mirrors
+# the Sprint-2 ``brain_provider`` rationale.
+NodeToolHostProvider = Callable[[], "NodeToolHost | None"]
 
 
 MAX_TOOL_ROUNDS = 1
@@ -107,6 +122,7 @@ def resolve_node_tools(
     *,
     external_tools: Iterable[str] | None,
     enable_file_tools: bool = True,
+    tool_host: NodeToolHost | None = None,
 ) -> list[dict[str, Any]]:
     """Translate a v1-style ``external_tools`` whitelist into LLM tool dicts.
 
@@ -117,11 +133,17 @@ def resolve_node_tools(
     aigc-video-studio template **disables** this for workbench nodes
     (``wb-hh-*``) so they only have the explicit ``hh_*`` whitelist.
 
-    Tools unknown to :func:`get_tool_definition` are dropped with a
-    debug log -- this is the bridge for plugin (``hh_*``) tools that
-    live in a separate manifest the orgs_v2 node path does not consume
-    yet; we surface a count so the caller can include it in the LLM
-    debug ``tools_count`` field.
+    Sprint-6 P0-3 (RCA ``_v17_p1_rca.md`` §4 P0-3): when ``tool_host``
+    is supplied the resolver also looks up plugin-provided
+    definitions (``hh_image_create`` etc) via the host's tool catalog
+    -- the plugin API extends ``agent._tools`` with their
+    Anthropic-shape definitions, so the workbench ``wb-hh-*`` nodes
+    finally see their declared external tools instead of having them
+    silently dropped (Sprint-5 §3 P0-3 "out of scope" note).
+
+    Tools unknown to **both** the host and :func:`get_tool_definition`
+    are dropped with a debug log -- preserves Sprint-5 behaviour for
+    bare-builder fixtures that never set up a host.
     """
 
     flat = _flatten_external_tools(external_tools)
@@ -139,7 +161,25 @@ def resolve_node_tools(
         if name in seen:
             continue
         seen.add(name)
-        defn = get_tool_definition(name)
+        defn: dict[str, Any] | None = None
+        # Sprint-6 P0-3: prefer the host's lookup so plugin tools
+        # (``hh_*``) are included. The host inspects the live
+        # ``agent._tools`` list -- which is what ``plugins/api.py``
+        # extends after each plugin registers -- so any tool the LLM
+        # might legitimately call is reachable here.
+        if tool_host is not None:
+            try:
+                defn = tool_host.lookup_tool_definition(name)
+            except Exception:  # noqa: BLE001 -- best-effort
+                defn = None
+        if defn is None:
+            static_defn = get_tool_definition(name)
+            if static_defn is not None:
+                defn = {
+                    "name": static_defn.get("name", name),
+                    "description": static_defn.get("description", ""),
+                    "input_schema": static_defn.get("input_schema", {"type": "object"}),
+                }
         if defn is None:
             dropped.append(name)
             continue
@@ -286,8 +326,9 @@ async def execute_node_tool(
     node_id: str,
     command_id: str | None,
     emit: NodeToolEmit | None = None,
+    tool_host: NodeToolHost | None = None,
 ) -> tuple[str, bool]:
-    """Run one tool via :data:`default_handler_registry` with safety net.
+    """Run one tool via :class:`NodeToolHost` (Sprint-6 P0-1) with safety net.
 
     Returns ``(text, is_error)``:
 
@@ -299,6 +340,16 @@ async def execute_node_tool(
       so the LLM can decide how to proceed; this matches the v1
       :class:`ToolExecutor` policy (an unknown / failing tool returns a
       structured error string rather than blowing up the whole turn).
+
+    Sprint-6 P0-1 (RCA ``_v17_p1_rca.md`` §1.5): the host's
+    ``handler_registry`` is the *populated* one from the desktop
+    Agent (filesystem / memory / web_search / 20 system handlers +
+    every plugin-registered tool). When ``tool_host`` is ``None`` we
+    fall back to the Sprint-5 global registry path so headless test
+    fixtures and the FastAPI lifespan-race window (host not yet
+    wired) keep working -- the fallback will still emit
+    ``node_tool_failed`` for unknown tools, byte-for-byte v17
+    observable.
 
     Cancellation is propagated unchanged -- if the surrounding task is
     cancelled we re-raise :class:`asyncio.CancelledError` so the cancel
@@ -325,18 +376,64 @@ async def execute_node_tool(
         },
     )
 
-    # Lazy import for the same reason as ``resolve_node_tools``:
-    # tools/handlers/__init__.py registers a global singleton whose
-    # initialiser pulls in MCP / policy_v2 / etc.
-    from openakita.tools.handlers import default_handler_registry
+    # Lazy import: the host module pulls a small graph but the
+    # exception class is hashable so a late import keeps the orgs_v2
+    # package import-time light.
+    from ._runtime_agent_host import ToolNotAvailable
 
     try:
-        result = await default_handler_registry.execute_by_tool(tool_name, dict(tool_input))
+        if tool_host is not None:
+            result = await tool_host.execute_tool(
+                tool_name,
+                dict(tool_input),
+                node_id=node_id,
+                command_id=command_id,
+            )
+        else:
+            # Sprint-5 fallback path (RCA §1.5.4 rollback): the global
+            # registry stays empty in production, so the lookup will
+            # raise ``ValueError`` and we surface it as the same
+            # ``node_tool_failed`` payload v17 observed. This branch
+            # only fires in test fixtures that monkeypatch
+            # ``default_handler_registry.execute_by_tool``.
+            from openakita.tools.handlers import default_handler_registry
+
+            result = await default_handler_registry.execute_by_tool(
+                tool_name, dict(tool_input)
+            )
     except asyncio.CancelledError:
         # User cancel must propagate to the outer node-agent run so the
         # outcome cache resolves to ``cancelled`` instead of failing
         # this tool as an error.
         raise
+    except ToolNotAvailable as exc:
+        # Sprint-6 P0-3: classify "plugin tool not loaded" distinctly
+        # from a generic handler crash so events.jsonl readers can
+        # tell whether ``hh_*`` failed because the plugin manifest
+        # is missing vs the API is down. The Sprint-5 path turned
+        # both into ``error="No handler mapped for tool: <name>"``.
+        _LOGGER.warning(
+            "[orgs_v2 node tool] %s.%s unavailable: %s",
+            node_id,
+            tool_name,
+            exc.reason,
+        )
+        await _safe_emit(
+            emit,
+            "node_tool_failed",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                "reason": "plugin_not_loaded",
+                "error": exc.reason,
+            },
+        )
+        return (
+            f"[tool {tool_name} unavailable: {exc.reason}]",
+            True,
+        )
     except Exception as exc:  # noqa: BLE001
         _LOGGER.warning(
             "[orgs_v2 node tool] %s.%s raised: %s",
@@ -352,6 +449,7 @@ async def execute_node_tool(
                 "node_id": node_id,
                 "command_id": command_id,
                 "tool_name": tool_name,
+                "reason": "handler_raised",
                 "error": str(exc),
             },
         )
@@ -383,6 +481,7 @@ async def run_with_tools(
     command_id: str | None,
     emit: NodeToolEmit | None = None,
     second_round_caller: Callable[[list[dict[str, Any]]], Awaitable[Any]] | None = None,
+    tool_host: NodeToolHost | None = None,
 ) -> tuple[Any, int]:
     """One-round tool-use loop on top of :meth:`Brain.messages_create_async`.
 
@@ -444,6 +543,7 @@ async def run_with_tools(
             node_id=node_id,
             command_id=command_id,
             emit=emit,
+            tool_host=tool_host,
         )
         tool_results.append(
             {

@@ -125,12 +125,23 @@ class AgentPipelineExecutor:
         lookup: OrgLookupProtocol,
         event_bus: Any,
         on_org_paused: Any = None,
+        cancel_source_provider: Any = None,
     ) -> None:
         self._cache = cache
         self._resolver = resolver
         self._lookup = lookup
         self._bus = event_bus
         self._on_org_paused = on_org_paused
+        # Sprint-6 P0-2 (RCA ``_v17_p1_rca.md`` §2.5): optional
+        # ``(command_id: str) -> str | None`` callback that resolves
+        # the cancel source (``stop_org``/``watchdog``/``user_cancel``)
+        # so the ``except CancelledError`` branch below can stamp
+        # ``cancelled_by`` on the ``agent_run_cancelled`` event
+        # payload. Defaults to ``None`` so existing tests (and
+        # composition roots that don't wire the bridge) keep the
+        # Sprint-5 observable: ``reason="user_cancel"`` + no
+        # ``cancelled_by`` field.
+        self._cancel_source_provider = cancel_source_provider
 
     async def activate_and_run(
         self,
@@ -248,16 +259,33 @@ class AgentPipelineExecutor:
             # may surface the cancellation when ``await`` resumes inside
             # ``_InMemoryEventBus.emit``, but the outcome we *care about*
             # is the original cancel, not the nested one.
+            # Sprint-6 P0-2 (RCA ``_v17_p1_rca.md`` §2.5): consult the
+            # cancel-source bridge before emitting so the events.jsonl
+            # payload distinguishes user-cancel / stop-org / watchdog
+            # kills. The Sprint-5 commit only wrote ``cancelled_by``
+            # to the in-memory outcome cache; v17 audit caught that
+            # the on-disk payload still hard-coded ``user_cancel``.
+            # Sources arrive verbatim from
+            # :meth:`OrgCommandService.cancel_all_for_org` (``stop_org``,
+            # forwarded verbatim by ``cancel_user_command``) and the
+            # watchdog (``watchdog``). ``None`` -> keep the Sprint-3
+            # default so user-initiated cancels stay byte-for-byte
+            # compatible with the existing reader.
+            cancel_source: str | None = None
+            if self._cancel_source_provider is not None and command_id:
+                try:
+                    cancel_source = self._cancel_source_provider(command_id)
+                except Exception:  # noqa: BLE001 -- best-effort
+                    cancel_source = None
+            cancel_payload: dict[str, Any] = {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "reason": cancel_source or "user_cancel",
+                "cancelled_by": cancel_source or "user_cancel",
+            }
             try:
-                await self._emit(
-                    "agent_run_cancelled",
-                    {
-                        "org_id": org_id,
-                        "node_id": node_id,
-                        "command_id": command_id,
-                        "reason": "user_cancel",
-                    },
-                )
+                await self._emit("agent_run_cancelled", cancel_payload)
             except asyncio.CancelledError:
                 pass
             raise

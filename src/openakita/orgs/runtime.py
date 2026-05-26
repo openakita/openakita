@@ -52,6 +52,7 @@ from .manager import OrgLifecycleEmitterProtocol, OrgPersistenceProtocol
 from .node_scheduler import NodeSchedulerProtocol
 
 if TYPE_CHECKING:  # pragma: no cover -- forward ref only
+    from ._runtime_agent_host import NodeToolHost
     from ._runtime_dispatch import CommandDispatchManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -380,6 +381,15 @@ class OrgRuntime:
         self._inboxes: dict[str, Any] = {}
         self._watchdog_tasks: dict[str, asyncio.Task[None]] = {}
         self._idle_probe_tasks: dict[str, asyncio.Task[None]] = {}
+        # Sprint-6 P0-1 (RCA ``_v17_p1_rca.md`` §1.5): per-process
+        # :class:`NodeToolHost` slot. We deliberately keep it as a
+        # single-slot ref (not a per-org dict) because the Sprint-6
+        # minimum-viable host re-uses the main desktop Agent's
+        # handler_registry -- there is exactly one such registry in
+        # the process regardless of how many orgs run. Per-org
+        # workspace / memory isolation is reserved for Sprint-7+
+        # (see ``_runtime_agent_host`` module docstring).
+        self._node_tool_host: NodeToolHost | None = None
 
         # H4 fix (audit ``_orgs_business_capability_audit_v1.md`` §3.2):
         # bridge the in-process dispatch event-bus to two long-lived
@@ -438,10 +448,25 @@ class OrgRuntime:
             command_id=command_id,
         )
 
-    async def cancel_user_command(self, org_id: str, command_id: str) -> dict[str, Any] | None:
-        """v1 ``OrgRuntime.cancel_user_command`` parity (delegates to dispatch sibling P9.6e)."""
+    async def cancel_user_command(
+        self,
+        org_id: str,
+        command_id: str,
+        *,
+        cancel_reason: str | None = None,
+    ) -> dict[str, Any] | None:
+        """v1 ``OrgRuntime.cancel_user_command`` parity (delegates to dispatch sibling P9.6e).
 
-        return await self._dispatch.cancel_user_command(org_id, command_id)
+        Sprint-6 P0-2 (RCA ``_v17_p1_rca.md`` §2.5): pass through the
+        explicit cancel source so the dispatch sibling can stamp
+        events.jsonl with ``cancelled_by`` (stop_org / watchdog /
+        user_cancel) instead of always emitting the hardcoded
+        ``user_cancel`` Sprint-5 wrote.
+        """
+
+        return await self._dispatch.cancel_user_command(
+            org_id, command_id, cancel_reason=cancel_reason
+        )
 
     def has_active_delegations(self, org_id: str, root_node_id: str) -> bool:
         """v1 ``OrgRuntime._has_active_delegations`` parity (delegates to dispatch sibling P9.6e)."""
@@ -502,6 +527,39 @@ class OrgRuntime:
         except IllegalOrgTransition as exc:
             raise ValueError(str(exc)) from exc
         return {"ok": ok, "status": self._state.get_org_state(org_id) or "unknown"}
+
+    # ------------------------------------------------------------------
+    # Sprint-6 P0-1: NodeToolHost wiring (RCA _v17_p1_rca.md §1.5)
+    # ------------------------------------------------------------------
+
+    def set_node_tool_host(self, host: NodeToolHost | None) -> None:
+        """Bind a :class:`NodeToolHost` for use by per-node agents.
+
+        Late-binding: the API server lifespan installs the host once
+        ``app.state.agent`` (the desktop ``Agent``) is fully wired.
+        Prior to that the runtime falls back to the empty
+        ``default_handler_registry`` path the Sprint-5 commit shipped
+        with, so the lifespan-race window keeps its v17 observable
+        instead of crashing (RCA §1.5.4 rollback strategy).
+        """
+
+        # Dispose the previous host (if any) so the source agent's
+        # handler_registry can be garbage-collected on rebinds.
+        prior = self._node_tool_host
+        if prior is not None and prior is not host:
+            try:
+                prior.dispose()
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug(
+                    "NodeToolHost.dispose raised during rebind",
+                    exc_info=True,
+                )
+        self._node_tool_host = host
+
+    def get_node_tool_host(self) -> NodeToolHost | None:
+        """Return the currently-bound :class:`NodeToolHost`, if any."""
+
+        return self._node_tool_host
 
     def set_on_stop_org(self, callback: Any) -> None:
         """Sprint-5 P0-2 passthrough: late-bind the stop-org callback.

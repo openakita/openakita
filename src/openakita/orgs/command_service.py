@@ -132,7 +132,13 @@ class CommandRuntimeProtocol(Protocol):
         command_id: str,
     ) -> dict[str, Any]: ...
 
-    async def cancel_user_command(self, org_id: str, command_id: str) -> dict[str, Any]: ...
+    async def cancel_user_command(
+        self,
+        org_id: str,
+        command_id: str,
+        *,
+        cancel_reason: str | None = None,
+    ) -> dict[str, Any]: ...
 
     def has_active_delegations(self, org_id: str, root_node_id: str) -> bool: ...
 
@@ -760,6 +766,34 @@ class OrgCommandService:
         }
 
     # ------------------------------------------------------------------
+    # Sprint-6 P0-2: cancel-source bridge (RCA _v17_p1_rca.md §2.5)
+    # ------------------------------------------------------------------
+
+    def get_cancel_source(self, command_id: str) -> str | None:
+        """Return the ``cancelled_by`` source stored in the outcome cache.
+
+        The Sprint-5 commit pre-seeded
+        ``_command_outcomes[cid]["cancelled_by"]`` in
+        :meth:`cancel_all_for_org` (``stop_org:*``) and the watchdog
+        (``watchdog``) but the ``agent_run_cancelled`` event the
+        executor emits on ``CancelledError`` hard-coded
+        ``reason="user_cancel"`` -- the cache marker never reached
+        disk. Sprint-6 P0-2 wires the executor to consult this
+        accessor before emitting so events.jsonl carries the source
+        verbatim. Returns ``None`` when the outcome is missing or
+        carries no source (user-initiated cancels fall through and
+        keep the legacy ``user_cancel`` reason).
+        """
+
+        outcome = self._command_outcomes.get(command_id)
+        if not isinstance(outcome, dict):
+            return None
+        source = outcome.get("cancelled_by")
+        if isinstance(source, str) and source:
+            return source
+        return None
+
+    # ------------------------------------------------------------------
     # Sprint-5 P0-2: org-wide cancel + watchdog
     # ------------------------------------------------------------------
 
@@ -819,8 +853,17 @@ class OrgCommandService:
             }
             # Best-effort: also notify the runtime layer so the
             # dispatch tracker / chain accounting agrees with us.
+            # Sprint-6 P0-2 (RCA ``_v17_p1_rca.md`` §2.5): pass the
+            # cancel source through so the dispatch sibling can
+            # stamp ``cancelled_by`` on the events.jsonl payload
+            # instead of always writing ``user_cancel``. Without this
+            # the v17 audit saw 0/5 stop-org cases tagged with
+            # ``cancelled_by=stop_org`` on disk (single-plane Sprint-5
+            # fix; outcome cache only).
             try:
-                await self._runtime.cancel_user_command(org_id, cid)
+                await self._runtime.cancel_user_command(
+                    org_id, cid, cancel_reason=reason
+                )
             except Exception:  # noqa: BLE001 -- runtime cancel is best-effort here
                 logger.debug(
                     "[OrgCmd] runtime cancel_user_command raised during stop-org "
@@ -976,6 +1019,17 @@ class OrgCommandService:
                 "threshold_s": int(threshold),
             }
             # Emit the explicit event for events.jsonl (best-effort).
+            #
+            # Sprint-6 P0-2 (RCA ``_v17_p1_rca.md`` §2.7.1 + §2.5):
+            # include ``cancelled_by="watchdog"`` on the on-disk
+            # payload so events.jsonl readers can attribute the kill
+            # to the watchdog even before the
+            # follow-on ``agent_run_cancelled`` arrives. Pre-Sprint-6
+            # the field lived only in the outcome cache, so any
+            # external auditor scanning the JSONL had no way to
+            # tell apart a watchdog kill from a user / stop-org
+            # cancel (both later events used the same hard-coded
+            # ``user_cancel`` reason).
             if self._event_bus is not None:
                 emit = getattr(self._event_bus, "emit", None)
                 if callable(emit):
@@ -987,6 +1041,7 @@ class OrgCommandService:
                                 "command_id": cid,
                                 "elapsed_s": round(elapsed, 1),
                                 "threshold_s": int(threshold),
+                                "cancelled_by": "watchdog",
                             },
                         )
                         if asyncio.iscoroutine(coro):

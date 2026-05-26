@@ -330,8 +330,29 @@ class CommandDispatchManager:
             "node_id": target_node_id,
         }
 
-    async def cancel_user_command(self, org_id: str, command_id: str) -> dict[str, Any] | None:
-        """v1 ``OrgRuntime.cancel_user_command`` parity (65 LOC -> ~30 LOC)."""
+    async def cancel_user_command(
+        self,
+        org_id: str,
+        command_id: str,
+        *,
+        cancel_reason: str | None = None,
+    ) -> dict[str, Any] | None:
+        """v1 ``OrgRuntime.cancel_user_command`` parity (65 LOC -> ~30 LOC).
+
+        Sprint-6 P0-2 (RCA ``_v17_p1_rca.md`` §2.5 method A): accept
+        an explicit ``cancel_reason`` so callers like
+        :meth:`OrgCommandService.cancel_all_for_org` ("stop_org") and
+        the watchdog ("watchdog") can stamp the
+        ``user_command_cancelled`` and per-tracker fields with a
+        source that survives in **events.jsonl**, not just the
+        in-memory ``_command_outcomes`` cache the Sprint-5 commit
+        wrote and the v17 audit caught as a single-plane fix.
+
+        ``None`` (the default) preserves the Sprint-3 user-cancel
+        observable: ``reason="user_cancel"`` + no ``cancelled_by`` --
+        any existing reader that only knows the older payload shape
+        keeps working unchanged.
+        """
 
         tracker = self._registry.get(org_id, command_id)
         if tracker is None:
@@ -351,7 +372,12 @@ class CommandDispatchManager:
                 "cancelled_roots": [tracker.root_node_id] if tracker.root_node_id else [],
             }
         tracker.state = TRACKER_CANCELLED
-        tracker.cancel_reason = "user_cancel"
+        # Sprint-6 P0-2: store the explicit source so the tracker
+        # snapshot reflects "who pressed the button" instead of
+        # always reading "user_cancel". The string is the same value
+        # we write to events.jsonl below for consistency.
+        resolved_reason = cancel_reason or "user_cancel"
+        tracker.cancel_reason = resolved_reason
         tracker.last_activity_at = time()
         if self._cmd is not None:
             try:
@@ -362,13 +388,25 @@ class CommandDispatchManager:
         if self._chain_cancel is not None:
             for chain_id in list(tracker.chains):
                 try:
-                    await self._chain_cancel(org_id, chain_id, "user_cancel")
+                    await self._chain_cancel(org_id, chain_id, resolved_reason)
                 except Exception:  # noqa: BLE001
                     _LOGGER.exception("chain_cancel raised (org=%s chain=%s)", org_id, chain_id)
-        await self._bus.emit(
-            "user_command_cancelled",
-            {"org_id": org_id, "command_id": command_id, "reason": "user_cancel"},
-        )
+        # Sprint-6 P0-2: emit both the legacy ``reason`` field (kept
+        # at ``user_cancel`` when no source was supplied so the
+        # existing reader stays compatible) and a new
+        # ``cancelled_by`` field that names the source verbatim.
+        # The v17 audit checks payload[cancelled_by]; pre-Sprint-6
+        # the field was missing for stop-org / watchdog kills so
+        # 0/5 R.F2 cases scored. New schema:
+        #
+        #   {"reason": "user_cancel" | <source>, "cancelled_by": <source>}
+        cancel_payload: dict[str, Any] = {
+            "org_id": org_id,
+            "command_id": command_id,
+            "reason": resolved_reason,
+            "cancelled_by": resolved_reason,
+        }
+        await self._bus.emit("user_command_cancelled", cancel_payload)
         # Sprint-3 P0-2 (audit v3 §5.3): populate ``cancelled_roots`` so the
         # service layer's response stops lying with ``[]``. We use the single
         # tracker root because the current dispatch model fans out from one
