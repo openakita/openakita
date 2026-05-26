@@ -121,8 +121,15 @@ class PolicyEngineV2:
         - ``owner_only.tools`` 显式 owner-only 工具
         - ``approval_classes.overrides`` 用户对 ApprovalClass 的 override
         - ``unattended.default_strategy`` 计划任务的兜底策略
-        默认 ``PolicyConfigV2()``——纯 schema 默认（trust 模式不开、空 immune、
-        ask_owner 兜底）；测试与首启都 OK。
+        默认 ``PolicyConfigV2()``——纯 schema 默认。自 v1.27.13 起：
+        - ``confirmation.mode = TRUST``（出厂"不打扰"档；DESTRUCTIVE/UNKNOWN
+          仍走 CONFIRM，矩阵兜底见 ``policy_v2/matrix.py``）
+        - ``profile.current = "trust"``（UI 标签真源；引擎不读它做决策）
+        - ``sandbox / shell_risk / death_switch / checkpoint`` 仍默认 ``enabled=True``
+          作为 belt-and-suspenders fail-safe——这与 ``_apply_security_profile_defaults``
+          套用的 "trust profile bundle"（其中 sandbox 被关掉）有意保留差异：
+          schema 默认是"原子字段都开 + 模式 TRUST"，profile bundle 是 UI 套餐
+          整体语义。测试与首启都 OK。
 
         ``audit_hook`` 接收 ``evaluate_tool_call`` 决策；``audit_intent_hook``
         接收 ``evaluate_message_intent`` 决策。两者签名形参不同，分开传以避

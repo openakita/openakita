@@ -35,7 +35,11 @@ class TestSchemaDefaults:
         cfg = PolicyConfigV2()
         assert cfg.enabled is True
         assert cfg.workspace.paths == ["${CWD}"]
-        assert cfg.confirmation.mode == ConfirmationMode.DEFAULT.value
+        # 出厂默认 = trust：与 SecurityProfileConfig.current="trust" 配套，
+        # 让 fresh install / 缺失 POLICIES.yaml 的场景直接落到信任档。
+        # DESTRUCTIVE / UNKNOWN 在矩阵里仍走 CONFIRM，所以这不是"裸奔"。
+        assert cfg.confirmation.mode == ConfirmationMode.TRUST.value
+        assert cfg.profile.current == "trust"
         assert cfg.session_role.default == SessionRole.AGENT.value
         assert cfg.safety_immune.paths == []
         assert cfg.shell_risk.enabled is True
@@ -158,7 +162,9 @@ class TestLoaderFile:
     def test_nonexistent_file_returns_defaults(self, tmp_path: Path) -> None:
         cfg, report = load_policies_yaml(tmp_path / "nope.yaml")
         assert isinstance(cfg, PolicyConfigV2)
-        assert cfg.confirmation.mode == "default"
+        # 自 v1.27.13 起 schema 默认 = trust（参见 schema.py 注释）。
+        # 任何"missing YAML → fall back to defaults"路径都必须落到 trust。
+        assert cfg.confirmation.mode == "trust"
         assert report.schema_detected == "empty"
 
     def test_none_path_returns_defaults(self) -> None:
@@ -228,8 +234,8 @@ security:
             encoding="utf-8",
         )
         cfg, _ = load_policies_yaml(p, strict=False)
-        # falls back to defaults
-        assert cfg.confirmation.mode == "default"
+        # falls back to defaults — schema 默认 = trust (v1.27.13+)
+        assert cfg.confirmation.mode == "trust"
 
     def test_strict_mode_raises_on_invalid_mode(self, tmp_path: Path) -> None:
         p = tmp_path / "bad_mode.yaml"

@@ -94,7 +94,9 @@ class TestPhaseDFeedsPhaseC:
     def test_flag_unset_overrides_no_op(self, clean_env: None) -> None:
         cfg = PolicyConfigV2()
         new_cfg, report = eo.apply_env_overrides(cfg, environ={})
-        assert new_cfg.confirmation.mode == "default"
+        # 没有任何 env override 时，apply_env_overrides 必须返回 schema 默认值。
+        # schema 默认从 v1.27.13 起 = trust，所以这里也要随之更新。
+        assert new_cfg.confirmation.mode == "trust"
         assert not report.has_any()
 
 

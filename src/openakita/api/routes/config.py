@@ -293,7 +293,10 @@ _SECURITY_PROFILE_OFF_ACK = "确认风险同意关闭"
 
 
 def _normalize_security_profile(profile: str) -> str:
-    value = (profile or "protect").strip().lower()
+    # 出厂默认 = trust：和 ``PolicyConfigV2.profile.current`` 的 schema 默认
+    # 保持一致。空字符串 / 未知值的兜底也指向 trust，让 setup-center 的"刷新
+    # 全部"在配置仍为空时不会误显示成 protect。
+    value = (profile or "trust").strip().lower()
     aliases = {
         "yolo": "trust",
         "smart": "protect",
@@ -301,7 +304,7 @@ def _normalize_security_profile(profile: str) -> str:
     }
     value = aliases.get(value, value)
     if value not in ("trust", "protect", "strict", "off", "custom"):
-        value = "protect"
+        value = "trust"
     return value
 
 
@@ -377,7 +380,9 @@ def _mark_security_profile_custom(sec: dict[str, Any]) -> None:
     prev = profile.get("current")
     leaving_off = prev == "off"
     if prev != "custom":
-        profile["base"] = prev or "protect"
+        # base 兜底 = trust：与新出厂默认对齐。用户从 custom 还原时回到信任方案，
+        # 而不是回到 v1.27 时代的 protect。
+        profile["base"] = prev or "trust"
         profile["current"] = "custom"
     # custom 模式下 security.enabled 永远应该是 True（否则不存在意义）。
     sec["enabled"] = True
@@ -386,13 +391,16 @@ def _mark_security_profile_custom(sec: dict[str, Any]) -> None:
 
 
 def _mode_from_security(sec: dict[str, Any] | None) -> str:
+    # 出厂默认 = yolo（= trust）：与 PolicyConfigV2 schema 默认一致。
+    # 即便 raw dict 里没有 confirmation 块，也按"信任模式"汇报，保持
+    # /security/options 与运行时引擎的一致性。
     conf = (sec or {}).get("confirmation", {})
     mode = conf.get("mode")
     if mode:
         return _normalize_permission_mode(str(mode))
     if conf.get("auto_confirm") is True:
         return "yolo"
-    return "smart" if sec else "yolo"
+    return "yolo"
 
 
 def _normalize_confirmation_mode(mode: Any) -> str:
@@ -1883,7 +1891,8 @@ async def write_security_path_policy(body: SecurityPathPolicyUpdate):
     sec.pop("zones", None)
     profile = sec.setdefault("profile", {})
     if profile.get("current") != "custom":
-        profile["base"] = profile.get("current") or "protect"
+        # base 兜底与 _mark_security_profile_custom 保持一致：新出厂默认 = trust。
+        profile["base"] = profile.get("current") or "trust"
         profile["current"] = "custom"
     _write_policies_yaml(data)
     try:

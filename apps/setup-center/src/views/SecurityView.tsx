@@ -149,10 +149,13 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   const [sandbox, setSandbox] = useState<SandboxConfig>({ enabled: true, backend: "auto", sandbox_risk_levels: ["HIGH"], exempt_commands: [] });
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [checkpoints, setCheckpoints] = useState<CheckpointEntry[]>([]);
-  const [confirmConfig, setConfirmConfig] = useState<ConfirmConfig>({ mode: "default", timeout_seconds: 60, default_on_timeout: "deny", confirm_ttl: 120 });
+  const [confirmConfig, setConfirmConfig] = useState<ConfirmConfig>({ mode: "trust", timeout_seconds: 60, default_on_timeout: "deny", confirm_ttl: 120 });
   const [selfProtect, setSelfProtect] = useState<SelfProtectConfig>({ enabled: true, protected_dirs: ["data/", "identity/", "logs/", "src/"], death_switch_threshold: 3, death_switch_total_multiplier: 3, audit_to_file: true, audit_path: "", readonly_mode: false });
   const [allowlist, setAllowlist] = useState<AllowlistData>({ commands: [], tools: [] });
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>("protect");
+  // 出厂默认 = "trust"：与后端 PolicyConfigV2 schema 一致。GET /security/options
+  // 在配置缺失时也返回 trust，下面 fetchAll 会用真实值覆盖；这里仅决定第一次
+  // 渲染（loading）时的占位。
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("trust");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [savingAction, setSavingAction] = useState<string | null>(null);
   const [loadingAll, setLoadingAll] = useState(false);
