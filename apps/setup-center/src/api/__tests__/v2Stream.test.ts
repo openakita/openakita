@@ -65,7 +65,47 @@ describe("createV2Stream", () => {
   it("constructs the canonical URL with the org id encoded", () => {
     const stream = createV2Stream("org abc/?", { eventSourceFactory: fakeFactory });
     expect(factorySource).not.toBeNull();
-    expect(factorySource!.url).toBe("/api/v2/orgs-spec/org%20abc%2F%3F/stream");
+    expect(factorySource!.url).toBe(
+      "/api/v2/orgs/org%20abc%2F%3F/events/stream",
+    );
+    stream.close();
+  });
+
+  it("supports the legacy /orgs-spec stream URL via apiPath override", () => {
+    const stream = createV2Stream("org_legacy", {
+      eventSourceFactory: fakeFactory,
+      apiPath: "/api/v2/orgs-spec/{id}/stream",
+    });
+    expect(factorySource!.url).toBe(
+      "/api/v2/orgs-spec/org_legacy/stream",
+    );
+    stream.close();
+  });
+
+  it("subscribes the Sprint-9 stalls and replans channels by default", () => {
+    const stalls = vi.fn();
+    const replans = vi.fn();
+    const stream = createV2Stream("org_s9", { eventSourceFactory: fakeFactory });
+    stream.onEvent("stalls", stalls);
+    stream.onEvent("replans", replans);
+    factorySource!.emit("stalls", {
+      type: "stall_detected",
+      payload: { n_stalls: 1 },
+      org_id: "org_s9",
+      command_id: "c",
+      superstep: 2,
+      ts: "t",
+    });
+    factorySource!.emit("replans", {
+      type: "replan_requested",
+      payload: { n_replans: 1 },
+      org_id: "org_s9",
+      command_id: "c",
+      superstep: 3,
+      ts: "t",
+    });
+    expect(stalls).toHaveBeenCalledTimes(1);
+    expect(replans).toHaveBeenCalledTimes(1);
     stream.close();
   });
 

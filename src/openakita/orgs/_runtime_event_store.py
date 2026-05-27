@@ -56,10 +56,21 @@ class OrgEventStore:
                 _LOGGER.warning("OrgEventStore replay failed for %s: %s", org_id, exc)
 
     def append(self, event: dict[str, Any]) -> dict[str, Any]:
-        """Append ``event``; stamps ``org_id`` + ``at`` if absent."""
+        """Append ``event``; stamps ``org_id`` + ``at`` + ``ts`` if absent.
+
+        The dual ``at`` / ``ts`` stamp closes the v17-v20 audit
+        observability hole. Pre-fix only ``at`` was stamped, and every
+        exploratory script (``_v*_biz/_lib.py``) read ``e.get("ts")``
+        and reported ``last_event_ts = null`` for the entire run. We
+        keep ``at`` so older readers continue to work and add ``ts``
+        as a numeric-epoch mirror with the same value, so any new
+        reader can use the canonical field without dual-key fallback.
+        """
         record = dict(event)
         record.setdefault("org_id", self._org_id)
-        record.setdefault("at", time.time())
+        now = time.time()
+        record.setdefault("at", now)
+        record.setdefault("ts", record.get("at", now))
         with self._lock:
             self._events.append(record)
         if self._jsonl is not None:

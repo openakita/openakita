@@ -15,8 +15,10 @@ import pytest
 
 # P-RC-9 P9.9δ-2b: ``failure_diagnoser`` absorption into
 # ``runtime.orgs._runtime_watchdog`` (inventory §3) was not landed at this
-# commit; the v2 watchdog module exports CommandWatchdog + IdleProbeLoop
-# only. Module-level guarded import + skip until the absorption commit.
+# commit; the v2 watchdog module exports IdleProbeLoop only after Sprint-9
+# removed CommandWatchdog (supervisor takeover -- StallDetector replaced
+# the wall-clock watchdog). Module-level guarded import + skip until the
+# absorption commit.
 try:
     from openakita.orgs._runtime_watchdog import (  # type: ignore[attr-defined]
         _DIAGNOSIS_TEMPLATES,

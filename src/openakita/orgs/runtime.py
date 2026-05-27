@@ -379,7 +379,10 @@ class OrgRuntime:
         # the lifecycle sibling (P9.6d).
         self._event_stores: dict[str, Any] = {}
         self._inboxes: dict[str, Any] = {}
-        self._watchdog_tasks: dict[str, asyncio.Task[None]] = {}
+        # Sprint-9 removed ``self._watchdog_tasks`` -- the wall-clock
+        # CommandWatchdog has been replaced by the supervisor's
+        # StallDetector + max_turns cap (see
+        # ``runtime/supervisor.py`` + ``orgs/command_service.py``).
         self._idle_probe_tasks: dict[str, asyncio.Task[None]] = {}
         # Sprint-6 P0-1 (RCA ``_v17_p1_rca.md`` §1.5): per-process
         # :class:`NodeToolHost` slot. We deliberately keep it as a

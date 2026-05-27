@@ -142,7 +142,14 @@ class _StubRuntime:
             return {"result": "", "cancelled_by_user": True}
         return {"result": "completed"}
 
-    async def cancel_user_command(self, org_id: str, command_id: str) -> dict[str, Any]:
+    async def cancel_user_command(
+        self,
+        org_id: str,
+        command_id: str,
+        *,
+        cancel_reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Sprint-9: accept ``cancel_reason`` for the taxonomy bridge."""
         # 1) flip the cancelled-flag (cooperative)
         self._cancelled.add(command_id)
         # 2) write a stub checkpoint (the ADR-0005 contract surface)
@@ -150,6 +157,7 @@ class _StubRuntime:
             "command_id": command_id,
             "status": "cancelled",
             "ts": time.time(),
+            "cancelled_by": cancel_reason or "user_cancel",
         }
         # 3) release the awaiter so send_command returns
         evt = self._events.setdefault(command_id, asyncio.Event())
@@ -162,9 +170,63 @@ class _StubRuntime:
 # ---------------------------------------------------------------------------
 
 
+def _slow_supervisor_factory(_rt: _StubRuntime) -> Any:
+    """Sprint-9 supervisor takeover stub.
+
+    Returns a supervisor factory that wires a long-running fake
+    supervisor whose ``run()`` parks on the cancel-token poll so the
+    cancel-pipeline SLA tests measure the wall-clock from
+    :meth:`OrgCommandService.cancel` until the stub-runtime's
+    ``cancel_user_command`` writes the checkpoint.
+    """
+    from openakita.runtime.cancel_token import CancellationToken
+    from openakita.runtime.supervisor import (
+        FinalOutcome,
+        SupervisorOutcome,
+    )
+
+    class _SlowSupervisor:
+        def __init__(self) -> None:
+            self.cancel_token = CancellationToken()
+            self.stall_detector = type(
+                "_SD", (), {"n_turns": 0, "n_stalls": 0}
+            )()
+            self.history: list[Any] = []
+            self.n_replans = 0
+            self.last_checkpoint_id = "cp-slow"
+
+        async def run(self) -> SupervisorOutcome:
+            for _ in range(2000):  # up to 100 s in 0.05 s ticks
+                if self.cancel_token.is_cancelled():
+                    return SupervisorOutcome(
+                        outcome=FinalOutcome.CANCELLED,
+                        final_message="cancelled",
+                        final_checkpoint_id=self.last_checkpoint_id,
+                        n_turns=0,
+                        n_replans=0,
+                        reason=self.cancel_token.reason or "cancelled",
+                    )
+                await asyncio.sleep(0.05)
+            return SupervisorOutcome(
+                outcome=FinalOutcome.DONE,
+                final_message="done",
+                final_checkpoint_id=self.last_checkpoint_id,
+                n_turns=0,
+                n_replans=0,
+            )
+
+        async def resume_from_checkpoint(self, cp: str) -> "_SlowSupervisor":
+            return self
+
+    def _factory(*, org_id, command_id, root_node_id, task, **_kw):
+        return _SlowSupervisor()
+
+    return _factory
+
+
 def _make_service(rt: _StubRuntime) -> OrgCommandService:
     """Construct the v2 service against the stub runtime."""
-    return OrgCommandService(rt)
+    return OrgCommandService(rt, supervisor_factory=_slow_supervisor_factory(rt))
 
 
 # ---------------------------------------------------------------------------

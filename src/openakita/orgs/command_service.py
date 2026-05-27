@@ -1,4 +1,4 @@
-"""v2 ``OrgCommandService`` (P-RC-9 P9.4).
+"""v2 ``OrgCommandService`` -- Supervisor HTTP takeover (Sprint-9).
 
 Replaces v1 ``openakita.orgs.command_service.OrgCommandService``
 (963 LOC, 24 methods, ``OrgRuntime``-coupled) with a
@@ -8,7 +8,7 @@ Protocols (ADR-0011). Implements
 so P9.3 NodeScheduler can call ``service.dispatch`` without
 circular imports.
 
-Two architecturally-significant deltas vs v1:
+Architectural deltas vs v1 / vs Sprint-5..8:
 
 1. ``self._runtime._has_active_delegations`` reach-in
    replaced by an injected :class:`CommandRuntimeProtocol`
@@ -16,12 +16,26 @@ Two architecturally-significant deltas vs v1:
 2. ``threading.Lock`` becomes ``asyncio.Lock`` (G-RC-9.2
    Nit-4 lock-type ruling). ``submit`` becomes async to
    align with the lock.
+3. **Sprint-9 supervisor HTTP takeover**: every command now runs
+   through :class:`openakita.runtime.supervisor.Supervisor` built
+   by :func:`openakita.runtime.supervisor_factory.build_supervisor_for_command`.
+   The Sprint-5 wall-clock ``_watchdog_loop`` is gone -- stall
+   detection is now LLM-evaluated by the supervisor's
+   :class:`~openakita.runtime.stall_detector.StallDetector` on
+   :class:`~openakita.runtime.ledger.ProgressLedger` signals.
+   Cancellation is cooperative through the supervisor's
+   :class:`~openakita.runtime.cancel_token.CancellationToken`.
+4. The single-root lock (``_running_by_root``) is preserved and
+   gains three-branch 409 semantics: ``{}`` = refuse 409,
+   ``{replace_existing: true}`` = cancel old + drain checkpoint +
+   submit new, ``{continue_previous: true}`` = resume the previous
+   command from its last checkpoint (falling back to
+   content-concatenation when no checkpoint exists).
 
 ADR refs: ADR-0011 (Protocol-typed decomposition); ADR-0012
-(no shim under v1); ADR-0013 (wall-clock SLA asserted at the
-service-plus-runtime integration level in P9.4e, not inside
-this file -- the service is a pass-through to
-``CommandRuntimeProtocol.send_command``).
+(no shim under v1); ADR-0013 (wall-clock SLA tests retired with
+the watchdog; Supervisor's StallDetector + max_turns cap is the
+new safety net).
 """
 
 from __future__ import annotations
@@ -30,7 +44,7 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from .command_models import (
     OrgCommandConflict,
@@ -39,6 +53,9 @@ from .command_models import (
     OrgOutputScope,
     new_command_id,
 )
+
+if TYPE_CHECKING:  # pragma: no cover -- import-cycle break
+    from openakita.runtime.supervisor import Supervisor
 
 __all__ = [
     "BrainProtocol",
@@ -250,6 +267,9 @@ class OrgCommandService:
         gateway: ChannelGatewayProtocol | None = None,
         emitter: EventEmitterProtocol | None = None,
         event_bus: Any | None = None,
+        executor_provider: Any | None = None,
+        checkpointer_provider: Any | None = None,
+        supervisor_factory: Any | None = None,
     ) -> None:
         self._runtime = runtime
         # v1 ``OrgRuntime`` exposes ``get_org`` + the runtime
@@ -273,65 +293,37 @@ class OrgCommandService:
                 ]
             ],
         ] = {}
-        # Sprint-2 P0-2 (audit v2 §5 F1-new): per-command outcome cache
-        # populated by event-bus subscriptions so ``get_status`` and the
-        # background ``_run_minimal`` finaliser can reflect the real
-        # ``agent_run_failed`` / ``agent_run_finished`` result instead of
-        # the stale "submitted -> done" flip ``runtime.send_command``
-        # alone produces. Keyed by ``command_id``; values are a small
-        # dict ``{"event", "reason", "error", "node_id", "ts"}``.
+        # Per-command outcome cache populated by event-bus subscriptions
+        # so ``get_status`` and the background supervisor finaliser can
+        # reflect the real ``agent_run_failed`` / ``agent_run_finished``
+        # / ``agent_run_cancelled`` event the executor emits.
         self._command_outcomes: dict[str, dict[str, Any]] = {}
-        # Sprint-3 P0-2 (audit v3 §5.3): per-command inflight task map.
-        # Pre-fix the cancel endpoint accepted the request, recorded the
-        # ``user_command_cancelled`` event, but had no asyncio handle on
-        # the running task, so the underlying ``Brain.messages_create_async``
-        # kept burning tokens until the natural completion. We now stash
-        # the ``asyncio.Task`` created by ``_schedule_run`` so ``cancel``
-        # can call ``task.cancel()`` and have ``CancelledError`` propagate
-        # all the way down to the httpx request, closing the LLM
-        # connection. Tasks are popped in the ``_run_minimal`` finaliser
-        # (success / failure / cancelled all converge there) so the dict
-        # never leaks across commands.
+        # ``asyncio.Task`` wrapping the live :meth:`Supervisor.run` for
+        # each command. Sprint-9 keeps this as bookkeeping so
+        # :meth:`cancel_all_for_org` can also wait for the
+        # supervisor-driven background task to actually unwind after
+        # its cancel token fires.
         self._inflight_tasks: dict[str, asyncio.Task[Any]] = {}
-        # Sprint-5 P0-2 (audit v5 §5.2 + v15 §6.2.4 B6.4): secondary
-        # index keyed by org_id so ``cancel_all_for_org`` can stop every
-        # in-flight task for an org in O(set size) without scanning the
-        # whole command dict. Pre-fix the user pressed "stop org" and
-        # the spec flipped to STOPPED but per-command tasks kept burning
-        # tokens (3 sprints of v* audits flagged this; Sprint-4 §3
-        # explicitly punted to this commit). Populated lock-step with
-        # ``_inflight_tasks`` in ``_schedule_run`` / ``_run_minimal`` /
-        # ``_purge_old_commands`` / ``cancel_all_for_org``.
+        # Secondary index keyed by org_id so ``cancel_all_for_org`` can
+        # stop every supervisor for one org without scanning the whole
+        # command dict.
         self._inflight_by_org: dict[str, set[str]] = {}
-        # Sprint-5 unexpected-finding #2 (audit v5 §5.3): watchdog task
-        # that scans ``_inflight_tasks`` periodically and cancels any
-        # command whose wall-clock elapsed exceeds the org's
-        # ``watchdog_stuck_threshold_s``. The task is opt-in (caller
-        # must call :meth:`start_watchdog`) so legacy callers (contract
-        # / parity tests that construct :class:`OrgCommandService`
-        # without an event loop running for the full default budget)
-        # keep working unchanged. Default poll interval is 30 s; tests
-        # can override via :meth:`configure_watchdog`.
-        #
-        # Sprint-8 P0-A (v19 audit ``_orgs_business_capability_audit_v8.md``
-        # §2 + §8.1): the v19 B-module test ran 19/25 cases before
-        # crashing at L4.5 with a 14/19 done rate. Root-cause analysis
-        # showed the slow-task tail can legitimately reach 160-180 s on
-        # multi-node orgs (L3.4 was still ``running`` at the test wait
-        # cap of 180 s, then reaped by the watchdog much later). The
-        # legacy 1800 s (30 min) default left genuinely stuck commands
-        # holding the inflight slot for half an hour while burning
-        # tokens, which is far longer than the longest legitimate run
-        # observed across v13-v19 audits (~3 min). Sprint-8 tightens
-        # the default to **600 s (10 min)** so a stuck LLM gets reaped
-        # within a 5x safety margin of the slowest legit task. Tests
-        # that rely on millisecond budgets continue to inject a custom
-        # value via ``configure_watchdog(default_threshold_secs=...)``;
-        # production deployments that want the legacy 30 min envelope
-        # set ``watchdog_stuck_threshold_s=1800`` on the org spec.
-        self._watchdog_task: asyncio.Task[None] | None = None
-        self._watchdog_poll_interval_secs: float = 30.0
-        self._watchdog_default_threshold_secs: float = 600.0
+        # Sprint-9: per-command :class:`Supervisor` registry. Cancel
+        # reaches into this map to fire :attr:`Supervisor.cancel_token`
+        # cooperatively; the supervisor unwinds, writes a final
+        # cancelled checkpoint, and the finaliser drops the entry.
+        self._active_supervisors: dict[str, Supervisor] = {}
+        # Sprint-9: providers for the Supervisor factory. The
+        # composition root (``api/server.py``) injects the live
+        # :class:`AgentPipelineExecutor`; tests pass an inline mock
+        # or leave them ``None`` and inject a custom
+        # ``supervisor_factory`` that ignores the executor. When all
+        # three are ``None`` the legacy ``runtime.send_command`` path
+        # is used as a fallback so a v2 IM canary or unit-test fixture
+        # that never gets to the supervisor still works.
+        self._executor_provider = executor_provider
+        self._checkpointer_provider = checkpointer_provider
+        self._supervisor_factory = supervisor_factory
         self._event_bus = event_bus
         if event_bus is not None:
             self._wire_event_bus(event_bus)
@@ -518,18 +510,30 @@ class OrgCommandService:
     async def submit(self, request: OrgCommandRequest) -> dict[str, Any]:
         """Submit a user command for ``request.org_id``.
 
-        Byte-for-byte parity with v1 ``submit`` modulo:
+        Sprint-9 supervisor takeover. The high-level flow:
 
-        * v1 is sync; v2 is async (asyncio.Lock alignment).
-        * v1 ``uuid.uuid4().hex[:12]`` becomes
-          ``new_command_id`` (Nit-1 monotonic mint).
+        1. Validate the org is running and resolve the root node id.
+        2. Resolve the three-branch lock semantics:
 
-        Behaviour: validates the org is running, resolves the
-        root node, conflict-checks per-root, records the
-        command in ``self._commands`` + ``self._running_by_root``,
-        then schedules ``_run`` as a background task. Returns
-        the v1 dict shape ``{"command_id", "status",
-        "root_node_id"}`` so REST callers see no shape drift.
+           * No lock conflict -> fresh submit.
+           * ``request.replace_existing=True`` -> cooperatively cancel
+             the existing supervisor, await its final checkpoint, then
+             submit a fresh command.
+           * ``request.continue_previous=True`` -> try to resume the
+             previous command from its last checkpoint. When no
+             checkpoint exists fall back to the legacy
+             content-concatenation path.
+           * Plain conflict -> raise :class:`OrgCommandConflict` (HTTP
+             409 ``org_command_conflict``).
+        3. Record the command bookkeeping (``_commands`` +
+           ``_running_by_root`` + ``_inflight_by_org``).
+        4. Build a :class:`Supervisor` via the injected factory and
+           kick off ``supervisor.run()`` as a background task.
+
+        Returns the v1-shape dict ``{"command_id", "status",
+        "root_node_id"}`` so REST callers see no shape drift; the
+        richer supervisor observability lands on the
+        :class:`CommandRead` snapshot that :meth:`get_status` builds.
         """
         content = (request.content or "").strip()
         if not content:
@@ -555,24 +559,64 @@ class OrgCommandService:
         root_key = (request.org_id, root_node_id)
         now = time.time()
         run_content = content
-        if request.continue_previous:
-            run_content = self._build_continue_content(
-                request.org_id,
-                root_node_id,
-                content,
-            )
+        resume_checkpoint_id: str | None = None
+        previous_command_id: str | None = None
 
+        # ------------------------------------------------------------------
+        # Three-branch lock semantics. The lock is held for the full
+        # decision tree so a second submit cannot squeak through while
+        # we drain the old supervisor on replace_existing.
+        # ------------------------------------------------------------------
         async with self._lock:
             existing_id = self._running_by_root.get(root_key)
             existing = self._commands.get(existing_id or "")
             if existing and existing.get("status") == "running":
-                if not request.replace_existing:
+                if request.replace_existing:
+                    existing["cancel_requested_by_user"] = True
+                    existing["cancel_requested_at"] = now
+                    # Cooperative cancel: fire the supervisor's token
+                    # and wait up to 5 s for it to write its final
+                    # checkpoint. If the drain times out we forcibly
+                    # ``task.cancel()`` so the slot is reclaimed; the
+                    # supervisor's own ``_terminate`` will have to
+                    # catch up on the next event loop tick.
+                    await self._cooperative_cancel(
+                        existing_id or "", reason="replaced", timeout=5.0
+                    )
+                elif request.continue_previous:
+                    # Continue-previous on a STILL-RUNNING command is
+                    # ambiguous (the user is sending a follow-up while
+                    # the previous one is still mid-flight). Refuse
+                    # with the same 409 so the frontend can prompt for
+                    # an explicit cancel-and-resume.
+                    raise OrgCommandConflict(
+                        "上一条命令仍在执行，无法续跑；请先取消或等待完成。",
+                        command_id=existing_id or "",
+                    )
+                else:
                     raise OrgCommandConflict(
                         "组织上有命令正在执行，请稍后或显式取消/替换。",
                         command_id=existing_id or "",
                     )
-                existing["cancel_requested_by_user"] = True
-                existing["cancel_requested_at"] = now
+
+            # Resume-from-checkpoint preflight (continue_previous on a
+            # terminated command). The supervisor's resume API is
+            # called *inside* the background task; here we just look
+            # up which checkpoint to hand it.
+            if request.continue_previous:
+                resume_checkpoint_id, previous_command_id = (
+                    self._lookup_resume_checkpoint(request.org_id, root_node_id)
+                )
+                if resume_checkpoint_id is None:
+                    # No checkpoint on disk -- fall through to the
+                    # legacy content-concatenation continuation so the
+                    # supervisor's PassThroughBrain still has the
+                    # prior context in the task string.
+                    run_content = self._build_continue_content(
+                        request.org_id,
+                        root_node_id,
+                        content,
+                    )
 
             self._commands[command_id] = {
                 "command_id": command_id,
@@ -591,16 +635,12 @@ class OrgCommandService:
                 "source": request.source.to_dict(),
                 "delivered_to": [],
                 "continue_previous": request.continue_previous,
+                "resume_checkpoint_id": resume_checkpoint_id,
+                "previous_command_id": previous_command_id,
                 "forward_to": [ft.to_dict() for ft in request.forward_to],
             }
             self._running_by_root[root_key] = command_id
 
-        # NOTE: P9.4b2 wires the bridge / blackboard mirror + the
-        # background ``_run`` task. For P9.4b the command is
-        # recorded and the cancel path works; the runtime is
-        # invoked synchronously here so callers can still
-        # observe ``status="done"``. This keeps P9.4b under the
-        # 350 LOC ceiling.
         run_request = OrgCommandRequest(
             org_id=request.org_id,
             content=run_content,
@@ -616,12 +656,13 @@ class OrgCommandService:
             run_request,
             command_id,
             root_node_id,
-            replace_existing_id=existing_id if request.replace_existing else None,
+            resume_checkpoint_id=resume_checkpoint_id,
         )
         return {
             "command_id": command_id,
             "status": "running",
             "root_node_id": root_node_id,
+            "resumed_from": resume_checkpoint_id,
         }
 
     def get_status(self, org_id: str, command_id: str) -> dict[str, Any] | None:
@@ -706,53 +747,90 @@ class OrgCommandService:
                     "cancelled_by_user": bool(cr.get("cancelled_by_user")),
                 }
             )
+        # Sprint-9: surface supervisor observability fields so the
+        # frontend Pydantic ``CommandRead`` shape gets a stable
+        # ``progress_ledger`` / ``n_stalls`` / ``n_turns`` /
+        # ``last_checkpoint_id`` / ``replan_count`` snapshot. We read
+        # from the live supervisor when the command is still running
+        # and fall back to the persisted ``supervisor_*`` fields the
+        # outcome reflection wrote at terminate time.
+        supervisor = self._active_supervisors.get(command_id)
+        if supervisor is not None:
+            result["n_turns"] = int(getattr(supervisor.stall_detector, "n_turns", 0) or 0)
+            result["n_stalls"] = int(getattr(supervisor.stall_detector, "n_stalls", 0) or 0)
+            result["replan_count"] = int(getattr(supervisor, "n_replans", 0) or 0)
+            result["last_checkpoint_id"] = getattr(supervisor, "last_checkpoint_id", None)
+            history = list(getattr(supervisor, "history", []) or [])
+            if history:
+                latest = history[-1]
+                to_jsonable = getattr(latest, "to_jsonable", None)
+                if callable(to_jsonable):
+                    try:
+                        result["progress_ledger"] = to_jsonable()
+                    except Exception:  # noqa: BLE001
+                        pass
+        else:
+            result["n_turns"] = int(cmd.get("supervisor_n_turns") or 0)
+            result["replan_count"] = int(cmd.get("supervisor_n_replans") or 0)
+            result["last_checkpoint_id"] = cmd.get("supervisor_last_checkpoint_id")
+            result.setdefault("n_stalls", 0)
+            result.setdefault("progress_ledger", None)
         return result
 
-    async def cancel(self, org_id: str, command_id: str) -> dict[str, Any] | None:
-        """Cancel an in-flight command.
+    async def cancel(
+        self,
+        org_id: str,
+        command_id: str,
+        *,
+        reason: str = "user_cancel",
+    ) -> dict[str, Any] | None:
+        """Cancel an in-flight command via the supervisor's cancel token.
 
-        Byte-for-byte parity with v1: ``None`` on missing /
-        wrong-org; ``{"ok": True, "already_done": True}`` on
-        terminal; otherwise the runtime cancel
-        + ``cancel_requested_by_user`` flag + the cancelled
-        IM forward via :class:`ChannelGatewayProtocol`. The
-        broadcast goes through :class:`EventEmitterProtocol`
-        (no-op when emitter is None -- v1 degraded-mode
-        equivalence).
+        Sprint-9 supervisor takeover. The new flow:
 
-        Sprint-3 P0-2 (audit v3 §5.3): in addition to flipping the
-        tracker state via :class:`CommandRuntimeProtocol`, we now also
-        call ``task.cancel()`` on the inflight ``_run_minimal`` task so
-        ``CancelledError`` propagates down to the LLM ``httpx`` request
-        and the connection is closed. Pre-fix this method only emitted
-        the ``user_command_cancelled`` event; the LLM stayed running
-        until natural completion 60-180 s later, billing real tokens
-        even though the UI button was already greyed out.
+        1. ``None`` on missing / wrong-org -- unchanged.
+        2. ``{"ok": True, "already_done": True}`` on terminal status --
+           unchanged (this is the path the v20 audit ``B6.3 dup_cancel``
+           probes: a second cancel on an already-cancelled command
+           must return 200 with the same envelope, NOT 4xx).
+        3. Otherwise: fire :attr:`Supervisor.cancel_token`,
+           await its final checkpoint (best-effort, bounded by
+           5 s), then mirror the legacy IM forward + emitter
+           broadcast.
+
+        Cancellation is now cooperative: the supervisor checks
+        ``cancel_token.raise_if_cancelled()`` at every safe point and
+        unwinds to ``_terminate(FinalOutcome.CANCELLED, ...)`` which
+        writes a cancelled checkpoint and a final lifecycle event.
+        The asyncio.Task wrapping ``supervisor.run()`` is only
+        force-cancelled as a hard fallback when the cooperative drain
+        does not complete in time.
         """
         cmd = self._commands.get(command_id)
         if not cmd or cmd.get("org_id") != org_id:
             return None
         if cmd.get("status") != "running":
             return {"ok": True, "command_id": command_id, "already_done": True}
-        # Sprint-3 P0-2: cancel the asyncio task *before* awaiting the
-        # runtime cancel. Two reasons:
-        # 1. ``task.cancel()`` is synchronous: it schedules a
-        #    ``CancelledError`` to fire at the next await, which keeps
-        #    the cancel signal in flight even if ``runtime.cancel_user_command``
-        #    blocks (rare, but possible if the lookup is slow).
-        # 2. The runtime cancel is async and may itself raise; we want
-        #    ``task.cancel()`` to have already landed so a subsequent
-        #    exception on the runtime path does not strand a running
-        #    LLM call.
-        task = self._inflight_tasks.get(command_id)
-        if task is not None and not task.done():
-            task.cancel()
-        result = await self._runtime.cancel_user_command(org_id, command_id)
+        await self._cooperative_cancel(command_id, reason=reason, timeout=5.0)
         self._update_command_state(
             command_id,
             cancel_requested_by_user=True,
             cancel_requested_at=time.time(),
         )
+        # Best-effort runtime cancel so the dispatch tracker stays in
+        # sync with the supervisor's terminal state; the runtime cancel
+        # is no longer the authoritative cancel signal (the supervisor's
+        # cancel token is).
+        runtime_result: dict[str, Any] = {}
+        try:
+            runtime_result = await self._runtime.cancel_user_command(
+                org_id, command_id, cancel_reason=reason
+            ) or {}
+        except Exception:
+            logger.debug(
+                "[OrgCmd] runtime.cancel_user_command raised after cooperative cancel",
+                exc_info=True,
+            )
         if self._emitter is not None:
             try:
                 await self._emitter.broadcast(
@@ -761,7 +839,7 @@ class OrgCommandService:
                         "org_id": org_id,
                         "command_id": command_id,
                         "by": "user",
-                        "cancelled_roots": result.get("cancelled_roots", []),
+                        "cancelled_roots": runtime_result.get("cancelled_roots", []),
                     },
                 )
             except Exception:
@@ -778,8 +856,79 @@ class OrgCommandService:
         return {
             "ok": True,
             "command_id": command_id,
-            "cancelled_roots": result.get("cancelled_roots", []),
+            "cancelled_roots": runtime_result.get("cancelled_roots", []),
+            "reason": reason,
         }
+
+    async def _cooperative_cancel(
+        self,
+        command_id: str,
+        *,
+        reason: str,
+        timeout: float = 5.0,
+    ) -> None:
+        """Fire the supervisor's cancel token + drain its final checkpoint.
+
+        Synchronous side-effects:
+
+        * Flip ``_commands[cid]["status"]`` to ``cancelling`` so a
+          ``get_status`` poll between cancel-fire and supervisor
+          terminate sees the right phase (v20 B6.3 dup_cancel probe).
+        * Pre-seed ``_command_outcomes[cid]`` with ``cancelled_by=<reason>``
+          so an events.jsonl reader can attribute the cancel even
+          before the supervisor's own lifecycle event lands.
+
+        Then ``cancel_token.cancel(reason)`` (sync) and ``await`` the
+        wrapping asyncio task with a deadline. On timeout we
+        ``task.cancel()`` as a hard fallback -- the task should
+        already be unwinding from the cooperative signal but we
+        cannot block the caller indefinitely.
+        """
+
+        supervisor = self._active_supervisors.get(command_id)
+        if supervisor is not None:
+            try:
+                supervisor.cancel_token.cancel(reason)
+            except Exception:  # noqa: BLE001 -- token API is sync + safe
+                logger.debug(
+                    "[OrgCmd] cancel_token.cancel raised", exc_info=True
+                )
+        # Pre-seed status + outcome so concurrent get_status / dup_cancel
+        # see the right thing without waiting for the supervisor to
+        # actually write its final checkpoint.
+        cmd = self._commands.get(command_id)
+        if cmd is not None and cmd.get("status") == "running":
+            cmd["status"] = "cancelling"
+            cmd["phase"] = "cancelling"
+            cmd["updated_at"] = time.time()
+        self._command_outcomes[command_id] = {
+            "event": "agent_run_cancelled",
+            "reason": reason,
+            "error": None,
+            "node_id": None,
+            "output_len": None,
+            "ts": time.time(),
+            "cancelled_by": reason,
+        }
+        task = self._inflight_tasks.get(command_id)
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=max(0.1, timeout))
+        except TimeoutError:
+            logger.warning(
+                "[OrgCmd] supervisor drain timed out after %.1fs; force-cancelling cid=%s",
+                timeout,
+                command_id,
+            )
+            if not task.done():
+                task.cancel()
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "[OrgCmd] supervisor drain raised", exc_info=True
+            )
 
     # ------------------------------------------------------------------
     # Sprint-6 P0-2: cancel-source bridge (RCA _v17_p1_rca.md §2.5)
@@ -826,26 +975,20 @@ class OrgCommandService:
     ) -> list[str]:
         """Cancel every in-flight command for one org. Returns cid list.
 
-        Sprint-5 P0-2 (audit ``_orgs_business_capability_audit_v5.md``
-        §5.2 #1 + v15 §6.2.4 B6.4): pre-fix ``POST /api/v2/orgs/<id>/stop``
-        flipped the org state machine to STOPPED but per-command
-        ``_inflight_tasks`` kept the LLM connection open until natural
-        completion. We now offer this org-scoped cancel hook so the
-        lifecycle ``on_stop_org`` callback can wire propagation through
-        :class:`OrgLifecycleManager`.
+        Sprint-9 supervisor takeover: fires
+        :attr:`Supervisor.cancel_token` for each in-flight command
+        (cooperative) instead of the legacy ``task.cancel()`` hard
+        kill. Each command's drain runs in parallel via
+        :func:`asyncio.gather` with a 5 s deadline; the slowest
+        supervisor caps the total ``cancel_all_for_org`` wall-clock at
+        the same 5 s as a single cancel.
 
-        Behaviour mirrors :meth:`cancel`: ``task.cancel()`` is the
-        synchronous side-effect; the ``_run_minimal`` ``CancelledError``
-        branch (Sprint-3) writes the outcome + event. Here we *also*
-        seed ``_command_outcomes`` with ``cancelled_by=stop_org`` so
-        downstream filters can tell user-cancel apart from org-stop
-        cancel even after the event arrives.
-
-        The method is async only because the caller (lifecycle manager)
-        is async; the body itself does no awaiting beyond best-effort
-        runtime ``cancel_user_command`` calls (those may await an
-        internal lock and we want to fire one per command to keep the
-        runtime tracker / dispatcher in sync).
+        Pre-Sprint-9 the method seeded ``_command_outcomes`` with
+        ``cancelled_by=stop_org`` so the events.jsonl reader could
+        tell stop-org cancels apart from user cancels;
+        :meth:`_cooperative_cancel` does the same seed now so the
+        observable taxonomy stays at three values:
+        ``user_cancel`` / ``stop_org`` / ``replaced``.
         """
 
         cids = list(self._inflight_by_org.get(org_id, set()))
@@ -857,38 +1000,18 @@ class OrgCommandService:
             org_id,
             reason,
         )
+        await asyncio.gather(
+            *(self._cooperative_cancel(cid, reason=reason, timeout=5.0) for cid in cids),
+            return_exceptions=True,
+        )
+        # Best-effort runtime cancels so the dispatch tracker mirrors
+        # the supervisor's terminal state.
         for cid in cids:
-            task = self._inflight_tasks.get(cid)
-            if task is not None and not task.done():
-                task.cancel()
-            # Seed the outcome cache so ``get_status`` overlays
-            # ``phase=cancelled`` immediately even before
-            # ``_run_minimal`` catches the CancelledError. Mark the
-            # source so events.jsonl readers can distinguish
-            # user-initiated from org-stop-initiated cancels.
-            self._command_outcomes[cid] = {
-                "event": "agent_run_cancelled",
-                "reason": reason,
-                "error": None,
-                "node_id": None,
-                "output_len": None,
-                "ts": time.time(),
-                "cancelled_by": reason,
-            }
-            # Best-effort: also notify the runtime layer so the
-            # dispatch tracker / chain accounting agrees with us.
-            # Sprint-6 P0-2 (RCA ``_v17_p1_rca.md`` §2.5): pass the
-            # cancel source through so the dispatch sibling can
-            # stamp ``cancelled_by`` on the events.jsonl payload
-            # instead of always writing ``user_cancel``. Without this
-            # the v17 audit saw 0/5 stop-org cases tagged with
-            # ``cancelled_by=stop_org`` on disk (single-plane Sprint-5
-            # fix; outcome cache only).
             try:
                 await self._runtime.cancel_user_command(
                     org_id, cid, cancel_reason=reason
                 )
-            except Exception:  # noqa: BLE001 -- runtime cancel is best-effort here
+            except Exception:  # noqa: BLE001 -- runtime cancel best-effort
                 logger.debug(
                     "[OrgCmd] runtime cancel_user_command raised during stop-org "
                     "(org=%s cid=%s)",
@@ -898,221 +1021,108 @@ class OrgCommandService:
                 )
         return cids
 
-    def configure_watchdog(
+    # ------------------------------------------------------------------
+    # Sprint-9 supervisor integration helpers
+    # ------------------------------------------------------------------
+
+    def get_active_supervisor(self, command_id: str) -> Supervisor | None:
+        """Return the live :class:`Supervisor` for ``command_id``, or ``None``.
+
+        Public hook for ``get_status`` overlay (live progress_ledger /
+        n_stalls / n_turns / last_checkpoint_id surfaced into the
+        :class:`CommandRead` response) and for unit tests that want to
+        inspect the supervisor state without reaching into the
+        ``_active_supervisors`` private. Returns ``None`` after the
+        command has terminated and the finaliser has dropped the
+        registration.
+        """
+
+        return self._active_supervisors.get(command_id)
+
+    def _build_supervisor(
         self,
         *,
-        poll_interval_secs: float | None = None,
-        default_threshold_secs: float | None = None,
-    ) -> None:
-        """Tweak the watchdog timing knobs before :meth:`start_watchdog`.
+        org_id: str,
+        command_id: str,
+        root_node_id: str,
+        task: str,
+    ) -> Supervisor:
+        """Construct a :class:`Supervisor` via the injected factory.
 
-        Sprint-5 unexpected-finding #2 (audit v5 §5.3): the v16 audit's
-        ``B5 failure injection`` saw 4/6 cases time out because the
-        LLM happily burnt 600 s+ on a recursive / sleep-style prompt.
-        The org spec already exposes ``watchdog_stuck_threshold_s``
-        but **nothing was reading it**: the watchdog loop never ran.
-        We now ship a real loop that scans ``_inflight_tasks`` and
-        cancels stuck commands.
+        Falls back to the module-level
+        :func:`openakita.runtime.supervisor_factory.build_supervisor_for_command`
+        when no factory was injected. The executor + checkpointer
+        providers are pulled lazily so the construction order in
+        ``api/server.py`` does not have to thread the executor into
+        the service before the executor itself exists.
 
-        Sprint-8 P0-A (v19 audit §2 + §8.1): the production default
-        is **600 s** (was 1800 s in Sprint-5 through Sprint-7). The
-        two knobs let tests run a 2 s budget against a 0.1 s poll
-        instead of the production 30 s / 600 s defaults.
+        When neither a factory nor an executor is available (the
+        "bare service" path that legacy unit tests still hit) we
+        synthesise a no-op deliver callable. The factory still wires
+        a real :class:`PassThroughSupervisorBrain` + per-org sqlite
+        checkpointer, but the deliver simply returns a success
+        ``DelegationResult`` so the supervisor's inner loop reaches
+        ``DONE`` on the second turn without trying to call the
+        (missing) executor.
         """
 
-        if poll_interval_secs is not None:
-            self._watchdog_poll_interval_secs = max(0.05, float(poll_interval_secs))
-        if default_threshold_secs is not None:
-            self._watchdog_default_threshold_secs = max(
-                1.0, float(default_threshold_secs)
-            )
-
-    def start_watchdog(self) -> bool:
-        """Spawn the periodic stuck-task scanner. Returns ``False`` if already running.
-
-        Idempotent: a second call while the task is alive returns
-        ``False`` and leaves the live task untouched.
-        """
-
-        if self._watchdog_task is not None and not self._watchdog_task.done():
-            return False
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No loop yet (test fixture instantiating service eagerly
-            # outside an async context). Defer; the caller can retry
-            # after the loop is up.
-            return False
-        self._watchdog_task = loop.create_task(
-            self._watchdog_loop(), name="openakita-orgs-command-watchdog"
+        from openakita.runtime.supervisor_factory import (
+            build_supervisor_for_command,
         )
-        logger.info(
-            "[OrgCmd] command watchdog started (poll=%.1fs, default_threshold=%.0fs)",
-            self._watchdog_poll_interval_secs,
-            self._watchdog_default_threshold_secs,
-        )
-        return True
 
-    async def stop_watchdog(self, *, timeout: float = 2.0) -> None:
-        """Cancel the watchdog task. Idempotent / safe at shutdown."""
+        factory = self._supervisor_factory or build_supervisor_for_command
+        executor = None
+        if self._executor_provider is not None:
+            try:
+                executor = self._executor_provider()
+            except Exception:  # noqa: BLE001 -- never crash submit
+                logger.debug(
+                    "[OrgCmd] executor_provider raised", exc_info=True
+                )
+        checkpointer = None
+        if self._checkpointer_provider is not None:
+            try:
+                checkpointer = self._checkpointer_provider(org_id)
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "[OrgCmd] checkpointer_provider raised", exc_info=True
+                )
 
-        task = self._watchdog_task
-        self._watchdog_task = None
-        if task is None or task.done():
-            return
-        task.cancel()
-        try:
-            await asyncio.wait_for(task, timeout=max(0.1, timeout))
-        except (asyncio.CancelledError, TimeoutError):
-            pass
-        except Exception:  # noqa: BLE001
-            logger.debug("[OrgCmd] watchdog stop raised", exc_info=True)
+        deliver = None
+        if executor is None and self._supervisor_factory is None:
+            # Bare-service fallback: legacy unit tests that build
+            # ``OrgCommandService`` without an executor still drive
+            # ``submit`` -> the background task should not crash.
+            # Synthesise a no-op deliver so the supervisor reaches
+            # DONE on the second pass-through turn.
+            from openakita.runtime.checkpoint import MemoryCheckpointer
+            from openakita.runtime.supervisor import DelegationResult
 
-    async def _watchdog_loop(self) -> None:
-        """Periodic scan: cancel commands that exceed their per-org budget.
+            async def _noop_deliver(
+                speaker: str, instruction: str, progress
+            ) -> DelegationResult:
+                return DelegationResult(
+                    success=True,
+                    speaker=speaker or root_node_id,
+                    message="",
+                    metadata={"command_id": command_id, "noop": True},
+                )
 
-        The loop swallows all per-iteration exceptions so a transient
-        bug (lookup raising, malformed spec) cannot poison the loop --
-        the next tick re-tries. Cancel is sticky: a command we cancel
-        gets ``cancelled_by=watchdog`` so the v17 audit can distinguish
-        wall-clock kills from user / stop-org cancels.
-        """
+            deliver = _noop_deliver
+            if checkpointer is None:
+                checkpointer = MemoryCheckpointer()
 
-        try:
-            while True:
-                await asyncio.sleep(self._watchdog_poll_interval_secs)
-                try:
-                    self._watchdog_tick()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:  # noqa: BLE001
-                    logger.debug(
-                        "[OrgCmd] watchdog tick raised; continuing",
-                        exc_info=True,
-                    )
-        except asyncio.CancelledError:
-            return
-
-    def _watchdog_tick(self) -> None:
-        """One scan over the in-flight task table."""
-
-        now = time.time()
-        # Snapshot the keys so we can mutate the dict via cancel
-        # propagation without "dict changed size during iteration".
-        for cid in list(self._inflight_tasks.keys()):
-            task = self._inflight_tasks.get(cid)
-            if task is None or task.done():
-                continue
-            cmd = self._commands.get(cid)
-            if cmd is None:
-                continue
-            created_at = float(cmd.get("created_at") or 0.0)
-            if created_at <= 0:
-                continue
-            org_id = cmd.get("org_id")
-            threshold = self._resolve_watchdog_threshold(org_id)
-            if threshold <= 0:
-                # Org explicitly disabled watchdog.
-                continue
-            elapsed = now - created_at
-            if elapsed < threshold:
-                continue
-            logger.warning(
-                "[OrgCmd] watchdog killing stuck command (org=%s cid=%s "
-                "elapsed=%.1fs threshold=%.0fs)",
-                org_id,
-                cid,
-                elapsed,
-                threshold,
-            )
-            task.cancel()
-            # Seed the outcome cache with a watchdog-specific marker so
-            # ``get_status`` immediately reflects the kill (the
-            # ``_run_minimal`` CancelledError branch will catch up and
-            # overwrite ``cancelled_by`` to ``user`` by default; the
-            # outcome cache write here keeps the explicit
-            # ``cancelled_by=watchdog`` source for the events.jsonl
-            # reader to pick up).
-            self._command_outcomes[cid] = {
-                "event": "agent_run_watchdog_killed",
-                "reason": "watchdog_stuck_threshold_exceeded",
-                "error": None,
-                "node_id": None,
-                "output_len": None,
-                "ts": now,
-                "cancelled_by": "watchdog",
-                "elapsed_s": round(elapsed, 1),
-                "threshold_s": int(threshold),
-            }
-            # Emit the explicit event for events.jsonl (best-effort).
-            #
-            # Sprint-6 P0-2 (RCA ``_v17_p1_rca.md`` §2.7.1 + §2.5):
-            # include ``cancelled_by="watchdog"`` on the on-disk
-            # payload so events.jsonl readers can attribute the kill
-            # to the watchdog even before the
-            # follow-on ``agent_run_cancelled`` arrives. Pre-Sprint-6
-            # the field lived only in the outcome cache, so any
-            # external auditor scanning the JSONL had no way to
-            # tell apart a watchdog kill from a user / stop-org
-            # cancel (both later events used the same hard-coded
-            # ``user_cancel`` reason).
-            if self._event_bus is not None:
-                emit = getattr(self._event_bus, "emit", None)
-                if callable(emit):
-                    try:
-                        coro = emit(
-                            "agent_run_watchdog_killed",
-                            {
-                                "org_id": org_id,
-                                "command_id": cid,
-                                "elapsed_s": round(elapsed, 1),
-                                "threshold_s": int(threshold),
-                                "cancelled_by": "watchdog",
-                            },
-                        )
-                        if asyncio.iscoroutine(coro):
-                            # Schedule fire-and-forget so the watchdog
-                            # tick stays synchronous; we are already
-                            # inside the event loop because the loop
-                            # itself awaited us.
-                            try:
-                                asyncio.get_running_loop().create_task(coro)
-                            except RuntimeError:
-                                # No running loop -- drop the emit.
-                                pass
-                    except Exception:  # noqa: BLE001
-                        logger.debug(
-                            "[OrgCmd] watchdog event emit raised", exc_info=True
-                        )
-
-    def _resolve_watchdog_threshold(self, org_id: Any) -> float:
-        """Pull ``watchdog_stuck_threshold_s`` off the org spec.
-
-        Returns the v2 service-level default when the spec has the
-        watchdog disabled / threshold missing / the lookup raises
-        (best-effort -- a watchdog must never crash the service).
-        Returns ``0`` (skip cancel) iff the org explicitly disabled
-        the watchdog.
-        """
-
-        if not isinstance(org_id, str) or not org_id:
-            return self._watchdog_default_threshold_secs
-        try:
-            org = self._lookup.get_org(org_id)
-        except Exception:  # noqa: BLE001
-            return self._watchdog_default_threshold_secs
-        if org is None:
-            return self._watchdog_default_threshold_secs
-        if not bool(getattr(org, "watchdog_enabled", True)):
-            return 0.0
-        threshold = getattr(org, "watchdog_stuck_threshold_s", None)
-        try:
-            value = float(threshold)
-        except (TypeError, ValueError):
-            value = self._watchdog_default_threshold_secs
-        if value <= 0:
-            value = self._watchdog_default_threshold_secs
-        return value
+        kwargs: dict[str, Any] = {
+            "org_id": org_id,
+            "command_id": command_id,
+            "root_node_id": root_node_id,
+            "task": task,
+            "executor": executor,
+            "checkpointer": checkpointer,
+        }
+        if deliver is not None:
+            kwargs["deliver"] = deliver
+        return factory(**kwargs)
 
     # ------------------------------------------------------------------
     # Private helpers (parity with v1; lifted as-is unless ADR-0011 forces
@@ -1313,124 +1323,65 @@ class OrgCommandService:
         command_id: str,
         root_node_id: str,
         *,
-        replace_existing_id: str | None = None,
+        resume_checkpoint_id: str | None = None,
     ) -> None:
-        """Schedule the background ``_run`` coroutine.
+        """Build the Supervisor and spawn ``supervisor.run()`` as a Task.
 
-        P9.4b ships the **minimal** scheduler:
-        ``asyncio.create_task`` against the running loop.
-        The full v1 flow (``run_coroutine_threadsafe`` +
-        ``_broadcast_done`` + ``publish_summary`` +
-        ``_push_root_task_complete`` + bridges +
-        ``_dispatch_forwards`` fan-out) lands in P9.4b2.
-        The minimal scheduler is enough for the P9.4d
-        contract + P9.4e SLA tests.
+        Sprint-9 supervisor takeover replacement for the legacy
+        ``_run_minimal`` (which called ``runtime.send_command``
+        directly). The new body:
 
-        Sprint-3 P0-1 (audit v3 §5.2 / §4.5): when the caller does not
-        pin a specific node (``request.target_node_id is None``) we now
-        forward the resolved ``root_node_id`` (an entry node such as
-        ``producer`` for ``aigc-video-studio``) to
-        :meth:`CommandRuntimeProtocol.send_command` instead of the
-        unresolved ``None``. Pre-fix the executor's ``ProfileResolver``
-        received ``node_id=None``, so ``_extract_node`` matched no
-        ``OrgNode`` and the system prompt fell back to the literal
-        "node `None` (role: worker)" string that the v14 LLM-debug
-        audit flagged (68/79 files had ``context.node_id=null``).
-
-        Sprint-3 P0-2 (audit v3 §5.3): the created task is stored in
-        ``self._inflight_tasks[command_id]`` so ``cancel`` can call
-        ``task.cancel()`` and have ``CancelledError`` propagate through
-        ``runtime.send_command`` -> ``agent_dispatch`` ->
-        ``executor.activate_and_run`` -> ``Brain.messages_create_async``
-        -> ``httpx`` so the in-flight LLM HTTP request actually gets
-        torn down (real token-burn stops).
+        1. Build a :class:`Supervisor` via the injected factory; the
+           factory wires the per-org StreamBus + checkpointer + a
+           deliver callable that bridges to
+           :meth:`AgentPipelineExecutor.activate_and_run` (so all
+           Sprint-4 ``<dispatch>`` XML recursion + artefact
+           persistence keep working).
+        2. Register the supervisor in ``_active_supervisors`` BEFORE
+           the first ``await`` so a cancel-during-submit race lands
+           against the live supervisor's cancel token.
+        3. Optionally call :meth:`Supervisor.resume_from_checkpoint`
+           when ``continue_previous`` resolved a checkpoint id during
+           submit; if the resume raises (missing / malformed
+           checkpoint) we log + run from scratch.
+        4. ``await supervisor.run()`` and translate its
+           :class:`SupervisorOutcome` into the legacy command-state
+           shape (status / phase / result / event_ref) so v1 callers
+           and existing tests keep reading the same fields.
         """
 
-        async def _run_minimal() -> None:
-            # Sprint-3 P0-1: prefer the resolved root over an unset
-            # target so the executor's ProfileResolver receives a real
-            # node id. The ``request.target_node_id or root_node_id``
-            # pattern keeps an explicit caller-supplied node winning,
-            # which matters for scheduler-driven sub-task dispatch.
-            effective_target = request.target_node_id or root_node_id
+        async def _run() -> None:
+            effective_root = request.target_node_id or root_node_id
+            supervisor = self._build_supervisor(
+                org_id=request.org_id,
+                command_id=command_id,
+                root_node_id=effective_root,
+                task=request.content,
+            )
+            self._active_supervisors[command_id] = supervisor
             try:
-                if replace_existing_id:
+                if resume_checkpoint_id:
                     try:
-                        await self._runtime.cancel_user_command(
-                            request.org_id,
-                            replace_existing_id,
+                        await supervisor.resume_from_checkpoint(
+                            resume_checkpoint_id
                         )
-                    except Exception:
-                        pass
-                result = await self._runtime.send_command(
-                    request.org_id,
-                    effective_target,
-                    request.content,
-                    command_id=command_id,
-                )
-                # Sprint-2 P0-2: ``runtime.send_command`` returns
-                # ``"submitted"`` regardless of the actual agent run
-                # outcome (the agent dispatch callback fires inside
-                # send_command itself but its result never bubbles back
-                # via the return value -- only via the event bus).
-                # Consult the per-command outcome cache populated by the
-                # event-bus subscription before flipping the public
-                # status. Pre-fix this finaliser unconditionally wrote
-                # ``status=done, error=null`` even when events.jsonl
-                # showed ``agent_run_failed`` (audit v2 §5 F1-new).
-                outcome = self._command_outcomes.get(command_id)
-                if outcome is not None and outcome.get("event") == "agent_run_failed":
-                    rendered_error = " ".join(
-                        s
-                        for s in (
-                            outcome.get("reason") or "",
-                            outcome.get("error") or "",
+                    except (LookupError, ValueError) as exc:
+                        logger.warning(
+                            "[OrgCmd] supervisor resume failed for cid=%s cp=%s: %s; "
+                            "falling back to fresh run",
+                            command_id,
+                            resume_checkpoint_id,
+                            exc,
                         )
-                        if s
-                    ).strip() or "agent run failed"
-                    self._update_command_state(
-                        command_id,
-                        status="error",
-                        phase="error",
-                        result=result,
-                        error=rendered_error,
-                        event_ref="agent_run_failed",
-                        finished_at=time.time(),
-                    )
-                elif outcome is not None and outcome.get("event") == "agent_run_cancelled":
-                    # Sprint-3 P0-2: the executor emitted the cancel
-                    # event but the task itself completed normally
-                    # (e.g. the agent run wrapped the cancel into a
-                    # graceful early-return). Reflect cancelled state
-                    # without crashing the finaliser.
-                    self._update_command_state(
-                        command_id,
-                        status="cancelled",
-                        phase="cancelled",
-                        result=result,
-                        error=None,
-                        event_ref="agent_run_cancelled",
-                        finished_at=time.time(),
-                    )
-                else:
-                    self._update_command_state(
-                        command_id,
-                        status="done",
-                        phase="done",
-                        result=result,
-                        event_ref=(outcome or {}).get("event") if outcome else None,
-                        finished_at=time.time(),
-                    )
+                outcome = await supervisor.run()
+                self._reflect_supervisor_outcome(command_id, supervisor, outcome)
             except asyncio.CancelledError:
-                # Sprint-3 P0-2 (audit v3 §5.3): the user pressed cancel
-                # and ``cancel`` -> ``task.cancel()`` injected
-                # ``CancelledError`` at the LLM await point. Flip the
-                # public snapshot to ``cancelled`` *before* re-raising
-                # so ``GET /commands/{cid}`` immediately returns
-                # ``phase=cancelled, event_ref=agent_run_cancelled``
-                # (pre-fix it kept saying ``phase=running`` until the
-                # LLM happened to finish ~1-3 minutes later, while
-                # token meter kept ticking).
+                # Hard fallback path: the supervisor's cooperative
+                # cancel did not complete in time and our wrapping
+                # task got force-cancelled. The supervisor itself
+                # raises CancelledByToken on the cooperative path and
+                # _terminate writes a cancelled checkpoint already, so
+                # we only land here on the rare hard-cancel.
                 self._update_command_state(
                     command_id,
                     status="cancelled",
@@ -1441,7 +1392,10 @@ class OrgCommandService:
                     cancelled_by_user=True,
                 )
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- last-resort guardrail
+                logger.exception(
+                    "[OrgCmd] supervisor.run raised for cid=%s", command_id
+                )
                 self._update_command_state(
                     command_id,
                     status="error",
@@ -1450,17 +1404,11 @@ class OrgCommandService:
                     finished_at=time.time(),
                 )
             finally:
+                self._active_supervisors.pop(command_id, None)
                 root_key = (request.org_id, root_node_id)
                 if self._running_by_root.get(root_key) == command_id:
                     self._running_by_root.pop(root_key, None)
-                # Sprint-3 P0-2: clear the inflight task entry so the
-                # dict cannot grow unbounded and so a stale ``Task``
-                # reference cannot accidentally re-cancel a recycled
-                # command_id.
                 self._inflight_tasks.pop(command_id, None)
-                # Sprint-5 P0-2: keep the by-org index aligned with
-                # ``_inflight_tasks``. Both are mutated only on this
-                # event loop so a discard-after-pop is safe.
                 org_cids = self._inflight_by_org.get(request.org_id)
                 if org_cids is not None:
                     org_cids.discard(command_id)
@@ -1468,17 +1416,113 @@ class OrgCommandService:
                         self._inflight_by_org.pop(request.org_id, None)
 
         loop = asyncio.get_running_loop()
-        task = loop.create_task(_run_minimal())
-        # Sprint-3 P0-2: record the task so ``cancel`` can reach it.
-        # We register before any first ``await`` so the cancel-while-
-        # still-pending race window is closed (the dict is mutated
-        # synchronously in the same event-loop tick as ``submit``).
+        task = loop.create_task(
+            _run(), name=f"openakita-orgs-supervisor-{command_id}"
+        )
+        # Register the task + by-org index synchronously, before the
+        # first ``await``, so cancel-while-still-pending races land
+        # against a live task slot.
         self._inflight_tasks[command_id] = task
-        # Sprint-5 P0-2: same pre-await registration for the by-org
-        # secondary index so ``cancel_all_for_org`` reaches the task
-        # even if the user fires ``POST /stop`` within the same tick
-        # as ``submit``.
         self._inflight_by_org.setdefault(request.org_id, set()).add(command_id)
+
+    def _reflect_supervisor_outcome(
+        self,
+        command_id: str,
+        supervisor: Supervisor,
+        outcome: Any,
+    ) -> None:
+        """Translate a :class:`SupervisorOutcome` into command-state fields."""
+
+        # Lazy import keeps the runtime <-> orgs cycle loose.
+        from openakita.runtime.supervisor import FinalOutcome
+
+        outcome_value = getattr(getattr(outcome, "outcome", None), "value", None)
+        n_turns = int(getattr(outcome, "n_turns", 0) or 0)
+        n_replans = int(getattr(outcome, "n_replans", 0) or 0)
+        final_cp = getattr(outcome, "final_checkpoint_id", None)
+        final_msg = getattr(outcome, "final_message", "") or ""
+
+        if outcome_value == FinalOutcome.DONE.value:
+            status, phase, error = "done", "done", None
+        elif outcome_value == FinalOutcome.CANCELLED.value:
+            status, phase, error = "cancelled", "cancelled", None
+        elif outcome_value in (
+            FinalOutcome.FAILED.value,
+            FinalOutcome.REPLAN_BUDGET_EXHAUSTED.value,
+        ):
+            status, phase, error = "error", "error", final_msg or outcome_value
+        elif outcome_value == FinalOutcome.OUT_OF_TURNS.value:
+            status, phase, error = "error", "out_of_turns", final_msg or outcome_value
+        else:
+            status, phase, error = "done", "done", None
+
+        event_ref = f"supervisor_{outcome_value}" if outcome_value else None
+        self._update_command_state(
+            command_id,
+            status=status,
+            phase=phase,
+            result={
+                "final_message": final_msg,
+                "n_turns": n_turns,
+                "n_replans": n_replans,
+                "final_checkpoint_id": final_cp,
+                "outcome": outcome_value,
+            },
+            error=error,
+            event_ref=event_ref,
+            finished_at=time.time(),
+            supervisor_outcome=outcome_value,
+            supervisor_n_turns=n_turns,
+            supervisor_n_replans=n_replans,
+            supervisor_last_checkpoint_id=final_cp,
+        )
+        # Mirror into ``_command_outcomes`` so :meth:`get_status` can
+        # surface ``event_ref`` (the v1 outcome-cache lookup is the
+        # single source of truth for that field).
+        existing = self._command_outcomes.get(command_id) or {}
+        existing.update(
+            {
+                "event": event_ref,
+                "reason": existing.get("reason"),
+                "error": error,
+                "ts": time.time(),
+            }
+        )
+        self._command_outcomes[command_id] = existing
+
+    # ------------------------------------------------------------------
+    # Continue-previous resume helper
+    # ------------------------------------------------------------------
+
+    def _lookup_resume_checkpoint(
+        self, org_id: str, root_node_id: str
+    ) -> tuple[str | None, str | None]:
+        """Find the last terminated command for ``root_node_id`` + its checkpoint.
+
+        Returns ``(checkpoint_id, previous_command_id)``. Both fall to
+        ``None`` when no terminated command exists, in which case the
+        caller falls back to :meth:`_build_continue_content` legacy
+        content-concatenation. The actual checkpoint *file* existence
+        is verified inside the background task via
+        :meth:`Supervisor.resume_from_checkpoint`; here we only pick
+        out the metadata that the bookkeeping dict carries so the
+        fast path stays sync.
+        """
+
+        previous = self._find_recent_previous_command(org_id, root_node_id)
+        if previous is None:
+            return None, None
+        prev_cid = str(previous.get("command_id") or "")
+        # The most reliable signal is the ``supervisor_last_checkpoint_id``
+        # the Sprint-9 outcome reflection writes onto the command dict;
+        # falls back to ``result.final_checkpoint_id`` for the v20
+        # transition window when the old shape might still be on disk.
+        cp_id = previous.get("supervisor_last_checkpoint_id") or None
+        if not cp_id:
+            result = previous.get("result")
+            if isinstance(result, dict):
+                cp_id = result.get("final_checkpoint_id") or None
+        return (str(cp_id) if cp_id else None), (prev_cid or None)
 
     async def _dispatch_forwards(
         self,

@@ -28,11 +28,14 @@ This module exercises the **disk side** of the bridge:
   (the latter is new but the value matches the legacy reason so
   readers that prefer the new field still get a deterministic
   value).
-* ``test_watchdog_kill_emits_cancelled_by_watchdog_to_disk`` --
-  Sprint-6 P0-2 watchdog parity: the emit-to-events.jsonl payload
-  must carry ``cancelled_by=watchdog`` so an external auditor can
-  attribute the kill before the follow-on ``agent_run_cancelled``
-  arrives.
+* (Sprint-9 deletion) the ``cancelled_by=watchdog`` disk-emit case
+  was removed together with the wall-clock watchdog itself; the
+  supervisor's :class:`StallDetector` now drives stuck detection,
+  and stall terminations land as the standard
+  ``agent_run_cancelled`` event with ``reason="stall"`` plus the
+  supervisor's ``final_message``. The ``get_cancel_source`` bridge
+  still recognises ``cancelled_by="watchdog"`` for backward-
+  compatibility with already-persisted events.
 """
 
 from __future__ import annotations
@@ -230,10 +233,6 @@ async def test_stop_org_flow_writes_cancelled_by_to_disk(tmp_path: Path) -> None
     lookup = MagicMock()
     lookup.get_org = MagicMock(return_value=_Org())
 
-    async def slow_send(*_args: Any, **kwargs: Any) -> dict[str, Any]:
-        await asyncio.sleep(30)
-        return {"status": "submitted", "command_id": kwargs.get("command_id")}
-
     # Wire a real dispatch manager that the service forwards to.
     dispatch = CommandDispatchManager(
         command_service=None,
@@ -246,7 +245,6 @@ async def test_stop_org_flow_writes_cancelled_by_to_disk(tmp_path: Path) -> None
     rt.get_event_store = MagicMock(return_value=MagicMock(query=lambda **kw: []))
     rt.has_active_delegations = MagicMock(return_value=False)
     rt.get_inbox = MagicMock(return_value=MagicMock())
-    rt.send_command = AsyncMock(side_effect=slow_send)
 
     async def _cancel_user_command(
         org_id: str, command_id: str, *, cancel_reason: str | None = None
@@ -266,10 +264,57 @@ async def test_stop_org_flow_writes_cancelled_by_to_disk(tmp_path: Path) -> None
         )
 
     rt.cancel_user_command = AsyncMock(side_effect=_cancel_user_command)
-    svc = OrgCommandService(rt, event_bus=bus)
+
+    # Sprint-9 supervisor takeover: drive a slow fake supervisor so
+    # the command is still in-flight when ``cancel_all_for_org``
+    # fires (the legacy ``slow_send`` patch on ``rt.send_command`` is
+    # no longer reached -- the new flow goes through
+    # ``supervisor.run`` instead of ``runtime.send_command``).
+    from openakita.runtime.cancel_token import CancellationToken
+    from openakita.runtime.supervisor import FinalOutcome, SupervisorOutcome
+
+    class _SlowSupervisor:
+        def __init__(self, command_id: str) -> None:
+            self.cancel_token = CancellationToken()
+            self.stall_detector = type(
+                "_SD", (), {"n_turns": 0, "n_stalls": 0}
+            )()
+            self.history: list[Any] = []
+            self.n_replans = 0
+            self.last_checkpoint_id = "cp-slow"
+            self._command_id = command_id
+
+        async def run(self) -> SupervisorOutcome:
+            for _ in range(600):  # up to 30 s in 0.05 s ticks
+                if self.cancel_token.is_cancelled():
+                    return SupervisorOutcome(
+                        outcome=FinalOutcome.CANCELLED,
+                        final_message="cancelled",
+                        final_checkpoint_id=self.last_checkpoint_id,
+                        n_turns=0,
+                        n_replans=0,
+                        reason=self.cancel_token.reason or "cancelled",
+                    )
+                await asyncio.sleep(0.05)
+            return SupervisorOutcome(
+                outcome=FinalOutcome.DONE,
+                final_message="done",
+                final_checkpoint_id=self.last_checkpoint_id,
+                n_turns=0,
+                n_replans=0,
+            )
+
+        async def resume_from_checkpoint(
+            self, checkpoint_id: str
+        ) -> "_SlowSupervisor":
+            return self
+
+    def _slow_factory(*, org_id, command_id, root_node_id, task, **_kw):
+        return _SlowSupervisor(command_id)
+
+    svc = OrgCommandService(rt, event_bus=bus, supervisor_factory=_slow_factory)
     res = await svc.submit(OrgCommandRequest(org_id="org-int", content="task A"))
     cid = res["command_id"]
-    # Give the background _schedule_run a tick.
     await asyncio.sleep(0.02)
 
     cancelled = await svc.cancel_all_for_org("org-int", reason="stop_org")
@@ -333,64 +378,9 @@ async def test_get_cancel_source_returns_stop_org_after_seeding() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-2 -- watchdog emit payload carries cancelled_by on disk
+# (Sprint-9: ``test_watchdog_kill_emits_cancelled_by_watchdog_to_disk``
+#  removed -- see module docstring.)
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_watchdog_kill_emits_cancelled_by_watchdog_to_disk(
-    tmp_path: Path,
-) -> None:
-    """case id: p06.cancelled_by.watchdog_emit_to_disk
-
-    Watchdog parity: pre-Sprint-6 the ``agent_run_watchdog_killed``
-    JSONL line carried elapsed_s / threshold_s but no
-    ``cancelled_by``. Sprint-6 adds the field so audits can attribute
-    the kill to the watchdog source uniformly with stop-org / user
-    cancels.
-    """
-
-    jsonl = tmp_path / "logs" / "events.jsonl"
-    store = OrgEventStore(org_id="org-int", jsonl_path=jsonl)
-    bus = _DiskWiredEventBus(store)
-
-    async def slow_send(*_args: Any, **kwargs: Any) -> dict[str, Any]:
-        await asyncio.sleep(30)
-        return {"status": "submitted", "command_id": kwargs.get("command_id")}
-
-    rt = MagicMock()
-    rt.get_org = MagicMock(return_value=_Org())
-    rt.get_command_tracker_snapshot = MagicMock(return_value=None)
-    rt.get_event_store = MagicMock(return_value=MagicMock(query=lambda **kw: []))
-    rt.has_active_delegations = MagicMock(return_value=False)
-    rt.get_inbox = MagicMock(return_value=MagicMock())
-    rt.cancel_user_command = AsyncMock(return_value={"cancelled_roots": ["root1"]})
-    rt.send_command = AsyncMock(side_effect=slow_send)
-    svc = OrgCommandService(rt, event_bus=bus)
-    svc.configure_watchdog(poll_interval_secs=0.1, default_threshold_secs=0.5)
-    svc.start_watchdog()
-    try:
-        res = await svc.submit(OrgCommandRequest(org_id="org-int", content="long"))
-        cid = res["command_id"]
-        await asyncio.sleep(1.2)
-        task = svc._inflight_tasks.get(cid)
-        if task is not None:
-            try:
-                await asyncio.wait_for(task, timeout=1.0)
-            except (asyncio.CancelledError, TimeoutError):
-                pass
-        events = _read_events(jsonl)
-        watchdog_events = [
-            e for e in events if e.get("type") == "agent_run_watchdog_killed"
-        ]
-        assert watchdog_events, "watchdog emit must hit events.jsonl"
-        assert watchdog_events[0]["cancelled_by"] == "watchdog"
-        # The cache side stays consistent.
-        outcome = svc._command_outcomes.get(cid)
-        assert outcome is not None
-        assert outcome["cancelled_by"] == "watchdog"
-    finally:
-        await svc.stop_watchdog(timeout=0.5)
 
 
 # ---------------------------------------------------------------------------

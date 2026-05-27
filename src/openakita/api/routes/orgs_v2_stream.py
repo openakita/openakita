@@ -112,9 +112,13 @@ async def _event_stream(request: Request, org_id: str) -> AsyncIterator[str]:
         mark_subscriber_lost(org_id)
 
 
-@router.get("/{org_id}/stream", summary="SSE stream of v2 supervisor progress for one org")
-async def stream_org_progress(request: Request, org_id: str) -> StreamingResponse:
-    """SSE endpoint backed by the org's long-lived StreamBus."""
+def _build_streaming_response(request: Request, org_id: str) -> StreamingResponse:
+    """Validate the org + return the long-poll :class:`StreamingResponse`.
+
+    Shared by both the legacy ``/api/v2/orgs-spec/{id}/stream`` route
+    and the Sprint-9 alias ``/api/v2/orgs/{id}/events/stream`` so
+    the two surfaces are byte-for-byte equivalent.
+    """
     if not getattr(settings, "runtime_v2_enabled", False):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -137,3 +141,19 @@ async def stream_org_progress(request: Request, org_id: str) -> StreamingRespons
             "Connection": "keep-alive",
         },
     )
+
+
+@router.get("/{org_id}/stream", summary="SSE stream of v2 supervisor progress for one org")
+async def stream_org_progress(request: Request, org_id: str) -> StreamingResponse:
+    """SSE endpoint backed by the org's long-lived StreamBus.
+
+    Legacy path under ``/api/v2/orgs-spec/`` -- the frontend's
+    ``apps/setup-center/src/api/v2Stream.ts`` was wired to this URL
+    in P-RC-3. Kept verbatim so older clients keep working.
+
+    Newer callers should prefer the Sprint-9 alias
+    ``GET /api/v2/orgs/{id}/events/stream`` mounted on
+    :mod:`orgs_v2_runtime` -- same body, conventional location next
+    to the rest of the runtime verbs.
+    """
+    return _build_streaming_response(request, org_id)

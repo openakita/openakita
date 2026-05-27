@@ -29,6 +29,7 @@ import logging
 from typing import Any
 
 from fastapi import HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from openakita.api.schemas.orgs_v2 import CancelRequest, CommandSubmit
 
@@ -39,6 +40,7 @@ from .orgs_v2_runtime import (
     _runtime_method_not_wired,
     router,
 )
+from .orgs_v2_stream import _build_streaming_response
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +268,28 @@ async def cancel_command(
 # ---------------------------------------------------------------------------
 # B41: org-level broadcast
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Sprint-9 (supervisor HTTP takeover): SSE alias under /api/v2/orgs.
+#
+# The original SSE route lives at ``/api/v2/orgs-spec/{id}/stream`` (see
+# ``orgs_v2_stream.py``) because P-RC-3 split the spec / runtime URL
+# namespaces. v17-v20 exploratory probes (``_v*_biz/b6_chaos.py::B6.5``)
+# hit ``/api/v2/orgs/{id}/events/stream`` instead and 404'd, which then
+# masqueraded as "SSE broken". This alias re-mounts the same body under
+# the runtime router so both URL patterns work; the legacy ``/orgs-spec/``
+# path is preserved so the frontend's ``v2Stream.ts`` does not have to
+# change in this commit.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{org_id}/events/stream",
+    summary="Sprint-9 SSE alias of /api/v2/orgs-spec/{id}/stream",
+)
+async def stream_org_events(request: Request, org_id: str) -> StreamingResponse:
+    return _build_streaming_response(request, org_id)
 
 
 @router.post("/{org_id}/broadcast", summary="B41 broadcast to organization")

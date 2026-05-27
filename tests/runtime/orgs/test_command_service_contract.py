@@ -138,7 +138,13 @@ async def test_submit_happy_path_returns_running_dict() -> None:
     rt = _make_runtime(send_hang=True)
     svc = _make_service(rt)
     res = await svc.submit(OrgCommandRequest(org_id="o1", content="task"))
-    assert res == {"command_id": res["command_id"], "status": "running", "root_node_id": "root1"}
+    # Sprint-9 supervisor takeover: the submit envelope adds a
+    # ``resumed_from`` slot (carries the checkpoint id when
+    # continue_previous=True succeeded; ``None`` on a fresh submit).
+    assert res["command_id"].startswith("cmd_")
+    assert res["status"] == "running"
+    assert res["root_node_id"] == "root1"
+    assert res["resumed_from"] is None
     cmd = svc.commands[res["command_id"]]
     assert cmd["status"] == "running" and cmd["origin_surface"] == "org_console"
 
@@ -264,7 +270,14 @@ async def test_cancel_running_calls_runtime_and_emitter() -> None:
     res = await svc.submit(OrgCommandRequest(org_id="o1", content="x"))
     ack = await svc.cancel("o1", res["command_id"])
     assert ack is not None and ack["ok"] is True
-    rt.cancel_user_command.assert_awaited_once_with("o1", res["command_id"])
+    # Sprint-9 supervisor takeover: cancel now propagates a
+    # ``cancel_reason`` kwarg so the dispatch tracker can route the
+    # taxonomy (user_cancel / stop_org / replaced) through to
+    # events.jsonl alongside the supervisor's own cancelled
+    # lifecycle event.
+    rt.cancel_user_command.assert_awaited_once_with(
+        "o1", res["command_id"], cancel_reason="user_cancel"
+    )
     emitter.broadcast.assert_awaited_once()
     event, payload = emitter.broadcast.await_args[0]
     assert event == "org:command_cancelled"

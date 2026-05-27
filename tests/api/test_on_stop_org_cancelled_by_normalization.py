@@ -208,7 +208,6 @@ async def test_on_stop_org_handler_emits_stop_org_to_disk_no_compound(
     rt.get_event_store = MagicMock(return_value=MagicMock(query=lambda **kw: []))
     rt.has_active_delegations = MagicMock(return_value=False)
     rt.get_inbox = MagicMock(return_value=MagicMock())
-    rt.send_command = AsyncMock(side_effect=slow_send)
 
     async def _cancel_user_command(
         org_id: str, command_id: str, *, cancel_reason: str | None = None
@@ -227,7 +226,53 @@ async def test_on_stop_org_handler_emits_stop_org_to_disk_no_compound(
         )
 
     rt.cancel_user_command = AsyncMock(side_effect=_cancel_user_command)
-    svc = OrgCommandService(rt, event_bus=bus)
+
+    # Sprint-9 supervisor takeover: ``rt.send_command`` is no longer
+    # in the hot path; the new flow goes through a Supervisor
+    # constructed by ``supervisor_factory``. Inject a slow stub so
+    # the command is still in-flight when the on-stop handler runs.
+    from openakita.runtime.cancel_token import CancellationToken
+    from openakita.runtime.supervisor import FinalOutcome, SupervisorOutcome
+
+    class _SlowSupervisor:
+        def __init__(self) -> None:
+            self.cancel_token = CancellationToken()
+            self.stall_detector = type(
+                "_SD", (), {"n_turns": 0, "n_stalls": 0}
+            )()
+            self.history: list[Any] = []
+            self.n_replans = 0
+            self.last_checkpoint_id = "cp-slow"
+
+        async def run(self) -> SupervisorOutcome:
+            for _ in range(600):
+                if self.cancel_token.is_cancelled():
+                    return SupervisorOutcome(
+                        outcome=FinalOutcome.CANCELLED,
+                        final_message="cancelled",
+                        final_checkpoint_id=self.last_checkpoint_id,
+                        n_turns=0,
+                        n_replans=0,
+                        reason=self.cancel_token.reason or "cancelled",
+                    )
+                await asyncio.sleep(0.05)
+            return SupervisorOutcome(
+                outcome=FinalOutcome.DONE,
+                final_message="done",
+                final_checkpoint_id=self.last_checkpoint_id,
+                n_turns=0,
+                n_replans=0,
+            )
+
+        async def resume_from_checkpoint(self, cp: str) -> "_SlowSupervisor":
+            return self
+
+    def _slow_factory(*, org_id, command_id, root_node_id, task, **_kw):
+        return _SlowSupervisor()
+
+    svc = OrgCommandService(
+        rt, event_bus=bus, supervisor_factory=_slow_factory
+    )
     res = await svc.submit(OrgCommandRequest(org_id="org-int", content="long"))
     cid = res["command_id"]
     await asyncio.sleep(0.02)

@@ -80,46 +80,42 @@ def _make_runtime(*, send_result: dict[str, Any] | None = None) -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_run_minimal_forwards_resolved_root_when_target_is_none() -> None:
-    """case id: p0_1.run_minimal.forwards_root_to_runtime
+async def test_submit_records_resolved_root_when_target_is_none() -> None:
+    """case id: p0_1.submit.records_resolved_root
 
-    Pre-fix ``request.target_node_id`` (``None``) was forwarded to
-    ``runtime.send_command``, so the executor's ``ProfileResolver``
-    received ``node_id=None``. With the fix the resolved ``root_node_id``
-    (e.g. ``"producer"``) is passed instead, so the resolver actually
-    finds the OrgNode and the system prompt reflects the real role.
+    Sprint-9 supervisor takeover replacement for the legacy
+    ``test_run_minimal_forwards_resolved_root_when_target_is_none``:
+    instead of poking ``runtime.send_command.await_args`` (the new
+    flow does not call ``send_command`` at all -- it routes through
+    the supervisor + executor.activate_and_run) we assert that the
+    command bookkeeping captured the resolved root id. This still
+    pins the v14 audit fix (root_id must not be ``None``); the
+    downstream "resolved root reaches the executor" guarantee is
+    covered by :mod:`tests.runtime.orgs.test_supervisor_http_takeover`
+    which patches the supervisor factory and asserts the executor
+    receives ``node_id=root_node_id``.
     """
 
     rt = _make_runtime()
     svc = OrgCommandService(rt)
-    await svc.submit(OrgCommandRequest(org_id="o1", content="hi"))
-    # Yield once so the background ``_run_minimal`` reaches the
-    # ``send_command`` await.
-    await asyncio.sleep(0.02)
-    # The runtime saw the resolved root id, not ``None``.
-    args, kwargs = rt.send_command.await_args
-    assert args[0] == "o1"
-    assert args[1] == "producer"  # resolved root, not request.target_node_id (None)
-    assert kwargs.get("command_id")
+    res = await svc.submit(OrgCommandRequest(org_id="o1", content="hi"))
+    cmd = svc.commands[res["command_id"]]
+    assert cmd["root_node_id"] == "producer"
+    assert res["root_node_id"] == "producer"
 
 
 @pytest.mark.asyncio
-async def test_run_minimal_respects_explicit_target_node() -> None:
-    """case id: p0_1.run_minimal.explicit_target_wins
-
-    When the caller pins a specific node (e.g. NodeScheduler dispatch
-    or the IM gateway addressing a non-root department), the explicit
-    target must win over the auto-resolved root.
-    """
+async def test_submit_respects_explicit_target_node() -> None:
+    """case id: p0_1.submit.explicit_target_wins"""
 
     rt = _make_runtime()
     svc = OrgCommandService(rt)
-    await svc.submit(
+    res = await svc.submit(
         OrgCommandRequest(org_id="o1", content="hi", target_node_id="producer")
     )
-    await asyncio.sleep(0.02)
-    args, _ = rt.send_command.await_args
-    assert args[1] == "producer"
+    cmd = svc.commands[res["command_id"]]
+    assert cmd["target_node_id"] == "producer"
+    assert cmd["root_node_id"] == "producer"
 
 
 def test_dispatch_emits_subtask_assigned_event(tmp_path: Path, monkeypatch) -> None:

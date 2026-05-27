@@ -412,8 +412,13 @@ class Organization:
     # Workspace — custom output directory for file-producing tools
     workspace_dir: str = ""
 
-    # Watchdog
-    # 默认开启：自动发现节点长时间无进展；用户仍可在组织设置中关闭。
+    # Watchdog (Sprint-9 supervisor takeover: deprecated no-op fields).
+    # 历史字段。Sprint-9 起 supervisor 的 StallDetector + max_turns 已经
+    # 取代 wall-clock watchdog，这些字段不再控制任何运行时行为。但仍保留
+    # 在 dataclass 上以便已存在的 org spec JSON 文件能向后兼容反序列化
+    # （`from_dict` 会按字段名过滤未知键，旧 JSON 里写过的值仍会被读入
+    # 并按原值回写）。前端 UI 仍展示这些字段，但开关不会触发任何逻辑。
+    # TODO(post-Sprint-9): 删除这些字段 + 前端 UI 板块。
     watchdog_enabled: bool = True
     watchdog_interval_s: int = 30
     watchdog_stuck_threshold_s: int = 1800

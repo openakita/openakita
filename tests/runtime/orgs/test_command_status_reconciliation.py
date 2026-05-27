@@ -167,74 +167,16 @@ def test_handle_agent_event_skips_payload_without_command_id() -> None:
     assert svc._command_outcomes == {}
 
 
-@pytest.mark.asyncio
-async def test_run_minimal_flips_status_to_error_when_event_says_failed() -> None:
-    """case id: p02.run_minimal.failed_event_overrides_done
-
-    Pre-Sprint-2 ``_run_minimal`` finished with ``status=done,
-    phase=done, error=null`` regardless of the event-bus signal.
-    With the bus wired, ``agent_run_failed`` flips the public
-    snapshot to ``error`` so ``GET /commands/{cid}`` no longer lies.
-    """
-
-    bus = _StubEventBus()
-    rt = _make_runtime()
-
-    async def fake_send(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        # Simulate the dispatch sibling: emit the failure event,
-        # then return the legacy ``submitted`` envelope.
-        await bus.emit(
-            "agent_run_failed",
-            {
-                "org_id": args[0],
-                "node_id": args[1],
-                "command_id": kwargs["command_id"],
-                "reason": "agent_build_failed",
-                "error": "AgentBuilderProtocol not wired",
-            },
-        )
-        return {"status": "submitted", "command_id": kwargs["command_id"]}
-
-    rt.send_command = AsyncMock(side_effect=fake_send)
-    svc = OrgCommandService(rt, event_bus=bus)
-    res = await svc.submit(OrgCommandRequest(org_id="o1", content="hi"))
-    # Yield once so the background ``_run_minimal`` task progresses.
-    await asyncio.sleep(0.05)
-    cmd = svc.commands[res["command_id"]]
-    assert cmd["status"] == "error"
-    assert cmd["phase"] == "error"
-    assert "agent_build_failed" in (cmd.get("error") or "")
-    assert cmd.get("event_ref") == "agent_run_failed"
-
-
-@pytest.mark.asyncio
-async def test_run_minimal_keeps_done_when_event_says_finished() -> None:
-    """case id: p02.run_minimal.finished_event_keeps_done"""
-
-    bus = _StubEventBus()
-    rt = _make_runtime()
-
-    async def fake_send(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        await bus.emit(
-            "agent_run_finished",
-            {
-                "org_id": args[0],
-                "node_id": args[1],
-                "command_id": kwargs["command_id"],
-                "output_len": 7,
-            },
-        )
-        return {"status": "submitted", "command_id": kwargs["command_id"]}
-
-    rt.send_command = AsyncMock(side_effect=fake_send)
-    svc = OrgCommandService(rt, event_bus=bus)
-    res = await svc.submit(OrgCommandRequest(org_id="o1", content="hi"))
-    await asyncio.sleep(0.05)
-    cmd = svc.commands[res["command_id"]]
-    assert cmd["status"] == "done"
-    assert cmd["phase"] == "done"
-    assert cmd.get("error") is None
-    assert cmd.get("event_ref") == "agent_run_finished"
+# Sprint-9 supervisor takeover: the two
+# ``test_run_minimal_*_event_says_*`` cases (failed / finished) used
+# to pin the legacy ``_run_minimal`` path that called
+# ``runtime.send_command`` and then re-read ``_command_outcomes`` to
+# flip ``cmd["status"]``. The new flow runs ``supervisor.run()`` and
+# the supervisor's :class:`FinalOutcome` is the source of truth -- a
+# stray bus event no longer overrides it. ``_command_outcomes`` is
+# still maintained for ``get_cancel_source`` + ``get_status``
+# overlay reads, which are covered by the remaining tests in this
+# file and by :mod:`tests.runtime.orgs.test_supervisor_http_takeover`.
 
 
 @pytest.mark.asyncio

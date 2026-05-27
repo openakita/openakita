@@ -384,6 +384,23 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
   const [stopping, setStopping] = useState(false);
+  // Sprint-9: per-org single-root 409 conflict dialog. When a submit
+  // races with an already-running command on the same root, the
+  // backend returns 409 with ``code=org_command_conflict`` +
+  // ``command_id`` of the in-flight command. The dialog lets the
+  // user choose one of three branches:
+  //   - replace_existing -> cancel current + start new
+  //   - continue_previous -> resume from the previous command's
+  //                          final checkpoint (falls back to content
+  //                          concatenation when no checkpoint exists)
+  //   - cancel -> abandon this submit, the running command keeps
+  //               going
+  const [conflictDialog, setConflictDialog] = useState<{
+    pendingText: string;
+    existingCommandId: string;
+    message: string;
+  } | null>(null);
+  const [resolvingConflict, setResolvingConflict] = useState(false);
   // P3：可选的 IM 转发目标。当用户选中一个或多个 bot/聊天，命令完成 / 取消时
   // 后端会顺手把最终消息投递到这些 IM 频道——指挥台因此成为"统一入口/出口"。
   // 列表来自 ``GET /api/agents/bots``；每项形如 ``{channel, chat_id, label}``。
@@ -800,7 +817,13 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     }
   }, [apiBaseUrl, orgId, pendingCmdId]);
 
-  const handleSend = useCallback(async (opts?: { continuePrevious?: boolean; text?: string }) => {
+  // Sprint-9: forward declarations -- the two resolvers reference
+  // ``handleSend`` which is declared after them, so we keep them in a
+  // ref that the dialog's onClick wires up. ``handleSend`` itself is
+  // a useCallback that recomputes every render, but the ref is
+  // updated in a sibling useEffect-like pattern via the JSX closure.
+
+  const handleSend = useCallback(async (opts?: { continuePrevious?: boolean; replaceExisting?: boolean; text?: string }) => {
     const text = (opts?.text ?? input).trim();
     if (!text || sending) return;
 
@@ -1207,6 +1230,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           content: text,
           target_node_id: nodeId || undefined,
           continue_previous: !!opts?.continuePrevious,
+          replace_existing: !!opts?.replaceExisting,
           forward_to: forwardTargets.map(ft => ({
             channel: ft.channel,
             chat_id: ft.chat_id,
@@ -1216,6 +1240,36 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           })),
         }),
       });
+      // Sprint-9: surface the 409 (org_command_conflict) shape into
+      // an inline dialog so the user picks replace_existing /
+      // continue_previous / cancel instead of seeing a generic error
+      // toast.
+      if (res.status === 409) {
+        const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        const existingId =
+          (typeof data.command_id === "string" && data.command_id) ||
+          (typeof (data.detail as Record<string, unknown> | undefined)?.command_id === "string"
+            ? ((data.detail as Record<string, unknown>).command_id as string)
+            : "");
+        const msg =
+          (typeof data.detail === "string" && data.detail) ||
+          (typeof (data.detail as Record<string, unknown> | undefined)?.message === "string"
+            ? ((data.detail as Record<string, unknown>).message as string)
+            : typeof data.message === "string"
+              ? (data.message as string)
+              : t(
+                  "org.chat.conflictDefault",
+                  "组织当前已有命令在执行，请选择处理方式。",
+                ));
+        setConflictDialog({
+          pendingText: text,
+          existingCommandId: existingId,
+          message: msg,
+        });
+        finalContent = `> ${msg}`;
+        finalizeResult(finalContent);
+        return;
+      }
       const data = await res.json();
       const commandId = data.command_id as string | undefined;
 
@@ -1535,6 +1589,77 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           )}
         </button>
       </div>
+
+      {conflictDialog ? (
+        <AlertDialog
+          open={!!conflictDialog}
+          onOpenChange={(open) => {
+            if (resolvingConflict) return;
+            if (!open) setConflictDialog(null);
+          }}
+        >
+          <AlertDialogContent className="sm:max-w-[520px]">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <span className="grid size-8 place-items-center rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-600">
+                  <ShieldAlert size={16} />
+                </span>
+                {t("org.chat.conflictTitle", "组织上已有命令在执行")}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {conflictDialog.message}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+              <AlertDialogCancel disabled={resolvingConflict}>
+                {t("org.chat.conflictCancel", "放弃此次提交")}
+              </AlertDialogCancel>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={resolvingConflict}
+                onClick={() => {
+                  if (!conflictDialog) return;
+                  const { pendingText } = conflictDialog;
+                  setResolvingConflict(true);
+                  setConflictDialog(null);
+                  setTimeout(() => {
+                    setResolvingConflict(false);
+                    void handleSend({
+                      text: pendingText,
+                      continuePrevious: true,
+                    });
+                  }, 0);
+                }}
+              >
+                {resolvingConflict && <Loader2 className="mr-2 size-4 animate-spin" />}
+                {t("org.chat.conflictContinue", "继续上一次")}
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={resolvingConflict}
+                onClick={() => {
+                  if (!conflictDialog) return;
+                  const { pendingText } = conflictDialog;
+                  setResolvingConflict(true);
+                  setConflictDialog(null);
+                  setTimeout(() => {
+                    setResolvingConflict(false);
+                    void handleSend({
+                      text: pendingText,
+                      replaceExisting: true,
+                    });
+                  }, 0);
+                }}
+              >
+                {resolvingConflict && <Loader2 className="mr-2 size-4 animate-spin" />}
+                {t("org.chat.conflictReplace", "取消旧任务并重新提交")}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
 
       <AlertDialog
         open={stopDialogOpen}

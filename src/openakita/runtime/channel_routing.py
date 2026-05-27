@@ -319,31 +319,51 @@ async def dispatch_inbound_message_to_v2(
         from openakita.runtime.checkpoint import MemoryCheckpointer
         from openakita.runtime.messenger import InMemoryNodeRegistry, Messenger
         from openakita.runtime.stream import StreamBus
-        from openakita.runtime.supervisor import FinalOutcome, Supervisor
+        from openakita.runtime.supervisor import FinalOutcome
+        from openakita.runtime.supervisor_factory import build_supervisor_for_command
 
+        # IM canary keeps its existing defaults (degenerate brain,
+        # in-memory checkpointer, messenger-based deliver) but routes
+        # construction through the Sprint-9 factory so the
+        # construction shape stays byte-for-byte aligned with the
+        # HTTP path. The factory accepts ``deliver=`` directly which
+        # lets us keep the messenger transport here.
         resolved_brain = brain or default_supervisor_brain()
         resolved_stream = stream_bus or StreamBus()
         resolved_checkpointer = checkpointer or MemoryCheckpointer()
         resolved_registry = node_registry or InMemoryNodeRegistry()
         resolved_token = cancel_token or CancellationToken()
-        supervisor_impl = supervisor_cls or Supervisor
 
         messenger = Messenger(registry=resolved_registry, stream=resolved_stream)
         command_id = f"cmd_{_uuid.uuid4().hex[:12]}"
         deliver = messenger.bind_for_command(
             command_id=command_id, org_id=org_id, cancel_token=resolved_token,
         )
-        supervisor = supervisor_impl(
-            command_id=command_id,
-            org_id=org_id,
-            root_node_id=plan.next_node_id,
-            task=message,
-            brain=resolved_brain,
-            deliver=deliver,
-            stream=resolved_stream,
-            checkpointer=resolved_checkpointer,
-            cancel_token=resolved_token,
-        )
+        if supervisor_cls is not None:
+            supervisor = supervisor_cls(
+                command_id=command_id,
+                org_id=org_id,
+                root_node_id=plan.next_node_id,
+                task=message,
+                brain=resolved_brain,
+                deliver=deliver,
+                stream=resolved_stream,
+                checkpointer=resolved_checkpointer,
+                cancel_token=resolved_token,
+            )
+        else:
+            supervisor = build_supervisor_for_command(
+                org_id=org_id,
+                command_id=command_id,
+                root_node_id=plan.next_node_id,
+                task=message,
+                executor=None,
+                deliver=deliver,
+                brain=resolved_brain,
+                stream=resolved_stream,
+                checkpointer=resolved_checkpointer,
+                cancel_token=resolved_token,
+            )
 
         try:
             outcome = await supervisor.run()

@@ -1,12 +1,23 @@
 ﻿/**
- * V2 SSE stream client for ``GET /api/v2/orgs-spec/{id}/stream``.
+ * V2 SSE stream client.
+ *
+ * Default URL is the Sprint-9 alias ``GET
+ * /api/v2/orgs/{id}/events/stream`` (set by
+ * ``api/routes/orgs_v2_runtime_dispatch.py``); the legacy
+ * ``/api/v2/orgs-spec/{id}/stream`` path is still served by
+ * ``api/routes/orgs_v2_stream.py`` for backward-compat and can be
+ * targeted by passing ``apiPath`` to ``createV2Stream``.
  *
  * Wraps the browser ``EventSource`` API with a typed handler
  * registry so callers do not have to remember channel-name
- * strings. The four channels exposed by the backend
- * (``progress_ledger`` / ``messages`` / ``lifecycle`` /
- * ``tasks``, see ADR-0006 + ``api/routes/orgs_v2_stream.py``)
- * are first-class type literals here.
+ * strings. Sprint-9 exposes six channels:
+ *   - ``progress_ledger`` -- per-turn supervisor ledger snapshots
+ *   - ``messages``        -- node-to-node messenger traffic
+ *   - ``lifecycle``       -- supervisor start / done / cancelled /
+ *                            resumed events
+ *   - ``tasks``           -- task ledger updates (facts / plan)
+ *   - ``stalls``          -- StallDetector signals (warn / replan)
+ *   - ``replans``         -- replan-budget moves
  *
  * Returned object:
  *   onEvent(channel, handler) -> unsubscribe function
@@ -28,7 +39,9 @@ export type V2StreamChannel =
   | "progress_ledger"
   | "messages"
   | "lifecycle"
-  | "tasks";
+  | "tasks"
+  | "stalls"
+  | "replans";
 
 /**
  * Shape of one event delivered through the SSE stream.
@@ -77,6 +90,13 @@ export type EventSourceFactory = (url: string) => EventSourceLike;
 export interface V2StreamOptions {
   /** Override the URL prefix (default: same-origin "/"). */
   apiBase?: string;
+  /**
+   * Override the per-org path template. Use ``"{id}"`` as the
+   * placeholder. Defaults to the Sprint-9 alias
+   * ``/api/v2/orgs/{id}/events/stream``. Set to
+   * ``/api/v2/orgs-spec/{id}/stream`` to talk to the legacy route.
+   */
+  apiPath?: string;
   /** Inject an EventSource factory (test seam; defaults to ``new EventSource``). */
   eventSourceFactory?: EventSourceFactory;
 }
@@ -86,6 +106,8 @@ const DEFAULT_CHANNELS: V2StreamChannel[] = [
   "messages",
   "lifecycle",
   "tasks",
+  "stalls",
+  "replans",
 ];
 
 function defaultFactory(url: string): EventSourceLike {
@@ -109,7 +131,8 @@ export function createV2Stream(
     throw new Error("createV2Stream: orgId must be a non-empty string");
   }
   const apiBase = (opts.apiBase ?? "").replace(/\/+$/, "");
-  const url = `${apiBase}/api/v2/orgs-spec/${encodeURIComponent(orgId)}/stream`;
+  const pathTemplate = opts.apiPath ?? "/api/v2/orgs/{id}/events/stream";
+  const url = `${apiBase}${pathTemplate.replace("{id}", encodeURIComponent(orgId))}`;
   const factory = opts.eventSourceFactory ?? defaultFactory;
   const source = factory(url);
 

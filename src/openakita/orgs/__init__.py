@@ -47,11 +47,13 @@
     ``get_default_event_bus`` factory in
     ``_runtime_event_bus.py`` (the Protocol contract is in
     ``runtime.py`` P9.6a0).
-  - P9.6c ships :class:`CommandWatchdog` (v1
-    ``_command_watchdog`` parity) + :class:`IdleProbeLoop`
-    (v1 ``_idle_probe_loop`` parity) in
-    ``_runtime_watchdog.py``; both are DI-driven async
-    loops with start / stop / graceful-shutdown semantics.
+  - P9.6c ships :class:`IdleProbeLoop` (v1
+    ``_idle_probe_loop`` parity) in ``_runtime_watchdog.py``;
+    DI-driven async loop with start / stop /
+    graceful-shutdown semantics. (``CommandWatchdog`` was
+    also shipped in P9.6c but removed in Sprint-9 -- the
+    supervisor's :class:`StallDetector` now drives stuck
+    detection on LLM-evaluated progress ledger signals.)
   - P9.6d ships :class:`OrgLifecycleManager` -- org
     state-machine + DI-callback orchestrator for
     start / stop / pause / resume / restart / delete /
@@ -212,7 +214,7 @@ from ._runtime_templates import (
     ensure_builtin_templates,
     list_avatar_presets,
 )
-from ._runtime_watchdog import CommandWatchdog, IdleProbeLoop
+from ._runtime_watchdog import IdleProbeLoop
 from .blackboard import (
     MAX_DEPT_MEMORIES,
     MAX_NODE_MEMORIES,
@@ -322,7 +324,6 @@ __all__ = [
     "CommandDispatchManager",
     "CommandDispatcher",
     "CommandRuntimeProtocol",
-    "CommandWatchdog",
     "DefaultAgentBuilder",
     "EdgeType",
     "EventBusProtocol",

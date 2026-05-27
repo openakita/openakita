@@ -619,10 +619,24 @@ def create_app(
     # ``agent_run_*`` events keyed by command_id and reflect the real
     # outcome back through ``get_status`` -- UI shows "failed" when the
     # node actually failed.
+    # Sprint-9 supervisor takeover: inject the live executor +
+    # per-org sqlite checkpointer factory so submit() can build a
+    # :class:`Supervisor` per command via
+    # :mod:`openakita.runtime.supervisor_factory`.
+    from openakita.runtime.supervisor_factory import get_or_create_checkpointer
+
+    def _executor_provider() -> Any:
+        return getattr(app.state, "org_agent_executor", None)
+
+    def _checkpointer_provider(org_id: str) -> Any:
+        return get_or_create_checkpointer(org_id)
+
     org_command_service = OrgCommandService(
         org_runtime,
         session_manager=session_manager,
         event_bus=org_event_bus,
+        executor_provider=_executor_provider,
+        checkpointer_provider=_checkpointer_provider,
     )
     set_command_service(org_command_service)
     app.state.org_command_service = org_command_service
@@ -915,20 +929,13 @@ def create_app(
                 await to_engine(app.state.org_runtime.start())
             except Exception as e:
                 logger.warning(f"OrgRuntime startup error (non-fatal): {e}")
-        # Sprint-5 unexpected-finding #2 (audit v5 §5.3): start the
-        # command watchdog so node LLM calls that run past the spec's
-        # ``watchdog_stuck_threshold_s`` (default 1800 s) get killed
-        # instead of burning tokens indefinitely. Failure here logs +
-        # continues -- the watchdog is opt-in operational armour, not
-        # required for correctness.
-        try:
-            cmd_svc = getattr(app.state, "org_command_service", None)
-            if cmd_svc is not None:
-                # Production defaults: 30 s poll, 1800 s threshold. Tests
-                # tweak via ``configure_watchdog`` before ``start_watchdog``.
-                cmd_svc.start_watchdog()
-        except Exception:
-            logger.warning("OrgCommandService watchdog start error", exc_info=True)
+        # Sprint-9 supervisor HTTP takeover: the legacy
+        # ``OrgCommandService.start_watchdog()`` wall-clock loop is
+        # gone. Stall detection is now LLM-evaluated by the
+        # supervisor's :class:`StallDetector` on
+        # :class:`ProgressLedger` signals, with the hard
+        # ``max_turns`` cap as the only wall-style guard. Nothing to
+        # start at boot.
 
         # Endpoint health check: detect stale/broken endpoints early
         try:
@@ -974,16 +981,18 @@ def create_app(
 
     @app.on_event("shutdown")
     async def _shutdown_org_runtime():
-        # Sprint-5 unexpected-finding #2: stop the watchdog *before*
-        # tearing down the runtime so the loop does not race to log a
-        # warning on a half-disposed lookup. Bounded by stop_watchdog's
-        # own ``timeout=2.0`` to never block shutdown for long.
+        # Sprint-9 supervisor takeover: close per-org sqlite
+        # checkpointers so the file handles are released cleanly. The
+        # legacy ``stop_watchdog()`` call is gone with the watchdog
+        # loop itself.
         try:
-            cmd_svc = getattr(app.state, "org_command_service", None)
-            if cmd_svc is not None:
-                await cmd_svc.stop_watchdog()
+            from openakita.runtime.supervisor_factory import (
+                aclose_all_checkpointers,
+            )
+
+            await aclose_all_checkpointers()
         except Exception:
-            logger.debug("OrgCommandService watchdog stop error", exc_info=True)
+            logger.debug("Supervisor checkpointer aclose error", exc_info=True)
         if hasattr(app.state, "org_runtime") and app.state.org_runtime:
             try:
                 from openakita.core.engine_bridge import to_engine

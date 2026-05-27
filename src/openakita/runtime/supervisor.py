@@ -212,21 +212,133 @@ class Supervisor:
         self.history: list[ProgressLedger] = []
         self.n_replans: int = 0
         self.last_checkpoint_id: str | None = None
+        # Sprint-9: set to True by :meth:`resume_from_checkpoint` so
+        # :meth:`run` skips the outer-loop setup and dives straight
+        # into the inner loop with restored history.
+        self._resumed: bool = False
 
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
 
     async def run(self) -> SupervisorOutcome:
-        """Drive the dual-ledger loop until a terminal outcome."""
-        await self._emit_lifecycle("started", {"task": self.task_ledger.task})
+        """Drive the dual-ledger loop until a terminal outcome.
+
+        Two execution modes:
+
+        * Fresh run (default): perform :meth:`_outer_loop_setup` to
+          extract facts + draft a plan via the brain, then enter the
+          inner loop.
+        * Resumed run: when :meth:`resume_from_checkpoint` has already
+          restored ``task_ledger.facts`` + ``task_ledger.plan`` from
+          a checkpoint, skip the outer-loop setup and re-enter the
+          inner loop. The brain's ``emit_progress_ledger`` receives
+          the full restored ``history`` on the first turn so the
+          decision-making continues exactly where it left off.
+        """
+        if self._resumed:
+            await self._emit_lifecycle(
+                "resumed",
+                {
+                    "task": self.task_ledger.task,
+                    "n_turns": self.stall_detector.n_turns,
+                    "n_replans": self.n_replans,
+                    "resumed_from": self.last_checkpoint_id,
+                },
+            )
+        else:
+            await self._emit_lifecycle("started", {"task": self.task_ledger.task})
         try:
-            await self._outer_loop_setup()
+            if not self._resumed:
+                await self._outer_loop_setup()
             return await self._inner_loop()
         except CancelledByToken as exc:
             return await self._terminate(
                 FinalOutcome.CANCELLED, exc.reason or "cancelled"
             )
+
+    # ------------------------------------------------------------------
+    # Resume from checkpoint (Sprint-9 HTTP-takeover continue_previous)
+    # ------------------------------------------------------------------
+
+    async def resume_from_checkpoint(self, checkpoint_id: str) -> Supervisor:
+        """Restore TaskLedger / history / stall counter from a stored checkpoint.
+
+        Loads ``self.checkpointer.aget(checkpoint_id)`` and, when the
+        checkpoint belongs to the same ``command_id`` (it must -- a
+        checkpoint stamped against a different command is a caller
+        bug, not a runtime recoverable condition), rehydrates:
+
+        * ``task_ledger.facts`` / ``task_ledger.plan`` /
+          ``task_ledger.revision``
+        * ``history`` of :class:`ProgressLedger` snapshots
+        * ``stall_detector`` counters (n_turns + n_stalls)
+        * ``n_replans``
+
+        Returns ``self`` so callers can chain ``await sup.resume_from_checkpoint(cid)``
+        with the subsequent ``await sup.run()``. Raises ``LookupError``
+        when the checkpoint does not exist, and ``ValueError`` when
+        it belongs to a different command.
+
+        Sprint-9 audit §9 item 5: when a caller asks for resume but
+        the checkpoint id is unknown, the higher-level dispatcher
+        (``OrgCommandService.submit`` ``continue_previous=true`` path)
+        is responsible for falling back to a fresh run with the
+        legacy ``_build_continue_content`` text concatenation. The
+        method here is intentionally strict so the upstream caller
+        sees the exact failure mode and decides the policy.
+        """
+        ck = await self.checkpointer.aget(checkpoint_id)
+        if ck is None:
+            raise LookupError(f"checkpoint {checkpoint_id!r} not found")
+        if ck.metadata.command_id != self.command_id:
+            raise ValueError(
+                f"checkpoint {checkpoint_id!r} belongs to command "
+                f"{ck.metadata.command_id!r}, not {self.command_id!r}"
+            )
+        state = ck.state or {}
+        ledger_blob = state.get("task_ledger") or {}
+        if isinstance(ledger_blob, dict):
+            self.task_ledger.facts = str(ledger_blob.get("facts") or self.task_ledger.facts)
+            self.task_ledger.plan = str(ledger_blob.get("plan") or self.task_ledger.plan)
+            rev = ledger_blob.get("revision")
+            if isinstance(rev, int):
+                self.task_ledger.revision = rev
+        history_blob = state.get("history") or []
+        restored: list[ProgressLedger] = []
+        for entry in history_blob:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                # Round-trip through parse_progress_ledger_json so the
+                # restored history goes through the same validation
+                # path live progress ledgers do; if a stored entry is
+                # malformed (would only happen if someone hand-edited
+                # the sqlite file) we drop it rather than crashing.
+                import json as _json
+
+                restored.append(
+                    parse_progress_ledger_json(
+                        _json.dumps(entry, ensure_ascii=False),
+                        turn_id=int(entry.get("turn_id") or len(restored) + 1),
+                    )
+                )
+            except ProgressLedgerParseError:
+                continue
+        self.history = restored
+        sd_blob = state.get("stall_detector") or {}
+        if isinstance(sd_blob, dict):
+            try:
+                self.stall_detector.n_turns = int(sd_blob.get("n_turns") or 0)
+                self.stall_detector.n_stalls = int(sd_blob.get("n_stalls") or 0)
+            except (TypeError, ValueError):
+                pass
+        replans = state.get("n_replans")
+        if isinstance(replans, int):
+            self.n_replans = replans
+        self.last_checkpoint_id = checkpoint_id
+        self._resumed = True
+        return self
 
     # ------------------------------------------------------------------
     # Outer loop — facts + plan

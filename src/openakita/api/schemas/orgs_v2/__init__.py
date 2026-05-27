@@ -12,7 +12,7 @@ layer separation), ADR-0012 (no shim under v1).
 
 from __future__ import annotations
 
-from .commands import CancelRequest, CommandSnapshot, CommandSubmit
+from .commands import CancelRequest, CommandRead, CommandSnapshot, CommandSubmit
 from .nodes import Node, NodeRegister, NodeStatus
 from .orgs import Org, OrgCreate, OrgPatch, OrgStatus
 from .projects import (
@@ -26,6 +26,7 @@ from .projects import (
 
 __all__ = [
     "CancelRequest",
+    "CommandRead",
     "CommandSnapshot",
     "CommandSubmit",
     "Node",
