@@ -1726,7 +1726,12 @@ class PluginManager:
         """
         return self._failed.pop(plugin_id, None) is not None
 
-    async def unload_all_plugins(self, *, per_plugin_timeout_s: float = 3.0) -> int:
+    async def unload_all_plugins(
+        self,
+        *,
+        per_plugin_timeout_s: float = 3.0,
+        max_concurrency: int = 8,
+    ) -> int:
         """Unload every loaded plugin, releasing per-plugin OS resources.
 
         Sprint 16 P0 (root cause of v32 ~13 s lifespan→exit hang):
@@ -1740,12 +1745,23 @@ class PluginManager:
         teardown for ~13 s in every v32 PHASEA run (see
         ``_v32_biz_e2e/_diagnostics_analysis.md``).
 
-        This method drives the existing ``unload_plugin`` loop, each
-        call wrapped in a per-plugin :func:`asyncio.wait_for` so one
-        plugin's hung ``on_unload`` cannot starve the others. The
-        order is the current ``_loaded`` insertion order reversed
-        (LIFO) so the most-recently-loaded plugin tears down first,
-        matching the natural dependency direction.
+        Sprint 16 P0 / v33 smoke iteration 1: serve-mode dev installs
+        ship 17+ plugins, and the slowest plugins (e.g. seedance-video,
+        ppt-maker, subtitle-craft) take 0.5–3.5 s each to drain their
+        own poll loops inside ``on_unload``. Sequential unload exceeded
+        the 8 s lifespan stage budget on round one — only 3/17 plugins
+        unloaded before the watchdog fired. This version unloads in
+        parallel under a small concurrency cap so the slow plugins
+        overlap with the fast ones; the cap (default 8) keeps the
+        event loop from being flooded by simultaneous GC passes /
+        sys.modules churn from 20+ plugins at once.
+
+        Each :meth:`unload_plugin` call is wrapped in a per-plugin
+        :func:`asyncio.wait_for` so one plugin's hung ``on_unload``
+        cannot starve the others. The seed iteration order is the
+        current ``_loaded`` insertion order reversed (LIFO) so the
+        most-recently-loaded plugin tears down first, matching the
+        natural dependency direction.
 
         Returns the number of plugins for which ``unload_plugin``
         returned ``True`` (i.e. did real work). Plugins that timed
@@ -1753,27 +1769,34 @@ class PluginManager:
         """
         plugin_ids = list(self._loaded.keys())
         plugin_ids.reverse()
-        unloaded = 0
-        for pid in plugin_ids:
-            try:
-                ok = await asyncio.wait_for(
-                    self.unload_plugin(pid), timeout=per_plugin_timeout_s
-                )
-                if ok:
-                    unloaded += 1
-            except TimeoutError:
-                logger.warning(
-                    "[Shutdown] Plugin '%s' unload exceeded %.1fs; abandoning to "
-                    "keep teardown moving (worker thread may stay alive but the "
-                    "force-exit watchdog will still bound the process exit).",
-                    pid,
-                    per_plugin_timeout_s,
-                )
-            except Exception as exc:  # noqa: BLE001 -- shutdown must never raise
-                logger.warning(
-                    "[Shutdown] Plugin '%s' unload failed: %s", pid, exc
-                )
-        return unloaded
+        if not plugin_ids:
+            return 0
+
+        sem = asyncio.Semaphore(max(1, int(max_concurrency)))
+
+        async def _one(pid: str) -> bool:
+            async with sem:
+                try:
+                    return await asyncio.wait_for(
+                        self.unload_plugin(pid), timeout=per_plugin_timeout_s
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "[Shutdown] Plugin '%s' unload exceeded %.1fs; abandoning to "
+                        "keep teardown moving (worker thread may stay alive but the "
+                        "force-exit watchdog will still bound the process exit).",
+                        pid,
+                        per_plugin_timeout_s,
+                    )
+                    return False
+                except Exception as exc:  # noqa: BLE001 -- shutdown must never raise
+                    logger.warning(
+                        "[Shutdown] Plugin '%s' unload failed: %s", pid, exc
+                    )
+                    return False
+
+        results = await asyncio.gather(*[_one(pid) for pid in plugin_ids])
+        return sum(1 for r in results if r)
 
     async def shutdown(self, *, unload_plugins: bool = True) -> None:
         """Release host-owned resources (loaded plugins + Asset Bus).
