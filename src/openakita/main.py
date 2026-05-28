@@ -1607,6 +1607,13 @@ def stop(
     会先走 graceful 路径，``settings.shutdown_force_exit_grace_s`` 秒后
     若仍未自退则强制 ``os._exit(0)``。
 
+    Sprint 15 / v32 Phase B 修法（取证见
+    ``_v32_biz/_phase_b_cli_trust_env.md``）：底层 ``httpx.Client`` 强制
+    ``trust_env=False``，禁用 ``HTTP_PROXY`` / ``HTTPS_PROXY`` /
+    ``ALL_PROXY`` 环境变量读取。开发机常装 v2ray / clash 把 127.0.0.1
+    也走代理，对死端口返回 503，导致 CLI 误判 ``unexpected status 503``
+    退 1；正确的 dead-backend 表现应是 exit=2 + ``no backend listening``。
+
     退出码：
         0  shutdown 信号已被后端接受（HTTP 200）
         1  HTTP 状态码非 200（401/403/5xx 等）
@@ -1616,7 +1623,13 @@ def stop(
 
     url = f"http://{host}:{port}/api/shutdown"
     try:
-        r = httpx.post(url, timeout=timeout)
+        # ``trust_env=False`` MUST be set on the Client (not just the
+        # call). httpx reads proxy / verify / cert env vars from the
+        # Client config; the module-level ``httpx.post()`` shortcut
+        # creates a transient Client whose ``trust_env`` defaults to
+        # True. Using an explicit Client closes that gap.
+        with httpx.Client(trust_env=False, timeout=timeout) as client:
+            r = client.post(url)
     except httpx.ConnectError:
         typer.echo(f"no backend listening on {host}:{port}", err=True)
         raise typer.Exit(2) from None
