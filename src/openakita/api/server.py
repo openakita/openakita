@@ -1409,6 +1409,115 @@ def create_app(
             logger.debug("[Startup] Frontend bundle freshness check skipped: %s", e)
 
     # ------------------------------------------------------------
+    # Sprint 16 P0: close aiosqlite connections held by loaded plugins.
+    # Forensics: ``_v32_biz_e2e/_diagnostics_analysis.md`` — every
+    # PHASEA round left 14 stale ``Thread-NN
+    # (_connection_worker_thread)`` alive (non-daemon, because
+    # aiosqlite.core.py:90 forgot ``daemon=True``), pinning Python's
+    # interpreter teardown for ~13 s and forcing the threading.Timer
+    # force-exit to fire 6/6 PHASEA + 8/8 UVICORN runs. Root cause:
+    # serve-mode shutdown never invoked ``agent.shutdown()`` /
+    # ``pm.unload_plugin(...)``, so plugin ``on_unload`` (which already
+    # contains ``await self._tm.close()``) never ran. Closing here
+    # joins each aiosqlite worker, dropping shutdown_to_exit_s from
+    # ~16.7 s → ≤10 s and demoting force-exit watchdog back to a
+    # pure safety net.
+    #
+    # Registered BEFORE diagnostics so the diagnostics dump can
+    # observe a clean thread set; registered AFTER the other
+    # @app.on_event("shutdown") handlers because plugins may still
+    # call into them during their own ``on_unload``.
+    # ------------------------------------------------------------
+    @app.on_event("shutdown")
+    async def _shutdown_plugin_aiosqlite_workers() -> None:
+        try:
+            from openakita.config import settings as _settings
+
+            stage_timeout = float(
+                getattr(_settings, "lifespan_stage_timeout_s", 8) or 8
+            )
+        except Exception:
+            stage_timeout = 8.0
+
+        agent_ref = getattr(app.state, "agent", None)
+        pm = getattr(agent_ref, "_plugin_manager", None) if agent_ref else None
+        if pm is None:
+            logger.debug(
+                "[Shutdown] No PluginManager on app.state.agent; "
+                "skipping plugin aiosqlite-worker close",
+            )
+            return
+
+        loaded_before = getattr(pm, "loaded_count", 0)
+        t0 = time.monotonic()
+        try:
+            await asyncio.wait_for(pm.shutdown(), timeout=stage_timeout)
+        except TimeoutError:
+            logger.warning(
+                "[Shutdown] PluginManager.shutdown exceeded %.1fs; "
+                "%d plugin(s) may still hold aiosqlite worker threads "
+                "(force-exit watchdog is the final fallback)",
+                stage_timeout,
+                loaded_before,
+            )
+        except Exception as exc:  # noqa: BLE001 -- shutdown must never raise
+            logger.warning(
+                "[Shutdown] PluginManager.shutdown raised: %s "
+                "(continuing teardown; force-exit watchdog will bound exit)",
+                exc,
+            )
+        else:
+            logger.info(
+                "[Shutdown] Plugin aiosqlite workers closed "
+                "(loaded_before=%d, elapsed=%.2fs)",
+                loaded_before,
+                time.monotonic() - t0,
+            )
+
+        # Defensive belt-and-suspenders: close the token_stats
+        # ``Database`` singleton (a lazy aiosqlite connection minted
+        # on first ``/api/stats/tokens/*`` call). Without this hook
+        # the singleton survives lifespan teardown and contributes
+        # one extra non-daemon ``_connection_worker_thread`` to the
+        # interpreter-teardown hang. Module-level helpers
+        # ``_reset_db`` / ``_db_instance`` already exist; we just
+        # had to start invoking them.
+        try:
+            from openakita.api.routes import token_stats as _token_stats
+
+            reset_fn = getattr(_token_stats, "_reset_db", None)
+            if callable(reset_fn) and getattr(_token_stats, "_db_instance", None) is not None:
+                await asyncio.wait_for(reset_fn(), timeout=3.0)
+                logger.info("[Shutdown] token_stats.Database singleton closed")
+        except TimeoutError:
+            logger.warning("[Shutdown] token_stats.Database close exceeded 3s")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[Shutdown] token_stats.Database close error: %s", exc)
+
+        # Also close any storage.Database instance that callers may
+        # have pinned to app.state under a conventional attribute
+        # name (forward-compat for future routes that own a long-
+        # lived Database).
+        for attr in ("storage_database", "_storage_database"):
+            db = getattr(app.state, attr, None)
+            if db is None:
+                continue
+            close_fn = getattr(db, "close", None)
+            if not callable(close_fn):
+                continue
+            try:
+                await asyncio.wait_for(close_fn(), timeout=3.0)
+                logger.info("[Shutdown] storage.Database (%s) closed", attr)
+            except TimeoutError:
+                logger.warning(
+                    "[Shutdown] storage.Database (%s) close exceeded 3s", attr
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "[Shutdown] storage.Database (%s) close error: %s", attr, exc
+                )
+
+    # ------------------------------------------------------------
     # Sprint 15 / v32 Phase B Task C: lifespan→process-exit hang RCA.
     # Registered LAST so it runs LAST in Starlette's FIFO shutdown
     # order, i.e. after every other shutdown handler has done its
