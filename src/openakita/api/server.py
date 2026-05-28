@@ -99,32 +99,107 @@ def is_port_free(host: str, port: int) -> bool:
             return False
 
 
-def _schedule_force_exit_after_grace(app: FastAPI) -> None:
-    """Sprint 14 / v31 Phase A: arm a last-resort ``os._exit(0)`` watchdog.
-
-    Background — Phase A graceful shutdown reproduced 6 / 6 times in
-    v23/v24/v26/v28/v29/v30 (see ``_v31_biz/_phase_a_shutdown_chain.md``):
-    setting ``shutdown_event`` is not enough when an IM adapter wedges
-    cooperative cancellation. The graceful path *should* succeed
-    (Sprint 14 stage 1 made gateway.stop() concurrent + per-adapter
-    bounded), but we still want a hard ceiling so users never need
-    ``Stop-Process`` again.
-
-    Behaviour:
-      * Reads ``settings.shutdown_force_exit_grace_s`` (default 15s).
-      * ``0`` disables the safety net entirely (log only).
-      * Idempotent: only one task is armed per process; subsequent
-        ``/api/shutdown`` calls are a no-op.
-      * Exits via ``os._exit(0)`` so atexit handlers / sys.exit traps
-        cannot block.
-    """
+def _resolve_force_exit_grace_s() -> int:
+    """Read ``shutdown_force_exit_grace_s`` from settings with a safe fallback."""
     try:
         from openakita.config import settings
 
-        grace_s = int(getattr(settings, "shutdown_force_exit_grace_s", 15) or 0)
+        return int(getattr(settings, "shutdown_force_exit_grace_s", 15) or 0)
     except Exception:
-        grace_s = 15
+        return 15
 
+
+def _do_force_exit(grace_s: int) -> None:
+    """Last-mile body of the force-exit watchdog (mechanism-agnostic).
+
+    Extracted so both the threading and the legacy asyncio paths share
+    one place that flushes logs and pulls the plug. Tests patch
+    ``openakita.api.server.os._exit`` and intercept the call here.
+    """
+    logger.error(
+        "[Shutdown] Graceful shutdown exceeded %ss grace window; "
+        "forcing os._exit(0). See _v32_biz/_phase_b_watchdog_redesign.md.",
+        grace_s,
+    )
+    try:
+        for h in logging.getLogger().handlers:
+            with contextlib.suppress(Exception):
+                h.flush()
+    finally:
+        os._exit(0)
+
+
+def _arm_force_exit_watchdog_sync(app: FastAPI) -> None:
+    """Sprint 15 / v32 Phase B: ``threading.Timer`` force-exit safety net.
+
+    Why this exists — see ``_v32_biz/_phase_b_watchdog_redesign.md``.
+    v31 ``_arm_force_exit_watchdog_async`` registered the watchdog with
+    ``asyncio.create_task``. uvicorn's lifespan teardown cancels every
+    pending asyncio task, so ``await asyncio.sleep(grace_s)`` raised
+    ``CancelledError`` long before the grace window elapsed: v31 PHASEA
+    runs saw 4/4 ``Force-exit safety net armed`` but 0/4 ``forcing
+    os._exit(0)``.
+
+    ``threading.Timer`` is a plain Thread that sleeps in its own OS
+    timer; uvicorn's asyncio teardown has no handle on it, so the
+    timer fires on schedule even after the lifespan loop is gone.
+
+    Design notes:
+      * Intentionally *NOT* cancelled when graceful shutdown succeeds.
+        If the process has already exited when the timer fires, the
+        callback never runs (Python has reaped the interpreter); if
+        graceful is hung, the timer is the only escape hatch. The
+        wasted ~15s of idle Thread sleep is cheap.
+      * Daemon thread, so it never *itself* blocks process exit on the
+        happy path.
+      * Idempotent against the ``app.state._force_exit_task`` attribute
+        the v31 code already pinned (multi-tab /api/shutdown safety).
+    """
+    grace_s = _resolve_force_exit_grace_s()
+    if grace_s <= 0:
+        logger.warning(
+            "[Shutdown] Force-exit safety net disabled (grace_s=%s); "
+            "graceful path must complete on its own.",
+            grace_s,
+        )
+        return
+
+    if getattr(app.state, "_force_exit_task", None) is not None:
+        logger.debug(
+            "[Shutdown] Force-exit safety net already armed; skipping duplicate"
+        )
+        return
+
+    try:
+        import threading
+
+        def _fire() -> None:
+            _do_force_exit(grace_s)
+
+        timer = threading.Timer(float(grace_s), _fire)
+        timer.name = "openakita-force-exit-watchdog"
+        timer.daemon = True
+        timer.start()
+        app.state._force_exit_task = timer
+        app.state._force_exit_mechanism = "threading.Timer"
+        logger.info(
+            "[Shutdown] Force-exit safety net armed (grace=%ss, "
+            "mechanism=threading.Timer); graceful path runs first.",
+            grace_s,
+        )
+    except Exception as exc:  # noqa: BLE001 -- never break the shutdown route
+        logger.warning(
+            "[Shutdown] Failed to arm threading force-exit safety net: %s", exc
+        )
+
+
+def _arm_force_exit_watchdog_async(app: FastAPI) -> None:
+    """Legacy v31 asyncio-based watchdog. **Known broken** under uvicorn
+    lifespan teardown — kept solely as a rollback path behind
+    ``settings.shutdown_force_exit_use_threading=False``. Do not call
+    directly from production code paths.
+    """
+    grace_s = _resolve_force_exit_grace_s()
     if grace_s <= 0:
         logger.warning(
             "[Shutdown] Force-exit safety net disabled (grace_s=%s); "
@@ -144,36 +219,48 @@ def _schedule_force_exit_after_grace(app: FastAPI) -> None:
             await asyncio.sleep(grace_s)
         except asyncio.CancelledError:
             return
-        # If we got here, ``shutdown_event.set()`` plus the lifespan path
-        # did not bring the process down within the grace window. Logs
-        # have already been flushed by the running handlers; the audit
-        # writer + reconcile loop have either stopped or exceeded their
-        # own bounded timeouts. Pull the plug.
-        logger.error(
-            "[Shutdown] Graceful shutdown exceeded %ss grace window; "
-            "forcing os._exit(0). See _v31_biz/_phase_a_*.md.",
-            grace_s,
-        )
-        try:
-            for h in logging.getLogger().handlers:
-                with contextlib.suppress(Exception):
-                    h.flush()
-        finally:
-            os._exit(0)
+        _do_force_exit(grace_s)
 
     try:
         loop = asyncio.get_event_loop()
         task = loop.create_task(_force_exit(), name="openakita-force-exit-watchdog")
         app.state._force_exit_task = task
+        app.state._force_exit_mechanism = "asyncio.Task"
         logger.info(
-            "[Shutdown] Force-exit safety net armed (grace=%ss); "
-            "graceful path runs first.",
+            "[Shutdown] Force-exit safety net armed (grace=%ss, "
+            "mechanism=asyncio.Task [legacy]); graceful path runs first.",
             grace_s,
         )
     except Exception as exc:  # noqa: BLE001 -- never break the shutdown route
         logger.warning(
-            "[Shutdown] Failed to arm force-exit safety net: %s", exc
+            "[Shutdown] Failed to arm asyncio force-exit safety net: %s", exc
         )
+
+
+def _schedule_force_exit_after_grace(app: FastAPI) -> None:
+    """Public entry: arm a last-resort ``os._exit(0)`` watchdog.
+
+    Dispatches to ``_arm_force_exit_watchdog_sync`` (threading.Timer,
+    default) or ``_arm_force_exit_watchdog_async`` (legacy asyncio) based
+    on ``settings.shutdown_force_exit_use_threading``.
+
+    Why dispatch instead of hard-coding the new mechanism: the
+    rollback knob lets operators flip back to the v31 behaviour if a
+    fresh threading regression ever surfaces, without redeploying.
+    """
+    try:
+        from openakita.config import settings
+
+        use_threading = bool(
+            getattr(settings, "shutdown_force_exit_use_threading", True)
+        )
+    except Exception:
+        use_threading = True
+
+    if use_threading:
+        _arm_force_exit_watchdog_sync(app)
+    else:
+        _arm_force_exit_watchdog_async(app)
 
 
 def wait_for_port_free(host: str, port: int, timeout: float = 30.0) -> bool:

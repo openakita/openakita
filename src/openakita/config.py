@@ -71,6 +71,16 @@ class Settings(BaseSettings):
             "0 表示禁用兜底（仅用于诊断；生产不建议）。默认 15s。"
         ),
     )
+    shutdown_force_exit_use_threading: bool = Field(
+        default=True,
+        description=(
+            "Sprint 15 / v32 Phase B 修法：True 用 threading.Timer 实现 force-exit watchdog"
+            "（不受 uvicorn lifespan teardown 取消影响）；False 回退到 v31 的 asyncio.Task"
+            "实现（已知会被 lifespan 提前取消，4/4 PHASEA 轮 armed 但 0/4 fired）。"
+            "仅当 threading 路径在生产环境出现回归时再切到 False，详见"
+            "_v32_biz/_phase_b_watchdog_redesign.md。"
+        ),
+    )
     lifespan_stage_timeout_s: int = Field(
         default=8,
         ge=1,

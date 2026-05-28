@@ -1,34 +1,40 @@
-"""Sprint 14 / v31 Phase A regression: ``POST /api/shutdown`` must
-return immediately AND arm an ``os._exit(0)`` safety net so a wedged
-graceful path can no longer pin the process for 13~20 s.
+"""Sprint 14 / v31 Phase A + Sprint 15 / v32 Phase B regression:
+``POST /api/shutdown`` must return immediately AND arm an ``os._exit(0)``
+safety net so a wedged graceful path can no longer pin the process for
+13~20 s.
 
-Forensic background — see ``_v31_biz/_phase_a_shutdown_chain.md``:
+Forensic background — see ``_v31_biz_e2e/_phase_a_post_fix_forensics.md``
+and ``_v32_biz/_phase_b_watchdog_redesign.md``:
 
 * v23/v24/v26/v28/v29/v30 reproduced ``POST /api/shutdown`` returning
   200 but the process never self-exiting in time, forcing a manual
   ``Stop-Process`` every regression.
-* The route now schedules a background task that ``os._exit(0)``s
-  after ``settings.shutdown_force_exit_grace_s`` seconds when graceful
-  shutdown does not complete on its own.
+* v31 added an ``asyncio.create_task`` watchdog; it ARMED in 4/4 runs
+  but FIRED in 0/4 because uvicorn lifespan teardown cancels every
+  pending asyncio task.
+* v32 (this commit) replaces the watchdog with ``threading.Timer``
+  which has no asyncio handle and survives lifespan teardown.
 
-These tests pin three guarantees:
+These tests pin three route-level guarantees:
 
 1. ``POST /api/shutdown`` returns 200 ``shutting_down`` quickly.
 2. The route arms the force-exit watchdog (visible on ``app.state``).
-3. The watchdog actually fires after the grace window, calling
-   ``os._exit(0)`` (mocked).
+3. ``shutdown_force_exit_grace_s = 0`` disables the safety net.
+
+Threading vs. legacy-asyncio mechanism-level tests live in
+``test_force_exit_watchdog_threading.py`` so this file stays focused on
+the HTTP route contract.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from openakita.api.server import _schedule_force_exit_after_grace, create_app
+from openakita.api.server import create_app
 
 
 @pytest.fixture
@@ -48,8 +54,16 @@ def shutdown_app(monkeypatch: pytest.MonkeyPatch) -> TestClient:
        handler 403s non-localhost callers. Setting ``TRUST_PROXY=1`` plus
        a ``X-Forwarded-For: 127.0.0.1`` header makes ``get_client_ip``
        resolve to localhost without hard-coding test plumbing into prod.
+
+    Sprint 15 / v32 Phase B defence-in-depth: ``os._exit`` is patched
+    inside this fixture so a regression where a test arms the
+    threading.Timer watchdog and forgets to cancel it cannot kill the
+    pytest process partway through the suite (we hit exactly that
+    failure during v32 fixture porting; see
+    ``_v32_biz/_phase_b_watchdog_redesign.md``).
     """
     monkeypatch.setenv("TRUST_PROXY", "1")
+    monkeypatch.setattr("openakita.api.server.os._exit", lambda code=0: None)
     shutdown_event = asyncio.Event()
     app = create_app(shutdown_event=shutdown_event)
     token = app.state.web_access_config.create_access_token()
@@ -64,53 +78,81 @@ def shutdown_app(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         yield client
     finally:
         client.close()
+        # Belt-and-braces: cancel any timer left armed by the test so
+        # the daemon thread does not linger past the suite.
+        task = getattr(app.state, "_force_exit_task", None)
+        cancel = getattr(task, "cancel", None) if task is not None else None
+        if callable(cancel):
+            cancel()
 
 
 def test_shutdown_endpoint_returns_immediately(
     shutdown_app: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """POST /api/shutdown must respond ≤ 500ms even with the grace
-    watchdog armed (the watchdog does not await; it just creates a task).
+    """POST /api/shutdown must respond ≤ 500ms with the grace watchdog
+    armed (arming is just a ``threading.Timer.start`` — no await).
     """
-    # Use a tiny grace so a misbehaving fixture cannot leave a running
-    # task lying around in the background loop after the test exits.
+    # Use a long grace so the timer cannot fire mid-suite. v32's
+    # threading.Timer is **intentionally non-cancellable on the
+    # graceful path** — see ``_arm_force_exit_watchdog_sync`` docstring.
+    # Tests cannot rely on the asyncio-cancel-on-teardown side effect
+    # the v31 implementation had; we MUST explicitly cancel the
+    # ``threading.Timer`` in ``finally`` so it does not later fire
+    # ``os._exit(0)`` and silently kill the whole pytest process.
     monkeypatch.setattr(
-        "openakita.config.settings.shutdown_force_exit_grace_s", 5, raising=False
+        "openakita.config.settings.shutdown_force_exit_grace_s", 30, raising=False
     )
 
-    started = time.monotonic()
-    response = shutdown_app.post("/api/shutdown")
-    elapsed = time.monotonic() - started
+    app = shutdown_app.app  # type: ignore[attr-defined]
+    try:
+        started = time.monotonic()
+        response = shutdown_app.post("/api/shutdown")
+        elapsed = time.monotonic() - started
 
-    assert response.status_code == 200, response.text
-    assert response.json() == {"status": "shutting_down"}
-    assert elapsed < 0.5, f"shutdown response took {elapsed:.3f}s (expected <0.5s)"
+        assert response.status_code == 200, response.text
+        assert response.json() == {"status": "shutting_down"}
+        assert elapsed < 0.5, f"shutdown response took {elapsed:.3f}s (expected <0.5s)"
+    finally:
+        task = getattr(app.state, "_force_exit_task", None)
+        cancel = getattr(task, "cancel", None) if task is not None else None
+        if callable(cancel):
+            cancel()
 
 
 def test_shutdown_endpoint_arms_force_exit_watchdog(
     shutdown_app: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The route must schedule a force-exit task on the app event loop.
+    """The route must arm the force-exit watchdog on ``app.state``.
 
     ``app.state._force_exit_task`` is set by
     :func:`_schedule_force_exit_after_grace` and is the load-bearing
-    handle the second-`/api/shutdown` idempotency check uses.
+    handle the second-`/api/shutdown` idempotency check uses. Under the
+    v32 threading default it holds a ``threading.Timer``; under the
+    legacy asyncio path it holds an ``asyncio.Task``. This test asserts
+    only that it is set — mechanism-specific asserts live in
+    ``test_force_exit_watchdog_threading.py``.
 
-    Note: TestClient runs each request on a per-request asyncio loop;
-    the task is cancelled when the loop tears down. We therefore only
-    assert the task was *armed* (attribute set on app.state), not that
-    it is still pending — the production loop is long-lived.
+    A long grace (30s) keeps the timer pending past test teardown; we
+    cancel it explicitly in ``finally`` so the test process does not
+    end up holding a stray daemon thread sleeping for 30s after the
+    suite finishes.
     """
     monkeypatch.setattr(
         "openakita.config.settings.shutdown_force_exit_grace_s", 30, raising=False
     )
 
-    response = shutdown_app.post("/api/shutdown")
-    assert response.status_code == 200, response.text
-
     app = shutdown_app.app  # type: ignore[attr-defined]
-    task = getattr(app.state, "_force_exit_task", None)
-    assert task is not None, "force-exit watchdog should be armed"
+    try:
+        response = shutdown_app.post("/api/shutdown")
+        assert response.status_code == 200, response.text
+
+        task = getattr(app.state, "_force_exit_task", None)
+        assert task is not None, "force-exit watchdog should be armed"
+    finally:
+        task = getattr(app.state, "_force_exit_task", None)
+        cancel = getattr(task, "cancel", None) if task is not None else None
+        if callable(cancel):
+            cancel()
 
 
 def test_shutdown_endpoint_disabled_when_grace_zero(
@@ -126,68 +168,8 @@ def test_shutdown_endpoint_disabled_when_grace_zero(
         "openakita.config.settings.shutdown_force_exit_grace_s", 0, raising=False
     )
 
-    # Re-create the app so the new setting is read on first call.
     response = shutdown_app.post("/api/shutdown")
     assert response.status_code == 200, response.text
 
     app = shutdown_app.app  # type: ignore[attr-defined]
     assert getattr(app.state, "_force_exit_task", None) is None
-
-
-@pytest.mark.asyncio
-async def test_force_exit_watchdog_calls_os_exit_after_grace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The scheduled background task must call ``os._exit(0)`` after the
-    grace window. We mock ``os._exit`` so the test process does not die.
-
-    Implementation detail: we drive the watchdog directly here instead of
-    going through the HTTP path because TestClient runs the route on a
-    private loop that closes when the request finishes — the background
-    task gets cancelled before it can fire.
-    """
-    fake_app = MagicMock()
-    fake_app.state = type("S", (), {})()  # plain attribute container
-
-    monkeypatch.setattr(
-        "openakita.config.settings.shutdown_force_exit_grace_s", 1, raising=False
-    )
-
-    with patch("openakita.api.server.os._exit") as exit_mock:
-        _schedule_force_exit_after_grace(fake_app)
-        task = fake_app.state._force_exit_task
-        assert task is not None
-        # Wait long enough for the 1s grace + a small slack.
-        await asyncio.wait_for(task, timeout=3.0)
-        exit_mock.assert_called_once_with(0)
-
-
-@pytest.mark.asyncio
-async def test_force_exit_watchdog_is_idempotent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A second call must not arm a second watchdog.
-
-    Multi-tab Setup Center users can hit the shutdown button twice; the
-    duplicate must be a no-op so we don't end up with two os._exit racers.
-    """
-    fake_app = MagicMock()
-    fake_app.state = type("S", (), {})()
-
-    monkeypatch.setattr(
-        "openakita.config.settings.shutdown_force_exit_grace_s", 30, raising=False
-    )
-
-    _schedule_force_exit_after_grace(fake_app)
-    first_task = fake_app.state._force_exit_task
-    assert first_task is not None
-
-    _schedule_force_exit_after_grace(fake_app)
-    second_task = fake_app.state._force_exit_task
-    assert second_task is first_task, "duplicate /api/shutdown must reuse watchdog"
-
-    first_task.cancel()
-    try:
-        await first_task
-    except asyncio.CancelledError:
-        pass
