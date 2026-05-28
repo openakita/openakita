@@ -256,6 +256,16 @@ def build_supervisor_for_command(
         org_id=org_id, command_id=command_id, executor=executor
     )
 
+    # v22 RCA RC-4: bridge ``cancel_token`` -> ``asyncio.Event`` at the
+    # composition root so the bridge is established even before
+    # :meth:`Supervisor.run` is awaited. The supervisor passes the
+    # event down through :class:`SupervisorBrain` to the LLM client's
+    # ``_race_with_cancel`` wrapper; that lets a user-issued cancel
+    # abort an in-flight ``httpx`` request immediately instead of
+    # waiting for the historical 5s drain budget to expire.
+    cancel_event = asyncio.Event()
+    resolved_token.add_callback(cancel_event.set)
+
     return Supervisor(
         command_id=command_id,
         org_id=org_id,
@@ -266,6 +276,7 @@ def build_supervisor_for_command(
         stream=resolved_stream,
         checkpointer=resolved_checkpointer,
         cancel_token=resolved_token,
+        cancel_event=cancel_event,
         max_stalls=max_stalls,
         max_turns=max_turns,
         max_replans=max_replans,

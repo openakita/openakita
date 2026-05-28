@@ -32,6 +32,7 @@ rewrite.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -55,10 +56,21 @@ class DegenerateSupervisorBrain(SupervisorBrain):
     ) -> None:
         self.ack_text = ack_text
 
-    async def extract_facts(self, *, task: str) -> str:
+    async def extract_facts(
+        self,
+        *,
+        task: str,
+        cancel_event: asyncio.Event | None = None,  # noqa: ARG002 -- protocol shape
+    ) -> str:
         return f"User asked: {task[:200]}"
 
-    async def draft_plan(self, *, task: str, facts: str) -> str:
+    async def draft_plan(
+        self,
+        *,
+        task: str,
+        facts: str,
+        cancel_event: asyncio.Event | None = None,  # noqa: ARG002 -- protocol shape
+    ) -> str:
         return "1. acknowledge the message and stop."
 
     async def emit_progress_ledger(
@@ -68,6 +80,7 @@ class DegenerateSupervisorBrain(SupervisorBrain):
         facts: str,
         plan: str,
         history: list[ProgressLedger],
+        cancel_event: asyncio.Event | None = None,  # noqa: ARG002 -- protocol shape
     ) -> str:
         payload: dict[str, Any] = {
             "is_request_satisfied":    {"answer": True,  "reason": self.ack_text},
@@ -116,10 +129,21 @@ class PassThroughSupervisorBrain(SupervisorBrain):
         self.root_node_id = root_node_id
         self.max_passthrough_turns = max(1, int(max_passthrough_turns))
 
-    async def extract_facts(self, *, task: str) -> str:
+    async def extract_facts(
+        self,
+        *,
+        task: str,
+        cancel_event: asyncio.Event | None = None,  # noqa: ARG002 -- protocol shape
+    ) -> str:
         return f"User asked: {task[:1000]}"
 
-    async def draft_plan(self, *, task: str, facts: str) -> str:
+    async def draft_plan(
+        self,
+        *,
+        task: str,
+        facts: str,
+        cancel_event: asyncio.Event | None = None,  # noqa: ARG002 -- protocol shape
+    ) -> str:
         return (
             f"1. Delegate the verbatim task to root node `{self.root_node_id}`.\n"
             "2. Wait for its DelegationResult.\n"
@@ -133,6 +157,7 @@ class PassThroughSupervisorBrain(SupervisorBrain):
         facts: str,
         plan: str,
         history: list[ProgressLedger],
+        cancel_event: asyncio.Event | None = None,  # noqa: ARG002 -- protocol shape
     ) -> str:
         turn_index = len(history)
         if turn_index == 0:

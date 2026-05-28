@@ -70,13 +70,13 @@ class FakeBrain(SupervisorBrain):
         self.plan_calls = 0
         self.progress_calls = 0
 
-    async def extract_facts(self, *, task: str) -> str:
+    async def extract_facts(self, *, task: str, **_kwargs) -> str:
         self.facts_calls += 1
         if callable(self._facts):
             return self._facts(self.facts_calls)
         return self._facts
 
-    async def draft_plan(self, *, task: str, facts: str) -> str:
+    async def draft_plan(self, *, task: str, facts: str, **_kwargs) -> str:
         self.plan_calls += 1
         if callable(self._plan):
             return self._plan(self.plan_calls)
@@ -89,6 +89,7 @@ class FakeBrain(SupervisorBrain):
         facts: str,
         plan: str,
         history: list[ProgressLedger],
+        **_kwargs,
     ) -> str:
         self.progress_calls += 1
         if not self._progress:

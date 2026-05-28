@@ -75,10 +75,10 @@ class FakeSupervisorBrain(SupervisorBrain):
     def __init__(self, *, ledgers: list[str]) -> None:
         self._ledgers = list(ledgers)
 
-    async def extract_facts(self, *, task: str) -> str:
+    async def extract_facts(self, *, task: str, **_kwargs: object) -> str:
         return f"task is: {task}"
 
-    async def draft_plan(self, *, task: str, facts: str) -> str:
+    async def draft_plan(self, *, task: str, facts: str, **_kwargs: object) -> str:
         return "1. storyboard 2. image 3. video"
 
     async def emit_progress_ledger(
@@ -88,6 +88,7 @@ class FakeSupervisorBrain(SupervisorBrain):
         facts: str,
         plan: str,
         history: list[ProgressLedger],
+        **_kwargs: object,
     ) -> str:
         return self._ledgers.pop(0)
 

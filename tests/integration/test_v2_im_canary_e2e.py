@@ -63,10 +63,10 @@ class _SatisfyingBrain(SupervisorBrain):
     def __init__(self) -> None:
         self.progress_calls = 0
 
-    async def extract_facts(self, *, task: str) -> str:
+    async def extract_facts(self, *, task: str, **_kw: Any) -> str:
         return f"facts: {task[:50]}"
 
-    async def draft_plan(self, *, task: str, facts: str) -> str:
+    async def draft_plan(self, *, task: str, facts: str, **_kw: Any) -> str:
         return "acknowledge"
 
     async def emit_progress_ledger(self, **kw: Any) -> str:
@@ -82,10 +82,10 @@ class _SatisfyingBrain(SupervisorBrain):
 
 
 class _CancellingBrain(SupervisorBrain):
-    async def extract_facts(self, *, task: str) -> str:
+    async def extract_facts(self, *, task: str, **_kw: Any) -> str:
         raise CancelledByToken("user_cancel_via_im")
 
-    async def draft_plan(self, *, task: str, facts: str) -> str:  # pragma: no cover
+    async def draft_plan(self, *, task: str, facts: str, **_kw: Any) -> str:  # pragma: no cover
         raise AssertionError
 
     async def emit_progress_ledger(self, **kw: Any) -> str:  # pragma: no cover

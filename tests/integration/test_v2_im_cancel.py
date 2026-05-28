@@ -92,10 +92,10 @@ async def test_cancel_v2_dispatch_swallows_token_raise() -> None:
 
 
 class _CancellingBrain(SupervisorBrain):
-    async def extract_facts(self, *, task: str) -> str:
+    async def extract_facts(self, *, task: str, **_kwargs: Any) -> str:
         raise CancelledByToken("user_cancel_via_im")
 
-    async def draft_plan(self, *, task: str, facts: str) -> str:  # pragma: no cover
+    async def draft_plan(self, *, task: str, facts: str, **_kwargs: Any) -> str:  # pragma: no cover
         raise AssertionError
 
     async def emit_progress_ledger(self, **kwargs: Any) -> str:  # pragma: no cover

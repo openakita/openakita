@@ -929,10 +929,20 @@ class OrgCommandService:
         task = self._inflight_tasks.get(command_id)
         if task is None or task.done():
             return
+        # v22 RCA RC-4: pre-bridge cancel_token->httpx the inner ``task``
+        # would have stalled inside ``await provider.chat(...)`` for the
+        # full LLM latency (often >>5s), and we wrapped it in
+        # ``asyncio.shield`` so the surrounding ``wait_for`` could not
+        # nudge it. Now ``cancel_token.cancel()`` flips an
+        # ``asyncio.Event`` that races the in-flight ``httpx`` request,
+        # so the task terminates naturally within a few hundred ms of
+        # the cancel. Drop the shield and let ``wait_for`` cancel the
+        # task itself as the timeout fallback -- the shield is no
+        # longer load-bearing and removing it shortens force-cancel
+        # paths that the bridge cannot recover (e.g. node-level CPU
+        # spins between brain calls).
         try:
-            await asyncio.wait_for(
-                asyncio.shield(task), timeout=max(0.1, effective_timeout)
-            )
+            await asyncio.wait_for(task, timeout=max(0.1, effective_timeout))
         except TimeoutError:
             logger.warning(
                 "[OrgCmd] supervisor drain timed out after %.1fs; force-cancelling cid=%s",

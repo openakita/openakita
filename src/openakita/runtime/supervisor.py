@@ -14,6 +14,7 @@ under deterministic inputs.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -128,12 +129,40 @@ class SupervisorBrain(Protocol):
 
     Three async methods. Implementations route to whichever provider /
     model the runtime configures; the supervisor never knows.
+
+    v22 RCA RC-4: each method accepts an optional ``cancel_event``
+    that the supervisor bridges from its
+    :class:`~openakita.runtime.cancel_token.CancellationToken`.
+    Implementations forward the event to the underlying LLM client
+    (e.g. ``Brain.messages_create_async(cancel_event=...)``) so an
+    in-flight ``httpx`` request can be aborted the instant
+    ``cancel_token.cancel()`` fires -- without the historical 5s
+    drain timeout. Stub / pass-through brains may ignore the
+    argument; the default ``None`` keeps the protocol backward
+    compatible with existing implementations.
     """
 
-    async def extract_facts(self, *, task: str) -> str: ...
-    async def draft_plan(self, *, task: str, facts: str) -> str: ...
+    async def extract_facts(
+        self,
+        *,
+        task: str,
+        cancel_event: asyncio.Event | None = None,
+    ) -> str: ...
+    async def draft_plan(
+        self,
+        *,
+        task: str,
+        facts: str,
+        cancel_event: asyncio.Event | None = None,
+    ) -> str: ...
     async def emit_progress_ledger(
-        self, *, task: str, facts: str, plan: str, history: list[ProgressLedger]
+        self,
+        *,
+        task: str,
+        facts: str,
+        plan: str,
+        history: list[ProgressLedger],
+        cancel_event: asyncio.Event | None = None,
     ) -> str:  # raw JSON
         ...
 
@@ -182,6 +211,7 @@ class Supervisor:
         stream: StreamBus,
         checkpointer: BaseCheckpointer,
         cancel_token: CancellationToken | None = None,
+        cancel_event: asyncio.Event | None = None,
         max_stalls: int = 3,
         max_turns: int = 30,
         max_replans: int = 5,
@@ -200,6 +230,18 @@ class Supervisor:
         self.stream = stream
         self.checkpointer = checkpointer
         self.cancel_token = cancel_token or CancellationToken()
+        # v22 RCA RC-4: bridge the (thread-safe) ``CancellationToken``
+        # onto an ``asyncio.Event`` so brain implementations can race
+        # the event against an in-flight ``httpx`` request and abort
+        # the moment ``cancel_token.cancel()`` fires. When the caller
+        # (production: :func:`supervisor_factory.build_supervisor_for_command`)
+        # already wired the bridge we honour it as-is; otherwise we
+        # mint one here and attach the callback so a fresh
+        # ``Supervisor()`` is functional in tests too.
+        if cancel_event is None:
+            cancel_event = asyncio.Event()
+            self.cancel_token.add_callback(cancel_event.set)
+        self._cancel_event = cancel_event
         self.cfg = _SupervisorConfig(
             max_stalls=max_stalls,
             max_turns=max_turns,
@@ -346,9 +388,16 @@ class Supervisor:
 
     async def _outer_loop_setup(self) -> None:
         self.cancel_token.raise_if_cancelled()
-        facts = await self.brain.extract_facts(task=self.task_ledger.task)
+        facts = await self.brain.extract_facts(
+            task=self.task_ledger.task,
+            cancel_event=self._cancel_event,
+        )
         self.cancel_token.raise_if_cancelled()
-        plan = await self.brain.draft_plan(task=self.task_ledger.task, facts=facts)
+        plan = await self.brain.draft_plan(
+            task=self.task_ledger.task,
+            facts=facts,
+            cancel_event=self._cancel_event,
+        )
         self.task_ledger.facts = facts
         self.task_ledger.plan = plan
         self.task_ledger.updated_at = datetime.now(UTC)
@@ -369,10 +418,15 @@ class Supervisor:
         self.n_replans += 1
         await self._emit_lifecycle("replanning", {"reason": reason, "n_replans": self.n_replans})
         self.cancel_token.raise_if_cancelled()
-        new_facts = await self.brain.extract_facts(task=self.task_ledger.task)
+        new_facts = await self.brain.extract_facts(
+            task=self.task_ledger.task,
+            cancel_event=self._cancel_event,
+        )
         self.cancel_token.raise_if_cancelled()
         new_plan = await self.brain.draft_plan(
-            task=self.task_ledger.task, facts=new_facts
+            task=self.task_ledger.task,
+            facts=new_facts,
+            cancel_event=self._cancel_event,
         )
         self.task_ledger.revise(new_facts=new_facts, new_plan=new_plan)
         self.stall_detector.reset_after_replan()
@@ -488,6 +542,7 @@ class Supervisor:
                 facts=self.task_ledger.facts,
                 plan=self.task_ledger.plan,
                 history=list(self.history),
+                cancel_event=self._cancel_event,
             )
             try:
                 return parse_progress_ledger_json(

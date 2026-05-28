@@ -41,11 +41,11 @@ class _OneShotBrain(SupervisorBrain):
     def __init__(self) -> None:
         self.facts_calls = self.plan_calls = self.progress_calls = 0
 
-    async def extract_facts(self, *, task: str) -> str:
+    async def extract_facts(self, *, task: str, **_kwargs: Any) -> str:
         self.facts_calls += 1
         return "facts"
 
-    async def draft_plan(self, *, task: str, facts: str) -> str:
+    async def draft_plan(self, *, task: str, facts: str, **_kwargs: Any) -> str:
         self.plan_calls += 1
         return "plan"
 
@@ -55,10 +55,10 @@ class _OneShotBrain(SupervisorBrain):
 
 
 class _CancellingBrain(SupervisorBrain):
-    async def extract_facts(self, *, task: str) -> str:
+    async def extract_facts(self, *, task: str, **_kwargs: Any) -> str:
         raise CancelledByToken("user_cancel_via_im")
 
-    async def draft_plan(self, *, task: str, facts: str) -> str:  # pragma: no cover
+    async def draft_plan(self, *, task: str, facts: str, **_kwargs: Any) -> str:  # pragma: no cover
         raise AssertionError
 
     async def emit_progress_ledger(self, **kwargs: Any) -> str:  # pragma: no cover
@@ -66,10 +66,10 @@ class _CancellingBrain(SupervisorBrain):
 
 
 class _ExplodingBrain(SupervisorBrain):
-    async def extract_facts(self, *, task: str) -> str:
+    async def extract_facts(self, *, task: str, **_kwargs: Any) -> str:
         raise RuntimeError("brain misbehaved")
 
-    async def draft_plan(self, *, task: str, facts: str) -> str:  # pragma: no cover
+    async def draft_plan(self, *, task: str, facts: str, **_kwargs: Any) -> str:  # pragma: no cover
         raise AssertionError
 
     async def emit_progress_ledger(self, **kwargs: Any) -> str:  # pragma: no cover
