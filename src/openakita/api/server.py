@@ -432,10 +432,21 @@ def create_app(
     from openakita.orgs._runtime_templates import ensure_builtin_templates
     from openakita.orgs.manager import OrgManager
     from openakita.orgs.runtime import OrgRuntime, _InMemoryEventBus
+    from openakita.orgs.store import set_default_org_manager
 
     org_manager = OrgManager(data_dir)
     ensure_builtin_templates(data_dir / "org_templates")
     app.state.org_manager = org_manager
+    # Sprint 13 H2 RC-1 wiring closure (v29 CRUD-1/2 残留): publish the
+    # FastAPI-owned OrgManager as the process-wide default so the
+    # JsonOrgStore shim returned by ``get_default_store()`` and the
+    # spec CRUD's ``_resolve_manager_for_writes()`` resolve to the
+    # same instance (and the same _cache) as ``app.state.org_manager``.
+    # Without this call, the spec router's lazy fallback minted a
+    # second OrgManager rooted at the same disk dir, splitting the
+    # in-memory cache and leaving mint GET reads stale right after a
+    # spec PATCH / DELETE -- the exact symptom v29 CRUD-1 / CRUD-2 hit.
+    set_default_org_manager(org_manager)
     # H3 fix (audit ``_orgs_business_capability_audit_v1.md`` §3.2 P0):
     # build the AgentPipelineExecutor BEFORE OrgRuntime and inject its
     # ``activate_and_run`` as the ``agent_dispatch`` callback. Pre-fix

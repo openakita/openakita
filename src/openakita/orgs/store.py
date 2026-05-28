@@ -422,6 +422,18 @@ def reset_default_store(
     backing OrgManager (Sprint 13 H2 -- lets tests inject a
     pre-seeded mint manager without requiring
     :func:`set_default_org_manager`). Returns the new store.
+
+    The process-wide :data:`_DEFAULT_MANAGER` override is
+    re-aligned in the same call: passing ``manager=`` installs it,
+    omitting ``manager=`` clears the override. v29 RC-1 follow-up
+    rationale: the FastAPI ``create_app`` composition root now
+    publishes its OrgManager via :func:`set_default_org_manager`,
+    so a stale registration could leak from one ``create_app()``
+    test into a subsequent ``reset_default_store(path=tmp_path)``
+    test and silently redirect writes to the real ``data/orgs/``
+    tree. Treating reset as a clean slate (store + manager) keeps
+    test isolation robust without forcing every fixture to also
+    remember the partner cleanup call.
     """
     global _DEFAULT_STORE
     with _DEFAULT_LOCK:
@@ -433,4 +445,5 @@ def reset_default_store(
         if manager is not None and isinstance(store, JsonOrgStore):
             store._set_manager(manager)
         _DEFAULT_STORE = store
-        return _DEFAULT_STORE
+    set_default_org_manager(manager)
+    return _DEFAULT_STORE
