@@ -4,12 +4,20 @@
 backed by the org's long-lived
 :class:`~openakita.runtime.stream.StreamBus` (built lazily by
 :mod:`openakita.runtime.stream_registry`). Each event is one
-ADR-0006 record; channels delivered are ``progress_ledger`` /
-``messages`` / ``lifecycle`` / ``tasks``. 404 when
-``runtime_v2_enabled`` is off or the org is unknown. The
-dispatch path is wired to the org-level bus in P-RC-3; this
-commit ships the route + tests so the frontend has a stable
-contract to render against.
+ADR-0006 record. 404 when ``runtime_v2_enabled`` is off or the
+org is unknown. The dispatch path is wired to the org-level bus
+in P-RC-3.
+
+v25 RC-3 fix: the handler now subscribes to every channel in
+:data:`~openakita.runtime.stream.STANDARD_CHANNELS` except the
+noisy ``debug`` channel (which the frontend can opt back in via
+a future query-param). Previously the handler only subscribed to
+``progress_ledger`` / ``messages`` / ``lifecycle`` / ``tasks``,
+which silently dropped every ``updates`` (delegation_result),
+``checkpoints`` (checkpoint_written), and ``debug`` event the
+supervisor actually emits. See
+``_v22_biz/_root_cause_analysis.md`` §RC-3 and
+``_v25_biz/v25_phenomena_report.md`` D7.
 """
 
 from __future__ import annotations
@@ -18,35 +26,34 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from openakita.config import settings
 from openakita.orgs import OrgNotFound
-from openakita.runtime.stream import StreamEvent
+from openakita.runtime.stream import STANDARD_CHANNELS, StreamEvent
 from openakita.runtime.stream_registry import (
     get_or_create_org_stream_bus,
     mark_subscriber_attached,
     mark_subscriber_lost,
 )
 
-__all__ = ["router"]
+__all__ = ["DEFAULT_SSE_CHANNELS", "router"]
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/orgs-spec", tags=["v2:组织流"])
 
 
-#: Channels exposed by default. Noisy telemetry (``values`` /
-#: ``updates`` / ``debug`` / ``checkpoints``) is omitted; the
-#: frontend ProgressLedgerTimeline only needs the four below.
-DEFAULT_SSE_CHANNELS: tuple[str, ...] = (
-    "progress_ledger",
-    "messages",
-    "lifecycle",
-    "tasks",
+#: Channels exposed by default. Computed at import time from
+#: :data:`STANDARD_CHANNELS` (the canonical ADR-0006 set the
+#: supervisor actually emits to) minus the high-volume ``debug``
+#: channel, which is opt-in for diagnostic frontends only. The
+#: subscription set is sorted to keep the tuple deterministic for
+#: tests and OpenAPI snapshots.
+DEFAULT_SSE_CHANNELS: tuple[str, ...] = tuple(
+    sorted(ch for ch in STANDARD_CHANNELS if ch != "debug")
 )
 
 
@@ -59,12 +66,25 @@ def _serialize_event(event: StreamEvent) -> str:
     """
     body = event.to_jsonable()
     body.pop("channel", None)
-    body["ts"] = body.get("emitted_at") or datetime.now(UTC).isoformat()
+    body["ts"] = body.get("emitted_at")
     return f"event: {event.channel}\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
 async def _event_stream(request: Request, org_id: str) -> AsyncIterator[str]:
-    """Yield SSE-formatted strings until the client disconnects."""
+    """Yield SSE-formatted strings until the client disconnects.
+
+    v25 RC-3 fix: the generator no longer fabricates an
+    ``lifecycle/sse_connected`` first event. The "connection is
+    live" signal is now carried by the HTTP ``200`` + the
+    ``text/event-stream`` content type alone (browsers raise
+    ``EventSource.onopen`` for this), and an initial
+    ``retry: 3000`` SSE directive plus the first idle ``: ping``
+    SSE comment keep the response body flushing through proxies
+    that buffer until they see bytes. The synthetic first event
+    used to mask the RC-3 channel-coverage gap by always
+    satisfying "first event received" assertions even when no
+    real supervisor event ever flowed.
+    """
     bus = get_or_create_org_stream_bus(org_id)
 
     # Attach via the public API (P-RC-3 T5) so this route does not
@@ -83,18 +103,12 @@ async def _event_stream(request: Request, org_id: str) -> AsyncIterator[str]:
     # detaches the subscription regardless of which yield point
     # the generator was paused at when it was closed.
     try:
+        # The ``retry`` directive sets the client-side reconnect
+        # delay. It is the first chunk so reverse proxies that
+        # buffer the response until they see any body bytes
+        # (gunicorn / nginx without ``X-Accel-Buffering: no``)
+        # release the headers immediately.
         yield "retry: 3000\n\n"
-        initial = StreamEvent(
-            channel="lifecycle",
-            event_id="sse_connected",
-            command_id="",
-            org_id=org_id,
-            superstep=0,
-            emitted_at=datetime.now(UTC),
-            type="sse_connected",
-            payload={"org_id": org_id},
-        )
-        yield _serialize_event(initial)
 
         while True:
             if await request.is_disconnected():
@@ -102,6 +116,11 @@ async def _event_stream(request: Request, org_id: str) -> AsyncIterator[str]:
             try:
                 event = await asyncio.wait_for(sub.queue.get(), timeout=15.0)
             except TimeoutError:
+                # SSE comment line ("``:`` SP <text>"); per the
+                # HTML spec these are dropped by the EventSource
+                # parser so clients see no event, but the bytes
+                # keep the TCP connection warm and force the
+                # framework to flush any buffered chunks.
                 yield ": ping\n\n"
                 continue
             yield _serialize_event(event)

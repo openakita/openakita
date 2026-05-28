@@ -178,6 +178,47 @@ async def test_response_headers_are_correct(monkeypatch, tmp_path) -> None:
     assert response.headers["x-accel-buffering"] == "no"
 
 
+async def _drive_to_subscription(gen) -> str:
+    """Drive ``gen`` one step past ``register_subscription`` and return the first chunk.
+
+    The generator body starts executing on the first ``__anext__``
+    call. After v25 RC-3 deletes the synthetic ``sse_connected``
+    first event, the first chunk is ``"retry: 3000\\n\\n"`` (the
+    SSE retry directive); pulling it guarantees the
+    ``register_subscription`` call inside the generator has
+    completed before the test emits, eliminating the
+    "emit-before-subscribe" race.
+    """
+    return await gen.__anext__()  # type: ignore[no-any-return]
+
+
+async def test_event_stream_yields_retry_directive_first(monkeypatch, tmp_path) -> None:
+    """The first SSE chunk is the ``retry:`` directive, not a synthetic event.
+
+    v25 RC-3 fix: the handler used to fabricate a
+    ``lifecycle/sse_connected`` first event that masked the
+    channel-coverage gap. The retry directive is enough to flush
+    response headers through buffering proxies, and browsers
+    fire ``EventSource.onopen`` on the HTTP 200 itself.
+    """
+    monkeypatch.setattr(settings, "runtime_v2_enabled", True, raising=False)
+    reset_default_store(path=tmp_path / "orgs_v2.json")
+    bus = get_or_create_org_stream_bus("org_sse_test")
+    request = _FakeRequest()
+    gen = _event_stream(request, "org_sse_test")
+    try:
+        first_chunk = await _drive_to_subscription(gen)
+        assert first_chunk == "retry: 3000\n\n"
+        # The retry directive is not a parsed SSE event, so
+        # ``_collect`` would skip it; assert via the raw chunk
+        # instead. The subscription is registered eagerly so the
+        # bus already sees this consumer.
+        assert len(bus._subscriptions) == 1
+    finally:
+        request.disconnect.set()
+        await gen.aclose()
+
+
 async def test_event_stream_delivers_published_event(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(settings, "runtime_v2_enabled", True, raising=False)
     reset_default_store(path=tmp_path / "orgs_v2.json")
@@ -185,10 +226,11 @@ async def test_event_stream_delivers_published_event(monkeypatch, tmp_path) -> N
     request = _FakeRequest()
     gen = _event_stream(request, "org_sse_test")
 
-    # Pull the connected event so the Subscription is registered.
-    first = await _collect(gen, n=1, timeout=2.0)
-    assert first[0]["event"] == "lifecycle"
-    assert first[0]["data"]["type"] == "sse_connected"
+    # Drive the generator past register_subscription (consumes the
+    # one-shot ``retry: 3000`` directive) so the emit below cannot
+    # land before the subscriber is attached.
+    first_chunk = await _drive_to_subscription(gen)
+    assert first_chunk == "retry: 3000\n\n"
     assert len(bus._subscriptions) == 1
 
     await bus.emit(
@@ -220,8 +262,8 @@ async def test_event_stream_disconnect_detaches_subscription(monkeypatch, tmp_pa
     bus = get_or_create_org_stream_bus("org_sse_test")
     request = _FakeRequest()
     gen = _event_stream(request, "org_sse_test")
-    first = await _collect(gen, n=1, timeout=2.0)
-    assert first[0]["event"] == "lifecycle"
+    first_chunk = await _drive_to_subscription(gen)
+    assert first_chunk == "retry: 3000\n\n"
     assert len(bus._subscriptions) == 1
     request.disconnect.set()
     await gen.aclose()

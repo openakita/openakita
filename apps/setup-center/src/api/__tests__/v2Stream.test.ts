@@ -82,31 +82,69 @@ describe("createV2Stream", () => {
     stream.close();
   });
 
-  it("subscribes the Sprint-9 stalls and replans channels by default", () => {
-    const stalls = vi.fn();
-    const replans = vi.fn();
-    const stream = createV2Stream("org_s9", { eventSourceFactory: fakeFactory });
-    stream.onEvent("stalls", stalls);
-    stream.onEvent("replans", replans);
-    factorySource!.emit("stalls", {
-      type: "stall_detected",
-      payload: { n_stalls: 1 },
-      org_id: "org_s9",
-      command_id: "c",
-      superstep: 2,
-      ts: "t",
-    });
-    factorySource!.emit("replans", {
-      type: "replan_requested",
-      payload: { n_replans: 1 },
-      org_id: "org_s9",
-      command_id: "c",
-      superstep: 3,
-      ts: "t",
-    });
-    expect(stalls).toHaveBeenCalledTimes(1);
-    expect(replans).toHaveBeenCalledTimes(1);
-    stream.close();
+  it(
+    "delivers supervisor stall_warning / replanning events through the lifecycle channel",
+    () => {
+      // v25 RC-3 contract: the supervisor publishes
+      // ``stall_warning`` and ``replanning`` events on the
+      // ``lifecycle`` channel (supervisor.py:448 / :514). Callers
+      // listen on ``lifecycle`` and switch on ``event.type`` --
+      // the obsolete standalone ``stalls`` / ``replans`` channels
+      // were removed from V2StreamChannel because nothing ever
+      // emitted to them. See v2Stream.ts channel-list comment.
+      const lifecycle = vi.fn();
+      const stream = createV2Stream("org_s9", {
+        eventSourceFactory: fakeFactory,
+      });
+      stream.onEvent("lifecycle", lifecycle);
+
+      factorySource!.emit("lifecycle", {
+        type: "stall_warning",
+        payload: { n_stalls: 1, max_stalls: 3 },
+        org_id: "org_s9",
+        command_id: "c",
+        superstep: 2,
+        ts: "t",
+      });
+      factorySource!.emit("lifecycle", {
+        type: "replanning",
+        payload: { reason: "stall_budget_reached", n_replans: 1 },
+        org_id: "org_s9",
+        command_id: "c",
+        superstep: 3,
+        ts: "t",
+      });
+
+      expect(lifecycle).toHaveBeenCalledTimes(2);
+      const types = lifecycle.mock.calls.map(
+        ([ev]) => (ev as V2StreamEvent).type,
+      );
+      expect(types).toEqual(["stall_warning", "replanning"]);
+    },
+  );
+
+  it("subscribes the every-channel-minus-debug default set on connect", () => {
+    // Sanity-pin the on-connect channel set so a regression that
+    // shrinks it (the v22 / v25 RC-3 root cause) fails loudly.
+    // The backend's DEFAULT_SSE_CHANNELS = STANDARD_CHANNELS -
+    // {"debug"} = 7 channels; the EventSource must have one
+    // listener per channel attached pre-emptively.
+    createV2Stream("org_default", { eventSourceFactory: fakeFactory });
+    const attached = Array.from(factorySource!.listeners.keys())
+      .filter((k) => k !== "error")
+      .sort();
+    expect(attached).toEqual([
+      "checkpoints",
+      "lifecycle",
+      "messages",
+      "progress_ledger",
+      "tasks",
+      "updates",
+      "values",
+    ]);
+    expect(attached).not.toContain("stalls");
+    expect(attached).not.toContain("replans");
+    expect(attached).not.toContain("debug");
   });
 
   it("dispatches typed events to per-channel handlers", () => {

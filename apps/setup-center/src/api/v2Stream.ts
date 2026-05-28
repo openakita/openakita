@@ -10,14 +10,35 @@
  *
  * Wraps the browser ``EventSource`` API with a typed handler
  * registry so callers do not have to remember channel-name
- * strings. Sprint-9 exposes six channels:
+ * strings. The channel list mirrors the backend's
+ * ``STANDARD_CHANNELS`` constant (``src/openakita/runtime/stream.py``)
+ * minus the high-volume ``debug`` channel; the contract is pinned
+ * by ``tests/api/test_sse_channel_coverage.py``.
+ *
+ * Channels delivered by the v2 supervisor (ADR-0006):
  *   - ``progress_ledger`` -- per-turn supervisor ledger snapshots
  *   - ``messages``        -- node-to-node messenger traffic
  *   - ``lifecycle``       -- supervisor start / done / cancelled /
- *                            resumed events
+ *                            resumed lifecycle events, AND the
+ *                            ``stall_warning`` / ``replanning``
+ *                            event types that older code paths
+ *                            once expected on separate ``stalls`` /
+ *                            ``replans`` channels (the supervisor
+ *                            has always emitted them through
+ *                            ``lifecycle``; see
+ *                            ``supervisor.py:448`` /
+ *                            ``supervisor.py:514``).
  *   - ``tasks``           -- task ledger updates (facts / plan)
- *   - ``stalls``          -- StallDetector signals (warn / replan)
- *   - ``replans``         -- replan-budget moves
+ *   - ``updates``         -- delegation results
+ *   - ``checkpoints``     -- checkpoint-written events
+ *   - ``values``          -- ledger value-extension hooks
+ *
+ * To listen for stall / replan signals, subscribe to
+ * ``lifecycle`` and switch on ``event.type``:
+ *   stream.onEvent("lifecycle", (e) => {
+ *     if (e.type === "stall_warning") { ... }
+ *     if (e.type === "replanning")    { ... }
+ *   });
  *
  * Returned object:
  *   onEvent(channel, handler) -> unsubscribe function
@@ -40,8 +61,9 @@ export type V2StreamChannel =
   | "messages"
   | "lifecycle"
   | "tasks"
-  | "stalls"
-  | "replans";
+  | "updates"
+  | "checkpoints"
+  | "values";
 
 /**
  * Shape of one event delivered through the SSE stream.
@@ -101,13 +123,29 @@ export interface V2StreamOptions {
   eventSourceFactory?: EventSourceFactory;
 }
 
+/**
+ * Channels eagerly attached on every connection.
+ *
+ * Must stay in sync with the backend's ``DEFAULT_SSE_CHANNELS``
+ * tuple in ``src/openakita/api/routes/orgs_v2_stream.py``, which
+ * is computed as ``STANDARD_CHANNELS - {"debug"}``. The set is
+ * sorted alphabetically so the order matches the backend's
+ * sorted tuple, making cross-stack diffs easier to spot.
+ *
+ * The previous list contained ``stalls`` and ``replans`` -- two
+ * names that no backend module has ever published to. Those
+ * signals arrive as ``lifecycle`` events with ``type ===
+ * "stall_warning"`` / ``"replanning"``; see the channel-list
+ * comment above for the recommended subscription pattern.
+ */
 const DEFAULT_CHANNELS: V2StreamChannel[] = [
-  "progress_ledger",
-  "messages",
+  "checkpoints",
   "lifecycle",
+  "messages",
+  "progress_ledger",
   "tasks",
-  "stalls",
-  "replans",
+  "updates",
+  "values",
 ];
 
 function defaultFactory(url: string): EventSourceLike {
