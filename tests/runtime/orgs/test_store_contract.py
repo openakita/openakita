@@ -1,10 +1,16 @@
 """Cross-backend contract suite for the v2 org store (P-RC-3 G-RC-3 gate).
 
-Every test is parametrised over the two backends -- :class:Json
-OrgStore (the default) and :class:SqliteOrgStore (P-RC-3 P3.4).
-If either backend fails any case here, the G-RC-3 gate is BLOCKED:
-the whole point of the pluggable factory in P3.6 is that the two
-backends are observationally indistinguishable.
+Sprint 13 H2 治根 (RC-1): :class:`JsonOrgStore` retired its
+write surface and turned into a manager-backed read-only shim.
+The cross-backend mutation contract therefore now exercises only
+the SQLite backend (the alternate write-capable backend behind
+``settings.orgs_v2_backend = "sqlite"``); the JSON shim's read /
+union-with-legacy contract is pinned in
+:mod:`tests.orgs.test_json_org_store_shim` and
+:mod:`tests.runtime.test_orgs_store`. Pre-Sprint-13 the JSON
+backend was parametrised here too -- removing it loudly is the
+right break, because routing every JSON write through the shim
+would re-hide the RC-1 split this commit is fixing.
 """
 
 from __future__ import annotations
@@ -15,9 +21,9 @@ from pathlib import Path
 
 import pytest
 
-from openakita.runtime.models import OrgV2, new_org_id
 from openakita.orgs.sqlite_store import SqliteOrgStore
-from openakita.orgs.store import JsonOrgStore, OrgNotFound
+from openakita.orgs.store import OrgNotFound
+from openakita.runtime.models import OrgV2, new_org_id
 
 # Each "backend factory" returns a freshly opened store rooted under
 # `tmp_path`. The closer is called by the fixture so we exercise the
@@ -26,16 +32,8 @@ BackendFactory = Callable[[Path], object]
 BackendCloser = Callable[[object], None]
 
 
-def _json_factory(root: Path) -> JsonOrgStore:
-    return JsonOrgStore(path=root / "orgs.json")
-
-
 def _sqlite_factory(root: Path) -> SqliteOrgStore:
     return SqliteOrgStore(path=root / "orgs.sqlite")
-
-
-def _json_close(store: object) -> None:
-    pass  # JSON store has no explicit close; cache invalidates on reopen.
 
 
 def _sqlite_close(store: object) -> None:
@@ -43,7 +41,6 @@ def _sqlite_close(store: object) -> None:
 
 
 BACKENDS = [
-    pytest.param(("json", _json_factory, _json_close), id="json"),
     pytest.param(("sqlite", _sqlite_factory, _sqlite_close), id="sqlite"),
 ]
 

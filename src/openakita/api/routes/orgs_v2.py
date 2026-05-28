@@ -46,6 +46,7 @@ checkpointer; the API contract stays the same.
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
@@ -53,6 +54,10 @@ from pydantic import BaseModel, Field
 
 from openakita.config import settings
 from openakita.orgs import OrgNotFound, get_default_store
+from openakita.orgs.manager import OrgManager, OrgNameConflictError
+from openakita.orgs.org_models import EdgeType, OrgStatus
+from openakita.orgs.store import JsonOrgStore
+from openakita.runtime.models import EdgeKind, OrgV2
 from openakita.runtime.templates import (
     GLOBAL_REGISTRY,
     TemplateValidationError,
@@ -305,8 +310,148 @@ class _PatchOrgBody(BaseModel):
     description: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Manager resolution (Sprint 13 H2 / RC-1)
+# ---------------------------------------------------------------------------
+#
+# The spec CRUD endpoints write through OrgManager so mint and spec
+# write paths share one SSoT (``data/orgs/<id>/org.json``). Reads
+# go through the same shim ``get_default_store()`` returns -- it
+# now routes through ``OrgManager.as_orgv2`` and unions in legacy
+# ``data/orgs_v2.json`` rows for the deprecation soak. See
+# ``src/openakita/orgs/store.py`` module docstring for the full
+# contract.
+
+
+def _resolve_manager_for_writes() -> OrgManager:
+    """Return the :class:`OrgManager` the spec CRUD should write to.
+
+    Priority:
+
+    1. The :class:`JsonOrgStore` shim's backing manager (set by
+       ``api/server.py`` via :func:`set_default_org_manager` or by
+       a test fixture via ``reset_default_store(..., manager=)``).
+       This is the canonical resolution -- the same manager
+       ``app.state.org_manager`` exposes.
+    2. A settings-derived fallback when the active backend is
+       :class:`SqliteOrgStore` (opt-in, rare). The spec routes
+       still land orgs in ``OrgManager`` so the IM canary read
+       path can see them; SQLite-backend deployments accept that
+       trade-off because RC-1 explicitly chose OrgManager as the
+       SSoT regardless of the legacy JSON / SQLite alternation.
+    """
+    store = get_default_store()
+    if isinstance(store, JsonOrgStore):
+        return store._get_manager()
+    # SQLite-backend (opt-in): build manager from settings so the
+    # spec CRUD still flows into the SSoT.
+    from openakita.orgs.store import _build_default_manager
+
+    return _build_default_manager()
+
+
+def _orgv2_dict_to_organization_data(payload: dict[str, Any]) -> dict[str, Any]:
+    """Translate an :class:`OrgV2` jsonable payload into the dict
+    :meth:`OrgManager.create` consumes.
+
+    The translation is intentionally light: only the fields the
+    legacy :class:`Organization` model can carry are forwarded;
+    OrgV2-only metadata (``defaults``, ``last_seen`` /
+    ``last_progress_at`` per node) is dropped because OrgManager
+    has no place to put them. Nodes/edges are projected via
+    :func:`_orgv2_node_dict_to_orgnode_data` /
+    :func:`_orgv2_edge_dict_to_orgedge_data`.
+    """
+    nodes_raw = payload.get("nodes") or []
+    edges_raw = payload.get("edges") or []
+    data: dict[str, Any] = {
+        "id": payload.get("id") or "",
+        "name": payload.get("name") or "",
+        "description": payload.get("description") or "",
+        "nodes": [_orgv2_node_dict_to_orgnode_data(n) for n in nodes_raw],
+        "edges": [_orgv2_edge_dict_to_orgedge_data(e) for e in edges_raw],
+    }
+    # Status mapping: OrgV2 (CREATED/ACTIVE/RUNNING/PAUSED/STOPPED) ->
+    # Organization (DORMANT/ACTIVE/RUNNING/PAUSED/ARCHIVED). Just-
+    # minted spec orgs land as DORMANT so the v1 lifecycle FSM
+    # treats them as "not yet active" until an explicit start verb.
+    raw_status = (payload.get("status") or "").lower()
+    status_map = {
+        "created": OrgStatus.DORMANT.value,
+        "active": OrgStatus.ACTIVE.value,
+        "running": OrgStatus.RUNNING.value,
+        "paused": OrgStatus.PAUSED.value,
+        "stopped": OrgStatus.ARCHIVED.value,
+    }
+    data["status"] = status_map.get(raw_status, OrgStatus.DORMANT.value)
+    return data
+
+
+def _orgv2_node_dict_to_orgnode_data(node_dict: dict[str, Any]) -> dict[str, Any]:
+    """Project one OrgV2 NodeV2 jsonable into an OrgNode jsonable.
+
+    Field mapping:
+    * ``id`` 1:1
+    * ``role`` -> ``role_title`` (the v2 wire calls the function
+      identifier "role"; v1 calls the human label "role_title")
+    * ``label`` -> falls back into ``role_title`` when ``role`` is
+      blank so the projection is non-empty
+    * ``role`` (the function id) -> ``agent_profile_id`` (the
+      legacy slot that picks an AgentProfile by id)
+    * ``persona_prompt`` -> ``custom_prompt``
+    * ``tool_subset`` -> ``external_tools``
+    * ``workbench`` -> ``plugin_origin`` (when present)
+    * everything else: dropped (not representable in OrgNode)
+    """
+    role = (node_dict.get("role") or "").strip()
+    label = (node_dict.get("label") or "").strip()
+    title = label or role or (node_dict.get("id") or "")
+    workbench = node_dict.get("workbench") or None
+    plugin_origin: dict[str, Any] | None = None
+    if isinstance(workbench, dict) and workbench.get("plugin_id"):
+        plugin_origin = {
+            "plugin_id": str(workbench.get("plugin_id")),
+            "mode": str(workbench.get("mode") or "default"),
+        }
+    return {
+        "id": node_dict.get("id") or "",
+        "role_title": title,
+        "agent_profile_id": role or "default",
+        "custom_prompt": node_dict.get("persona_prompt") or "",
+        "external_tools": list(node_dict.get("tool_subset") or []),
+        "plugin_origin": plugin_origin,
+    }
+
+
+def _orgv2_edge_dict_to_orgedge_data(edge_dict: dict[str, Any]) -> dict[str, Any]:
+    """Project one OrgV2 EdgeV2 jsonable into an OrgEdge jsonable."""
+    kind = (edge_dict.get("kind") or EdgeKind.HIERARCHY.value).lower()
+    try:
+        edge_type = EdgeType(kind).value
+    except ValueError:
+        edge_type = EdgeType.HIERARCHY.value
+    return {
+        "id": edge_dict.get("id") or "",
+        "source": edge_dict.get("src") or "",
+        "target": edge_dict.get("dst") or "",
+        "edge_type": edge_type,
+    }
+
+
+# ---------------------------------------------------------------------------
+# CRUD endpoints (Sprint 13 H2: writes always flow through OrgManager)
+# ---------------------------------------------------------------------------
+
+
 @router.get("", summary="List persisted v2 organisations")
 def list_orgs() -> dict[str, Any]:
+    """List spec orgs.
+
+    Reads through the shim, which unions OrgManager (mint + spec
+    creates) with the legacy ``data/orgs_v2.json`` soak file --
+    so callers see one consistent set regardless of how the
+    org was originally minted.
+    """
     _require_v2_enabled()
     store = get_default_store()
     items = [org.to_jsonable() for org in store.list()]
@@ -315,29 +460,83 @@ def list_orgs() -> dict[str, Any]:
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Persist a v2 organisation")
 def create_org(body: _CreateOrgBody) -> dict[str, Any]:
-    _require_v2_enabled()
-    from openakita.runtime.models import OrgV2
+    """Persist an instantiated OrgV2 -- writes through OrgManager.
 
+    Sprint 13 H2 (RC-1): pre-fix this wrote to
+    ``data/orgs_v2.json`` via :class:`JsonOrgStore`, leaving the
+    org invisible to mint readers (the v25 H2 / E4 symptom). Now
+    the schema-projected payload lands in
+    ``data/orgs/<id>/org.json`` so the IM canary path and the
+    spec list can both see it.
+    """
+    _require_v2_enabled()
+
+    # Fill server-generated timestamps if the caller omitted
+    # them: the strict :meth:`OrgV2.from_jsonable` /
+    # :meth:`NodeV2.from_jsonable` require ``created_at``, but
+    # pre-Sprint-13 the JsonOrgStore.create flow auto-stamped
+    # them, and we preserve that ergonomic contract for callers
+    # that don't supply timestamps.
+    from datetime import datetime
+
+    now_iso = datetime.now(UTC).isoformat()
+    payload_for_validation: dict[str, Any] = dict(body.org)
+    payload_for_validation.setdefault("created_at", now_iso)
+    payload_for_validation.setdefault("updated_at", now_iso)
+    nodes_for_validation: list[dict[str, Any]] = []
+    for node_dict in payload_for_validation.get("nodes") or []:
+        if not isinstance(node_dict, dict):
+            nodes_for_validation.append(node_dict)
+            continue
+        n = dict(node_dict)
+        n.setdefault("created_at", now_iso)
+        nodes_for_validation.append(n)
+    payload_for_validation["nodes"] = nodes_for_validation
     try:
-        org = OrgV2.from_jsonable(body.org)
+        OrgV2.from_jsonable(payload_for_validation)
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"invalid OrgV2 payload: {exc}",
         ) from exc
-    store = get_default_store()
+
+    manager = _resolve_manager_for_writes()
+    org_data = _orgv2_dict_to_organization_data(body.org)
+
+    # Idempotent guard against id collisions: the original
+    # ``JsonOrgStore.create`` raised ValueError("already exists"); v1's
+    # ``OrgManager.create`` only checks name uniqueness, so we surface
+    # the id collision here so callers keep getting 409 on dup id.
+    existing_id = org_data.get("id")
+    if existing_id and manager.get(existing_id) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"OrgV2 with id={existing_id!r} already exists",
+        )
     try:
-        saved = store.create(org)
-    except ValueError as exc:
+        organization = manager.create(org_data)
+    except OrgNameConflictError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+    saved = manager.as_orgv2(organization.id)
+    if saved is None:  # pragma: no cover - manager.create just persisted it
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OrgManager.create succeeded but as_orgv2 returned None",
+        )
     return saved.to_jsonable()
 
 
 @router.get("/{org_id}", summary="Get a persisted v2 organisation")
 def get_org(org_id: str) -> dict[str, Any]:
+    """Get a spec org -- reads through the manager-backed shim.
+
+    Mint orgs are now visible here (they weren't pre-Sprint-13);
+    legacy ``data/orgs_v2.json`` rows are still resolvable during
+    the deprecation soak.
+    """
     _require_v2_enabled()
     try:
         org = get_default_store().get(org_id)
@@ -351,15 +550,34 @@ def get_org(org_id: str) -> dict[str, Any]:
 
 @router.patch("/{org_id}", summary="Patch a v2 organisation (name / description)")
 def patch_org(org_id: str, body: _PatchOrgBody) -> dict[str, Any]:
+    """Patch name / description on a spec org -- writes via OrgManager.update."""
     _require_v2_enabled()
-    try:
-        org = get_default_store().patch(org_id, name=body.name, description=body.description)
-    except OrgNotFound as exc:
+    manager = _resolve_manager_for_writes()
+    if manager.get(org_id) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"OrgV2 with id={org_id!r} not found",
+        )
+    patch_data: dict[str, Any] = {}
+    if body.name is not None:
+        patch_data["name"] = body.name
+    if body.description is not None:
+        patch_data["description"] = body.description
+    try:
+        if patch_data:
+            manager.update(org_id, patch_data)
+    except OrgNameConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
-    return org.to_jsonable()
+    projected = manager.as_orgv2(org_id)
+    if projected is None:  # pragma: no cover - just patched
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"OrgV2 with id={org_id!r} not found",
+        )
+    return projected.to_jsonable()
 
 
 @router.delete(
@@ -368,12 +586,13 @@ def patch_org(org_id: str, body: _PatchOrgBody) -> dict[str, Any]:
     summary="Delete a persisted v2 organisation",
 )
 def delete_org(org_id: str) -> None:
+    """Delete a spec org -- writes via OrgManager.delete."""
     _require_v2_enabled()
-    try:
-        get_default_store().delete(org_id)
-    except OrgNotFound as exc:
+    manager = _resolve_manager_for_writes()
+    deleted = manager.delete(org_id)
+    if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+            detail=f"OrgV2 with id={org_id!r} not found",
+        )
     return None

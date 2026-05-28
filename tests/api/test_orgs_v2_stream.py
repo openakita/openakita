@@ -42,7 +42,16 @@ def _isolate_stream_registry() -> Iterator[None]:
 
 
 def _make_org(store, org_id: str = "org_sse_test") -> OrgV2:
-    org = OrgV2(
+    """Vestigial fixture from before v22.
+
+    Sprint 13 H2 (RC-1): the legacy ``store.create`` write path was
+    retired -- the SSE route already validates org existence via
+    ``request.app.state.org_manager.get`` (a stub :class:`_FakeManager`
+    in this test, not the JSON shim), so this helper now only mints
+    an in-memory ``OrgV2`` payload for callers that still want to
+    reason about the spec object. No persistence is required.
+    """
+    return OrgV2(
         id=org_id,
         name="SSE smoke org",
         description="for the test",
@@ -57,8 +66,6 @@ def _make_org(store, org_id: str = "org_sse_test") -> OrgV2:
         ],
         edges=[],
     )
-    store.create(org)
-    return org
 
 
 class _FakeManager:

@@ -1,8 +1,15 @@
-"""Unit tests for :mod:`openakita.orgs.store`.
+"""Unit tests for the manager-backed :class:`JsonOrgStore` shim.
 
-Cover the persistence layer directly so the HTTP-level CRUD tests
-under ``tests/api/test_orgs_v2.py`` can focus on contract / status-
-code shape rather than implementation.
+Sprint 13 H2 治根 (RC-1): the JSON store no longer writes; this
+suite pins the new read-only contract -- mint orgs round-trip
+through ``OrgManager.as_orgv2``, write methods raise, malformed
+legacy payloads are tolerated.
+
+The exhaustive shim contract lives in
+:mod:`tests.orgs.test_json_org_store_shim`; this file keeps the
+historical ``tests/runtime`` location alive for the
+``pytest tests/runtime/orgs/`` glob and pins the deprecation
+boundary at the *unit* layer.
 """
 
 from __future__ import annotations
@@ -12,8 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from openakita.runtime.models import OrgStatus, OrgV2, new_org_id
+from openakita.orgs.manager import OrgManager
 from openakita.orgs.store import JsonOrgStore, OrgNotFound
+from openakita.runtime.models import OrgStatus, OrgV2, new_org_id
 
 
 def _mk_org(name: str = "Test", org_id: str | None = None) -> OrgV2:
@@ -27,82 +35,83 @@ def _mk_org(name: str = "Test", org_id: str | None = None) -> OrgV2:
     )
 
 
+def _shim_with_manager(tmp_path: Path) -> tuple[JsonOrgStore, OrgManager]:
+    manager = OrgManager(tmp_path)
+    store = JsonOrgStore(path=tmp_path / "orgs_v2.json", manager=manager)
+    return store, manager
+
+
 def test_get_unknown_raises(tmp_path: Path) -> None:
-    store = JsonOrgStore(path=tmp_path / "orgs.json")
+    """Miss contract preserved -- HTTP 404 mappers stay green."""
+    store, _ = _shim_with_manager(tmp_path)
     with pytest.raises(OrgNotFound):
         store.get("org_unknown")
 
 
-def test_create_then_get_round_trips(tmp_path: Path) -> None:
-    store = JsonOrgStore(path=tmp_path / "orgs.json")
-    org = _mk_org("Alpha")
-    saved = store.create(org)
-    assert saved.id == org.id
-    got = store.get(org.id)
+def test_get_finds_mint_orgs_via_manager(tmp_path: Path) -> None:
+    """Mint via OrgManager (the SSoT) -> visible to the shim's read path."""
+    store, manager = _shim_with_manager(tmp_path)
+    minted = manager.create({"name": "Alpha"})
+    got = store.get(minted.id)
+    assert got.id == minted.id
     assert got.name == "Alpha"
+    # DORMANT (legacy default) -> CREATED (v2)
     assert got.status is OrgStatus.CREATED
 
 
-def test_create_duplicate_raises(tmp_path: Path) -> None:
-    store = JsonOrgStore(path=tmp_path / "orgs.json")
-    org = _mk_org()
-    store.create(org)
-    with pytest.raises(ValueError, match="already exists"):
-        store.create(org)
+def test_list_returns_mint_orgs(tmp_path: Path) -> None:
+    """``list()`` enumerates manager orgs (no legacy file = manager only)."""
+    store, manager = _shim_with_manager(tmp_path)
+    a = manager.create({"name": "A"})
+    b = manager.create({"name": "B"})
+    listed = store.list()
+    assert {o.id for o in listed} == {a.id, b.id}
 
 
-def test_patch_updates_whitelisted_fields_only(tmp_path: Path) -> None:
-    store = JsonOrgStore(path=tmp_path / "orgs.json")
-    org = _mk_org()
-    store.create(org)
-    patched = store.patch(org.id, name="Renamed", description="now editorial")
-    assert patched.name == "Renamed"
-    assert patched.description == "now editorial"
-    assert patched.updated_at >= org.updated_at
+def test_create_raises_deprecation(tmp_path: Path) -> None:
+    """Writes are forbidden -- callers must use OrgManager.create."""
+    store, _ = _shim_with_manager(tmp_path)
+    with pytest.raises(RuntimeError, match="JsonOrgStore.create is deprecated"):
+        store.create(_mk_org())
 
 
-def test_patch_unknown_raises(tmp_path: Path) -> None:
-    store = JsonOrgStore(path=tmp_path / "orgs.json")
-    with pytest.raises(OrgNotFound):
+def test_patch_raises_deprecation(tmp_path: Path) -> None:
+    store, _ = _shim_with_manager(tmp_path)
+    with pytest.raises(RuntimeError, match="JsonOrgStore.patch is deprecated"):
         store.patch("org_unknown", name="x")
 
 
-def test_delete_removes_org(tmp_path: Path) -> None:
-    store = JsonOrgStore(path=tmp_path / "orgs.json")
-    org = _mk_org()
-    store.create(org)
-    store.delete(org.id)
-    with pytest.raises(OrgNotFound):
-        store.get(org.id)
+def test_delete_raises_deprecation(tmp_path: Path) -> None:
+    store, _ = _shim_with_manager(tmp_path)
+    with pytest.raises(RuntimeError, match="JsonOrgStore.delete is deprecated"):
+        store.delete("org_unknown")
 
 
-def test_persistence_survives_reload(tmp_path: Path) -> None:
-    path = tmp_path / "orgs.json"
-    store = JsonOrgStore(path=path)
-    a = _mk_org("Persisted A")
-    b = _mk_org("Persisted B")
-    store.create(a)
-    store.create(b)
-    # Fresh store reads from disk
-    fresh = JsonOrgStore(path=path)
+def test_persistence_via_manager_round_trips(tmp_path: Path) -> None:
+    """OrgManager persistence survives a fresh shim instance over the same dir.
+
+    The new SSoT contract: ``data/orgs/<id>/org.json`` is the
+    durable record; the shim is just a wire-format projection.
+    Reopening the manager + shim picks every persisted org back up.
+    """
+    manager_a = OrgManager(tmp_path)
+    a = manager_a.create({"name": "Persisted A"})
+    b = manager_a.create({"name": "Persisted B"})
+    manager_b = OrgManager(tmp_path)
+    fresh = JsonOrgStore(path=tmp_path / "orgs_v2.json", manager=manager_b)
     assert {o.id for o in fresh.list()} == {a.id, b.id}
 
 
-def test_list_returns_newest_first(tmp_path: Path) -> None:
-    store = JsonOrgStore(path=tmp_path / "orgs.json")
-    a = _mk_org("A")
-    store.create(a)
-    b = _mk_org("B")
-    store.create(b)
-    listing = store.list()
-    # newest-first
-    assert listing[0].id in {a.id, b.id}
-    assert {o.id for o in listing} == {a.id, b.id}
+def test_malformed_legacy_payload_is_tolerated(tmp_path: Path) -> None:
+    """A corrupted ``data/orgs_v2.json`` (legacy soak file) cannot break the shim.
 
-
-def test_malformed_disk_payload_is_tolerated(tmp_path: Path) -> None:
-    path = tmp_path / "orgs.json"
-    path.write_text(json.dumps({"orgs": {"x": {"bad": "shape"}}}), encoding="utf-8")
-    store = JsonOrgStore(path=path)
-    # Malformed payload is dropped, not crashed
+    No mint orgs + bad legacy file -> empty list, no raise.
+    """
+    bad_path = tmp_path / "orgs_v2.json"
+    bad_path.write_text(
+        json.dumps({"orgs": {"x": {"bad": "shape"}}}),
+        encoding="utf-8",
+    )
+    manager = OrgManager(tmp_path)
+    store = JsonOrgStore(path=bad_path, manager=manager)
     assert store.list() == []

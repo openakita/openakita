@@ -16,14 +16,15 @@ from typing import Any
 
 import pytest
 
+from openakita.orgs import reset_default_store, set_default_org_manager
+from openakita.orgs.manager import OrgManager
+from openakita.orgs.org_models import OrgNode
 from openakita.runtime.cancel_token import CancellationToken, CancelledByToken
 from openakita.runtime.channel_routing import (
     RoutingPlan,
     dispatch_inbound_message_to_v2,
 )
 from openakita.runtime.checkpoint import MemoryCheckpointer
-from openakita.runtime.models import NodeType, NodeV2, OrgV2
-from openakita.orgs import get_default_store, reset_default_store
 from openakita.runtime.supervisor import FinalOutcome, SupervisorBrain
 
 
@@ -76,25 +77,48 @@ class _ExplodingBrain(SupervisorBrain):
         raise AssertionError
 
 
-def _seed_org(*, with_nodes: bool = True) -> OrgV2:
-    org = OrgV2(id="org_canary", name="Canary Org")
+def _seed_org_in_manager(manager: OrgManager, *, with_nodes: bool = True) -> str:
+    """Mint ``org_canary`` in the manager-backed SSoT.
+
+    Sprint 13 H2 (RC-1): the dispatch path reads through the
+    JsonOrgStore shim which now delegates to OrgManager, so we
+    seed straight into ``data/orgs/<id>/`` rather than
+    ``data/orgs_v2.json``. Returns the minted org id (always
+    ``"org_canary"`` -- pinned for reason-string assertions).
+    """
+    nodes: list[dict] = []
     if with_nodes:
-        org.nodes.append(NodeV2(
-            id="node_root", org_id=org.id, type=NodeType.LLM,
-            role="producer", label="Producer",
-        ))
-    return org
+        nodes.append(
+            OrgNode(
+                id="node_root",
+                role_title="producer",
+                agent_profile_id="default",
+            ).to_dict()
+        )
+    manager.create({"id": "org_canary", "name": "Canary Org", "nodes": nodes})
+    return "org_canary"
 
 
 @pytest.fixture(autouse=True)
-def _isolated_store(tmp_path: Path) -> None:
-    reset_default_store(path=tmp_path / "orgs_v2.json")
-    yield
+def _isolated_store(tmp_path: Path) -> OrgManager:
+    """Tmp-rooted manager + shim for every dispatch test.
+
+    The yielded :class:`OrgManager` is the SSoT for this test;
+    individual tests can call ``_seed_org_in_manager(manager,
+    with_nodes=...)`` to add a canary org. Both the shim and the
+    process-wide default manager are reset between cases so no
+    state leaks across tests.
+    """
+    manager = OrgManager(tmp_path)
+    reset_default_store(path=tmp_path / "orgs_v2.json", manager=manager)
+    set_default_org_manager(manager)
+    yield manager
+    set_default_org_manager(None)
     reset_default_store()
 
 
-async def test_dispatch_routes_when_org_is_canary_shaped() -> None:
-    get_default_store().create(_seed_org(with_nodes=True))
+async def test_dispatch_routes_when_org_is_canary_shaped(_isolated_store: OrgManager) -> None:
+    _seed_org_in_manager(_isolated_store, with_nodes=True)
     brain = _OneShotBrain()
     checkpointer = MemoryCheckpointer()
 
@@ -128,16 +152,18 @@ async def test_dispatch_skips_when_org_is_unknown() -> None:
     assert plan.status == "skipped" and "not in v2 store" in plan.reason
 
 
-async def test_dispatch_skips_when_org_has_no_nodes() -> None:
-    get_default_store().create(_seed_org(with_nodes=False))
+async def test_dispatch_skips_when_org_has_no_nodes(_isolated_store: OrgManager) -> None:
+    _seed_org_in_manager(_isolated_store, with_nodes=False)
     plan = await dispatch_inbound_message_to_v2(
         session_key="wecom:chat:user", org_id="org_canary", message="hi",
     )
     assert plan.status == "skipped" and "no nodes" in plan.reason
 
 
-async def test_dispatch_returns_cancelled_when_brain_raises_cancel_token() -> None:
-    get_default_store().create(_seed_org(with_nodes=True))
+async def test_dispatch_returns_cancelled_when_brain_raises_cancel_token(
+    _isolated_store: OrgManager,
+) -> None:
+    _seed_org_in_manager(_isolated_store, with_nodes=True)
     token = CancellationToken()
     token.cancel("user_cancel_via_im")
     checkpointer = MemoryCheckpointer()
@@ -155,8 +181,10 @@ async def test_dispatch_returns_cancelled_when_brain_raises_cancel_token() -> No
     assert checkpointer.total() >= 1
 
 
-async def test_dispatch_swallows_supervisor_exception_and_skips() -> None:
-    get_default_store().create(_seed_org(with_nodes=True))
+async def test_dispatch_swallows_supervisor_exception_and_skips(
+    _isolated_store: OrgManager,
+) -> None:
+    _seed_org_in_manager(_isolated_store, with_nodes=True)
     plan = await dispatch_inbound_message_to_v2(
         session_key="qq:chat:user", org_id="org_canary",
         message="trigger boom", brain=_ExplodingBrain(),

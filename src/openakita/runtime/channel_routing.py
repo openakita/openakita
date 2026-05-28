@@ -230,6 +230,15 @@ def route_inbound_message_to_v2(*, org_id: str | None) -> RoutingPlan:
         )
 
     try:
+        # Sprint 13 H2 (RC-1): ``get_default_store()`` is now the
+        # manager-backed shim (see ``src/openakita/orgs/store.py``);
+        # this read transparently routes through
+        # ``OrgManager.as_orgv2`` so mint orgs (the v25 H2 case --
+        # ``data/orgs/<id>/org.json``) finally resolve here. The
+        # legacy ``data/orgs_v2.json`` fallback is unioned in for
+        # the duration of the deprecation soak. A future cleanup
+        # will swap this for ``request.app.state.org_manager.get``
+        # once channel_routing is taught to take the FastAPI app.
         org = get_default_store().get(org_id)
     except OrgNotFound:
         return RoutingPlan(
@@ -297,6 +306,12 @@ async def dispatch_inbound_message_to_v2(
             )
 
         try:
+            # Sprint 13 H2 (RC-1): ``get_default_store()`` is now the
+            # manager-backed shim; this read goes through
+            # ``OrgManager.as_orgv2`` so the IM canary path -- the v25
+            # H2 / E4 symptom site -- can finally see mint orgs. See
+            # the matching comment in the sync ``route_inbound_...``
+            # helper above for the longer write-up.
             org = get_default_store().get(org_id)
         except OrgNotFound:
             return RoutingPlan(

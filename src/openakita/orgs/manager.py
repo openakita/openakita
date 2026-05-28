@@ -48,11 +48,33 @@ import logging
 import os
 import shutil
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from openakita.memory.types import normalize_tags
+from openakita.runtime.models import (
+    DefaultsSpec,
+    EdgeKind,
+    EdgeV2,
+    NodeRuntimeOverrides,
+    NodeType,
+    NodeV2,
+    OrgV2,
+    WorkbenchBinding,
+)
+from openakita.runtime.models import (
+    NodeStatus as RuntimeNodeStatus,
+)
+from openakita.runtime.models import (
+    OrgStatus as RuntimeOrgStatus,
+)
+
+from ._org_layout import apply_initial_tree_layout, normalize_org_name
+from .command_service import OrgLookupProtocol
 from .org_models import (
+    EdgeType,
+    NodeStatus,
     Organization,
     OrgEdge,
     OrgNode,
@@ -63,9 +85,6 @@ from .org_models import (
     infer_agent_profile_id_for_node,
 )
 from .scheduler_models import NodeSchedule, ScheduleType
-
-from ._org_layout import apply_initial_tree_layout, normalize_org_name
-from .command_service import OrgLookupProtocol
 
 __all__ = [
     "OrgFactoryProtocol",
@@ -345,6 +364,58 @@ class OrgManager:
         if raw is None:
             return None
         return Organization.from_dict(raw)
+
+    # ------------------------------------------------------------------
+    # OrgV2 spec projection (Sprint 13 H2 / RC-1 治根)
+    # ------------------------------------------------------------------
+
+    def as_orgv2(self, org_id: str) -> OrgV2 | None:
+        """Project ``org_id``'s :class:`Organization` to an :class:`OrgV2`.
+
+        v22 RCA RC-1 root-cause: ``OrgManager`` writes
+        ``data/orgs/<id>/org.json`` while ``JsonOrgStore``
+        wrote ``data/orgs_v2.json`` independently, so
+        ``/api/v2/orgs-spec`` and the IM canary read-side
+        (``channel_routing.py``) could not see mint orgs.
+
+        This adapter lets the JsonOrgStore shim and the
+        spec-API CRUD route round-trip mint orgs back into
+        the OrgV2 wire format without ever writing to the
+        legacy ``data/orgs_v2.json`` (red-line D --
+        OrgManager stays the single source of truth).
+
+        Field mapping (lossy in places; documented on each):
+
+        * ``id`` / ``name`` / ``description`` -- 1:1
+        * ``template_id`` -- not preserved on the rich
+          :class:`Organization` model; returned as ``None``
+          (callers that need the template id must read it
+          from ``Organization.tags`` or ``core_business``
+          when the templating layer is taught to stash it).
+        * ``status`` -- mapped via :func:`_org_status_to_v2`
+          (DORMANT->CREATED, ACTIVE->ACTIVE, RUNNING->RUNNING,
+          PAUSED->PAUSED, ARCHIVED->STOPPED).
+        * ``created_at`` / ``updated_at`` -- ISO strings
+          parsed back into ``datetime``; unparseable values
+          fall back to ``now`` so the projection cannot
+          raise on a malformed legacy row.
+        * ``defaults`` -- :class:`DefaultsSpec` factory
+          defaults (``Organization`` does not carry the
+          template DefaultsSpec; the spec API only needs
+          something jsonable here).
+        * ``nodes`` -- each :class:`OrgNode` projects to
+          :class:`NodeV2` via :func:`_node_to_v2`.
+        * ``edges`` -- each :class:`OrgEdge` projects to
+          :class:`EdgeV2` via :func:`_edge_to_v2`.
+
+        Returns ``None`` when the org is not found (i.e.
+        ``OrgManager`` has no ``data/orgs/<org_id>/org.json``).
+        """
+        try:
+            org = self._load(org_id)
+        except FileNotFoundError:
+            return None
+        return _project_organization_to_orgv2(org, self._org_dir(org_id))
 
     # ------------------------------------------------------------------
     # CRUD core (P9.5b -- 12 methods)
@@ -1000,6 +1071,211 @@ class OrgManager:
         p = self._state_json(org_id)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Organization -> OrgV2 projection helpers (Sprint 13 H2 / RC-1 治根)
+# ---------------------------------------------------------------------------
+#
+# These helpers translate the rich v1-shape :class:`Organization` model
+# (used by OrgManager, the SSoT) into the v2 spec :class:`OrgV2`
+# wire format consumed by ``/api/v2/orgs-spec`` and the IM canary
+# routing path. They are intentionally read-only -- the inverse
+# direction is owned by the spec-create endpoint in
+# ``api/routes/orgs_v2.py`` and never touches OrgManager from
+# JsonOrgStore.create (red-line D enforced).
+
+
+def _org_status_to_v2(status: OrgStatus) -> RuntimeOrgStatus:
+    """Map legacy OrgStatus -> runtime OrgV2 OrgStatus.
+
+    The two enums overlap on ``ACTIVE`` / ``RUNNING`` / ``PAUSED``
+    but differ at the edges -- ``DORMANT`` (legacy) becomes
+    ``CREATED`` (v2 just-minted), and ``ARCHIVED`` (legacy)
+    becomes ``STOPPED`` (v2 terminal). Unknown values fall
+    back to ``CREATED`` rather than raising so a bad enum
+    string on disk cannot break the spec API.
+    """
+    mapping = {
+        OrgStatus.DORMANT: RuntimeOrgStatus.CREATED,
+        OrgStatus.ACTIVE: RuntimeOrgStatus.ACTIVE,
+        OrgStatus.RUNNING: RuntimeOrgStatus.RUNNING,
+        OrgStatus.PAUSED: RuntimeOrgStatus.PAUSED,
+        OrgStatus.ARCHIVED: RuntimeOrgStatus.STOPPED,
+    }
+    return mapping.get(status, RuntimeOrgStatus.CREATED)
+
+
+def _node_status_to_v2(status: NodeStatus) -> RuntimeNodeStatus:
+    """Map legacy NodeStatus -> runtime NodeV2 NodeStatus."""
+    mapping = {
+        NodeStatus.IDLE: RuntimeNodeStatus.IDLE,
+        NodeStatus.BUSY: RuntimeNodeStatus.BUSY,
+        NodeStatus.WAITING: RuntimeNodeStatus.IDLE,
+        NodeStatus.ERROR: RuntimeNodeStatus.ERROR,
+        NodeStatus.OFFLINE: RuntimeNodeStatus.OFFLINE,
+        NodeStatus.FROZEN: RuntimeNodeStatus.OFFLINE,
+    }
+    return mapping.get(status, RuntimeNodeStatus.IDLE)
+
+
+def _edge_kind_to_v2(edge_type: EdgeType) -> EdgeKind:
+    """Map legacy EdgeType -> runtime EdgeKind (string values match 1:1)."""
+    try:
+        return EdgeKind(edge_type.value)
+    except ValueError:
+        return EdgeKind.HIERARCHY
+
+
+def _parse_iso_or_now(value: Any, fallback_path: Path | None = None) -> datetime:
+    """Best-effort ISO parse with file-mtime / now() fallback.
+
+    Tries to parse ``value`` (the ISO string Organization stores).
+    On failure -- malformed string, ``None``, non-string -- falls
+    back to ``fallback_path``'s mtime when available, finally
+    ``datetime.now(UTC)``. Never raises.
+    """
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            pass
+    if fallback_path is not None:
+        try:
+            return datetime.fromtimestamp(fallback_path.stat().st_mtime, tz=UTC)
+        except OSError:
+            pass
+    return datetime.now(UTC)
+
+
+def _node_parent_map(org: Organization) -> dict[str, str]:
+    """Return ``{child_node_id -> parent_node_id}`` from HIERARCHY edges.
+
+    Used to populate :attr:`NodeV2.parent_id` -- the legacy
+    Organization model carries parent/child only via
+    ``HIERARCHY`` edges, so we walk those once.
+    """
+    out: dict[str, str] = {}
+    for edge in org.edges:
+        if edge.edge_type != EdgeType.HIERARCHY:
+            continue
+        if not edge.source or not edge.target or edge.source == edge.target:
+            continue
+        out.setdefault(edge.target, edge.source)
+    return out
+
+
+def _node_to_v2(
+    node: OrgNode,
+    *,
+    org_id: str,
+    parent_id: str | None,
+    org_created_at: datetime,
+) -> NodeV2:
+    """Project one :class:`OrgNode` to a :class:`NodeV2`.
+
+    Type inference: nodes carrying ``plugin_origin`` are
+    workbench-typed; everything else is classified ``LLM``
+    (the v2 supervisor's default execution profile).
+    Workbench bindings preserve the original plugin id.
+    """
+    if node.plugin_origin and isinstance(node.plugin_origin, dict):
+        plugin_id = str(node.plugin_origin.get("plugin_id") or "")
+        mode = str(node.plugin_origin.get("mode") or "default")
+        if plugin_id:
+            workbench: WorkbenchBinding | None = WorkbenchBinding(
+                plugin_id=plugin_id, mode=mode, capabilities=None
+            )
+            node_type = NodeType.WORKBENCH
+        else:
+            workbench = None
+            node_type = NodeType.LLM
+    else:
+        workbench = None
+        node_type = NodeType.LLM
+
+    # ``role`` is the function-style identifier the v2 supervisor /
+    # messenger use to address a node ("art_director" /
+    # "screenwriter"); v1 stored that in ``role_title`` (human-
+    # readable label, often Chinese) so we prefer it. The
+    # ``agent_profile_id`` fallback is the second-best when
+    # ``role_title`` is blank, and ``"default"`` the third-best so
+    # the projected NodeV2 always has a non-empty role.
+    role = (node.role_title or "").strip() or node.agent_profile_id or "default"
+    label = (node.role_title or node.id).strip() or node.id
+    persona = node.custom_prompt or node.role_backstory or None
+    tool_subset: tuple[str, ...] | None = (
+        tuple(node.external_tools) if node.external_tools else None
+    )
+    overrides_dict = node.runtime_overrides if isinstance(node.runtime_overrides, dict) else {}
+    runtime_overrides = NodeRuntimeOverrides.from_jsonable(overrides_dict)
+
+    return NodeV2(
+        id=node.id,
+        org_id=org_id,
+        type=node_type,
+        role=role,
+        label=label,
+        persona_prompt=persona,
+        tool_subset=tool_subset,
+        workbench=workbench,
+        runtime_overrides=runtime_overrides,
+        parent_id=parent_id,
+        status=_node_status_to_v2(node.status),
+        last_seen=None,
+        last_progress_at=None,
+        created_at=org_created_at,
+    )
+
+
+def _edge_to_v2(edge: OrgEdge, *, org_id: str) -> EdgeV2:
+    """Project one :class:`OrgEdge` to an :class:`EdgeV2`."""
+    return EdgeV2(
+        id=edge.id,
+        org_id=org_id,
+        src=edge.source,
+        dst=edge.target,
+        kind=_edge_kind_to_v2(edge.edge_type),
+    )
+
+
+def _project_organization_to_orgv2(org: Organization, org_dir: Path) -> OrgV2:
+    """Build an :class:`OrgV2` from a fully-loaded :class:`Organization`.
+
+    Public entrypoint is :meth:`OrgManager.as_orgv2` -- this is the
+    pure projection (no I/O of its own; the caller passes in the
+    on-disk org directory only so :func:`_parse_iso_or_now` can
+    fall back to ``org.json``'s mtime when ``Organization.created_at``
+    is missing or unparseable).
+    """
+    org_json_path = org_dir / "org.json"
+    created = _parse_iso_or_now(org.created_at, fallback_path=org_json_path)
+    updated = _parse_iso_or_now(org.updated_at, fallback_path=org_json_path)
+
+    parent_map = _node_parent_map(org)
+    nodes_v2 = [
+        _node_to_v2(
+            n,
+            org_id=org.id,
+            parent_id=parent_map.get(n.id),
+            org_created_at=created,
+        )
+        for n in org.nodes
+    ]
+    edges_v2 = [_edge_to_v2(e, org_id=org.id) for e in org.edges]
+
+    return OrgV2(
+        id=org.id,
+        name=org.name,
+        template_id=None,
+        description=(org.description or None),
+        nodes=nodes_v2,
+        edges=edges_v2,
+        defaults=DefaultsSpec(),
+        status=_org_status_to_v2(org.status),
+        created_at=created,
+        updated_at=updated,
+    )
 
 
 # ---------------------------------------------------------------------------

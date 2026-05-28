@@ -309,7 +309,13 @@ from .runtime import (
 )
 from .scheduler_models import NodeSchedule, ScheduleType, new_schedule_id
 from .sqlite_store import SqliteOrgStore
-from .store import JsonOrgStore, OrgNotFound, get_default_store, reset_default_store
+from .store import (
+    JsonOrgStore,
+    OrgNotFound,
+    get_default_store,
+    reset_default_store,
+    set_default_org_manager,
+)
 
 __all__ = [
     "AgentBuilderProtocol",
@@ -450,4 +456,5 @@ __all__ = [
     "reset_default_store",
     "safe_asset_filename",
     "set_command_service",
+    "set_default_org_manager",
 ]

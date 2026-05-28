@@ -28,11 +28,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from openakita.channels.gateway import MessageGateway
+from openakita.orgs import reset_default_store, set_default_org_manager
+from openakita.orgs.manager import OrgManager
+from openakita.orgs.org_models import OrgNode
 from openakita.runtime.cancel_token import CancellationToken, CancelledByToken
 from openakita.runtime.channel_routing import dispatch_inbound_message_to_v2
 from openakita.runtime.checkpoint import CheckpointStatus, MemoryCheckpointer
-from openakita.runtime.models import NodeType, NodeV2, OrgV2
-from openakita.orgs import reset_default_store
 from openakita.runtime.supervisor import FinalOutcome, SupervisorBrain
 from tests.fixtures.factories import create_channel_message
 
@@ -104,14 +105,26 @@ class _CancellingBrain(SupervisorBrain):
 
 @pytest.fixture
 def _seeded_store(tmp_path: Path) -> None:
-    store = reset_default_store(path=tmp_path / "orgs_v2.json")
-    org = OrgV2(id="org_canary", name="Canary")
-    org.nodes.append(NodeV2(
-        id="node_root", org_id=org.id, type=NodeType.LLM,
-        role="producer", label="P",
-    ))
-    store.create(org)
+    """Sprint 13 H2 (RC-1): mint canary org via OrgManager (the SSoT)
+    instead of the deprecated ``JsonOrgStore.create`` write path."""
+    manager = OrgManager(tmp_path)
+    reset_default_store(path=tmp_path / "orgs_v2.json", manager=manager)
+    set_default_org_manager(manager)
+    manager.create(
+        {
+            "id": "org_canary",
+            "name": "Canary",
+            "nodes": [
+                OrgNode(
+                    id="node_root",
+                    role_title="producer",
+                    agent_profile_id="default",
+                ).to_dict()
+            ],
+        }
+    )
     yield
+    set_default_org_manager(None)
     reset_default_store()
 
 

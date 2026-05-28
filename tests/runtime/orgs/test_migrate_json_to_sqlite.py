@@ -18,13 +18,21 @@ _module = importlib.util.module_from_spec(_spec)
 sys.modules["_migrate_json_sqlite"] = _module
 _spec.loader.exec_module(_module)
 
-from openakita.runtime.models import OrgV2, new_org_id  # noqa: E402
 from openakita.orgs.sqlite_store import SqliteOrgStore  # noqa: E402
-from openakita.orgs.store import JsonOrgStore  # noqa: E402
+from openakita.runtime.models import OrgV2, new_org_id  # noqa: E402
 
 
 def _seed_json(path: Path, n: int = 3) -> list[str]:
-    store = JsonOrgStore(path=path)
+    """Seed the legacy ``orgs_v2.json`` file directly.
+
+    Sprint 13 H2 (RC-1) retired ``JsonOrgStore.create``; the
+    migration script still has to be exercised against a real
+    legacy payload, so we write the JSON file in the same shape
+    the pre-Sprint-13 store used to produce -- the migration
+    target itself reads the raw file, not the (now read-only)
+    shim.
+    """
+    payload: dict[str, dict[str, dict]] = {"orgs": {}}
     ids: list[str] = []
     for i in range(n):
         org = OrgV2(
@@ -35,8 +43,10 @@ def _seed_json(path: Path, n: int = 3) -> list[str]:
             nodes=[],
             edges=[],
         )
-        store.create(org)
+        payload["orgs"][org.id] = org.to_jsonable()
         ids.append(org.id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return ids
 
 

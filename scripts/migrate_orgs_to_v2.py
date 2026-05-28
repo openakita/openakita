@@ -98,12 +98,23 @@ def _bootstrap_templates() -> int:
     return new_count
 
 
-def _migrate_orgs_from_legacy(legacy_db: Path, *, apply: bool) -> tuple[int, int, int]:
+def _migrate_orgs_from_legacy(
+    legacy_db: Path,
+    *,
+    apply: bool,
+    manager: object | None = None,
+) -> tuple[int, int, int]:
     """Walk the legacy SQLite snapshot and project every org into the v2 store.
 
     Returns ``(orgs_seen, orgs_imported, orgs_skipped)``. Best-effort:
     schema variations are tolerated, missing template_ids cause a
     skip, malformed rows do not abort the run.
+
+    Sprint 13 H2 (RC-1): ``manager`` is the optional injection point
+    for tests to point migration at a tmp-rooted :class:`OrgManager`
+    instead of the settings-derived production SSoT. Production
+    callers leave it ``None`` and get a fresh manager rooted at
+    ``settings.data_dir``.
     """
     if not legacy_db.exists():
         logger.info("no legacy snapshot at %s — fresh-start migration", legacy_db)
@@ -125,10 +136,21 @@ def _migrate_orgs_from_legacy(legacy_db: Path, *, apply: bool) -> tuple[int, int
         conn.close()
         return 0, 0, 0
 
-    from openakita.orgs import get_default_store
+    # Sprint 13 H2 (RC-1): the v2 SSoT is now ``OrgManager`` writing
+    # ``data/orgs/<id>/org.json``; the legacy ``JsonOrgStore.create``
+    # write path raises. Route imports through the manager so the
+    # migration deposits orgs directly into the new SSoT.
     from openakita.runtime.templates import GLOBAL_REGISTRY
 
-    store = get_default_store()
+    if manager is None:
+        from openakita.config import settings
+
+        from openakita.orgs.manager import OrgManager
+        from openakita.orgs.store import set_default_org_manager
+
+        manager = OrgManager(Path(getattr(settings, "data_dir", None) or "data"))
+        set_default_org_manager(manager)
+
     seen, imported, skipped = 0, 0, 0
     try:
         rows = conn.execute("SELECT id, name, template_id FROM orgs").fetchall()
@@ -145,8 +167,7 @@ def _migrate_orgs_from_legacy(legacy_db: Path, *, apply: bool) -> tuple[int, int
             skipped += 1
             continue
         try:
-            org = GLOBAL_REGISTRY.instantiate(template_id, name=name or org_id)
-            org.id = str(org_id)  # preserve legacy id for downstream stability
+            org_v2 = GLOBAL_REGISTRY.instantiate(template_id, name=name or org_id)
         except Exception as exc:  # noqa: BLE001 — defensive
             logger.warning("skip org %s: instantiate failed (%s)", org_id, exc)
             skipped += 1
@@ -155,11 +176,20 @@ def _migrate_orgs_from_legacy(legacy_db: Path, *, apply: bool) -> tuple[int, int
             logger.info("would import org %s (template=%s)", org_id, template_id)
             imported += 1
             continue
+        # Idempotency: skip when OrgManager already has this id.
+        if manager.get(str(org_id)) is not None:
+            logger.debug("org %s already in v2 SSoT — idempotent skip", org_id)
+            continue
         try:
-            store.create(org)
+            # Project the OrgV2 spec into the rich Organization dict
+            # the manager expects, preserving the legacy id.
+            payload = {
+                "id": str(org_id),
+                "name": org_v2.name,
+                "description": org_v2.description or "",
+            }
+            manager.create(payload)
             imported += 1
-        except ValueError:
-            logger.debug("org %s already in v2 store — idempotent skip", org_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("import failed for %s: %s", org_id, exc)
             skipped += 1
