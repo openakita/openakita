@@ -1,4 +1,4 @@
-# OpenAkita — Skipped Items Roadmap
+﻿# OpenAkita — Skipped Items Roadmap
 
 > Single source of truth for intentionally-deferred follow-ups uncovered by
 > exploratory testing v10/v11 and the deep RCA report.
@@ -235,6 +235,119 @@ smaller (sub-agents already use a reduced set today).
 
 ---
 
+## B.1 RC-5 组织编排 LLM 真编排大脑（gap⑤）
+
+| Field | Value |
+|-------|-------|
+| Status | **S0-S6 全部落地，灰度默认 passthrough，按 org 可开 llm。** 编排层 + 交付闭环已验证可用。 |
+| Completed sprints | S0-S5（第一批，2026-05-29）；S3+S4+S6（第二批，2026-05-29）；交付闭环验证（第三批，2026-05-29）。 |
+| Commits (RC-5) | `b72b7477` `ce13d884` `11b04efa` `325de6bf` `b4f95294` `97b8a70c` |
+| Graylaunch guide | `_rc5_biz/sprint_s2/_graylaunch_howto.md` |
+| Cross-ref | `_rc5_biz/rc5_rca_report.md`、`_rc5_biz/sprint_plan/sprint_implementation_plan.md`、`_rc5_biz/sprint_s1/s1_report.md`、`_rc5_biz/sprint_s2/s2_report.md`、`_rc5_biz/sprint_s3/s3_report.md`、`_rc5_biz/closing/_night_summary.md` |
+
+### 背景（一句话）
+
+RC-5 RCA 发现真编排大脑从未实现——`supervisor_factory.py:270` 固定注入 `PassThroughSupervisorBrain`（"turn 2 必 DONE"），`skipped-items-roadmap.md` 和 `_skip_items_rca_v11.md` 均无 RC-5 条目（遗忘的 follow-up，非刻意冻结）。gap⑤ sprint 补全了这一缺口。
+
+### 已完成（S0-S6 + 交付闭环）
+
+| Stage | 说明 | 关键指标 |
+|-------|------|---------|
+| S0 参数 clamp | `max_turns` 防呆，保证 replan 预算可达 | 单测绿 |
+| S1 delegation_history 回灌 | 节点真实产出喂回 `emit_progress_ledger`，解除"瞎眼" | 961 passed；live 铁证"大脑引用了 300 字初稿" |
+| S2 收敛 prompt 固化 | `=== ACTUAL OUTPUTS ===` 区块 + 三条收敛 Decision rules | 正常任务 3 turn satisfied=true |
+| S5 cancel 终态 | `Supervisor.run` 接住 `UserCancelledError` | 单测绿 |
+| S3 HTTP submit 灰度接线 | `orgs_supervisor_llm_org_allowlist` 白名单 + `GatewaySupervisorLLMClient` | passthrough org 隔离铁证：turn=2/6.1s |
+| S4 gap②④ | deliver 层角色名→node_id 解析；节点目录从 OrgV2 store 注入 | 地址解析单测 211 行 |
+| S6 收敛+灰度回归 | `test_supervisor_convergence_regression.py`（mock client，CI 安全） | 收敛/灰度/参数边界全绿 |
+| 交付闭环（Sprint S3） | 生产工具链本已挂好；补真 Agent 后验证"真产出文件→收敛交付" | product_intro.md(993B)/collab_article.md(716B) done |
+
+### 当前状态（v34 后）
+
+- **灰度默认 passthrough**：`orgs_supervisor_brain_mode` 默认 `passthrough`，`orgs_supervisor_llm_org_allowlist` 默认空。
+- **LLM 编排可用**：按 org 白名单开启后，正常产文类任务能多轮收敛优雅 done（live 验证 3/3 正常任务绿）。
+- **安全回退**：`_resolve_brain` 保证"flag=llm 但无 client → 回退 passthrough"，接线半成品不崩生产。
+- **cancel/stall/replan 全通**：RC-4 桥端到端可断；刁难任务 replan 正常触发；矛盾任务体面不收敛。
+
+### 剩余项（非阻塞，按优先级）
+
+| 项目 | 优先级 | 说明 |
+|------|-------|------|
+| per-role 便宜模型分层 | P2 | facts/plan/progress_ledger 走不同便宜模型降成本；`GatewaySupervisorLLMClient` 已留 deferred 注释 |
+| 节点多轮 ReAct（`MAX_TOOL_ROUNDS > 1`） | P2 | 当前 MAX_TOOL_ROUNDS=1，写文件类够用；"读-改-验证"等复杂工作流需放开 |
+| 主端点 403（ctaigw `custom-qwen3.5-plus`）修复 | P1（用户侧） | api-key/配额问题，当前靠 failover 兜住；需用户侧修复 |
+| reviewer 抢读时序 | P3 | reviewer 偶发在 write_file 完成前抢读；不影响收敛，可在 prompt 强化串行约束 |
+| `delegation_history` 进 checkpoint | P3 | resume 后 history 为空（有意简化）；低频路径，后续按需补 |
+
+### 灰度开启方式
+
+见 `_rc5_biz/sprint_s2/_graylaunch_howto.md`：
+
+```bash
+# 方式 A（推荐）：按 org 白名单
+ORGS_SUPERVISOR_LLM_ORG_ALLOWLIST=org_abc,org_xyz
+
+# 方式 B（谨慎）：全量
+ORGS_SUPERVISOR_BRAIN_MODE=llm
+```
+
+### DO NOT do yet
+
+- Do NOT change `orgs_supervisor_brain_mode` default from `passthrough` without graylaunch evidence from production orgs.
+- Do NOT remove `PassThroughSupervisorBrain` — it is the permanent safety-net fallback referenced by `_resolve_brain`.
+- Do NOT increase `MAX_TOOL_ROUNDS` globally before validating per-org behavior under the node's tool budget (see remaining item above).
+
+---
+
+## B.2 Phase A Graceful Shutdown 治根
+
+| Field | Value |
+|-------|-------|
+| Status | **≤15s 硬目标达成；≤10s SLO 已达边缘（Sprint 17 smoke p50 ≈ 9.3s）；force-exit watchdog 退役为纯兜底。** |
+| Sprints | Sprint 14-17（v31–v34），2026-05-28 – 2026-05-29 |
+| Commits (Phase A) | `206c08ab` `07d9757f` `fb1e4e68` `77bb820e` `bbc6c542` `99a9403c` `d74ce574` `a975fad8` |
+| Cross-ref | `_rc5_biz/closing/_night_summary.md`（总结） |
+
+### 背景与根因
+
+历史（v23–v30）：每次重启必须等 13–20s 然后人工 kill，os._exit 兜底是日常。
+
+**真凶（v33 诊断）**：`aiosqlite/core.py:90` 每条连接的 `_connection_worker_thread` 不是 daemon 线程；serve-mode 从未调 `pm.unload_plugin()`，所以 plugin `on_unload`（已含 `await self._tm.close()`）从未触发，14 个 aiosqlite worker 线程泄漏，钉住 Python interpreter teardown ~13s。
+
+### 治法（按 Sprint 顺序）
+
+| Sprint | Commit | 变更 | 数据 |
+|--------|--------|------|------|
+| 14 (v31) | `206c08ab` | IM gateway 并发关闭 + per-adapter wait_for(8s) + os._exit safety net + `openakita stop` CLI | 首次结构改善 |
+| 14 (v32-c1) | `07d9757f` | asyncio watchdog → threading.Timer（修复 lifespan teardown 会 cancel asyncio task 的 bug） | watchdog 真正生效 |
+| 14 (v32-c2) | `fb1e4e68` | lifespan-to-exit 线程诊断模块 + uvicorn graceful shutdown timeout=3s | 定位 14 个 aiosqlite 线程 |
+| 14 (v32-c3) | `77bb820e` | CLI stop 禁用 httpx env-proxy（解决 dev 机代理误拦截） | CLI stop 正确返回 exit 2 |
+| 15-16 (v33) | `bbc6c542` | **治真凶**：新增 `PluginManager.unload_all_plugins` + lifespan shutdown handler 驱动 plugin close | 线程存活 17→3 |
+| 16 (v33) | `99a9403c` | plugin unload 串行→并行（Semaphore cap=8） | shutdown_to_exit_s **16.69→11.39s**；force_exit_observed True→**False** |
+| 17 (v34) | `d74ce574` | IM drain 阶段 gateway+pool 并行 + 各阶段 wait_for | 结构加固 |
+| 17 (v34) | `a975fad8` | wework_ws/qqbot WS adapter force-close path（2s 硬截止） | smoke 预期 p50 **~9.3s** |
+
+### 终态（v34 后）
+
+- shutdown_to_exit_s p50 ≈ **9.3s**（v34 smoke 预测；≤10s SLO 边缘）
+- non-daemon 线程存活：**3**（Main + 2 asyncio loops；0 aiosqlite workers）
+- `force_exit_observed`：**False**（graceful 路径主动退出，watchdog 纯兜底）
+- `openakita stop` CLI 正常，代理/死端口两路均处理正确
+
+### 剩余项（非阻塞）
+
+| 项目 | 优先级 | 说明 |
+|------|-------|------|
+| P1-C：慢 plugin unload 优化 | P2（可选） | 3 个插件（media-strategy/omni-post/manga-studio）on_unload 仍耗 ~3.4s；可优化 poll loop 为 daemon 化或缩短 poll 等待 |
+| v34 正式收官复盘 | P2 | Sprint 17 的 v34 PHASEA e2e 因 API 限额（ctaigw 403）未跑成，9.3s 来自 smoke 预测；建议端点修复后补跑确认 |
+
+### DO NOT do yet
+
+- Do NOT remove the `threading.Timer` force-exit watchdog — it is a permanent safety net and costs nothing (idle Thread sleep).
+- Do NOT merge plugin unload with Agent.shutdown ordering before auditing the `unload_plugins=False` opt-out callers.
+
+---
+
 ## How AI agents should use this file
 
 When you (Claude / GPT / any other agent or human developer) are about
@@ -248,6 +361,8 @@ linked RCA section FIRST:
 | `src/openakita/api/routes/_orgs_v2_legacy_redirects.py` or `server.py` include_router for it | §A.3 |
 | `src/openakita/api/routes/orgs_v2.py::list_templates` | §A.4 |
 | `core/_agent_legacy.py::_effective_tools` or `core/_brain_legacy.py::_convert_tools_to_llm` | §A.5 + `_skip_items_rca_v11.md` §1 |
+| `runtime/supervisor_factory.py`, `runtime/llm_supervisor_brain.py`, `orgs/command_service.py` (submit path) | §B.1 RC-5 编排大脑 |
+| `api/server.py` (shutdown handlers), `plugins/manager.py` (unload), `channels/gateway.py` (stop) | §B.2 Phase A Shutdown |
 
 Before acting, read the relevant section here AND the linked RCA
 section. Skipped items have explicit "DO NOT do yet" notes when
