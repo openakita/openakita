@@ -405,3 +405,33 @@ _main_gate_*.txt
 _narrow_*.txt
 _smoke_backend_*.log.err
 _v1_*.txt
+
+# ─────────────────────────────────────────────────────────────
+# 散文件清理 第四轮（2026-05-29，RC-5 closing）：
+# 工作树探路 / forensics / 临时测试产物的防复发模式（review §3.5）。
+# 说明：A 类 forensics（_v31~34_biz*/、_rc5_biz/）保留在磁盘上作决策依据，
+# 这些模式只阻止它们被 `git add .` 误带入版本库，不会删除磁盘文件；
+# 已 tracked 的 _v33_biz/*.md、_rc5_biz/sprint_s1/* 不受影响（git 不 untrack 已跟踪文件）。
+# ─────────────────────────────────────────────────────────────
+_v[0-9]*_biz*/
+_commit_msg_*.txt
+tmp_*/
+org_*/
+reports/
+apps/setup-center/test-results/
+*.sqlite-shm
+*.sqlite-wal
+plugins/*/data/
+_*_pytest*.txt
+_*_test.out
+_*_test.err
+_*_log.jsonl
+
+# ─────────────────────────────────────────────────────────────
+# 过程文件归档目录（2026-05-29）：
+# 所有过程测试 / forensics / 一次性调试脚本 / RCA / acceptance 产物
+# 统一归档到工程内的 _archive/ 下（保留原相对路径结构便于复查），
+# 该目录永不进入 git。已 tracked 的 forensics 文件通过 `git rm --cached`
+# 取消跟踪后再移入此处，磁盘文件完整保留。
+# ─────────────────────────────────────────────────────────────
+_archive/
