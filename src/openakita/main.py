@@ -737,37 +737,76 @@ async def stop_im_channels(*, graceful: bool = True, drain_timeout: float = 30.0
     """
     停止 IM 通道
 
+    Sprint 17 P1-A 治根（forensics: ``_v34_biz/_im_shutdown_chain_inventory.md``）：
+
+    - Gateway drain 与 desktop_pool 收尾 **并行** 起跑（两者完全独立——desktop_pool 不
+      被任何 IM in-flight task 引用），把"先 drain 再 desktop"的串行链折叠成 max。
+    - 每一层 ``await`` 加 ``settings.lifespan_stage_timeout_s`` (默认 8s) 的 wait_for
+      兜底，防止某一 sub-stage 失控把 35s 外层 wait_for 全吃光。
+    - Orchestrator → SessionManager 仍保持串行依赖：orchestrator 内部任务可能持有
+      session 引用，必须在 orchestrator.shutdown 完成后再关 session manager。
+
+    v33 backend_run1.log 时序证据：MessageGateway stopped → Orchestrator complete
+    → SessionManager stopped 三者间隔 ~0.001s + ~0.041s，主刀仍在 gateway 内部
+    wework_ws WS adapter 收尸（见 c2 commit）。
+
     Args:
         graceful: True 时先排空进行中任务再停止，False 时立即停止
         drain_timeout: 排空等待超时秒数
     """
     global _message_gateway, _session_manager, _orchestrator, _desktop_pool
 
-    # Gateway drain MUST happen first — agents and orchestrator must stay alive
-    # so in-flight IM responses can finish sending before we tear down the pool.
+    # Per-stage timeout：lifespan_stage_timeout_s 与 server.py lifespan handler
+    # 同源；取不到时降级到 8s 默认。
+    try:
+        from openakita.config import settings as _settings
+
+        stage_timeout = float(getattr(_settings, "lifespan_stage_timeout_s", 8) or 8)
+    except Exception:
+        stage_timeout = 8.0
+
+    async def _bounded(label: str, coro):
+        try:
+            await asyncio.wait_for(coro, timeout=stage_timeout)
+        except TimeoutError:
+            logger.warning(
+                "[Shutdown] stop_im_channels stage %s exceeded %.1fs, abandoning",
+                label,
+                stage_timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 -- shutdown must not raise
+            logger.warning("[Shutdown] stop_im_channels stage %s error: %s", label, exc)
+
+    # ── Phase 1: gateway drain/stop ∥ desktop_pool.stop ──
+    # gateway drain MUST happen before orchestrator shutdown so in-flight IM
+    # responses can finish; desktop_pool is independent and runs in parallel.
+    phase1_aws: list = []
+    had_gateway = bool(_message_gateway)
+    had_desktop = bool(_desktop_pool)
     if _message_gateway:
         if graceful:
-            await _message_gateway.drain(timeout=drain_timeout)
+            phase1_aws.append(
+                _bounded("gateway.drain", _message_gateway.drain(timeout=drain_timeout))
+            )
         else:
-            await _message_gateway.stop()
-        logger.info("MessageGateway stopped")
-
+            phase1_aws.append(_bounded("gateway.stop", _message_gateway.stop()))
     if _desktop_pool:
-        try:
-            await _desktop_pool.stop()
-        except Exception as e:
-            logger.warning(f"Desktop pool shutdown error: {e}")
+        phase1_aws.append(_bounded("desktop_pool.stop", _desktop_pool.stop()))
+    if phase1_aws:
+        await asyncio.gather(*phase1_aws, return_exceptions=True)
+    if had_gateway:
+        logger.info("MessageGateway stopped")
+    if had_desktop:
         _desktop_pool = None
 
+    # ── Phase 2: orchestrator.shutdown (depends on gateway drained) ──
     if _orchestrator:
-        try:
-            await _orchestrator.shutdown()
-        except Exception as e:
-            logger.warning(f"Orchestrator shutdown error: {e}")
+        await _bounded("orchestrator.shutdown", _orchestrator.shutdown())
         _orchestrator = None
 
+    # ── Phase 3: session_manager.stop (depends on orchestrator drained) ──
     if _session_manager:
-        await _session_manager.stop()
+        await _bounded("session_manager.stop", _session_manager.stop())
         logger.info("SessionManager stopped")
 
 
