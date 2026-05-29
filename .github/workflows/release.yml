@@ -1106,6 +1106,55 @@ jobs:
             exit 1
           fi
 
+      # Archive Rust release-build PDB symbols into the same _upload/ directory
+      # so the next step's `gh release upload ${OUT_DIR}/*` ships them as a
+      # release asset alongside the installer.
+      #
+      # Why this matters: Cargo.toml's `[profile.release] debug = "line-tables-only"`
+      # makes the PDB useful (file:line resolution for any future minidump),
+      # but the PDB only lives in the build runner's target/release directory
+      # and is destroyed when the runner is recycled. Without this archival
+      # step every Windows release produces dump-resolvable binaries on the
+      # build host but unsymbolizable binaries in users' hands — the exact
+      # situation that left v1.27.12 / v1.27.13 minidumps from feedback
+      # issue #591 stuck at hex offsets like `+0x4E05A7` and `+0x857407`.
+      #
+      # Scope: Windows MSVC only. macOS / Linux toolchains keep DWARF inside
+      # the binary already (split-debuginfo defaults differ per platform), so
+      # no separate symbol asset is needed for those targets.
+      - name: Archive Windows debug symbols (PDB) into _upload/
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $targetBase = "apps/setup-center/src-tauri/target"
+          if ("${{ matrix.rust_target }}") {
+            $releaseDir = "$targetBase/${{ matrix.rust_target }}/release"
+          } else {
+            $releaseDir = "$targetBase/release"
+          }
+          $bundleDir = "$releaseDir/bundle"
+          $outDir = "$bundleDir/_upload"
+          if (-not (Test-Path $outDir)) {
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+          }
+          # Cargo writes the binary's PDB right next to the .exe in
+          # target/release/, regardless of where Tauri later renames the .exe
+          # for bundling. Match the crate name from Cargo.toml ([package].name).
+          $pdb = Get-ChildItem -Path $releaseDir -Filter "openakita-setup-center.pdb" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $pdb) {
+            Write-Host "::warning::PDB not found in $releaseDir; symbols will not be archived for this release."
+            Write-Host "Listing $releaseDir contents for diagnosis:"
+            Get-ChildItem -Path $releaseDir -File -ErrorAction SilentlyContinue | Select-Object Name, Length | Format-Table -AutoSize | Out-String | Write-Host
+            return
+          }
+          # Strip the `v` prefix from the release tag to match the version
+          # format used by installer assets (OpenAkitaDesktop_1.27.13_*).
+          $version = "${{ env.RELEASE_TAG }}".TrimStart('v')
+          $zipPath = "$outDir/OpenAkitaDesktop_${version}_${{ matrix.suffix }}.symbols.zip"
+          Compress-Archive -Path $pdb.FullName -DestinationPath $zipPath -Force
+          $sizeMb = [Math]::Round((Get-Item $zipPath).Length / 1MB, 2)
+          Write-Host "Created symbols archive: $zipPath ($sizeMb MB)"
+
       - name: Upload installers to GitHub Release
         shell: bash
         env:

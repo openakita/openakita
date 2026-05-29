@@ -66,3 +66,20 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_Threading",
 ] }
 
+# Keep enough debug info in release builds so future minidumps and panic
+# backtraces can be resolved back to source locations. The investigation of
+# the v1.27.12 / v1.27.13 minidumps from feedback issue #591 showed that
+# without per-line debug data we can only see `openakita-desktop.exe
+# +0x4E05A7` and `+0x857407`; with `line-tables-only` the same dump
+# resolves to the actual Rust function and line, which is what makes the
+# difference between "we know it crashed somewhere in our binary" and "we
+# know which use-after-free or null deref to fix".
+#
+# `line-tables-only` is the cheapest setting that produces useful
+# symbolized stacks: it adds roughly 5-15% to the Windows MSVC binary size
+# and emits the standard `target/release/<name>.pdb` that MSVC already
+# produces, just with a populated line-table section. release.yml archives
+# the resulting *.pdb alongside the .exe so future user crash dumps can be
+# analysed offline even after the CI runner is recycled.
+[profile.release]
+debug = "line-tables-only"
