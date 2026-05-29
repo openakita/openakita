@@ -128,12 +128,52 @@ def reset_checkpointer_cache() -> None:
         _ORG_CHECKPOINTERS.clear()
 
 
+def _resolve_speaker_to_node_id(
+    speaker: str,
+    *,
+    node_directory: Any,
+    root_node_id: str,
+) -> str:
+    """RC-5 S4 gap②: map a (possibly role-style) ``speaker`` to a node_id.
+
+    Production-grade promotion of the deliver-layer address resolution the
+    Sprint-9 comment flagged ("Future brains that emit role-style
+    next_speaker will need an address resolver here"). When a real
+    ``node_directory`` (list of ``NodeDescriptor``) is supplied we run the
+    brain's resolver (exact node_id -> exact role -> substring -> root
+    fallback) so a model answer like ``"copywriter"`` lands on the concrete
+    ``"node_writer"`` the executor expects.
+
+    Byte-for-byte preservation of the passthrough path: when no directory is
+    supplied (the default PassThrough submit path), the speaker is used
+    verbatim exactly as before -- no resolution, no behaviour change.
+    """
+    raw = speaker or ""
+    if not node_directory:
+        return raw
+    try:
+        from openakita.runtime.llm_supervisor_brain import LLMSupervisorBrain
+
+        return LLMSupervisorBrain.resolve_next_speaker(
+            raw, node_directory, root_node_id
+        )
+    except Exception:  # noqa: BLE001 -- resolution is best-effort, never crash
+        logger.debug(
+            "SupervisorFactory: speaker resolution failed for %r; using raw",
+            raw,
+            exc_info=True,
+        )
+        return raw
+
+
 def _make_executor_deliver(
     *,
     org_id: str,
     command_id: str,
     executor: Any,
     cancel_event: asyncio.Event | None = None,
+    node_directory: Any = None,
+    root_node_id: str = "",
 ) -> DeliverCallable:
     """Build a :class:`DeliverCallable` that routes to the v2 executor.
 
@@ -162,11 +202,14 @@ def _make_executor_deliver(
     """
 
     async def _deliver(speaker: str, instruction: str, progress: Any) -> DelegationResult:
-        node_id = speaker or ""
-        # ``speaker`` may be a role / address (Sprint-9 PassThroughBrain
-        # always sets it to the root node_id directly, so the simple
-        # lookup is fine). Future brains that emit role-style
-        # ``next_speaker`` will need an address resolver here.
+        # ``speaker`` may be a role / address. Sprint-9 PassThroughBrain
+        # always sets it to the root node_id directly (no directory supplied
+        # -> verbatim, unchanged). RC-5 S4 gap②: when an LLM brain runs with a
+        # real node directory, resolve a role-style ``next_speaker`` to the
+        # concrete node_id the executor expects.
+        node_id = _resolve_speaker_to_node_id(
+            speaker, node_directory=node_directory, root_node_id=root_node_id
+        )
         try:
             result = await executor.activate_and_run(
                 org_id=org_id,
@@ -208,6 +251,60 @@ def _make_executor_deliver(
     return _deliver
 
 
+def _resolve_brain(
+    *,
+    brain: SupervisorBrain | None,
+    brain_mode: str | None,
+    root_node_id: str,
+    llm_client: Any,
+    node_directory: Any,
+) -> SupervisorBrain:
+    """Pick the SupervisorBrain. Explicit ``brain`` wins; else flag-driven.
+
+    RC-5 route-B gray-switch. Default ``"passthrough"`` preserves Sprint-9
+    behaviour exactly. ``"llm"`` only engages the real LLM brain when a
+    client is wired; otherwise it logs and safely falls back to PassThrough
+    so flipping the config alone can never break the production submit path
+    (which never passes ``llm_client``).
+    """
+    if brain is not None:
+        return brain
+
+    mode = brain_mode
+    if mode is None:
+        try:
+            from openakita.config import settings
+
+            mode = settings.orgs_supervisor_brain_mode
+        except Exception:  # noqa: BLE001 -- config must never break submit
+            logger.debug("SupervisorFactory: settings read failed", exc_info=True)
+            mode = "passthrough"
+
+    if mode == "llm":
+        if llm_client is None:
+            logger.warning(
+                "SupervisorFactory: orgs_supervisor_brain_mode='llm' but no "
+                "llm_client supplied; falling back to PassThroughSupervisorBrain "
+                "(zero-impact safe default). Wire an llm_client to engage "
+                "LLMSupervisorBrain (RC-5 route B)."
+            )
+        else:
+            from openakita.runtime.llm_supervisor_brain import LLMSupervisorBrain
+
+            logger.info(
+                "SupervisorFactory: engaging LLMSupervisorBrain (RC-5 route B) "
+                "for root_node=%s",
+                root_node_id,
+            )
+            return LLMSupervisorBrain(
+                root_node_id=root_node_id,
+                client=llm_client,
+                node_directory=node_directory,
+            )
+
+    return PassThroughSupervisorBrain(root_node_id=root_node_id)
+
+
 def build_supervisor_for_command(
     *,
     org_id: str,
@@ -217,6 +314,9 @@ def build_supervisor_for_command(
     executor: Any,
     cancel_token: CancellationToken | None = None,
     brain: SupervisorBrain | None = None,
+    brain_mode: str | None = None,
+    llm_client: Any = None,
+    node_directory: Any = None,
     stream: StreamBus | None = None,
     checkpointer: BaseCheckpointer | None = None,
     deliver: DeliverCallable | None = None,
@@ -238,9 +338,25 @@ def build_supervisor_for_command(
       :func:`_make_executor_deliver` over the supplied executor. IM
       canary that wants a different transport (e.g. messenger.deliver
       addressing through node registries) can pass its own.
-    * ``brain``: defaults to :class:`PassThroughSupervisorBrain`
-      keyed on ``root_node_id`` -- single-shot delegation, then DONE.
-      A real LLM-driven multi-turn brain is the P-RC-4 follow-up.
+    * ``brain``: when supplied, used verbatim (explicit injection always
+      wins -- tests rely on this). When ``None`` the brain is selected by
+      ``brain_mode`` (defaulting to ``settings.orgs_supervisor_brain_mode``,
+      itself defaulting to ``"passthrough"``):
+
+      - ``"passthrough"`` -> :class:`PassThroughSupervisorBrain` keyed on
+        ``root_node_id`` (single-shot delegation, then DONE). This is the
+        zero-production-impact default; the legacy ``submit`` path never
+        passes ``brain_mode`` / ``llm_client`` so it always lands here.
+      - ``"llm"`` -> RC-5 route-B :class:`LLMSupervisorBrain`, but **only
+        when an ``llm_client`` is also supplied**. With the flag flipped but
+        no client wired we log a warning and **safely fall back** to
+        PassThrough rather than crash -- so flipping the config alone can
+        never break production.
+
+      ``llm_client`` / ``node_directory`` are forwarded to the
+      :class:`LLMSupervisorBrain` constructor (RC-5 prototype). A real
+      multi-turn LLM-driven brain is the P-RC-4 follow-up being prototyped
+      under ``_rc5_biz/prototype/``.
     * ``stream``: defaults to the org-scoped registry bus so SSE
       consumers (``GET /api/v2/orgs/{id}/events/stream``) see live
       events.
@@ -267,7 +383,13 @@ def build_supervisor_for_command(
     resolved_stream = stream or get_or_create_org_stream_bus(org_id)
     resolved_checkpointer = checkpointer or get_or_create_checkpointer(org_id)
     resolved_token = cancel_token or CancellationToken()
-    resolved_brain = brain or PassThroughSupervisorBrain(root_node_id=root_node_id)
+    resolved_brain = _resolve_brain(
+        brain=brain,
+        brain_mode=brain_mode,
+        root_node_id=root_node_id,
+        llm_client=llm_client,
+        node_directory=node_directory,
+    )
 
     # v22 RCA RC-4 / Sprint-13 H1: bridge ``cancel_token`` ->
     # ``asyncio.Event`` at the composition root so the bridge is
@@ -290,6 +412,8 @@ def build_supervisor_for_command(
         command_id=command_id,
         executor=executor,
         cancel_event=cancel_event,
+        node_directory=node_directory,
+        root_node_id=root_node_id,
     )
 
     return Supervisor(
