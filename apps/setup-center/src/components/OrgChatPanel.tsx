@@ -446,6 +446,39 @@ function loadFromLocalStorage(cid: string): ChatMsg[] {
   } catch { return []; }
 }
 
+// Strip any <thinking>…</thinking> chain-of-thought the node leaked into its
+// final answer. UI issue #3/#4: the v2 executor returns the node's raw reply as
+// the deliverable, and some nodes prepend a long <thinking> block — that is
+// internal reasoning, not part of the "任务完成汇报", so it must never show in
+// the final receipt bubble.
+function stripThinking(text: string): string {
+  if (!text) return text;
+  const cleaned = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, "").trim();
+  // If a node opened <thinking> but never closed it (truncated), drop the tag
+  // and everything up to the first markdown heading so we still show content.
+  if (/<thinking>/i.test(cleaned)) {
+    const afterHeading = cleaned.replace(/^[\s\S]*?(?=^#{1,6}\s)/m, "");
+    return (afterHeading || cleaned).replace(/<\/?thinking>/gi, "").trim();
+  }
+  return cleaned;
+}
+
+// UI issue #4: the v2 command result is shaped {final_message: "..."} (the
+// supervisor's closing summary), NOT {result: "..."}. Reading only ``result``
+// meant the final report fell through to a JSON.stringify(data) fallback and
+// the user never saw a clean receipt. Probe the real key plus sensible
+// fallbacks, then strip any leaked <thinking> block.
+function extractCommandResultText(
+  result: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!result || typeof result !== "object") return null;
+  for (const key of ["final_message", "result", "summary", "content", "message", "answer"]) {
+    const v = (result as Record<string, unknown>)[key];
+    if (typeof v === "string" && v.trim()) return stripThinking(v);
+  }
+  return null;
+}
+
 export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, title, onClose, nodeNames, runtime }: OrgChatPanelProps) {
   const { t } = useTranslation();
   const md = useMdModules();
@@ -829,8 +862,9 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
             _pendingCmds.delete(convId);
             const result = data.result as Record<string, unknown> | null | undefined;
             let resultText = JSON.stringify(data);
-            if (result && typeof result.result === "string" && result.result.trim()) {
-              resultText = result.result;
+            const extracted = extractCommandResultText(result);
+            if (extracted) {
+              resultText = extracted;
             } else if (result && typeof result.error === "string" && result.error.trim()) {
               resultText = result.error;
             } else if (typeof data.error === "string" && data.error.trim()) {
@@ -1351,7 +1385,8 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       error: unknown,
       fallback: unknown,
     ): string => {
-      if (result && typeof result.result === "string" && result.result.trim()) return result.result;
+      const extracted = extractCommandResultText(result);
+      if (extracted) return extracted;
       if (result && typeof result.error === "string" && result.error.trim()) return result.error;
       if (typeof error === "string" && error.trim()) return error;
       return JSON.stringify(fallback);
@@ -1410,7 +1445,11 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       const commandId = data.command_id as string | undefined;
 
       if (!commandId) {
-        finalContent = data.result || data.error || JSON.stringify(data);
+        finalContent =
+          extractCommandResultText(data.result as Record<string, unknown> | null | undefined) ||
+          (typeof data.result === "string" ? data.result : "") ||
+          data.error ||
+          JSON.stringify(data);
         finalizeResult(finalContent);
       } else {
         _pendingCmds.set(convId, { commandId, orgId, placeholderId, lastRendered: "", segmentCount: 0, allFiles: [], finalContent: null });
