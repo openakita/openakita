@@ -101,7 +101,17 @@ class OrgEventStore:
                 e for e in items if e.get("event_type") == event_type or e.get("type") == event_type
             ]
         if actor:
-            items = [e for e in items if e.get("actor") == actor]
+            # A4 fix: dispatch/agent-run events stamp the acting node on
+            # the top-level ``node_id`` field, not ``actor``. The node
+            # monitor panel queries ``/events?actor=<node_id>`` for its
+            # "recent activity" feed, so match either field (and the
+            # ``from_node`` alias some inter-node events use) to stop the
+            # feed coming back empty for every node.
+            items = [
+                e
+                for e in items
+                if actor in (e.get("actor"), e.get("node_id"), e.get("from_node"))
+            ]
         if chain_id:
             items = [e for e in items if e.get("chain_id") == chain_id]
         if task_id:

@@ -598,13 +598,23 @@ class OrgRuntime:
         try:
             store = self.get_event_store(org_id)
             if store is not None and hasattr(store, "query"):
-                for ev in store.query(limit=50) or []:
+                for ev in store.query(limit=200) or []:
                     if not isinstance(ev, dict):
                         continue
-                    data = ev.get("data") or ev.get("payload") or {}
-                    if not isinstance(data, dict):
-                        continue
-                    if data.get("node_id") == node_id:
+                    # A4 fix: the dispatch / agent-pipeline events stamp
+                    # ``node_id`` at the TOP level of the record (see
+                    # ``_runtime_agent_pipeline_executor._emit`` ->
+                    # ``OrgEventStore.append``), NOT under a nested
+                    # ``data`` / ``payload`` key. The old lookup read
+                    # ``ev["data"]["node_id"]`` which never existed, so
+                    # the thinking timeline came back empty for every
+                    # node even after a full multi-node run. Read the
+                    # canonical top-level field first, then fall back to
+                    # the nested shape for any legacy producer.
+                    nested = ev.get("data") or ev.get("payload") or {}
+                    nested = nested if isinstance(nested, dict) else {}
+                    ev_node = ev.get("node_id") or nested.get("node_id")
+                    if ev_node == node_id:
                         events.append(ev)
         except Exception:  # noqa: BLE001
             pass
@@ -612,7 +622,7 @@ class OrgRuntime:
             "org_id": org_id,
             "node_id": node_id,
             "thinking": events,
-            "implementation": "sprint5_stub",
+            "count": len(events),
         }
 
     def preview_node_prompt(self, org_id: str, node_id: str) -> dict[str, Any]:
@@ -670,6 +680,167 @@ class OrgRuntime:
             "is_active": is_active,
             "recently_stopped": recently_stopped,
             "implementation": "sprint5_stub",
+        }
+
+    def get_stats(self, org_id: str) -> dict[str, Any] | None:
+        """A1 fix: real org runtime statistics for the dashboard.
+
+        Pre-fix ``OrgRuntime`` had no ``get_stats`` at all, so
+        ``GET /api/v2/orgs/{id}/stats`` returned 503
+        ``runtime_method:get_stats not wired`` and the data-screen
+        dashboard fell back to its ``loadError`` ("看板无法加载") view.
+
+        The payload mirrors the shape the React ``OrgDashboard``
+        consumes (``node_stats`` / ``per_node`` / ``department_workload``
+        / ``recent_tasks`` / KPI counters). Everything is derived from
+        already-persisted data: the org spec (node roster), the live
+        node-lifecycle status map, and the per-org event store. Returns
+        ``None`` for an unknown org so the route's 404 path is kept.
+        """
+        org = self.get_org(org_id)
+        if org is None:
+            return None
+
+        def _attr(obj: Any, name: str, default: Any = None) -> Any:
+            if isinstance(obj, dict):
+                return obj.get(name, default)
+            return getattr(obj, name, default)
+
+        nodes = list(_attr(org, "nodes", []) or [])
+        buckets = {"idle": 0, "busy": 0, "error": 0, "frozen": 0, "waiting": 0}
+        per_node: list[dict[str, Any]] = []
+        dept_wl: dict[str, dict[str, int]] = {}
+        for n in nodes:
+            nid = _attr(n, "id", "") or ""
+            role = _attr(n, "role_title", "") or nid
+            dept = _attr(n, "department", "") or ""
+            # Prefer the live lifecycle status; fall back to the spec's
+            # static status field for nodes that never activated.
+            status = "idle"
+            try:
+                live = self._node_lifecycle.get_status(org_id, nid)
+                if live:
+                    status = str(live).lower()
+            except Exception:  # noqa: BLE001
+                status = str(_attr(n, "status", "idle") or "idle").lower()
+            # Normalise lifecycle vocab onto the 5 dashboard buckets.
+            if status in ("running", "active", "working"):
+                status = "busy"
+            elif status in ("offline", "stopped"):
+                status = "idle"
+            if status not in buckets:
+                status = "idle"
+            buckets[status] += 1
+            per_node.append(
+                {"id": nid, "role_title": role, "department": dept, "status": status}
+            )
+            slot = dept_wl.setdefault(dept or "—", {"total": 0, "busy": 0})
+            slot["total"] += 1
+            if status == "busy":
+                slot["busy"] += 1
+
+        recent_tasks: list[dict[str, Any]] = []
+        completed = 0
+        total_events = 0
+        try:
+            store = self.get_event_store(org_id)
+            if store is not None and hasattr(store, "query"):
+                evts = store.query(limit=200) or []
+                total_events = len(evts)
+                _type_map = {
+                    "subtask_assigned": "task_delegated",
+                    "agent_run_started": "node_activated",
+                    "agent_run_finished": "task_completed",
+                    "agent_run_failed": "task_rejected",
+                    "agent_run_cancelled": "task_cancelled",
+                }
+                for ev in evts:
+                    if not isinstance(ev, dict):
+                        continue
+                    etype = ev.get("type") or ev.get("event_type") or ""
+                    if etype == "agent_run_finished":
+                        completed += 1
+                    mapped = _type_map.get(etype)
+                    if mapped is None:
+                        continue
+                    ts = ev.get("ts") or ev.get("at") or 0
+                    try:
+                        ts_ms = float(ts) * 1000.0 if float(ts) < 1e12 else float(ts)
+                    except (TypeError, ValueError):
+                        ts_ms = 0
+                    recent_tasks.append(
+                        {
+                            "type": mapped,
+                            "from": ev.get("parent_node_id") or ev.get("node_id") or "",
+                            "to": ev.get("child_node_id")
+                            or (ev.get("node_id") if ev.get("parent_node_id") else ""),
+                            "task": ev.get("content_preview") or "",
+                            "t": ts_ms,
+                        }
+                    )
+                recent_tasks = recent_tasks[-30:]
+                recent_tasks.reverse()
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Best-effort recent blackboard slice (only when the backend is
+        # wired; B1 attaches it -- before that this stays []).
+        recent_bb: list[dict[str, Any]] = []
+        bb = self._blackboard_backend
+        if bb is not None:
+            try:
+                entries = bb.query(limit=10) if hasattr(bb, "query") else []
+                for e in entries or []:
+                    d = e.to_dict() if hasattr(e, "to_dict") else e
+                    if isinstance(d, dict):
+                        recent_bb.append(d)
+            except Exception:  # noqa: BLE001
+                recent_bb = []
+
+        err = buckets["error"]
+        node_count = len(nodes)
+        if err and node_count and err / node_count >= 0.5:
+            health = "critical"
+        elif err:
+            health = "warning"
+        elif buckets["busy"]:
+            health = "attention"
+        else:
+            health = "healthy"
+
+        uptime_s = 0.0
+        created = _attr(org, "created_at", None)
+        if isinstance(created, str) and created:
+            try:
+                from datetime import datetime, timezone
+
+                dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                uptime_s = max(0.0, datetime.now(timezone.utc).timestamp() - dt.timestamp())
+            except (ValueError, TypeError):
+                uptime_s = 0.0
+
+        try:
+            is_active = bool(self._state.is_org_active(org_id))
+        except Exception:  # noqa: BLE001
+            is_active = False
+
+        return {
+            "org_id": org_id,
+            "name": _attr(org, "name", org_id),
+            "health": health,
+            "is_active": is_active,
+            "node_count": node_count,
+            "node_stats": buckets,
+            "per_node": per_node,
+            "department_workload": dept_wl,
+            "recent_tasks": recent_tasks,
+            "recent_blackboard": recent_bb,
+            "anomalies": [],
+            "total_tasks_completed": _attr(org, "total_tasks_completed", 0) or completed,
+            "total_messages_exchanged": _attr(org, "total_messages_exchanged", 0) or total_events,
+            "pending_messages": 0,
+            "pending_approvals": 0,
+            "uptime_s": uptime_s,
         }
 
     def register_event_store(self, org_id: str) -> Any:
