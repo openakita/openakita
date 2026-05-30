@@ -1242,6 +1242,76 @@ class OrgRuntime:
             _LOGGER.debug("contract: ensure_project failed for %s", org_id, exc_info=True)
             return None
 
+    def ensure_command_project(
+        self, org_id: str, command_id: str, root_node_id: str | None, content: str
+    ) -> None:
+        """UI issue #8: create the project + a root task the INSTANT a command is
+        submitted, so the "项目" page shows work immediately instead of only after
+        the first delegation (or after completion). The per-node subtask tap then
+        hangs delegated subtasks under the same project; this root task is keyed
+        by ``chain_id == command_id`` so :meth:`finalize_command_project` can flip
+        it to delivered when the command converges. Idempotent + best-effort: a
+        missing project store or a duplicate submit must never break submission.
+        """
+        ps_registry = self._contract_project_store
+        if ps_registry is None or not command_id:
+            return
+        try:
+            ps = ps_registry.for_org(org_id)
+            pid = self._ensure_org_project(ps, org_id)
+            if not pid:
+                return
+            if ps.find_task_by_chain(command_id) is not None:
+                return  # idempotent: already created for this command
+            from .project_models import ProjectTask, TaskStatus
+
+            title = (content or "").strip().replace("\n", " ")
+            ps.add_task(
+                pid,
+                ProjectTask(
+                    project_id=pid,
+                    title=(title[:80] or "用户指令"),
+                    description=(content or "")[:2000],
+                    status=TaskStatus.IN_PROGRESS,
+                    assignee_node_id=root_node_id or "",
+                    chain_id=command_id,
+                    depth=0,
+                    progress_pct=0,
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("contract: ensure_command_project failed", exc_info=True)
+
+    def finalize_command_project(self, org_id: str, command_id: str, *, ok: bool = True) -> None:
+        """Flip the submit-time root task to delivered/rejected on convergence so
+        the project board reflects completion (UI issue #8: 完成时应显示已完成/100%)."""
+        ps_registry = self._contract_project_store
+        if ps_registry is None or not command_id:
+            return
+        try:
+            ps = ps_registry.for_org(org_id)
+            task = ps.find_task_by_chain(command_id)
+            if task is None:
+                return
+            pid = getattr(task, "project_id", None) or (
+                task.get("project_id") if isinstance(task, dict) else None
+            )
+            tid = getattr(task, "id", None) or (task.get("id") if isinstance(task, dict) else None)
+            if not pid or not tid:
+                return
+            from .project_models import TaskStatus
+
+            ps.update_task(
+                pid,
+                tid,
+                {
+                    "status": TaskStatus.DELIVERED if ok else TaskStatus.REJECTED,
+                    "progress_pct": 100 if ok else 0,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("contract: finalize_command_project failed", exc_info=True)
+
     async def _contract_event_tap(self, event_name: str, payload: dict[str, Any]) -> None:
         ps_registry = self._contract_project_store
         bb_registry = self._contract_blackboard

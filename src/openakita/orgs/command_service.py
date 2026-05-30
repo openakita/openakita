@@ -683,6 +683,16 @@ class OrgCommandService:
         except Exception:  # noqa: BLE001 (observability must never break submit)
             pass
 
+        # UI issue #8: create the project + a root task at submit time so the
+        # "项目" page shows work immediately (not only after the first delegation
+        # or after completion). Best-effort; never block submission.
+        try:
+            ensure_proj = getattr(self._runtime, "ensure_command_project", None)
+            if callable(ensure_proj):
+                ensure_proj(request.org_id, command_id, root_node_id, request.content or "")
+        except Exception:  # noqa: BLE001
+            pass
+
         run_request = OrgCommandRequest(
             org_id=request.org_id,
             content=run_content,
@@ -2071,6 +2081,18 @@ class OrgCommandService:
             }
         )
         self._command_outcomes[command_id] = existing
+
+        # UI issue #8: flip the submit-time root task to delivered/rejected so
+        # the project board shows completion (100%) once the command converges.
+        try:
+            fin = getattr(self._runtime, "finalize_command_project", None)
+            if callable(fin):
+                cmd_for_proj = self._commands.get(command_id) or {}
+                oid = cmd_for_proj.get("org_id")
+                if oid:
+                    fin(oid, command_id, ok=(status == "done"))
+        except Exception:  # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------
     # Continue-previous resume helper
