@@ -674,6 +674,51 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     const wholeOrgView = !nodeId || String(nodeId).trim() === "";
 
     const nameFmt = (id: string) => nodeNamesRef.current?.[id] || id;
+
+    // UI issue #4/#10: on a fresh reload the per-node activity cards are
+    // reconstructed from /activity, but the ROOT NODE's final summary ("任务完成
+    // 汇报") was only ever rendered live (when the command_done SSE fired). After
+    // a reload the receipt vanished. Re-fetch each completed command's result and
+    // append a prominent final-report bubble so the closing summary survives a
+    // remount. Bounded to the most recent few commands; idempotent via a stable
+    // ``final-report-<cmd>`` id so it dedups against the live bubble.
+    const fetchFinalReports = async (items: ActivityItem[]): Promise<ChatMsg[]> => {
+      if (!wholeOrgView) return [];
+      const lastTs = new Map<string, number>();
+      for (const it of items) {
+        const cid = it.command_id ? String(it.command_id) : "";
+        if (!cid) continue;
+        const ts = typeof it.ts === "number" ? it.ts : Date.parse(String(it.ts || "")) || 0;
+        lastTs.set(cid, Math.max(lastTs.get(cid) || 0, ts));
+      }
+      const recent = [...lastTs.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+      const out: ChatMsg[] = [];
+      await Promise.all(
+        recent.map(async ([cid, ts]) => {
+          try {
+            const r = await safeFetch(
+              `${apiBaseUrl}/api/v2/orgs/${encodeURIComponent(orgId)}/commands/${encodeURIComponent(cid)}`,
+            );
+            const d = await r.json();
+            if (String(d?.status) !== "done") return;
+            const text = extractCommandResultText(
+              d.result as Record<string, unknown> | null | undefined,
+            );
+            if (!text) return;
+            out.push({
+              id: `final-report-${cid}`,
+              role: "assistant",
+              content: `### 📋 ${t("org.chat.finalReportHeading", "任务完成汇报")}\n\n${text}`,
+              timestamp: (ts || Date.now()) + 1,
+            });
+          } catch {
+            /* best effort: a missing/old command must not break history load */
+          }
+        }),
+      );
+      return out;
+    };
+
     const fetchActivityAsMsgs = async (): Promise<ChatMsg[]> => {
       if (!wholeOrgView) return [];
       try {
@@ -682,7 +727,11 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         );
         const j = await r.json();
         const arr = Array.isArray(j?.items) ? (j.items as ActivityItem[]) : [];
-        return activityItemsToMessages(arr, nameFmt);
+        const [msgs, reports] = await Promise.all([
+          Promise.resolve(activityItemsToMessages(arr, nameFmt)),
+          fetchFinalReports(arr),
+        ]);
+        return [...msgs, ...reports];
       } catch {
         return [];
       }

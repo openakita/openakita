@@ -338,7 +338,11 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
       onMouseLeave={() => setHovered(false)}
       style={{
         background: "var(--card-bg, #fff)",
-        border: `2px solid ${selected ? "var(--primary)" : isAnomaly ? "#f59e0b" : isError ? "var(--danger)" : isBusy ? statusColor : "var(--line)"}`,
+        // UI issue #5: a busy node now uses a consistent indigo accent border +
+        // the radar-ping ring (see orgNodePulse) instead of the department/
+        // status colour, so "executing" never visually fights the node's own
+        // colour. The animated box-shadow below fully drives the busy glow.
+        border: `2px solid ${selected ? "var(--primary)" : isAnomaly ? "#f59e0b" : isError ? "var(--danger)" : isBusy ? "#6366f1" : "var(--line)"}`,
         borderRadius: "var(--radius)",
         padding: 0,
         minWidth: 180,
@@ -347,8 +351,6 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
           ? "0 0 0 2px var(--primary)"
           : isAnomaly
           ? "0 0 12px rgba(245,158,11,0.35)"
-          : isBusy
-          ? `0 0 16px ${statusColor}50`
           : isError
           ? `0 0 12px var(--danger, #ef4444)30`
           : "0 1px 4px rgba(0,0,0,0.08)",

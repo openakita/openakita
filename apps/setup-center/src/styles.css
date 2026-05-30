@@ -4857,9 +4857,16 @@ button.btnApplyRestart:hover {
 }
 
 /* ── Org Editor animations ── */
+/* UI issue #5: the old busy animation scaled the whole node AND glowed in the
+   node's own status/department colour, so "executing" was muddy and jittery
+   (the glow overlapped the node's own colour). This is a distinct indigo
+   "radar ping" ring that expands outward from a steady stroke — it reads as
+   "this node is working" regardless of the node's department colour, and it
+   does not move the node so neighbours don't jitter. */
 @keyframes orgNodePulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.015); opacity: 0.92; }
+  0%   { box-shadow: 0 0 0 0 rgba(99,102,241,0.50), 0 0 0 1.5px rgba(99,102,241,0.65), 0 2px 10px rgba(0,0,0,0.10); }
+  70%  { box-shadow: 0 0 0 11px rgba(99,102,241,0), 0 0 0 1.5px rgba(99,102,241,0.65), 0 2px 10px rgba(0,0,0,0.10); }
+  100% { box-shadow: 0 0 0 0 rgba(99,102,241,0), 0 0 0 1.5px rgba(99,102,241,0.65), 0 2px 10px rgba(0,0,0,0.10); }
 }
 @keyframes orgNodeError {
   0%, 100% { transform: scale(1); opacity: 1; }
