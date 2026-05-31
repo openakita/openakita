@@ -817,7 +817,12 @@ jobs:
           if (-not (Test-Path $outDir)) {
             New-Item -ItemType Directory -Path $outDir -Force | Out-Null
           }
-          $pdb = Get-ChildItem -Path $releaseDir -Filter "openakita-setup-center.pdb" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          # rustc converts crate-name dashes to underscores when emitting
+          # the symbol file (openakita-setup-center -> openakita_setup_center).
+          # The dryrun-1 log captured the actual filename as
+          # openakita_setup_center.pdb at 81 MB; the original dash-form
+          # filter found nothing and silently warned.
+          $pdb = Get-ChildItem -Path $releaseDir -Filter "openakita_setup_center.pdb" -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $pdb) {
             Write-Host "::warning::PDB not found in $releaseDir; symbols will not be archived for this dryrun."
             Write-Host "Listing $releaseDir contents for diagnosis:"

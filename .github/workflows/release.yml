@@ -1138,9 +1138,15 @@ jobs:
             New-Item -ItemType Directory -Path $outDir -Force | Out-Null
           }
           # Cargo writes the binary's PDB right next to the .exe in
-          # target/release/, regardless of where Tauri later renames the .exe
-          # for bundling. Match the crate name from Cargo.toml ([package].name).
-          $pdb = Get-ChildItem -Path $releaseDir -Filter "openakita-setup-center.pdb" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          # target/release/, regardless of where Tauri later renames the
+          # .exe for bundling. The file name uses underscores instead of
+          # the dashes from Cargo.toml's [package].name = "openakita-setup-
+          # center" — rustc converts crate-name dashes to underscores when
+          # synthesizing identifier-safe symbol file names. This was caught
+          # by the first release-dryrun whose log showed the PDB present
+          # as openakita_setup_center.pdb (81 MB after line-tables-only)
+          # while the original dash-form filter quietly produced no zip.
+          $pdb = Get-ChildItem -Path $releaseDir -Filter "openakita_setup_center.pdb" -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $pdb) {
             Write-Host "::warning::PDB not found in $releaseDir; symbols will not be archived for this release."
             Write-Host "Listing $releaseDir contents for diagnosis:"
