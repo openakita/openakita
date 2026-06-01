@@ -2132,13 +2132,47 @@ class OrgCommandService:
 
         # UI issue #8: flip the submit-time root task to delivered/rejected so
         # the project board shows completion (100%) once the command converges.
+        oid_for_done: str | None = None
         try:
             fin = getattr(self._runtime, "finalize_command_project", None)
             if callable(fin):
                 cmd_for_proj = self._commands.get(command_id) or {}
-                oid = cmd_for_proj.get("org_id")
-                if oid:
-                    fin(oid, command_id, ok=(status == "done"))
+                oid_for_done = cmd_for_proj.get("org_id")
+                if oid_for_done:
+                    fin(oid_for_done, command_id, ok=(status == "done"))
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Item 2: route the terminal state through the event bus so a
+        # ``command_done`` event is persisted (events.jsonl) + streamed (SSE) +
+        # WS-broadcast, instead of only being discoverable by polling. Best
+        # effort + idempotent (the runtime dedupes per command_id). We schedule
+        # it because ``_reflect_supervisor_outcome`` is sync but always runs
+        # inside the supervisor task's event loop.
+        try:
+            emit_done = getattr(self._runtime, "emit_command_done", None)
+            if callable(emit_done) and oid_for_done:
+                cmd_final = self._commands.get(command_id) or {}
+                done_result = cmd_final.get("result")
+                done_error = cmd_final.get("error")
+                done_status = cmd_final.get("status") or status
+                import asyncio as _asyncio
+
+                try:
+                    loop = _asyncio.get_running_loop()
+                    loop.create_task(
+                        emit_done(
+                            oid_for_done,
+                            command_id,
+                            status=done_status,
+                            result=done_result,
+                            error=done_error,
+                        )
+                    )
+                except RuntimeError:
+                    # No running loop (sync test context): skip live emit; the
+                    # polling fallback still surfaces the terminal state.
+                    pass
         except Exception:  # noqa: BLE001
             pass
 

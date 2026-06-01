@@ -42,7 +42,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -1342,10 +1342,20 @@ class OrgRuntime:
                     },
                 )
             elif event_name in ("command_done", "org_command_done"):
-                await self._broadcast_ws_safe(
-                    "org:command_done",
-                    {"org_id": org_id, "command_id": payload.get("command_id") or ""},
-                )
+                # Forward status/result/error so the command center can render
+                # the final receipt straight from the WS event instead of
+                # waiting on a follow-up poll (item 2: command_done 即时下发).
+                done_payload: dict[str, Any] = {
+                    "org_id": org_id,
+                    "command_id": payload.get("command_id") or "",
+                }
+                if payload.get("status"):
+                    done_payload["status"] = payload.get("status")
+                if payload.get("result") is not None:
+                    done_payload["result"] = payload.get("result")
+                if payload.get("error"):
+                    done_payload["error"] = payload.get("error")
+                await self._broadcast_ws_safe("org:command_done", done_payload)
         except Exception:  # noqa: BLE001 -- bridge must not poison dispatch
             _LOGGER.debug("OrgRuntime ws tap failed for %r", event_name, exc_info=True)
 
@@ -1497,6 +1507,102 @@ class OrgRuntime:
             )
         except Exception:  # noqa: BLE001
             _LOGGER.debug("contract: finalize_command_project failed", exc_info=True)
+
+    async def emit_command_done(
+        self,
+        org_id: str,
+        command_id: str,
+        *,
+        status: str = "done",
+        result: Any = None,
+        error: str | None = None,
+    ) -> None:
+        """Emit a terminal ``command_done`` event onto the event bus (item 2).
+
+        Pre-fix the v2 command path NEVER emitted ``command_done`` — the
+        command center learned a command had converged only by polling
+        ``GET /commands/{id}``. Routing the terminal state through the bus
+        means all three taps fire exactly once:
+
+        * :meth:`_persist_event_tap` -> appends to the per-org
+          ``OrgEventStore`` (events.jsonl) so the event is queryable.
+        * :meth:`_stream_event_tap` -> SSE ``lifecycle`` channel.
+        * :meth:`_ws_event_tap` -> legacy ``org:command_done`` WS broadcast
+          carrying status/result/error so the UI renders the receipt live.
+
+        Idempotent: a per-command guard set ensures a second call (e.g. a
+        retry, or both the happy + synthetic-failure paths) is a no-op, so
+        the polling fallback stays compatible without producing duplicates.
+        """
+        if not org_id or not command_id:
+            return
+        done_set = getattr(self, "_command_done_emitted", None)
+        if done_set is None:
+            done_set = set()
+            self._command_done_emitted = done_set
+        if command_id in done_set:
+            return
+        done_set.add(command_id)
+        payload: dict[str, Any] = {
+            "org_id": org_id,
+            "command_id": command_id,
+            "status": status,
+        }
+        if result is not None:
+            payload["result"] = result
+        if error:
+            payload["error"] = error
+        try:
+            await self._event_bus.emit("command_done", payload)
+        except Exception:  # noqa: BLE001 -- terminal emit must not crash finalize
+            _LOGGER.debug(
+                "emit_command_done failed (org=%s cmd=%s)", org_id, command_id, exc_info=True
+            )
+        # 图3 convergence: when a command terminates, no node should remain
+        # "进行中". A node can be left busy if its terminal agent_run_* event was
+        # dropped (fan-out race / mid-run restart). Reset every still-busy node
+        # to idle and broadcast it so the graph + timeline converge instead of
+        # showing a permanent spinner.
+        try:
+            await self._reset_busy_nodes_to_idle(org_id)
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("reset busy nodes failed (org=%s)", org_id, exc_info=True)
+
+    async def _reset_busy_nodes_to_idle(self, org_id: str) -> None:
+        """Flip any non-idle node of ``org_id`` back to idle + broadcast it.
+
+        Idempotent and best-effort. Used at command convergence so the node
+        graph never shows a node stuck "busy"/"error" after the command is
+        done (the live agent_run_finished path already idles nodes; this is the
+        safety net for dropped terminal events)."""
+        org = self.get_org(org_id)
+        if org is None:
+            return
+        nodes = getattr(org, "nodes", None)
+        if isinstance(nodes, Mapping):
+            node_ids = [str(k) for k in nodes]
+        elif nodes:
+            node_ids = [str(getattr(n, "id", "") or "") for n in nodes]
+        else:
+            node_ids = []
+        for nid in node_ids:
+            if not nid:
+                continue
+            try:
+                cur = self._node_lifecycle.get_node_status(org_id, nid)
+            except Exception:  # noqa: BLE001
+                cur = None
+            if cur is None:
+                continue
+            if str(cur).lower() in ("busy", "error"):
+                try:
+                    await self._node_lifecycle.set_node_status(org_id, nid, "idle")
+                except Exception:  # noqa: BLE001
+                    pass
+                await self._broadcast_ws_safe(
+                    "org:node_status",
+                    {"org_id": org_id, "node_id": nid, "status": "idle"},
+                )
 
     async def _contract_event_tap(self, event_name: str, payload: dict[str, Any]) -> None:
         ps_registry = self._contract_project_store
@@ -1774,6 +1880,27 @@ class OrgRuntime:
         except OSError:
             size = 0
         name = _Path(rendered).name
+        # Item 3: persist a PDF event so the history/activity REBUILD path can
+        # backfill the final PDF download card after a page reload. The .md
+        # deliverables already land in the event store via agent_run_finished,
+        # but the PDF is rendered post-convergence and was only ever published
+        # to the blackboard + live WS — invisible to a remount. Recording it as
+        # a queryable event (carrying command_id + artifact_path) lets the
+        # command center reattach the card identically to the live render.
+        try:
+            store = self.register_event_store(org_id)
+            store.append(
+                {
+                    "type": "final_report_pdf",
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "command_id": command_id,
+                    "artifact_path": rendered,
+                    "output_len": size,
+                }
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("final pdf event persist failed", exc_info=True)
         if bb_registry is not None:
             try:
                 bb_registry.publish(
