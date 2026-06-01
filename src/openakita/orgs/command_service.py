@@ -1366,6 +1366,28 @@ class OrgCommandService:
 
             org = self._lookup.get_org(org_id)
             nodes = list(getattr(org, "nodes", None) or [])
+            edges = list(getattr(org, "edges", None) or [])
+            # Project the org's edges onto per-node topology maps so the brain
+            # routes ALONG the designed structure (★ "按组织架构连线流转"):
+            #   hierarchy edge source->target  =>  source delegates_to target,
+            #                                      target reports_to source.
+            #   collaborate/consult            =>  symmetric collaborators.
+            delegates: dict[str, list[str]] = {}
+            reports: dict[str, list[str]] = {}
+            collaborators: dict[str, list[str]] = {}
+            for e in edges:
+                src = getattr(e, "source", "") or ""
+                tgt = getattr(e, "target", "") or ""
+                if not src or not tgt or src == tgt:
+                    continue
+                et = getattr(e, "edge_type", None)
+                et_val = getattr(et, "value", None) or str(et)
+                if et_val in ("hierarchy", "escalate"):
+                    delegates.setdefault(src, []).append(tgt)
+                    reports.setdefault(tgt, []).append(src)
+                else:  # collaborate / consult => peer link (bidirectional)
+                    collaborators.setdefault(src, []).append(tgt)
+                    collaborators.setdefault(tgt, []).append(src)
             directory: list[Any] = []
             for n in nodes:
                 node_id = getattr(n, "id", "") or ""
@@ -1380,6 +1402,12 @@ class OrgCommandService:
                         node_id=node_id,
                         role=role,
                         capabilities=capabilities,
+                        is_root=(getattr(n, "level", None) == 0),
+                        reports_to=tuple(dict.fromkeys(reports.get(node_id, []))),
+                        delegates_to=tuple(dict.fromkeys(delegates.get(node_id, []))),
+                        collaborates_with=tuple(
+                            dict.fromkeys(collaborators.get(node_id, []))
+                        ),
                     )
                 )
             return directory or None

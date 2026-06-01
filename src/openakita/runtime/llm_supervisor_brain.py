@@ -176,6 +176,20 @@ Decision rules (follow strictly):
   stop, instead of looping until a hard turn cap.
 - Otherwise, route the single most useful next step. (next_speaker must be one
   of: {names})
+- RESPECT THE ORG CHART. The team block above shows each node's reporting and
+  delegation links (可下派给 / 汇报回 / 可协作). Route ALONG that structure, do
+  NOT teleport work to an arbitrary node:
+  * The very first turn must go to the root/主编 node (入口) so it can split the
+    task and decide who to delegate to — never start with a leaf specialist.
+  * When delegating work downward, prefer a node that is in the CURRENT
+    coordinator's "可下派给" set (its direct reports). Do not hand work to a node
+    that has no link to the node that should own this step.
+  * When a downstream node has produced its output, route back UP to the node it
+    "汇报回" (usually 主编) so the parent can integrate the result and decide the
+    next hand-off, rather than jumping sideways to an unrelated specialist.
+  * Use 可协作 links only for genuine peer collaboration/consultation.
+  This keeps the flow legible: 主编 拆分 → 按连线派给下游 → 下游产出回流主编 →
+  主编再继续，直到满足请求。
 
 Answer with brief reasoning, then output PURE JSON matching this exact schema,
 parsable as-is, with NOTHING else after it:
@@ -262,18 +276,41 @@ class NodeDescriptor:
     ``node_id`` is the concrete address the Supervisor's deliver callable
     expects; ``role`` / ``capabilities`` are the human-facing labels the
     LLM reasons over when picking the next speaker.
+
+    Topology fields (RC-5 gap④ follow-up — "respect the org chart"): the
+    org's edges are projected onto each node so the brain routes ALONG the
+    designed structure instead of free-naming any node. ``reports_to`` is the
+    hierarchy parent (where this node's output flows back up to);
+    ``delegates_to`` are the direct hierarchy children this node may hand work
+    down to; ``collaborates_with`` are peer collaborate/consult links. All are
+    lists of concrete ``node_id`` strings (possibly empty).
     """
 
     node_id: str
     role: str = ""
     capabilities: str = ""
+    is_root: bool = False
+    reports_to: tuple[str, ...] = ()
+    delegates_to: tuple[str, ...] = ()
+    collaborates_with: tuple[str, ...] = ()
 
     def render(self) -> str:
         bits = [f"- {self.node_id}"]
+        if self.is_root:
+            bits.append("（根节点/主编 · 入口）")
         if self.role:
             bits.append(f"（角色：{self.role}）")
         if self.capabilities:
             bits.append(f" 能力：{self.capabilities}")
+        rel: list[str] = []
+        if self.delegates_to:
+            rel.append("可下派给→ " + "、".join(self.delegates_to))
+        if self.reports_to:
+            rel.append("汇报回→ " + "、".join(self.reports_to))
+        if self.collaborates_with:
+            rel.append("可协作← → " + "、".join(self.collaborates_with))
+        if rel:
+            bits.append("\n    " + "；".join(rel))
         return "".join(bits)
 
 
