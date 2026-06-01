@@ -163,6 +163,49 @@ def _callable_accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
     )
 
 
+# 图4 思考过程展示: noise prefixes a model sometimes prepends to its
+# reasoning stream. Stripped so the 编排过程 timeline / 思维链 show clean
+# Chinese reasoning rather than a bare "thinking:" label or stray tags.
+_THINKING_NOISE_PREFIXES = (
+    "thinking:",
+    "thinking…",
+    "thinking...",
+    "thinking",
+    "<thinking>",
+    "</thinking>",
+    "reasoning:",
+    "let me think",
+    "思考：",
+    "思考:",
+    "思考中",
+    "我的思考",
+)
+
+
+def _clean_thinking(thinking: str | None) -> str:
+    """Normalise a model reasoning/thinking stream for UI display.
+
+    Strips ``<thinking>`` tags + common noise prefixes and collapses runs of
+    blank lines, so the surfaced snippet reads as clean reasoning. Returns ``""``
+    for a blank/None channel (the caller then emits nothing). This NEVER touches
+    the visible deliverable text — only the dedicated reasoning channel — so the
+    artifact / filename / billing paths are unaffected.
+    """
+    if not thinking:
+        return ""
+    text = str(thinking).replace("<thinking>", "").replace("</thinking>", "")
+    text = text.replace("<think>", "").replace("</think>", "")
+    stripped = text.strip()
+    low = stripped.lower()
+    for pref in _THINKING_NOISE_PREFIXES:
+        if low.startswith(pref):
+            stripped = stripped[len(pref):].lstrip(" :：\n\t")
+            low = stripped.lower()
+    # Collapse 3+ newlines so the snippet stays compact.
+    stripped = re.sub(r"\n{3,}", "\n\n", stripped)
+    return stripped.strip()
+
+
 # Type alias for the artefact persistor (Sprint-4 P0-2). The executor
 # wires this in too so the builder stays free of filesystem concerns.
 ArtifactPersistor = Callable[..., None]
@@ -807,6 +850,12 @@ class _BrainBackedNodeAgent:
                 # Cap the rolling preview so a multi-KB reply can't bloat a
                 # single SSE frame (the final artifact carries the full text).
                 "text": (acc.text_content or "")[:8000],
+                # 图4: stream the node's REASONING alongside the deliverable so
+                # the 编排过程 timeline shows "what it is thinking" live (not just
+                # the final output). ``thinking_content`` is the accumulator's
+                # dedicated reasoning channel — distinct from the visible text,
+                # so the deliverable / filename / billing paths are untouched.
+                "thinking": _clean_thinking(acc.thinking_content)[:4000],
                 "seq": seq,
                 "done": done,
             }
@@ -834,9 +883,15 @@ class _BrainBackedNodeAgent:
                     continue
                 produced = False
                 for hi in acc.feed(raw):
-                    if hi.get("type") == "text_delta" and hi.get("content"):
+                    htype = hi.get("type")
+                    if hi.get("content") and htype in ("text_delta", "thinking_delta"):
+                        # Either channel producing content is worth a frame so
+                        # reasoning shows up live even before the first visible
+                        # token; only TEXT counts toward "did we stream a real
+                        # deliverable" (thinking-only -> fall back, see below).
                         produced = True
-                        had_delta = True
+                        if htype == "text_delta":
+                            had_delta = True
                 if produced and (_time.monotonic() - last_emit) >= 0.1:
                     await _emit(done=False)
         except asyncio.CancelledError:
@@ -869,9 +924,41 @@ class _BrainBackedNodeAgent:
         # usage recording to the caller (see its docstring). Record it now so
         # streamed nodes are accounted exactly like non-streamed ones.
         self._record_stream_usage(acc)
+        # 图4: persist the node's reasoning ONCE per run (not per delta) so the
+        # 运行监控 "思维链" panel can show what the node reasoned about. Distinct
+        # from node_run_delta (transient/live); this single event is what the
+        # event-store-backed monitor timeline reads.
+        await self._emit_node_thinking(emit, command_id, acc.thinking_content)
         # Final marker so the frontend can settle the rolling entry.
         await _emit(done=True)
         return final_text, True
+
+    async def _emit_node_thinking(
+        self, emit: Any, command_id: str, thinking: str | None
+    ) -> None:
+        """Emit a single ``node_thinking`` event carrying the run's reasoning.
+
+        Best-effort + fail-silent: the reasoning is cleaned (noise prefixes
+        stripped) and truncated so it stays a compact monitor row, never the
+        deliverable. A missing/blank reasoning channel emits nothing.
+        """
+        if emit is None:
+            return
+        snippet = _clean_thinking(thinking)[:1200]
+        if not snippet:
+            return
+        payload = {
+            "org_id": self._spec.org_id,
+            "node_id": self._spec.node_id,
+            "command_id": command_id,
+            "thinking": snippet,
+        }
+        try:
+            res = emit("node_thinking", payload)
+            if asyncio.iscoroutine(res):
+                await res
+        except Exception:  # noqa: BLE001 -- a dropped reasoning event is harmless
+            pass
 
     def _record_stream_usage(self, acc: Any) -> None:
         """Record token usage from a finished stream into the brain accumulator.

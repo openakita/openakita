@@ -179,6 +179,11 @@ def _describe_recent_event(
         except (TypeError, ValueError):
             rlen = 0
         return f"{tool} 完成，返回 {rlen} 字" if rlen > 0 else f"{tool} 完成"
+    if etype == "node_thinking":
+        think = str(ev.get("thinking") or "").strip()
+        if think:
+            return f"思考：{think[:60]}…" if len(think) > 60 else f"思考：{think}"
+        return ""
     return str(ev.get("content_preview") or "")
 
 
@@ -762,6 +767,14 @@ class OrgRuntime:
                     if node_id not in (ev_node, parent, child):
                         continue
                     etype = ev.get("type") or ev.get("event_type") or ""
+                    # 图4: ``node_run_delta`` are high-frequency transient STREAM
+                    # frames (hundreds per node run) — they belong in the live
+                    # 编排过程 timeline, NOT the monitor's discrete 思维链. The
+                    # reasoning they carry is consolidated into the single
+                    # ``node_thinking`` event below, so skip the raw deltas here
+                    # to keep the panel clean (one reasoning row, not 200+).
+                    if etype == "node_run_delta":
+                        continue
                     # Project onto already-translated ``DATA_KEY_LABELS`` keys.
                     data: dict[str, Any] = {}
                     preview = _pick_event_field(
@@ -774,6 +787,12 @@ class OrgRuntime:
                     )
                     if result_prev is not None:
                         data["result_preview"] = result_prev
+                    # 图4: ``node_thinking`` events carry the node's reasoning so
+                    # the 思维链 panel shows "what it thought about", not just
+                    # actions. Reuse the already-translated ``thinking`` label.
+                    thinking_txt = _pick_event_field(ev, nested, ("thinking",))
+                    if thinking_txt is not None:
+                        data["thinking"] = thinking_txt
                     if child:
                         data["to"] = child
                     if parent and parent != node_id:
@@ -1406,7 +1425,44 @@ class OrgRuntime:
 
     def finalize_command_project(self, org_id: str, command_id: str, *, ok: bool = True) -> None:
         """Flip the submit-time root task to delivered/rejected on convergence so
-        the project board reflects completion (UI issue #8: 完成时应显示已完成/100%)."""
+        the project board reflects completion (UI issue #8: 完成时应显示已完成/100%).
+
+        Also the canonical "command converged" hook where the FINAL 主编 PDF is
+        rendered (图3): a multi-turn root re-integrates, so we render from the
+        LAST-recorded root deliverable here rather than the first root finish,
+        guaranteeing the pdf matches the final .md. Scheduling is best-effort —
+        if no event loop is running or no root artifact was recorded, we simply
+        skip the pdf and the .md is still delivered."""
+        # 图3 final-PDF: schedule the render of the FINAL root deliverable (only
+        # on a successful convergence) before the project-store guard below, so
+        # the pdf is produced even in setups without a project store wired.
+        if command_id:
+            store = getattr(self, "_root_final_artifact", None)
+            # Always pop (cleanup) so a cancelled/errored command can't leak the
+            # recorded artifact; only RENDER on a successful convergence.
+            rec = store.pop(command_id, None) if isinstance(store, dict) else None
+            if ok and rec:
+                root_node_id, final_md = rec
+                try:
+                    import asyncio as _asyncio
+
+                    loop = _asyncio.get_running_loop()
+                    loop.create_task(
+                        self._maybe_render_root_pdf(
+                            org_id=org_id,
+                            command_id=command_id,
+                            node_id=root_node_id,
+                            artifact_path=final_md,
+                            bb_registry=self._contract_blackboard,
+                        )
+                    )
+                except RuntimeError:
+                    # No running loop (sync test / odd call site): skip the pdf,
+                    # the final .md remains the delivered artifact.
+                    _LOGGER.debug("contract: no loop for final pdf render", exc_info=True)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug("contract: schedule final pdf failed", exc_info=True)
+
         ps_registry = self._contract_project_store
         if ps_registry is None or not command_id:
             return
@@ -1601,21 +1657,26 @@ class OrgRuntime:
                         )
                     except Exception:  # noqa: BLE001
                         _LOGGER.debug("contract: blackboard publish failed", exc_info=True)
-                # 图5/图6: render the ROOT node (主编) deliverable to a PDF so the
-                # final report is delivered as a polished document, not just a
-                # raw .md. Best-effort + de-duped per command so we launch
-                # Chromium at most once per command.
+                # 图3: the polished PDF is the FINAL 主编 report. A multi-turn
+                # root keeps re-integrating, so the FIRST root finish is NOT the
+                # final version. Instead of rendering here, just REMEMBER the
+                # most-recent root (.md) deliverable for this command; the PDF is
+                # rendered once at convergence (``finalize_command_project``)
+                # from this last-recorded artifact, guaranteeing pdf == final md.
                 if artifact_path and str(artifact_path).endswith(".md") and output_len > 120:
                     try:
-                        await self._maybe_render_root_pdf(
-                            org_id=org_id,
-                            command_id=str(payload.get("command_id") or chain_id or ""),
-                            node_id=node_id,
-                            artifact_path=str(artifact_path),
-                            bb_registry=bb_registry,
-                        )
+                        org = self.get_org(org_id)
+                        node = org.get_node(node_id) if org is not None else None
+                        if node is not None and getattr(node, "level", None) == 0:
+                            cid = str(payload.get("command_id") or chain_id or "")
+                            if cid:
+                                store = getattr(self, "_root_final_artifact", None)
+                                if store is None:
+                                    store = {}
+                                    self._root_final_artifact = store
+                                store[cid] = (node_id, str(artifact_path))
                     except Exception:  # noqa: BLE001
-                        _LOGGER.debug("contract: root pdf render failed", exc_info=True)
+                        _LOGGER.debug("contract: record root artifact failed", exc_info=True)
         except Exception:  # noqa: BLE001 -- bridge must not poison dispatch
             _LOGGER.debug("OrgRuntime contract tap failed for %r", event_name, exc_info=True)
 
