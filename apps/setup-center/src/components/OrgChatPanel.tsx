@@ -595,7 +595,18 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       // 用稳定 id 滚动更新一条时间线条目，让"文案写手"等节点在生成长文时
       // 实时滚字，而不是结束后才一次性出现。done=true 时落定该条目。
       if (etype === "node_run_delta") {
-        if (!streamText.trim()) return;
+        const thinkText = (p.thinking as string) || "";
+        if (!streamText.trim() && !thinkText.trim()) return;
+        // 图4：执行中实时展示节点的【思考过程】+【正在生成】。done=true 时
+        // 丢弃思考片段，条目收敛为最终产出摘要并随时间线自动折叠（避免完成后
+        // 仍占用大段思考链）。
+        const parts: string[] = [];
+        if (!p.done && thinkText.trim()) {
+          const tclip = thinkText.length > 240 ? `${thinkText.slice(0, 240)}…` : thinkText;
+          parts.push(`💭 思考：${tclip}`);
+        }
+        if (streamText.trim()) parts.push(`✍ ${p.done ? "已生成" : "正在生成"}：${streamText}`);
+        else if (!p.done) parts.push("✍ 正在生成…");
         push({
           id: `node_run_delta:${ev.command_id}:${node}`,
           ts: ev.ts ?? ev.emitted_at ?? new Date().toISOString(),
@@ -603,7 +614,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           is_in_loop: false,
           is_progress_being_made: true,
           next_speaker: nameOf(node),
-          instruction_or_question: `✍ ${p.done ? "已生成" : "正在生成"}：${streamText}`,
+          instruction_or_question: parts.join("\n\n"),
         });
         return;
       }

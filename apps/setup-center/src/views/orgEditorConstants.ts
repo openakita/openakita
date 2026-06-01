@@ -134,6 +134,7 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
   node_tool_called: "org.eventType.toolCallStart",
   node_tool_completed: "org.eventType.toolCallEnd",
   node_tool_failed: "org.eventType.workbenchToolFailed",
+  node_thinking: "org.eventType.thinking",
   command_done: "org.eventType.done",
 };
 
@@ -166,6 +167,7 @@ export const DATA_KEY_LABELS: Record<string, string> = {
   model: "org.dataKey.model",
   result_preview: "org.dataKey.resultPreview",
   deliverable_preview: "org.dataKey.deliverablePreview",
+  thinking: "org.dataKey.thinking",
   error: "org.dataKey.error",
   content: "org.dataKey.content",
   task: "org.dataKey.task",
