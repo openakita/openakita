@@ -386,6 +386,43 @@ function activityItemsToMessages(
  *摘要, reusing :func:`formatActivityLine`). Ids are stable (``act:<id>``) so a
  * later merge dedups idempotently.
  */
+// 图3: map an activity ``kind`` to the node lifecycle phase the timeline uses
+// to converge a node's status across rounds. Coordination/command-level kinds
+// have no phase (and aren't node-grouped) so they don't latch a node terminal.
+const ACTIVITY_KIND_TO_PHASE: Record<
+  string,
+  "start" | "active" | "done" | "incomplete" | "failed"
+> = {
+  node_activated: "start",
+  workbench_started: "active",
+  workbench_succeeded: "active",
+  workbench_failed: "active",
+  broadcast: "active",
+  task_completed: "done",
+  task_failed: "failed",
+  task_cancelled: "failed",
+  // The final PDF render is the root node's closing deliverable — treat it as a
+  // terminal "done" for that node so it folds into the node's segment instead
+  // of spawning a stray "进行中" row (图3).
+  final_report_pdf: "done",
+};
+
+// Kinds whose ``from`` is genuinely an acting node id we can group by. Command
+// registration / phase rows are command-level (no single owning node) and stay
+// on the legacy consecutive grouping.
+const NODE_SCOPED_KINDS = new Set([
+  "node_activated",
+  "workbench_started",
+  "workbench_succeeded",
+  "workbench_failed",
+  "broadcast",
+  "task_completed",
+  "task_failed",
+  "task_cancelled",
+  "delegate",
+  "final_report_pdf",
+]);
+
 function activityItemsToLedger(
   items: ActivityItem[],
   nameFmt?: (id: string) => string,
@@ -400,6 +437,17 @@ function activityItemsToLedger(
     if (!line.trim()) continue;
     const node = norm.from || norm.to || "";
     const satisfied = norm.kind === "task_completed";
+    // 图3: attribute the entry to its acting node + lifecycle phase so the
+    // reload/rebuild timeline groups all of a node's rounds into ONE
+    // converging segment (matching the live SSE path), instead of leaving the
+    // same node split across many "进行中" rows.
+    const nodeId = NODE_SCOPED_KINDS.has(norm.kind) ? (node || undefined) : undefined;
+    let phase = ACTIVITY_KIND_TO_PHASE[norm.kind];
+    // 质量门禁: a finished run flagged incomplete is NOT a delivery — converge
+    // it to "未通过校验" on reload, matching the live path.
+    if (phase === "done" && (it as { incomplete?: boolean }).incomplete) {
+      phase = "incomplete";
+    }
     out.push({
       id: `act:${it.id || `${activityTs(it)}:${norm.kind}:${node}`}`,
       ts: String(activityTs(it) || ""),
@@ -408,6 +456,8 @@ function activityItemsToLedger(
       is_progress_being_made: norm.kind !== "task_failed",
       next_speaker: node,
       instruction_or_question: line,
+      nodeId,
+      phase,
     });
   }
   return out;
@@ -593,6 +643,10 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       const resultLen = Number(p.result_len || 0);
       const streamText = (p.text as string) || "";
       let speaker = ""; let note = ""; let satisfied = false; let progress = true;
+      // 图3: lifecycle phase so the timeline can converge a node's status
+      // across rounds (start→active→done/incomplete/failed) instead of
+      // leaving every node stuck "进行中".
+      let phase: "start" | "active" | "done" | "incomplete" | "failed" | undefined;
       // 任务2：无工具(写类)节点的 token 级流式增量。后端按 (command,node)
       // 用稳定 id 滚动更新一条时间线条目，让"文案写手"等节点在生成长文时
       // 实时滚字，而不是结束后才一次性出现。done=true 时落定该条目。
@@ -617,13 +671,15 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           is_progress_being_made: true,
           next_speaker: nameOf(node),
           instruction_or_question: parts.join("\n\n"),
+          nodeId: node || undefined,
+          phase: "active",
         });
         return;
       }
       switch (etype) {
         case "agent_run_started":
           // Show what the node was actually asked to do, not just "开始执行".
-          speaker = nameOf(node); note = `开始执行${preview ? `：${preview}` : ""}`; break;
+          speaker = nameOf(node); note = `开始执行${preview ? `：${preview}` : ""}`; phase = "start"; break;
         case "agent_run_finished": {
           // UI issue #3/#7: a completion must carry CONTENT, not just an action
           // verb — surface the output size and any delivered file.
@@ -638,16 +694,18 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
               qualityReason === "empty_output" ? "无有效产出" : qualityReason;
             note = `⚠ 产出未通过完成度校验（${reasonText}），需重做/上报`;
             progress = false;
+            phase = "incomplete";
             break;
           }
           const bits = ["完成任务"];
           if (outputLen > 0) bits.push(`（产出 ${outputLen} 字）`);
           if (artifactName) bits.push(`📎 ${artifactName}`);
           note = bits.join(" ");
+          phase = "done";
           break;
         }
         case "agent_run_failed":
-          speaker = nameOf(node); note = "执行失败"; progress = false; break;
+          speaker = nameOf(node); note = "执行失败"; progress = false; phase = "failed"; break;
         // 任务1：把节点执行【过程中】实时产生的工具调用事件并入时间线，
         // 让用户看到"开始执行"和"完成"之间的真实中间动作（调用了什么工具、
         // 入参摘要、产出多少），而不是中间一片空白干等。这些事件本就经
@@ -655,15 +713,18 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         case "node_tool_called":
           speaker = nameOf(node);
           note = `🛠 调用工具 \`${toolName || "?"}\`${argsPreview ? `：${argsPreview}` : ""}`;
+          phase = "active";
           break;
         case "node_tool_completed":
           speaker = nameOf(node);
           note = `✓ 工具 \`${toolName || "?"}\` 完成${resultLen > 0 ? `（返回 ${resultLen} 字）` : ""}`;
+          phase = "active";
           break;
         case "node_tool_failed":
           speaker = nameOf(node);
           note = `⚠ 工具 \`${toolName || "?"}\` 失败${p.reason ? `（${p.reason as string}）` : ""}`;
           progress = false;
+          phase = "active";
           break;
         case "subtask_assigned":
         case "child_dispatch":
@@ -685,6 +746,13 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         is_progress_being_made: progress,
         next_speaker: speaker,
         instruction_or_question: note,
+        // 图3: attribute the entry to its node so the timeline groups all of a
+        // node's rounds into one converging segment (subtask_assigned keys to
+        // the dispatching parent so the coordination row sits under it).
+        nodeId: (etype === "subtask_assigned" || etype === "child_dispatch")
+          ? (parent || node || undefined)
+          : (node || undefined),
+        phase,
       });
     });
 
@@ -750,6 +818,44 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     // append a prominent final-report bubble so the closing summary survives a
     // remount. Bounded to the most recent few commands; idempotent via a stable
     // ``final-report-<cmd>`` id so it dedups against the live bubble.
+    // Item 3: build a command_id -> deliverable cards map from the org event
+    // store so the reload/rebuild path reattaches the SAME md/pdf download
+    // cards the live finalize showed. ``agent_run_finished`` carries the .md
+    // artifacts; ``final_report_pdf`` carries the post-convergence PDF. Both
+    // stamp ``command_id`` + ``artifact_path`` so we can partition per command.
+    const fetchDeliverablesByCommand = async (): Promise<Map<string, FileAttachment[]>> => {
+      const byCmd = new Map<string, FileAttachment[]>();
+      if (!wholeOrgView) return byCmd;
+      try {
+        const r = await safeFetch(
+          `${apiBaseUrl}/api/v2/orgs/${encodeURIComponent(orgId)}/events?limit=800`,
+        );
+        const j = await r.json();
+        const evs = Array.isArray(j) ? j : Array.isArray(j?.events) ? j.events : [];
+        const seenByCmd = new Map<string, Set<string>>();
+        for (const e of evs) {
+          const etype = (e?.type || e?.event_type || "") as string;
+          if (etype !== "agent_run_finished" && etype !== "final_report_pdf") continue;
+          if (e?.incomplete) continue; // 质量门禁: 未通过的不作为交付物
+          const cid = String(e?.command_id || "");
+          const apath = String(e?.artifact_path || "");
+          if (!cid || !apath) continue;
+          if (!/\.(md|pdf)$/i.test(apath)) continue;
+          let seen = seenByCmd.get(cid);
+          if (!seen) { seen = new Set(); seenByCmd.set(cid, seen); }
+          if (seen.has(apath)) continue;
+          seen.add(apath);
+          const fname = apath.replace(/\\/g, "/").split("/").pop() || "deliverable";
+          const arr = byCmd.get(cid) || [];
+          arr.push({ filename: fname, file_path: apath, file_size: Number(e?.output_len) || undefined });
+          byCmd.set(cid, arr);
+        }
+      } catch {
+        /* best effort: events query failure must not break history load */
+      }
+      return byCmd;
+    };
+
     const fetchFinalReports = async (items: ActivityItem[]): Promise<ChatMsg[]> => {
       if (!wholeOrgView) return [];
       const lastTs = new Map<string, number>();
@@ -760,6 +866,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         lastTs.set(cid, Math.max(lastTs.get(cid) || 0, ts));
       }
       const recent = [...lastTs.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+      const deliverablesByCmd = await fetchDeliverablesByCommand();
       const out: ChatMsg[] = [];
       await Promise.all(
         recent.map(async ([cid, ts]) => {
@@ -773,11 +880,25 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
               d.result as Record<string, unknown> | null | undefined,
             );
             if (!text) return;
+            // Item 3: reattach the command's md/pdf deliverables (prefer the
+            // final PDF + the longest md first so the receipt leads with the
+            // polished report), so the reloaded report bubble is downloadable.
+            const files = (deliverablesByCmd.get(cid) || []).slice().sort((a, b) => {
+              const ap = /\.pdf$/i.test(a.filename) ? 0 : 1;
+              const bp = /\.pdf$/i.test(b.filename) ? 0 : 1;
+              if (ap !== bp) return ap - bp;
+              return (b.file_size || 0) - (a.file_size || 0);
+            });
+            const manifest = files.length > 0
+              ? `\n\n**📎 ${t("org.chat.deliverablesHeading", "交付物清单")}（${files.length}）**\n\n`
+                + files.map(f => `- \`${f.filename}\``).join("\n")
+              : "";
             out.push({
               id: `final-report-${cid}`,
               role: "assistant",
-              content: `### 📋 ${t("org.chat.finalReportHeading", "任务完成汇报")}\n\n${text}`,
+              content: `### 📋 ${t("org.chat.finalReportHeading", "任务完成汇报")}\n\n${text}${manifest}`,
               timestamp: (ts || Date.now()) + 1,
+              attachments: files.length > 0 ? files : undefined,
             });
           } catch {
             /* best effort: a missing/old command must not break history load */

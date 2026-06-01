@@ -26,6 +26,22 @@ export interface ProgressLedgerEvent {
   next_speaker: string;
   /** Verbatim instruction the supervisor will hand to next_speaker. */
   instruction_or_question: string;
+  /**
+   * 图3 convergence: stable node id this event belongs to. When present,
+   * the timeline groups ALL events of the same node into ONE segment (even
+   * across interleaving / multiple dispatch rounds) instead of spawning a
+   * fresh "进行中" segment each time, so a node never shows multiple parallel
+   * running flows. Absent for raw supervisor ledger turns (those keep the
+   * legacy consecutive-by-speaker grouping).
+   */
+  nodeId?: string;
+  /**
+   * 图3 convergence: the node lifecycle phase this event represents. Drives
+   * the segment's terminal status: ``done`` / ``incomplete`` / ``failed`` are
+   * terminal and win over later non-terminal events, while a new ``start``
+   * after a terminal opens a fresh round within the same segment.
+   */
+  phase?: "start" | "active" | "done" | "incomplete" | "failed";
 }
 
 export interface ProgressLedgerTimelineProps {
@@ -39,7 +55,7 @@ export interface ProgressLedgerTimelineProps {
   "data-testid"?: string;
 }
 
-type SegStatus = "running" | "done" | "loop" | "stall";
+type SegStatus = "running" | "done" | "loop" | "stall" | "incomplete" | "failed";
 
 interface Segment {
   key: string;
@@ -48,7 +64,13 @@ interface Segment {
   status: SegStatus;
   satisfied: boolean;
   ts: string;
+  /** Number of dispatch rounds folded into this node segment (图3). */
+  rounds: number;
+  /** Monotonic order index of the most recent update (drives "active"). */
+  lastSeq: number;
 }
+
+const TERMINAL: ReadonlySet<SegStatus> = new Set<SegStatus>(["done", "incomplete", "failed"]);
 
 // UI issue #3: the old component rendered English status pills
 // (DONE/LOOP/PROGRESS/STALL). The whole product runs in Chinese, so the
@@ -58,6 +80,8 @@ const STATUS_LABEL: Record<SegStatus, string> = {
   done: "已完成",
   loop: "检测到循环",
   stall: "停滞",
+  incomplete: "未通过校验",
+  failed: "失败",
 };
 
 const STATUS_CLASS: Record<SegStatus, string> = {
@@ -65,6 +89,8 @@ const STATUS_CLASS: Record<SegStatus, string> = {
   done: "plt-pill plt-pill-done",
   loop: "plt-pill plt-pill-loop",
   stall: "plt-pill plt-pill-stall",
+  incomplete: "plt-pill plt-pill-stall",
+  failed: "plt-pill plt-pill-loop",
 };
 
 function fmtTs(ts: string): string {
@@ -110,46 +136,130 @@ export function ProgressLedgerTimeline({
     // terminal "satisfied" marker) — those were the bulk of the "大白块".
     const meaningful = events.filter(
       (e) =>
+        (e.nodeId && e.nodeId.trim()) ||
         (e.next_speaker && e.next_speaker.trim()) ||
         (e.instruction_or_question && e.instruction_or_question.trim()) ||
         e.is_request_satisfied,
     );
-    const segs: Segment[] = [];
+    // 图3 convergence: group by a STABLE key. When an event carries a
+    // ``nodeId`` we key on the node so all its rounds collapse into ONE
+    // segment regardless of interleaving (no more N parallel "进行中" rows for
+    // the same node). Supervisor ledger turns (no nodeId) fall back to the
+    // legacy consecutive-by-speaker behaviour via a per-run synthetic key.
+    const byKey = new Map<string, Segment>();
+    const order: string[] = [];
+    let seq = 0;
+    let consecutiveKey = "";
+    let consecutiveNode = "";
     for (const e of meaningful) {
-      const node = resolve((e.next_speaker || "").trim()) || "协调";
+      seq += 1;
+      const rawId = (e.nodeId || "").trim();
+      const node = resolve((rawId || e.next_speaker || "").trim()) || "协调";
       const line = (e.instruction_or_question || "").trim();
-      const last = segs[segs.length - 1];
-      let status: SegStatus = "running";
-      if (e.is_request_satisfied) status = "done";
-      else if (e.is_in_loop) status = "loop";
-      else if (!e.is_progress_being_made) status = "stall";
-      if (last && last.node === node && !last.satisfied) {
-        if (line && !last.lines.includes(line)) last.lines.push(line);
-        last.status = status;
-        last.satisfied = last.satisfied || e.is_request_satisfied;
-        last.ts = e.ts || last.ts;
+      const phase = e.phase;
+
+      // Resolve the grouping key.
+      let groupKey: string;
+      if (rawId) {
+        groupKey = `node:${rawId}`;
       } else {
-        segs.push({
-          key: e.id,
+        // Legacy ledger turn: merge consecutive same-speaker entries.
+        if (consecutiveNode === node && consecutiveKey) {
+          groupKey = consecutiveKey;
+        } else {
+          groupKey = `seg:${e.id}`;
+          consecutiveKey = groupKey;
+          consecutiveNode = node;
+        }
+      }
+      if (!rawId) {
+        consecutiveNode = node;
+        consecutiveKey = groupKey;
+      } else {
+        consecutiveKey = "";
+        consecutiveNode = "";
+      }
+
+      let seg = byKey.get(groupKey);
+      if (!seg) {
+        seg = {
+          key: groupKey,
           node,
-          lines: line ? [line] : [],
-          status,
-          satisfied: e.is_request_satisfied,
+          lines: [],
+          status: "running",
+          satisfied: false,
           ts: e.ts,
-        });
+          rounds: 1,
+          lastSeq: seq,
+        };
+        byKey.set(groupKey, seg);
+        order.push(groupKey);
+      }
+      seg.lastSeq = seq;
+      seg.ts = e.ts || seg.ts;
+
+      // A new dispatch round after a terminal state: open a fresh round in the
+      // SAME segment instead of a parallel one, and clear the terminal latch.
+      if (phase === "start" && TERMINAL.has(seg.status)) {
+        seg.rounds += 1;
+        seg.status = "running";
+        seg.satisfied = false;
+        seg.lines.push(`— 第 ${seg.rounds} 轮 —`);
+      }
+      if (line && !seg.lines.includes(line)) seg.lines.push(line);
+
+      // Status convergence. Terminal phases win and latch; non-terminal events
+      // never downgrade a terminal status (except via the new-round reset).
+      if (phase === "done") {
+        seg.status = "done";
+        seg.satisfied = true;
+      } else if (phase === "incomplete") {
+        seg.status = "incomplete";
+      } else if (phase === "failed") {
+        seg.status = "failed";
+      } else if (e.is_request_satisfied) {
+        seg.status = "done";
+        seg.satisfied = true;
+      } else if (!TERMINAL.has(seg.status)) {
+        if (e.is_in_loop) seg.status = "loop";
+        else if (!e.is_progress_being_made) seg.status = "stall";
+        else seg.status = "running";
       }
     }
-    return segs;
-  }, [events, nodeNameOf]);
+    const built = order.map((k) => byKey.get(k)!).filter(Boolean);
+    // 图3 final convergence: once the command is no longer running, NOTHING is
+    // truly "进行中". A node whose terminal event fell outside the rebuilt
+    // window (e.g. a worker that only ever emitted tool events, or an older
+    // command's mid-round row) must not be left spinning forever — resolve any
+    // still-"running" segment to "已完成" so the timeline settles deterministically.
+    if (!running) {
+      for (const s of built) {
+        if (s.status === "running") {
+          s.status = "done";
+          s.satisfied = true;
+        }
+      }
+    }
+    return built;
+  }, [events, nodeNameOf, running]);
 
   if (segments.length === 0) return null;
 
-  const lastIdx = segments.length - 1;
+  // 图3: "active" is the still-running segment that was updated most recently
+  // (by seq), not merely the last in render order — interleaved nodes mean the
+  // newest activity isn't always the last node first seen.
+  const activeKey = (() => {
+    let best: Segment | null = null;
+    for (const s of segments) {
+      if (s.status === "running" && (!best || s.lastSeq > best.lastSeq)) best = s;
+    }
+    return best?.key ?? "";
+  })();
 
   return (
     <div className="plt-feed" data-testid={rest["data-testid"] ?? "progress-ledger-timeline"}>
-      {segments.map((seg, idx) => {
-        const isActive = running && idx === lastIdx && seg.status === "running";
+      {segments.map((seg) => {
+        const isActive = running && seg.key === activeKey && seg.status === "running";
         // Active node stays open; completed nodes collapse to one line unless
         // the user explicitly expanded them.
         const open = openKeys[seg.key] ?? isActive;
