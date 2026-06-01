@@ -586,6 +586,8 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       const outputLen = Number(p.output_len || 0);
       const artifact = (p.artifact_path as string) || "";
       const artifactName = artifact ? artifact.replace(/\\/g, "/").split("/").pop() : "";
+      const incomplete = Boolean(p.incomplete);
+      const qualityReason = (p.quality_reason as string) || "";
       const toolName = (p.tool_name as string) || "";
       const argsPreview = (p.args_preview as string) || "";
       const resultLen = Number(p.result_len || 0);
@@ -626,6 +628,18 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           // UI issue #3/#7: a completion must carry CONTENT, not just an action
           // verb — surface the output size and any delivered file.
           speaker = nameOf(node);
+          if (incomplete) {
+            // Quality gate (test7 RCA): an output that failed the completion
+            // check is NOT a delivery — show it as "未通过完成度校验" with the
+            // reason and mark progress=false so the timeline doesn't read green.
+            const reasonText =
+              qualityReason === "thinking_leak" ? "仅输出思考过程，未产出成果" :
+              qualityReason === "mid_reasoning" ? "中途停在反复检索，未完成产出" :
+              qualityReason === "empty_output" ? "无有效产出" : qualityReason;
+            note = `⚠ 产出未通过完成度校验（${reasonText}），需重做/上报`;
+            progress = false;
+            break;
+          }
           const bits = ["完成任务"];
           if (outputLen > 0) bits.push(`（产出 ${outputLen} 字）`);
           if (artifactName) bits.push(`📎 ${artifactName}`);
@@ -653,8 +667,10 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           break;
         case "subtask_assigned":
         case "child_dispatch":
+          // 图2: a coordination entry must read 谁→谁 + 为什么/内容摘要, not a
+          // bare "已完成". ``parent`` delegates to ``child`` with the task brief.
           speaker = nameOf(child || node);
-          note = `${nameOf(parent) || "主管"} 派单${preview ? `：${preview}` : ""}`;
+          note = `↪ ${nameOf(parent) || "主管"} → ${nameOf(child || node)} 派单${preview ? `：${preview}` : ""}`;
           break;
         case "command_done":
           speaker = nameOf(node); note = "指令完成"; satisfied = true; break;
@@ -1266,8 +1282,18 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       const streamingAtts = pending?.allFiles && pending.allFiles.length > 0
         ? pending.allFiles
         : undefined;
+      // 图1 fix (test7 RCA): for v2 orgs the LIVE process is already rendered by
+      // the ``编排过程`` ProgressLedgerTimeline above the chat. Echoing the same
+      // rolling "主编 处理中.../开始处理..." segment reconstruction inside the
+      // assistant bubble was the redundant top bubble the user kept seeing. We
+      // keep tracking ``segments`` (so the FINAL report's collapsed 执行过程 +
+      // attachments still work) but show only a minimal "处理中" indicator in the
+      // live bubble. v1 orgs (no ProgressLedgerTimeline) keep the rolling text.
+      const liveContent = runtime === "v2"
+        ? t("org.chat.orgWorkingLive", "组织正在处理中…（实时编排过程见上方「编排过程」）")
+        : (rendered || t("org.chat.thinking"));
       setMessages(prev => prev.map(m => m.id === placeholderId
-        ? { ...m, content: rendered || t("org.chat.thinking"), attachments: streamingAtts ?? m.attachments }
+        ? { ...m, content: liveContent, attachments: streamingAtts ?? m.attachments }
         : m));
     }
 

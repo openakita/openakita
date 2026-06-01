@@ -3126,6 +3126,7 @@
     },
     "chat": {
       "thinking": "Thinking...",
+      "orgWorkingLive": "Organization is working… (see the “Orchestration” timeline above for live progress)",
       "executionSteps": "Execution Steps ({{count}} steps)",
       "confirmForceStop": "Are you sure you want to force stop the current task? This cannot be undone.",
       "taskIncomplete": "Task did not complete normally",

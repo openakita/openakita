@@ -3134,6 +3134,7 @@
     },
     "chat": {
       "thinking": "思考中...",
+      "orgWorkingLive": "组织正在处理中…（实时编排过程见上方「编排过程」）",
       "executionSteps": "执行过程（{{count}} 步）",
       "confirmForceStop": "确定要强制终止当前任务？此操作不可撤销。",
       "taskIncomplete": "任务未正常完成",
