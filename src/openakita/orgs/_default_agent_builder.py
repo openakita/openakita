@@ -610,14 +610,32 @@ class _BrainBackedNodeAgent:
                 tool_host=tool_host,
                 cancel_event=cancel_event,
             )
+            parent_text = _extract_text_from_response(response)
         else:
-            response = await self._brain.messages_create_async(
-                messages=[{"role": "user", "content": text}],
-                system=system_prompt,
-                tools=[],
+            # No-tools (writer/leaf) path. Stream the long-form reply token by
+            # token into the 编排过程 timeline (``node_run_delta`` events) so the
+            # executing entry rolls characters live instead of appearing only
+            # when the node finishes. Streaming is best-effort with a hard
+            # fallback: any failure (provider can't stream, empty text, error)
+            # transparently drops back to the original non-streaming call so
+            # billing / failover / debug-dump behaviour is never weaker than
+            # before.
+            streamed_text, streamed_ok = await self._run_no_tools_streaming(
+                system_prompt=system_prompt,
+                text=text,
+                command_id=command_id_for_events,
                 cancel_event=cancel_event,
             )
-        parent_text = _extract_text_from_response(response)
+            if streamed_ok:
+                parent_text = streamed_text
+            else:
+                response = await self._brain.messages_create_async(
+                    messages=[{"role": "user", "content": text}],
+                    system=system_prompt,
+                    tools=[],
+                    cancel_event=cancel_event,
+                )
+                parent_text = _extract_text_from_response(response)
 
         # Sprint-4 P0-1: parse + recurse on child dispatch blocks.
         # Skip if the dispatch callback is not wired (unit tests /
@@ -697,6 +715,176 @@ class _BrainBackedNodeAgent:
             (blocks[i][0], results[i]) for i in range(len(blocks))
         ]
         return _aggregate_with_children(parent_text, children)
+
+    # ------------------------------------------------------------------
+    # Token-level streaming for the no-tools (writer/leaf) path
+    # ------------------------------------------------------------------
+
+    async def _run_no_tools_streaming(
+        self,
+        *,
+        system_prompt: str,
+        text: str,
+        command_id: str | None,
+        cancel_event: asyncio.Event | None,
+    ) -> tuple[str, bool]:
+        """Stream a no-tools reply, emitting ``node_run_delta`` increments.
+
+        Returns ``(final_text, ok)``. ``ok=False`` means the caller MUST fall
+        back to the non-streaming :meth:`messages_create_async` path -- this
+        is the isolation contract that keeps billing / failover / debug-dump
+        intact when streaming is unavailable or fails mid-flight.
+
+        We use ``brain.messages_create_stream`` (not the bare ``stream_chat``
+        primitive) on purpose: the legacy stream method writes the LLM debug
+        dump and pushes a ``TokenTrackingContext`` exactly like the
+        non-streaming call, so the only billing concern left to us is
+        recording the final ``usage`` (done in :meth:`_record_stream_usage`).
+        ``CancelledError`` is re-raised unchanged so the Sprint-3 cancel
+        pipeline still aborts a streaming node.
+        """
+        emit = self._event_emitter
+        stream_factory = getattr(self._brain, "messages_create_stream", None)
+        if emit is None or not callable(stream_factory):
+            return "", False
+
+        import time as _time
+
+        try:
+            from openakita.core.stream_accumulator import StreamAccumulator
+        except Exception:  # noqa: BLE001 -- accumulator import must not break run
+            return "", False
+
+        acc = StreamAccumulator()
+        seq = 0
+        last_emit = 0.0
+        had_delta = False
+
+        async def _emit(*, done: bool) -> None:
+            nonlocal seq, last_emit
+            seq += 1
+            last_emit = _time.monotonic()
+            payload = {
+                "org_id": self._spec.org_id,
+                "node_id": self._spec.node_id,
+                "command_id": command_id,
+                # Frontend accumulates ``text``; ``delta`` is informational.
+                # Cap the rolling preview so a multi-KB reply can't bloat a
+                # single SSE frame (the final artifact carries the full text).
+                "text": (acc.text_content or "")[:8000],
+                "seq": seq,
+                "done": done,
+            }
+            try:
+                res = emit("node_run_delta", payload)
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:  # noqa: BLE001 -- a dropped delta must not abort the run
+                pass
+
+        stream = None
+        try:
+            stream = stream_factory(
+                messages=[{"role": "user", "content": text}],
+                system=system_prompt,
+                tools=[],
+                conversation_id=command_id or "",
+            )
+            async for raw in stream:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise asyncio.CancelledError()
+                if not isinstance(raw, dict):
+                    continue
+                if raw.get("type") == "endpoint_meta":
+                    continue
+                produced = False
+                for hi in acc.feed(raw):
+                    if hi.get("type") == "text_delta" and hi.get("content"):
+                        produced = True
+                        had_delta = True
+                if produced and (_time.monotonic() - last_emit) >= 0.1:
+                    await _emit(done=False)
+        except asyncio.CancelledError:
+            # Close the underlying stream so the httpx response is released,
+            # then propagate so the cancel pipeline unwinds the node.
+            if stream is not None:
+                aclose = getattr(stream, "aclose", None)
+                if callable(aclose):
+                    try:
+                        await aclose()
+                    except Exception:  # noqa: BLE001
+                        pass
+            raise
+        except Exception as exc:  # noqa: BLE001 -- any stream error -> fallback
+            _LOGGER.warning(
+                "orgs_v2 no-tools streaming failed (node=%s); falling back to "
+                "non-streaming path: %s",
+                self._spec.node_id,
+                exc,
+            )
+            return "", False
+
+        final_text = (acc.text_content or "").strip()
+        if not final_text or not had_delta:
+            # Nothing usable streamed -> let the caller do the resilient
+            # non-streaming call (which has full multi-endpoint failover).
+            return "", False
+
+        # Billing: messages_create_stream set the tracking context but leaves
+        # usage recording to the caller (see its docstring). Record it now so
+        # streamed nodes are accounted exactly like non-streamed ones.
+        self._record_stream_usage(acc)
+        # Final marker so the frontend can settle the rolling entry.
+        await _emit(done=True)
+        return final_text, True
+
+    def _record_stream_usage(self, acc: Any) -> None:
+        """Record token usage from a finished stream into the brain accumulator.
+
+        Best-effort and fail-silent: builds a tiny usage-only response object
+        (``brain._record_usage`` only reads ``usage`` / ``model`` /
+        ``endpoint_name``) so we don't depend on the full ``LLMResponse``
+        constructor. A missing usage block simply records nothing rather than
+        raising.
+        """
+        try:
+            usage = getattr(acc, "usage", None) or {}
+            in_tok = int(usage.get("input_tokens", 0) or 0)
+            out_tok = int(usage.get("output_tokens", 0) or 0)
+            if in_tok == 0 and out_tok == 0:
+                return
+            record = getattr(self._brain, "_record_usage", None)
+            if not callable(record):
+                return
+            from openakita.llm.types import Usage
+
+            u = Usage(
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                cache_creation_input_tokens=int(
+                    usage.get("cache_creation_input_tokens", 0) or 0
+                ),
+                cache_read_input_tokens=int(
+                    usage.get("cache_read_input_tokens", 0) or 0
+                ),
+            )
+            info: dict[str, Any] = {}
+            try:
+                info = self._brain.get_current_endpoint_info() or {}
+            except Exception:  # noqa: BLE001
+                info = {}
+
+            class _UsageOnly:
+                __slots__ = ("usage", "model", "endpoint_name")
+
+                def __init__(self) -> None:
+                    self.usage = u
+                    self.model = info.get("model", "") or ""
+                    self.endpoint_name = info.get("name", "") or ""
+
+            record(_UsageOnly())
+        except Exception:  # noqa: BLE001 -- billing record is best-effort
+            _LOGGER.debug("orgs_v2 stream usage record failed", exc_info=True)
 
 
 class DefaultAgentBuilder:

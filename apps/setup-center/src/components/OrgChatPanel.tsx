@@ -547,8 +547,20 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     if (runtime !== "v2" || !orgId) return;
     const stream = createV2Stream(orgId, { apiBase: apiBaseUrl });
     const nameOf = (id?: string) => (id ? (nodeNamesRef.current?.[id] || id) : "");
+    // Upsert by id: a node_run_delta carries a STABLE id per (command,node)
+    // so successive token increments REPLACE the same rolling entry instead of
+    // appending hundreds of rows. Every other event uses a per-event unique id,
+    // so for them this behaves exactly like the old append.
     const push = (e: ProgressLedgerEvent) =>
-      setV2LedgerEvents((prev) => (prev.length > 200 ? [...prev.slice(-200), e] : [...prev, e]));
+      setV2LedgerEvents((prev) => {
+        const idx = prev.findIndex((x) => x.id === e.id);
+        if (idx >= 0) {
+          const next = prev.slice();
+          next[idx] = e;
+          return next;
+        }
+        return prev.length > 200 ? [...prev.slice(-200), e] : [...prev, e];
+      });
 
     const offLedger = stream.onEvent("progress_ledger", (ev: V2StreamEvent) => {
       const p = ev.payload as Record<string, unknown>;
@@ -585,7 +597,24 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       const toolName = (p.tool_name as string) || "";
       const argsPreview = (p.args_preview as string) || "";
       const resultLen = Number(p.result_len || 0);
+      const streamText = (p.text as string) || "";
       let speaker = ""; let note = ""; let satisfied = false; let progress = true;
+      // 任务2：无工具(写类)节点的 token 级流式增量。后端按 (command,node)
+      // 用稳定 id 滚动更新一条时间线条目，让"文案写手"等节点在生成长文时
+      // 实时滚字，而不是结束后才一次性出现。done=true 时落定该条目。
+      if (etype === "node_run_delta") {
+        if (!streamText.trim()) return;
+        push({
+          id: `node_run_delta:${ev.command_id}:${node}`,
+          ts: ev.ts ?? ev.emitted_at ?? new Date().toISOString(),
+          is_request_satisfied: false,
+          is_in_loop: false,
+          is_progress_being_made: true,
+          next_speaker: nameOf(node),
+          instruction_or_question: `✍ ${p.done ? "已生成" : "正在生成"}：${streamText}`,
+        });
+        return;
+      }
       switch (etype) {
         case "agent_run_started":
           // Show what the node was actually asked to do, not just "开始执行".
@@ -818,15 +847,15 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   useEffect(() => {
     if (!loaded) return;
     const wholeOrgView = !nodeId || String(nodeId).trim() === "";
+    // Only the org:* WS events the v2 OrgRuntime actually emits trigger a
+    // command-center refresh. The v1-era names (command_started, message,
+    // broadcast, workbench_tool_status) were dead — v2 never fires them — so
+    // they were dropped from the trigger set.
     const orgEvents = new Set([
-      "org:command_started",
       "org:command_done",
       "org:command_cancelled",
-      "org:message",
-      "org:broadcast",
       "org:task_delegated",
       "org:blackboard_update",
-      "org:workbench_tool_status",
     ]);
     let pendingTimer: ReturnType<typeof setTimeout> | null = null;
 
