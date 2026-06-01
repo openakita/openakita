@@ -31,6 +31,7 @@ from ._runtime_agent_pipeline import (
 )
 from ._runtime_dispatch import _append_delegation_log
 from ._runtime_node_artifacts import (
+    classify_node_output,
     persist_node_artifact,
     persist_node_memory,
 )
@@ -387,9 +388,18 @@ class AgentPipelineExecutor:
         # persistence is either disabled or hit an I/O snag, never that
         # the agent run itself failed.
         output_text = str(output) if output else ""
+        # Quality gate (test7 RCA 2026-06): classify the output BEFORE we
+        # persist or register anything. A raw ``thinking…`` leak or a
+        # mid-iteration reasoning stub ("让我再搜索一下") must NOT become a
+        # formal deliverable — it gets no artifact file (so it can't be
+        # named as a 交付物, 图5) and the ``incomplete`` flag tells the
+        # contract tap to keep the task open instead of marking it
+        # delivered (so the supervisor re-routes / escalates).
+        quality_status, quality_reason = classify_node_output(output_text)
+        is_incomplete = quality_status != "ok"
         get_org_dir = getattr(self._lookup, "get_org_dir", None)
         artifact_path: str | None = None
-        if output_text and command_id:
+        if output_text and command_id and not is_incomplete:
             try:
                 artifact_path = persist_node_artifact(
                     org_id=org_id,
@@ -415,6 +425,15 @@ class AgentPipelineExecutor:
                     node_id,
                     exc_info=True,
                 )
+        elif is_incomplete:
+            _LOGGER.info(
+                "[quality-gate] node output rejected as deliverable "
+                "(org=%s node=%s reason=%s len=%d): not persisted / not delivered",
+                org_id,
+                node_id,
+                quality_reason,
+                len(output_text),
+            )
 
         finished_payload: dict[str, Any] = {
             "org_id": org_id,
@@ -431,6 +450,9 @@ class AgentPipelineExecutor:
             finished_payload["parent_node_id"] = parent_node_id
         if artifact_path:
             finished_payload["artifact_path"] = artifact_path
+        if is_incomplete:
+            finished_payload["incomplete"] = True
+            finished_payload["quality_reason"] = quality_reason
         await self._emit("agent_run_finished", finished_payload)
         return self._result("ok", command_id, output=output_text)
 

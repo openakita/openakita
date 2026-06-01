@@ -10,10 +10,13 @@ passed to :meth:`Brain.messages_create_async`. When the LLM emits a
 uses, splices the ``tool_result`` block back into the conversation, and
 calls the brain a **second** time so the LLM can finalise its reply.
 
-This is intentionally a one-round bound: see the module-level constant
-:data:`MAX_TOOL_ROUNDS` and the docstring of
-:func:`run_with_tools`. Multi-round ReAct, MCP servers, and skill
-SKILL.md auto-loading are deferred (audit §7.1 ``Not in P0-1 scope``).
+Sprint-5 shipped a one-round bound; the test7 quality RCA (2026-06)
+lifted it to a **bounded, budget-guarded multi-round ReAct loop** (see
+:data:`MAX_TOOL_ROUNDS` / :data:`MAX_TOOL_CALLS` and the docstring of
+:func:`run_with_tools`) so a node can iterate
+(search -> search again -> write) instead of delivering its raw
+mid-reasoning. MCP servers and skill SKILL.md auto-loading remain
+deferred (audit §7.1 ``Not in P0-1 scope``).
 
 ### Why mirror v1 and not re-implement
 
@@ -43,10 +46,6 @@ reusing the same registry we:
   *something* useful even on a workbench node.
 * **MCP servers** declared on ``node.mcp_servers`` -- ignored for now
   (audit §7.1 explicit ``Not in P0-1 scope``).
-* **Multi-round ReAct loop** -- we run **exactly one** tool round and
-  then ask the LLM for a final answer. Multi-round is the next-sprint
-  follow-up; without it the simplest "fetch + describe" tasks already
-  work, which is what the v17 audit needs to observe.
 * **Skill SKILL.md auto-load** (D4-ext) -- deferred.
 """
 
@@ -243,12 +242,46 @@ _LOGGER = logging.getLogger(__name__)
 NodeToolHostProvider = Callable[[], "NodeToolHost | None"]
 
 
-MAX_TOOL_ROUNDS = 1
-"""Hard cap on tool-call rounds per node activation. Sprint-5 ships a
-single round (LLM call -> tool_use -> tool_result -> LLM final). Setting
-this above 1 is a multi-round ReAct loop and is deferred to the next
-sprint; we keep it as a module-level constant so the bound is explicit
-and a future bump is a single-token diff."""
+def _env_int(name: str, default: int, *, lo: int, hi: int) -> int:
+    """Read a bounded int from the environment (clamped to ``[lo, hi]``)."""
+    import os
+
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(lo, min(hi, int(raw)))
+    except (TypeError, ValueError):
+        return default
+
+
+MAX_TOOL_ROUNDS = _env_int("OPENAKITA_ORG_MAX_TOOL_ROUNDS", 6, lo=1, hi=12)
+"""Cap on tool-call ROUNDS per node activation (one round == one
+``tool_use`` -> ``tool_result`` -> next LLM call cycle).
+
+Quality root-fix (test7 RCA, 2026-06): the Sprint-5 ``= 1`` bound made
+:func:`run_with_tools` return the LLM's *second* response verbatim even
+when that response was still mid-reasoning ("搜索结果不理想，让我再搜一次")
+or another ``tool_use`` request. The node therefore "delivered" its raw
+chain-of-thought (76-413B ``thinking…`` artifacts) instead of doing the
+work. A bounded ReAct loop lets a node iterate (search -> search again ->
+write) until it produces a real answer.
+
+The roadmap (``docs/follow-ups/skipped-items-roadmap.md``) gated this
+behind "validate per-org behaviour under the node's tool budget": we
+ship the loop together with :data:`MAX_TOOL_CALLS` (a hard per-activation
+tool-execution budget) and validate token/round counts on test7. The
+bound stays env-overridable so an operator can dial it back to ``1``
+(byte-for-byte Sprint-5 behaviour) without a code change."""
+
+
+MAX_TOOL_CALLS = _env_int("OPENAKITA_ORG_MAX_TOOL_CALLS", 16, lo=1, hi=40)
+"""Hard budget on TOTAL tool executions per node activation, independent
+of rounds (a single round may emit several ``tool_use`` blocks). Once the
+budget is spent the loop forces ONE final tool-less LLM call so the node
+still returns a clean text answer instead of leaking another tool_use /
+thinking turn. This is the cost guard the roadmap required before
+lifting :data:`MAX_TOOL_ROUNDS` above 1."""
 
 
 # Best-effort emitter signature: ``(event_name, payload_dict) -> Awaitable[None]``.
@@ -680,95 +713,120 @@ async def run_with_tools(
     tool_host: NodeToolHost | None = None,
     cancel_event: asyncio.Event | None = None,
 ) -> tuple[Any, int]:
-    """One-round tool-use loop on top of :meth:`Brain.messages_create_async`.
+    """Bounded multi-round ReAct loop on :meth:`Brain.messages_create_async`.
 
     Returns ``(final_response, tool_rounds)`` where ``tool_rounds`` is
     how many tool-use rounds ran (0 when the first response was already
-    a final answer; 1 when the LLM emitted at least one ``tool_use``
-    block and we called it back). ``final_response`` is the
-    last ``messages_create_async`` result so the caller can extract
-    text + attribute it to events / artefacts the same way it did
-    pre-Sprint-5.
+    a final answer). ``final_response`` is the last
+    ``messages_create_async`` result so the caller can extract text +
+    attribute it to events / artefacts unchanged.
 
-    The ``second_round_caller`` parameter is a test hook: when not
-    given, we call ``brain.messages_create_async(messages=..., system=...,
-    tools=tools)`` for the second round directly. Tests pass a stub
-    that captures the messages list for assertion without touching a
-    real brain.
+    Loop semantics (quality root-fix, test7 RCA 2026-06):
 
-    Sprint-13 H1 (RC-4 §6 H1): ``cancel_event`` is the asyncio event
-    minted by :func:`supervisor_factory.build_supervisor_for_command`
-    and wired to ``Supervisor.cancel_token``. When non-None it is
-    forwarded straight to ``brain.messages_create_async`` (both rounds)
-    so :meth:`LLMClient._race_with_cancel` can race the in-flight
-    ``httpx`` request and abort the moment a user cancel fires --
-    closing the 13-await-deep ``CancelledError`` unwind gap that v25/v27
-    storms hit (audit ``_v27_biz/_drain_rca.md``).
+    * Each iteration calls the brain, extracts ``tool_use`` blocks and,
+      if there are none, returns the response as the FINAL answer.
+    * When the LLM emits ``tool_use`` we run each tool sequentially,
+      splice the ``tool_result`` blocks back in, and loop -- so the node
+      can iterate (search -> search again -> write) instead of being
+      forced to "finalise" after a single tool call (which is what made
+      it deliver raw ``thinking…`` mid-reasoning).
+    * The loop is bounded by :data:`MAX_TOOL_ROUNDS` rounds AND
+      :data:`MAX_TOOL_CALLS` total tool executions. When either budget is
+      exhausted we make ONE last call with ``tools=[]`` so the LLM is
+      forced to emit a clean text answer instead of another ``tool_use``
+      turn that we would otherwise return verbatim.
+
+    The ``second_round_caller`` parameter is a test hook: when given it
+    is used for every brain call AFTER the first, so existing one-round
+    fixtures keep asserting on the spliced ``tool_result`` history.
+
+    Sprint-13 H1 (RC-4 §6 H1): ``cancel_event`` is forwarded to every
+    ``brain.messages_create_async`` call so :meth:`LLMClient._race_with_cancel`
+    can abort the in-flight ``httpx`` request the moment a user cancel
+    fires.
     """
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": user_content}]
-    response = await brain.messages_create_async(
-        messages=messages,
-        system=system_prompt,
-        tools=tools,
-        cancel_event=cancel_event,
-    )
 
-    tool_blocks = extract_tool_use_blocks(response) if tools else []
-    if not tool_blocks:
-        return response, 0
-
-    # Round 1: capture the LLM's tool_use turn verbatim, run each
-    # tool sequentially, then ask the LLM to wrap up. Sequential
-    # (not gather) keeps cancellation propagation trivial and the
-    # LLM debug ordering deterministic, matching the Sprint-4
-    # ``Decision C`` rationale for child dispatch.
-    assistant_blocks = _content_blocks_for_assistant(response)
-    if not assistant_blocks:
-        # Defensive: a provider returned only metadata. Synthesise
-        # the tool_use blocks we already extracted so the second
-        # round still validates server-side.
-        assistant_blocks = [
-            {
-                "type": "tool_use",
-                "id": block["id"],
-                "name": block["name"],
-                "input": block["input"],
-            }
-            for block in tool_blocks
-        ]
-    messages.append({"role": "assistant", "content": assistant_blocks})
-
-    tool_results: list[dict[str, Any]] = []
-    for block in tool_blocks:
-        tool_name = block["name"]
-        tool_input = block["input"] if isinstance(block["input"], dict) else {}
-        text, is_error = await execute_node_tool(
-            tool_name=tool_name,
-            tool_input=tool_input,
-            org_id=org_id,
-            node_id=node_id,
-            command_id=command_id,
-            emit=emit,
-            tool_host=tool_host,
-        )
-        tool_results.append(
-            {
-                "type": "tool_result",
-                "tool_use_id": block["id"],
-                "content": text,
-                "is_error": is_error,
-            }
-        )
-    messages.append({"role": "user", "content": tool_results})
-
-    if second_round_caller is not None:
-        final = await second_round_caller(messages)
-    else:
-        final = await brain.messages_create_async(
-            messages=messages,
+    async def _call_brain(turn_messages: list[dict[str, Any]], *, with_tools: bool) -> Any:
+        # Subsequent turns prefer the test hook so fixtures can capture
+        # the spliced tool_result history. The hook ignores the
+        # tools/system kwargs (it stubs the LLM entirely).
+        if second_round_caller is not None and len(turn_messages) > 1:
+            return await second_round_caller(turn_messages)
+        return await brain.messages_create_async(
+            messages=turn_messages,
             system=system_prompt,
-            tools=tools,
+            tools=tools if with_tools else [],
             cancel_event=cancel_event,
         )
-    return final, 1
+
+    rounds = 0
+    total_tool_calls = 0
+    # First turn always offers tools (unless the caller passed none).
+    response = await _call_brain(messages, with_tools=bool(tools))
+
+    while True:
+        tool_blocks = extract_tool_use_blocks(response) if tools else []
+        if not tool_blocks:
+            return response, rounds
+
+        # Capture the LLM's tool_use turn verbatim (Anthropic requires the
+        # prior assistant turn to contain the tool_use blocks the
+        # following tool_result references).
+        assistant_blocks = _content_blocks_for_assistant(response)
+        if not assistant_blocks:
+            assistant_blocks = [
+                {
+                    "type": "tool_use",
+                    "id": block["id"],
+                    "name": block["name"],
+                    "input": block["input"],
+                }
+                for block in tool_blocks
+            ]
+        messages.append({"role": "assistant", "content": assistant_blocks})
+
+        # Run each tool sequentially (deterministic ordering + trivial
+        # cancellation propagation, matching the Sprint-4 child-dispatch
+        # rationale).
+        tool_results: list[dict[str, Any]] = []
+        for block in tool_blocks:
+            tool_name = block["name"]
+            tool_input = block["input"] if isinstance(block["input"], dict) else {}
+            text, is_error = await execute_node_tool(
+                tool_name=tool_name,
+                tool_input=tool_input,
+                org_id=org_id,
+                node_id=node_id,
+                command_id=command_id,
+                emit=emit,
+                tool_host=tool_host,
+            )
+            total_tool_calls += 1
+            tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block["id"],
+                    "content": text,
+                    "is_error": is_error,
+                }
+            )
+        messages.append({"role": "user", "content": tool_results})
+        rounds += 1
+
+        budget_spent = rounds >= MAX_TOOL_ROUNDS or total_tool_calls >= MAX_TOOL_CALLS
+        if budget_spent:
+            _LOGGER.info(
+                "[node-tool] tool budget reached (org=%s node=%s rounds=%d calls=%d); "
+                "forcing final tool-less answer",
+                org_id,
+                node_id,
+                rounds,
+                total_tool_calls,
+            )
+            # Force a clean text answer: no tools on the last call so the
+            # LLM cannot emit another tool_use we would return as "output".
+            return await _call_brain(messages, with_tools=False), rounds
+
+        response = await _call_brain(messages, with_tools=True)

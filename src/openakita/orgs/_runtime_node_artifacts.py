@@ -49,6 +49,7 @@ __all__ = [
     "MEMORY_SUMMARY_TAIL_CHARS",
     "MEMORY_SUMMARY_THRESHOLD",
     "artifact_persistence_enabled",
+    "classify_node_output",
     "persist_node_artifact",
     "persist_node_memory",
     "safe_path_segment",
@@ -146,6 +147,86 @@ def _resolve_org_dir(
                 return Path(resolved)
     safe_id = safe_path_segment(org_id, fallback="_unknown")
     return Path("data") / "orgs" / safe_id
+
+
+# Phrases that announce a NEXT step ("let me search again / get more accurate
+# info") — when these are the WHOLE output the node stopped mid-iteration
+# without producing a deliverable (test7 RCA: writer-a/writer-b/data-analyst
+# returned 76-189B of raw "搜索结果不理想，让我再搜…" reasoning that was then
+# registered as a formal deliverable).
+_MID_REASONING_MARKERS: tuple[str, ...] = (
+    "让我再",
+    "让我搜",
+    "让我查",
+    "让我继续",
+    "让我先",
+    "我需要搜",
+    "我需要获取",
+    "我需要找",
+    "重新搜索",
+    "搜索更",
+    "再搜索",
+    "继续搜索",
+    "不太理想",
+    "不合适",
+    "需要更准确",
+    "需要更权威",
+)
+
+
+def classify_node_output(output: str | None) -> tuple[str, str]:
+    """Completion gate: decide whether a node output is a real deliverable.
+
+    Returns ``(status, reason)`` where ``status`` is ``"ok"`` (a genuine
+    deliverable that may be persisted + registered as delivered) or
+    ``"incomplete"`` (raw chain-of-thought / mid-iteration reasoning /
+    empty — must NOT be marked delivered; the supervisor should re-route
+    or escalate instead).
+
+    Test7 RCA (2026-06): with the Sprint-5 single tool round, nodes
+    frequently "delivered" their raw reasoning — e.g. ``visual`` (135B),
+    ``data-analyst`` (161B), ``writer-b`` (76B "让我再搜索一下"), ``writer-a``
+    (189B "搜索结果中有很多不合适的同人内容…让我搜索更权威"). The
+    :data:`MAX_TOOL_ROUNDS` bump makes most of these iterate to a real
+    answer; this gate is the safety net that stops the rest from being
+    named as formal deliverables.
+
+    The heuristics are deliberately conservative so they never reject a
+    real deliverable:
+
+    * Empty / whitespace-only -> incomplete.
+    * The output literally OPENS with a leaked chain-of-thought
+      (``thinking`` / ``<thinking>``) and has no markdown heading -> the
+      provider dumped reasoning instead of a document.
+    * A SHORT (<800 char) output with no heading that opens with a
+      reasoning phrase AND announces a next step ("让我再搜索…") -> the node
+      stopped mid-iteration.
+    """
+
+    if not isinstance(output, str) or not output.strip():
+        return ("incomplete", "empty_output")
+    text = output.strip()
+    low = text.lower()
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    has_heading = any(ln.startswith("#") for ln in lines)
+    # Strong signal: a chain-of-thought leak emitted as the whole output.
+    # The custom-qwen provider prefixes raw reasoning with the literal token
+    # "thinking" (no separator); Anthropic uses a <thinking> block. Neither is
+    # ever a legitimate deliverable opening. Allow it only when the text also
+    # carries a real markdown heading (reasoning + an actual document).
+    if (low.startswith("thinking") or low.startswith("<thinking>")) and not has_heading:
+        return ("incomplete", "thinking_leak")
+    # Short reasoning-only output that announces a next step: the node
+    # stopped mid-iteration. Length-gated + heading-gated so genuine short
+    # answers (e.g. a one-paragraph factual reply) are never rejected.
+    if len(text) < 800 and not has_heading:
+        starts_reasoning = text.startswith(
+            ("思考", "让我", "我需要", "我先", "我会先", "好的，我", "好的,我", "首先我")
+        )
+        announces_next = any(marker in text for marker in _MID_REASONING_MARKERS)
+        if starts_reasoning and announces_next:
+            return ("incomplete", "mid_reasoning")
+    return ("ok", "")
 
 
 def _derive_semantic_title(output: str, *, limit: int = 48) -> str:

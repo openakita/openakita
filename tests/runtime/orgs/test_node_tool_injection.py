@@ -381,15 +381,143 @@ def test_run_with_tools_runs_one_round_when_tool_use_emitted(monkeypatch) -> Non
     assert "search results" in last_user["content"][0]["content"]
 
 
-def test_max_tool_rounds_is_one() -> None:
+def test_max_tool_rounds_is_bounded_multi_round() -> None:
     """case id: p05.tools.loop.max_rounds_constant
 
-    Sprint-5 ships the one-round bound deliberately. Multi-round
-    ReAct is the next-sprint follow-up. This test exists to catch
-    accidental bumps in code review.
+    Quality root-fix (test7 RCA 2026-06): the Sprint-5 ``== 1`` bound made
+    nodes deliver their raw mid-reasoning. We now ship a BOUNDED
+    multi-round ReAct loop. The bound must be >1 (so nodes can iterate)
+    but stay finite (cost guard) and be paired with a tool-execution
+    budget. This test catches an accidental unbounded / disabled bump.
     """
 
-    assert MAX_TOOL_ROUNDS == 1
+    from openakita.orgs._runtime_node_tools import MAX_TOOL_CALLS
+
+    assert 1 < MAX_TOOL_ROUNDS <= 12
+    assert 1 <= MAX_TOOL_CALLS <= 40
+
+
+def test_run_with_tools_loops_until_text_then_stops(monkeypatch) -> None:
+    """case id: p05.tools.loop.multi_round_iterates
+
+    The LLM emits two successive tool_use rounds (search, then search
+    again) before returning a text answer. The loop must run BOTH tool
+    rounds and return the final text -- the Sprint-5 single-round bound
+    would have returned the 2nd tool_use turn's (empty) text as "output".
+    """
+
+    calls: list[dict[str, Any]] = []
+
+    async def fake_brain_call(
+        *,
+        messages: list[dict[str, Any]],
+        system: str,
+        tools: list[dict[str, Any]],
+        cancel_event: Any = None,
+    ) -> SimpleNamespace:
+        calls.append({"messages": messages, "tools": tools})
+        n = len(calls)
+        if n <= 2:
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        type="tool_use",
+                        id=f"tu_{n}",
+                        name="web_search",
+                        input={"query": f"q{n}"},
+                    )
+                ]
+            )
+        return SimpleNamespace(content=[SimpleNamespace(text="final integrated answer")])
+
+    brain = SimpleNamespace(messages_create_async=fake_brain_call)
+
+    async def fake_handler(tool_name: str, params: dict[str, Any]) -> str:
+        return "results"
+
+    import openakita.tools.handlers as handlers_mod
+
+    monkeypatch.setattr(
+        handlers_mod.default_handler_registry, "execute_by_tool", fake_handler
+    )
+
+    response, rounds = asyncio.run(
+        run_with_tools(
+            brain=brain,
+            system_prompt="sys",
+            user_content="search please",
+            tools=[{"name": "web_search", "description": "s", "input_schema": {"type": "object"}}],
+            org_id="o1",
+            node_id="n1",
+            command_id="c1",
+        )
+    )
+    assert rounds == 2
+    assert response.content[0].text == "final integrated answer"
+    # 3 brain calls: round1 tool_use, round2 tool_use, round3 final text.
+    assert len(calls) == 3
+
+
+def test_run_with_tools_forces_text_when_budget_exhausted(monkeypatch) -> None:
+    """case id: p05.tools.loop.budget_forces_final_answer
+
+    If the LLM keeps emitting tool_use forever, the loop must stop at the
+    round/call budget and make ONE final tools=[] call so the node returns
+    a clean text answer rather than a leaked tool_use / thinking turn.
+    """
+
+    from openakita.orgs import _runtime_node_tools as nt
+
+    monkeypatch.setattr(nt, "MAX_TOOL_ROUNDS", 3)
+    monkeypatch.setattr(nt, "MAX_TOOL_CALLS", 99)
+
+    calls: list[dict[str, Any]] = []
+
+    async def fake_brain_call(
+        *,
+        messages: list[dict[str, Any]],
+        system: str,
+        tools: list[dict[str, Any]],
+        cancel_event: Any = None,
+    ) -> SimpleNamespace:
+        calls.append({"tools": tools})
+        # Always wants another tool UNLESS no tools are offered (forced final).
+        if tools:
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        type="tool_use", id=f"tu_{len(calls)}", name="web_search", input={}
+                    )
+                ]
+            )
+        return SimpleNamespace(content=[SimpleNamespace(text="forced final")])
+
+    brain = SimpleNamespace(messages_create_async=fake_brain_call)
+
+    async def fake_handler(tool_name: str, params: dict[str, Any]) -> str:
+        return "r"
+
+    import openakita.tools.handlers as handlers_mod
+
+    monkeypatch.setattr(
+        handlers_mod.default_handler_registry, "execute_by_tool", fake_handler
+    )
+
+    response, rounds = asyncio.run(
+        run_with_tools(
+            brain=brain,
+            system_prompt="sys",
+            user_content="go",
+            tools=[{"name": "web_search", "description": "s", "input_schema": {"type": "object"}}],
+            org_id="o1",
+            node_id="n1",
+            command_id="c1",
+        )
+    )
+    assert rounds == 3
+    assert response.content[0].text == "forced final"
+    # The final call must have been made with tools=[] (the force).
+    assert calls[-1]["tools"] == []
 
 
 # ---------------------------------------------------------------------------

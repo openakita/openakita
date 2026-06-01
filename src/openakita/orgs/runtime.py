@@ -1305,8 +1305,14 @@ class OrgRuntime:
                     {"org_id": org_id, "node_id": node_id, "status": "idle"},
                 )
                 if event_name == "agent_run_finished":
+                    finished_incomplete = bool(payload.get("incomplete"))
                     await self._broadcast_ws_safe(
-                        "org:task_complete", {"org_id": org_id, "node_id": node_id}
+                        "org:task_complete",
+                        {
+                            "org_id": org_id,
+                            "node_id": node_id,
+                            "incomplete": finished_incomplete,
+                        },
                     )
                     # Audit fix: the node graph animates ``org:task_delivered``
                     # (产出回流连线) but v2 never emitted it — only delegation
@@ -1314,7 +1320,9 @@ class OrgRuntime:
                     # half of the flow was invisible. When a child finishes, fire
                     # a delivery animation back along its reporting edge to the
                     # parent so the round-trip (派单→交付) is visible end to end.
-                    if parent:
+                    # Quality gate: an incomplete output is NOT a delivery, so we
+                    # suppress the 产出回流 animation (test7 RCA: "失败也显示交付").
+                    if parent and not finished_incomplete:
                         await self._broadcast_ws_safe(
                             "org:task_delivered",
                             {
@@ -1546,6 +1554,34 @@ class OrgRuntime:
             elif event_name == "agent_run_finished" and node_id:
                 output_len = int(payload.get("output_len") or 0)
                 artifact_path = payload.get("artifact_path")
+                # Quality gate (test7 RCA 2026-06): an output that failed the
+                # completion check (raw thinking / mid-iteration stub / empty)
+                # carries ``incomplete=True`` and no artifact_path. It must NOT
+                # be marked delivered nor registered as a downloadable
+                # deliverable resource — instead we leave the task open (so the
+                # supervisor re-routes) and publish a transparency note.
+                incomplete = bool(payload.get("incomplete"))
+                if incomplete:
+                    quality_reason = str(payload.get("quality_reason") or "incomplete")
+                    if bb_registry is not None:
+                        try:
+                            bb_registry.publish(
+                                org_id,
+                                (
+                                    f"\u8282\u70b9 {node_id} \u7684\u4ea7\u51fa\u672a"
+                                    f"\u901a\u8fc7\u5b8c\u6210\u5ea6\u6821\u9a8c"
+                                    f"\uff08{quality_reason}\uff09\uff0c\u672a\u767b"
+                                    f"\u8bb0\u4e3a\u4ea4\u4ed8\u7269\uff0c\u9700\u91cd"
+                                    f"\u505a\u6216\u4e0a\u62a5\u4e0a\u7ea7\u3002"
+                                ),
+                                source_node=node_id,
+                                tags=["incomplete"],
+                            )
+                        except Exception:  # noqa: BLE001
+                            _LOGGER.debug(
+                                "contract: incomplete note publish failed", exc_info=True
+                            )
+                    return
                 # Resolve the artifact name/size ONCE so every surface
                 # (task card / blackboard panel / command-center file card)
                 # shares an identical, download-ready contract. The three
