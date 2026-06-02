@@ -5244,13 +5244,19 @@ class OrgRuntime:
         """Patch agent's ToolExecutor to intercept org_* tool calls and bridge plan tools.
 
         The ReAct execution path is:
-            execute_batch → execute_tool_with_policy → _execute_tool_impl
+            execute_batch → check_permission → execute_tool_with_policy → _execute_tool_impl
 
-        We patch ``execute_tool_with_policy`` so that org_* calls are handled
-        **before** both the ``_check_todo_required`` gate and the
-        ``handler_registry.has_tool()`` check in ``_execute_tool_impl``.
-        Without this, org tools are either blocked by the mandatory-todo
-        policy or rejected as "unknown tools".
+        We patch both ``check_permission`` and ``execute_tool_with_policy``:
+
+        - ``check_permission``: org_* calls return ALLOW immediately, bypassing
+          PolicyEngineV2. Without this, org_* tools are classified as UNKNOWN
+          by the heuristic table and hit CONFIRM in the COORDINATOR matrix,
+          blocking the call before it ever reaches execute_tool_with_policy.
+        - ``execute_tool_with_policy``: org_* calls are handled directly by
+          OrgRuntime's tool handler, bypassing both the ``_check_todo_required``
+          gate and the ``handler_registry.has_tool()`` check in
+          ``_execute_tool_impl``. Without this, org tools are either blocked by
+          the mandatory-todo policy or rejected as "unknown tools".
 
         Return contract: matches ``ToolExecutor.execute_tool_with_policy``,
         i.e. ``(text, ConfigHint | None)``. ``org_*`` shortcut path returns
@@ -5268,7 +5274,23 @@ class OrgRuntime:
         executor = engine._tool_executor
 
         original_with_policy = executor.execute_tool_with_policy
+        original_check_permission = executor.check_permission
         tool_handler = self._tool_handler
+
+        from ..core.permission import PermissionDecision as _PermissionDecision
+
+        def _patched_check_permission(
+            tool_name: str, tool_input: dict,
+        ) -> "PermissionDecision":
+            if tool_name.startswith("org_"):
+                return _PermissionDecision(
+                    behavior="allow",
+                    reason="org tool — managed by OrgRuntime",
+                    policy_name="org_runtime_bypass",
+                )
+            return original_check_permission(tool_name, tool_input)
+
+        executor.check_permission = _patched_check_permission
 
         async def _patched_with_policy(
             tool_name: str, tool_input: dict, policy_result: Any = None,
