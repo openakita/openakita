@@ -18,6 +18,7 @@ from .categories import (
     RESERVED_NAMESPACE_DIRS,
     CategoryRegistry,
 )
+from .category_store import CategoryStore
 from .parser import ParsedSkill, SkillMetadata, SkillParser
 from .registry import SkillRegistry
 
@@ -211,9 +212,12 @@ class SkillLoader:
     ):
         self.registry = registry if registry is not None else SkillRegistry()
         self.parser = parser or SkillParser()
-        self.category_registry = (
-            category_registry if category_registry is not None else CategoryRegistry()
-        )
+        if category_registry is not None:
+            self.category_registry = category_registry
+        else:
+            _default_reg = CategoryRegistry()
+            _default_reg.set_store(CategoryStore())
+            self.category_registry = _default_reg
         self._loaded_skills: dict[str, ParsedSkill] = {}
         self._last_load_issues: list[SkillLoadIssue] = []
 

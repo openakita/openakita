@@ -474,7 +474,9 @@ async def move_skill(request: Request):
     else:
         store.unbind_skill(skill_id)
 
+    _ensure_skills_cache_invalidated()
     await _propagate(request, "category_move", rescan=True)
+    _ensure_skills_cache_invalidated()
     return {
         "status": "ok",
         "skill_id": skill_id,
