@@ -459,41 +459,6 @@ def _sanitize_path(full_path: Path, workspace_root: Path) -> str:
         return full_path.name
 
 
-_SENSITIVE_KEY_PATTERNS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL")
-
-# NOTE: 修改本块（_mask_value / _mask_raw_env / read_env 的 mask 行为）时，
-# 务必同步检查以下三处防御，避免再次回归 v1.26.6 已修复的
-# "编辑端点时遮蔽 API Key 被回写覆盖真实密钥" 缺陷：
-#   1. write_env: 对敏感键过滤含 *** 的值（safe_entries）
-#   2. save_endpoint: body.api_key 含 *** 时降级为 None
-#   3. apps/setup-center/src/views/LLMView.tsx: editDraft.apiKeyDirty 标记
-# 参考 v1.26.x 提交：8ab550fa（前后端 dirty + save_endpoint 防御）
-# 与 d3ea9814（write_env *** 防御）。曾被 main 6439b342 误回退。
-
-
-def _mask_value(key: str, value: str) -> str:
-    """Redact values whose key name suggests a secret (API keys, tokens, etc.)."""
-    if any(p in key.upper() for p in _SENSITIVE_KEY_PATTERNS):
-        if len(value) <= 8:
-            return "****"
-        return value[:4] + "****" + value[-4:]
-    return value
-
-
-def _mask_raw_env(raw: str) -> str:
-    """Mask sensitive values inside the raw .env text."""
-    import re
-
-    def _replace(m: re.Match) -> str:
-        key, sep, val = m.group("key"), m.group("sep"), m.group("val")
-        return f"{key}{sep}{_mask_value(key, val)}"
-
-    return re.sub(
-        r"^(?P<key>[A-Za-z_]\w*)(?P<sep>\s*=\s*)(?P<val>.+)$",
-        _replace,
-        raw,
-        flags=re.MULTILINE,
-    )
 
 
 def _runtime_env_key_map() -> dict[str, str]:
@@ -570,12 +535,10 @@ def _sync_runtime_agent_settings(request: Request, changed_fields: set[str]) -> 
 async def read_env():
     """Read .env file content as key-value pairs.
 
-    Sensitive values (keys containing TOKEN/SECRET/PASSWORD/KEY/CREDENTIAL)
-    are masked before being returned. The ``has_value`` map tells the
-    frontend which keys actually have a non-empty value without leaking
-    the real secret — this lets the editor distinguish "已配置 / 未配置"
-    while still requiring the user to explicitly retype to update a key
-    (see apiKeyDirty in LLMView.tsx).
+    Returns plain-text values (no masking). The desktop app runs on
+    localhost and the user already has read access to the .env file,
+    so redaction would only create write-back hazards (masked values
+    accidentally overwriting real secrets — the v1.26.6 regression).
     """
     env_path = _project_root() / ".env"
     content = ""
@@ -584,10 +547,8 @@ async def read_env():
     env = _parse_env(content)
     for env_key, field_name in _runtime_env_key_map().items():
         env[env_key] = _runtime_env_value(field_name)
-    masked_env = {k: _mask_value(k, v) for k, v in env.items()}
     has_value = {k: bool(v and v.strip()) for k, v in env.items()}
-    masked_raw = _mask_raw_env(content)
-    return {"env": masked_env, "has_value": has_value, "raw": masked_raw}
+    return {"env": env, "has_value": has_value, "raw": content}
 
 
 @router.post("/api/config/env")
@@ -606,22 +567,10 @@ async def write_env(body: EnvUpdateRequest, request: Request):
     if env_path.exists():
         existing = env_path.read_bytes().decode("utf-8", errors="replace")
 
-    # Defense: drop masked sentinel values for sensitive keys to prevent the
-    # frontend's saveEnvKeys path from accidentally overwriting real secrets
-    # with the *** display values returned by GET /api/config/env.
-    # See v1.26.x commit d3ea9814.
-    import re as _re
-
-    _sensitive_key_re = _re.compile(
-        r"(TOKEN|SECRET|PASSWORD|KEY|APIKEY|CREDENTIAL)", _re.IGNORECASE
-    )
     runtime_key_map = _runtime_env_key_map()
     safe_entries: dict[str, str] = {}
     runtime_entries: dict[str, str] = {}
     for key, value in body.entries.items():
-        if value and "***" in value and _sensitive_key_re.search(key):
-            logger.warning("[Config API] write_env: dropping masked value for %s", key)
-            continue
         field_name = runtime_key_map.get(key.upper())
         if field_name:
             runtime_entries[key.upper()] = value
@@ -834,20 +783,7 @@ async def save_endpoint(body: SaveEndpointRequest, request: Request):
     """
     from openakita.llm.endpoint_manager import ConflictError
 
-    # Defense: if the frontend echoed back the masked sentinel from
-    # GET /api/config/env (e.g. "sk-d****ab53"), treat it as "unchanged"
-    # rather than overwriting the real key on disk. The frontend should
-    # already gate this via apiKeyDirty (LLMView.tsx) but we keep this
-    # belt-and-suspenders to prevent regressions like main 6439b342.
-    # See v1.26.x commit 8ab550fa.
     api_key = body.api_key
-    if api_key and "***" in api_key:
-        logger.warning(
-            "[Config API] save-endpoint: ignoring masked API key (len=%d), treating as unchanged",
-            len(api_key),
-        )
-        api_key = None
-
     mgr = _get_endpoint_manager()
     existing_endpoint = None
     lookup_name = (body.original_name or body.endpoint.get("name") or "").strip()
@@ -933,13 +869,6 @@ async def save_endpoints(body: SaveEndpointsRequest, request: Request):
     from openakita.llm.endpoint_manager import ConflictError
 
     api_key = body.api_key
-    if api_key and "***" in api_key:
-        logger.warning(
-            "[Config API] save-endpoints: ignoring masked API key (len=%d)",
-            len(api_key),
-        )
-        api_key = None
-
     mgr = _get_endpoint_manager()
     existing_by_name: dict[str, dict] = {}
     try:

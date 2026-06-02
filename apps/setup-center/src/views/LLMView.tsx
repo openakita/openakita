@@ -980,9 +980,7 @@ export function LLMView(props: LLMViewProps) {
       if (editDraft.streamOnly) endpoint.stream_only = true;
 
       // Only send the API key when the user actually edited the input
-      // (apiKeyDirty). Otherwise the prefilled masked value (sk-d****ab53)
-      // would be echoed back and overwrite the real key on disk.
-      // See v1.26.x commit 8ab550fa.
+      // (apiKeyDirty) to avoid unnecessary writes.
       const keyToSave = editDraft.apiKeyDirty ? (editDraft.apiKeyValue.trim() || null) : null;
       const saveResult = await saveEndpointConfig({
         endpoint,

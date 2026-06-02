@@ -276,7 +276,7 @@ class Settings(BaseSettings):
     # 调度规则见 src/openakita/tools/web_search/runtime.py：
     #   - web_search_provider 留空 → 按 auto_detect_order 走可用源 fallback
     #   - 指定 id → 严格走该源，失败不 fallback
-    # 命名带 `_API_KEY` / `_BASE_URL` 自动被 _mask_value 遮蔽（见 api/routes/config.py）
+    # 命名带 `_API_KEY` / `_BASE_URL` 的敏感字段由前端 password input 自行保护显示
     web_search_provider: str = Field(
         default="",
         description=(
