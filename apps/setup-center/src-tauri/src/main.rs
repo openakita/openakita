@@ -105,10 +105,11 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// 进程级自愈相关：crash 重启 marker 文件路径。
-/// 由 panic hook 在命中 tao#1180 特征时写入，setup 阶段读出并向前端 emit
-/// `app-restarted-from-crash` 事件，前端据此恢复上次工作区/视图。
-/// 同一窗口去重写：只保留最近一次现场，避免 marker 累积。
+/// Defence-in-depth self-heal: crash restart marker file path.
+/// The primary fix for tao#1180 is the [patch.crates-io] in Cargo.toml.
+/// This marker mechanism is a fallback: written by the panic hook when
+/// tao#1180 signature is detected, read at startup to emit
+/// `app-restarted-from-crash` so the frontend can restore the workspace.
 fn restart_marker_path() -> PathBuf {
     let base = home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -5105,11 +5106,14 @@ fn main() {
     crash_handler::install(crashdumps_dir());
 
     // Global panic hook: capture panics to crash.log + show dialog.
-    // 进程级自愈：检测 tao Windows 事件循环的已知 panic
-    // ("cannot move state from Destroyed"，对应上游 tao#1180)，落
-    // restart.marker 并立刻 spawn 一份自身进程接力。新进程靠
-    // tauri-plugin-single-instance 保证只有一个活实例，旧进程随后崩溃。
-    // 上游修复后此自愈可拆除（见 Cargo.toml TODO 标记）。
+    //
+    // Defence-in-depth self-heal for tao#1180: the primary fix is the
+    // [patch.crates-io] in Cargo.toml that replaces the panic with a
+    // debug log. The self-heal below (try_self_heal_relaunch) is kept
+    // as a fallback in case a future tao update re-introduces the
+    // panic or a similar Destroyed-state crash appears. Once upstream
+    // tauri-apps/tao#1188 ships, both the patch and this fallback can
+    // be removed.
     //
     // The hook records four diagnostic axes for every panic:
     //   1. Source location (file:line:col) via PanicHookInfo::location()
@@ -5462,6 +5466,23 @@ fn main() {
                         if consecutive_failures < 3 {
                             continue;
                         }
+                        // PID check BEFORE emitting backend:lost — if the
+                        // process is still alive, health failures are likely
+                        // caused by a busy single-worker uvicorn, not a crash.
+                        if let Some(pid_data) = read_pid_file(&ws_id) {
+                            if is_pid_running(pid_data.pid) {
+                                log_to_file(&format!(
+                                    "[heartbeat] backend PID {} still alive — skipping down/spawn (health may be blocked by long request)",
+                                    pid_data.pid
+                                ));
+                                let _ = app_handle.emit(
+                                    "backend:status",
+                                    serde_json::json!({"healthy": false, "pid_alive": true, "port": port}),
+                                );
+                                consecutive_failures = 0;
+                                continue;
+                            }
+                        }
                         if last_status_was_healthy != Some(false) {
                             let _ = app_handle.emit(
                                 "backend:lost",
@@ -5483,7 +5504,6 @@ fn main() {
                         let check_result = startup_version_check(&ws_id, &app_version_for_hb, port);
                         let need_start = !matches!(check_result, VersionCheckResult::RunningOk);
                         if !need_start {
-                            // 端口又被别人占了或 health 临时抖动 — 重置计数
                             consecutive_failures = 0;
                             continue;
                         }

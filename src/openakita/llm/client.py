@@ -2125,6 +2125,7 @@ class LLMClient:
             "extra_forbidden",
             "extra inputs are not permitted",
             "unsupported parameter",
+            "invalid params",
         ]
         if any(p in error_str for p in _reject_patterns) and (
             "thinking" in error_str or "reasoning_effort" in error_str

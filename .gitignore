@@ -379,3 +379,6 @@ route_stats.md
 
 # 误打包的插件 zip（plugins/<name>/ui/dist/ 仍走白名单保留）
 plugins/plugins.zip
+
+# Local tao patch working directory
+.patches/

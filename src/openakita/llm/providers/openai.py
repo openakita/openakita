@@ -1015,7 +1015,8 @@ class OpenAIProvider(LLMProvider):
 
             if request.enable_thinking or is_always_thinking:
                 if "thinking" not in body:
-                    body["thinking"] = {"type": "enabled"}
+                    thinking_type = "adaptive" if is_minimax else "enabled"
+                    body["thinking"] = {"type": thinking_type}
                 if request.thinking_depth:
                     effort = reasoning_effort_for_depth(
                         provider=self.config.provider,

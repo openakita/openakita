@@ -12,10 +12,13 @@ base64 = "0.22.1"
 flate2 = "1.0.35"
 
 [dependencies]
-# TODO(tao#1180): Tauri 2.10.x 锁死 tao 0.34.x，仍存在 Windows 事件循环
-# "cannot move state from Destroyed" panic（详见 https://github.com/tauri-apps/tao/issues/1180）。
-# 上游 tao 修复后请升级 Tauri/tao 验证 panic 不再出现，
-# 然后移除 src/main.rs 中的 try_self_heal_relaunch / restart.marker 自愈逻辑。
+# tao#1180: upstream PR tauri-apps/tao#1188 replaces the panic in
+# move_state_to(Destroyed → *) with a debug log. Until that PR is merged
+# and released, we patch tao via [patch.crates-io] below to pull from our
+# fork (SimYng/tao branch fix/no-panic-destroyed-0.34.8). Once upstream
+# ships the fix, remove the [patch] section and bump tao naturally.
+# The self-heal logic in main.rs (try_self_heal_relaunch / restart.marker)
+# is kept as a defence-in-depth fallback but should no longer trigger.
 tauri = { version = "2.10.1", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -81,5 +84,12 @@ windows-sys = { version = "0.59", features = [
 # produces, just with a populated line-table section. release.yml archives
 # the resulting *.pdb alongside the .exe so future user crash dumps can be
 # analysed offline even after the CI runner is recycled.
+[patch.crates-io]
+# Patch tao to not panic on state transitions from Destroyed (tao#1180).
+# Based on tao 0.34.8 with only runner.rs L371 changed:
+#   panic!("cannot move state from Destroyed") → debug!("…")
+# Upstream PR: https://github.com/tauri-apps/tao/pull/1188
+tao = { git = "https://github.com/SimYng/tao.git", branch = "fix/no-panic-destroyed-0.34.8" }
+
 [profile.release]
 debug = "line-tables-only"
