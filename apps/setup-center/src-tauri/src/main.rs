@@ -5417,6 +5417,14 @@ fn main() {
                         };
                         let port = read_workspace_api_port(&ws_id).unwrap_or(18900);
                         let healthy = is_backend_http_healthy(Some(port));
+                        // Re-check after the potentially slow HTTP call
+                        // (2s timeout) to close the TOCTOU window between
+                        // the top-of-loop SHUTDOWN check and the emit calls
+                        // below. Without this, a stale emit could touch the
+                        // runtime after RunEvent::Exit has already fired.
+                        if SHUTDOWN.load(Ordering::SeqCst) {
+                            return;
+                        }
                         if healthy {
                             consecutive_failures = 0;
                             if last_status_was_healthy != Some(true) {
@@ -5497,6 +5505,9 @@ fn main() {
                                 port,
                             ));
                             last_status_was_healthy = Some(false);
+                        }
+                        if SHUTDOWN.load(Ordering::SeqCst) {
+                            return;
                         }
                         if AUTO_START_IN_PROGRESS.load(Ordering::SeqCst) {
                             continue;
@@ -5677,11 +5688,17 @@ fn main() {
             // violation — exactly the pattern observed in issue #591. The
             // flag is cheap (one AtomicBool::store) and idempotent.
             SHUTDOWN.store(true, Ordering::SeqCst);
-            // Give heartbeat / other 1s-granularity loops a brief window
-            // to observe the flag and return cleanly before we proceed
-            // with backend cleanup. 1.2s is a 1s heartbeat tick plus a
-            // small margin; longer would just delay user-visible exit.
-            std::thread::sleep(std::time::Duration::from_millis(1200));
+            // Do NOT sleep here. The 1200ms blocking sleep we had before
+            // (v1.27.14) stalled the tao event loop on the main thread,
+            // causing Windows messages to pile up for 1.2 seconds. When
+            // the sleep ended and tao entered Destroyed, every queued
+            // message hit the panic in move_state_to — making v1.27.14
+            // crash MORE than v1.27.13 on exit. The heartbeat thread
+            // already checks SHUTDOWN every 1s in its own loop (line
+            // ~5400) and before each emit, so it will stop on its own.
+            // Even if a straggler emit slips through, the tao patch
+            // (Cargo.toml [patch.crates-io]) turns the panic into a
+            // harmless debug log.
             clear_frontend_session_marker();
             // Safety-net: clean up backend processes on ANY exit path
             // (SIGTERM, system shutdown, unexpected termination, etc.)
