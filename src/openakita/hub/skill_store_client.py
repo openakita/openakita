@@ -299,12 +299,18 @@ class SkillStoreClient:
         Many skill repos (e.g., inference-shell/skills) contain multiple skills
         in subdirectories. After cloning, we search for the skill_name subdirectory
         that contains SKILL.md, and only copy that to the target.
+
+        Falls back to GitHub ZIP download when git is not installed.
         """
         import tempfile
 
         git_exe = shutil.which("git")
+
+        # When git is not available, try GitHub ZIP download as fallback
         if git_exe is None:
-            raise FileNotFoundError("git not found in PATH")
+            return await SkillStoreClient._install_via_zip_fallback(
+                repo_url, skill_name, skill_dir
+            )
 
         extra_kwargs: dict = {}
         if sys.platform == "win32":
@@ -323,45 +329,123 @@ class SkillStoreClient:
             if result.returncode != 0:
                 raise RuntimeError(f"git clone failed: {result.stderr}")
 
-            skill_md_at_root = tmp_dir / "SKILL.md"
-            if skill_md_at_root.exists():
-                shutil.copytree(str(tmp_dir), str(skill_dir))
-                git_dir = skill_dir / ".git"
-                if git_dir.exists():
-                    shutil.rmtree(git_dir)
-                return True
+            return SkillStoreClient._extract_skill_from_repo(tmp_dir, skill_name, skill_dir)
+        finally:
+            shutil.rmtree(str(tmp_parent), ignore_errors=True)
 
-            candidates = [
-                skill_name,
-                f"skills/{skill_name}",
-                f"tools/{skill_name}",
-                f"packages/{skill_name}",
-            ]
-            seen: set[str] = set()
-            for rel in candidates:
-                rel_norm = rel.replace("\\", "/").strip("/")
-                if not rel_norm or rel_norm in seen:
-                    continue
-                seen.add(rel_norm)
-                candidate = tmp_dir / rel_norm
-                if candidate.is_dir() and (candidate / "SKILL.md").exists():
-                    shutil.copytree(str(candidate), str(skill_dir))
-                    return True
+    @staticmethod
+    async def _install_via_zip_fallback(
+        repo_url: str, skill_name: str, skill_dir: Path
+    ) -> bool:
+        """Download repo as ZIP from GitHub Archive API when git is unavailable.
 
-            # Fallback: recursive search for SKILL.md with matching directory name
-            for skill_md in tmp_dir.rglob("SKILL.md"):
-                if skill_md.parent.name == skill_name:
-                    shutil.copytree(str(skill_md.parent), str(skill_dir))
-                    return True
+        Mirrors the fallback logic in setup_center/bridge.py._download_github_zip.
+        """
+        import io
+        import re
+        import tempfile
+        import urllib.request
+        import zipfile
 
-            # Last resort: copy entire repo (backward-compatible)
+        m = re.match(r"https?://github\.com/([^/]+)/([^/.]+)", repo_url)
+        if not m:
+            raise FileNotFoundError(
+                "git not found in PATH, and the repo URL is not a recognized GitHub URL "
+                "for ZIP fallback. Please install Git (https://git-scm.com)."
+            )
+
+        owner, repo = m.group(1), m.group(2)
+        mirrors = [
+            "https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
+            "https://gh-proxy.com/https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
+            "https://mirror.ghproxy.com/https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
+            "https://ghproxy.net/https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip",
+        ]
+
+        data: bytes | None = None
+        last_err: Exception | None = None
+
+        for branch in ("main", "master"):
+            if data is not None:
+                break
+            for tpl in mirrors:
+                url = tpl.format(owner=owner, repo=repo, branch=branch)
+                try:
+                    req = urllib.request.Request(url, headers={"User-Agent": "OpenAkita"})
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        data = resp.read()
+                    break
+                except Exception as e:
+                    last_err = e
+
+        if data is None:
+            raise RuntimeError(
+                f"Git is not installed, and ZIP download from GitHub also failed "
+                f"for {owner}/{repo}. Please install Git or check network. "
+                f"(Last error: {last_err})"
+            )
+
+        tmp_parent = Path(tempfile.mkdtemp(prefix="openakita_skill_zip_"))
+        tmp_dir = tmp_parent / "repo"
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                for name in zf.namelist():
+                    normalized = os.path.normpath(name)
+                    if name.startswith("/") or name.startswith("\\") or normalized.startswith(".."):
+                        raise RuntimeError(f"Zip Slip detected: dangerous member '{name}'")
+                zf.extractall(tmp_parent)
+
+            children = list(tmp_parent.iterdir())
+            extracted = [c for c in children if c.is_dir() and c.name != "repo"]
+            if len(extracted) == 1:
+                tmp_dir = extracted[0]
+            elif tmp_dir.exists():
+                pass
+            else:
+                tmp_dir = tmp_parent
+
+            return SkillStoreClient._extract_skill_from_repo(tmp_dir, skill_name, skill_dir)
+        finally:
+            shutil.rmtree(str(tmp_parent), ignore_errors=True)
+
+    @staticmethod
+    def _extract_skill_from_repo(tmp_dir: Path, skill_name: str, skill_dir: Path) -> bool:
+        """Extract skill directory from a cloned/downloaded repo tree."""
+        skill_md_at_root = tmp_dir / "SKILL.md"
+        if skill_md_at_root.exists():
             shutil.copytree(str(tmp_dir), str(skill_dir))
             git_dir = skill_dir / ".git"
             if git_dir.exists():
                 shutil.rmtree(git_dir)
             return True
-        finally:
-            shutil.rmtree(str(tmp_parent), ignore_errors=True)
+
+        candidates = [
+            skill_name,
+            f"skills/{skill_name}",
+            f"tools/{skill_name}",
+            f"packages/{skill_name}",
+        ]
+        seen: set[str] = set()
+        for rel in candidates:
+            rel_norm = rel.replace("\\", "/").strip("/")
+            if not rel_norm or rel_norm in seen:
+                continue
+            seen.add(rel_norm)
+            candidate = tmp_dir / rel_norm
+            if candidate.is_dir() and (candidate / "SKILL.md").exists():
+                shutil.copytree(str(candidate), str(skill_dir))
+                return True
+
+        for skill_md in tmp_dir.rglob("SKILL.md"):
+            if skill_md.parent.name == skill_name:
+                shutil.copytree(str(skill_md.parent), str(skill_dir))
+                return True
+
+        shutil.copytree(str(tmp_dir), str(skill_dir))
+        git_dir = skill_dir / ".git"
+        if git_dir.exists():
+            shutil.rmtree(git_dir)
+        return True
 
     async def rate(
         self, skill_id: str, score: int, comment: str = "", token: str = ""

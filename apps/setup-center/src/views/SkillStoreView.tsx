@@ -80,7 +80,10 @@ export function SkillStoreView({ apiBaseUrl, visible }: SkillStoreViewProps) {
     const key = skillUniqueKey(skill);
     setInstallingSet(prev => { const next = new Set(prev); next.add(key); return next; });
     try {
-      const resp = await safeFetch(`${apiBaseUrl}/api/hub/skills/${skill.id}/install`, { method: "POST" });
+      const resp = await safeFetch(`${apiBaseUrl}/api/hub/skills/${skill.id}/install`, {
+        method: "POST",
+        signal: AbortSignal.timeout(180_000),
+      });
       const data = await resp.json();
       toast.success(t("skillStore.installSuccess", { name: data.skill_name || skill.name }));
       safeFetch(`${apiBaseUrl}/api/skills/reload`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
