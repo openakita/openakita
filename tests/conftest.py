@@ -209,6 +209,24 @@ def _disable_desktop_notifications(monkeypatch):
 # 显式 setup/teardown。
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
+def _default_org_review_off(monkeypatch):
+    """核心1/核心2: keep the new parent-executed review + rework loop OFF by
+    default in tests.
+
+    The review adds an extra LLM call per dispatched child and the rework loop
+    can re-run a child, which would corrupt the deterministic canned-reply
+    sequences (and call-count assertions) that the legacy orgs_v2 dispatch
+    tests rely on. Production defaults the review ON (env unset). Tests that
+    specifically exercise the review/rework behaviour opt in explicitly via
+    ``monkeypatch.setenv("OPENAKITA_ORG_REVIEW_ENABLED", "1")``.
+
+    The knobs are read dynamically (see ``_runtime_agent_pipeline_executor``)
+    so a plain ``setenv`` here is honoured without import-time freezing.
+    """
+    monkeypatch.setenv("OPENAKITA_ORG_REVIEW_ENABLED", "0")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_policy_v2_singletons():
     """每个 test 前后清空 DeathSwitch + SkillAllowlist singleton 状态。
 

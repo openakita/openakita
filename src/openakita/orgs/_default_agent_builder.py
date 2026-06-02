@@ -450,6 +450,81 @@ def _persona_system_prompt(
     return "\n".join(parts)
 
 
+_REVIEW_VERDICT_RE = re.compile(r"裁决\s*[:：]\s*(.+)")
+_REVIEW_REASON_RE = re.compile(r"(?:理由|原因)\s*[:：]\s*(.+)")
+
+
+def _parse_review_verdict(text: str) -> tuple[bool, str]:
+    """Parse a parent-review reply into ``(ok, reason)`` (核心1).
+
+    Decisively keyed on the explicit ``裁决:`` line so we do NOT mis-read
+    incidental words ("如被退回 / if rejected …") inside the REASON text as a
+    reject — that false-reject bug (test8 RCA 2026-06) trapped good
+    deliverables in endless rework. Verdict resolution order:
+
+    1. The ``裁决:`` line, if present — scan ONLY that line for 通过/退回.
+    2. No verdict line -> fail-open ACCEPT (a vague reviewer must not block
+       convergence; the bounded rework cap is the backstop on the reject path).
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return True, "审阅无明确结论，默认采纳。"
+    # Pull the reason first (so it never pollutes verdict detection).
+    reason = ""
+    m_reason = _REVIEW_REASON_RE.search(raw)
+    if m_reason:
+        reason = m_reason.group(1).strip()[:300]
+    # Drop a reason that is just the prompt template echoed back (some node
+    # models parrot "一句话说明 (If fail, give …)" instead of a real reason);
+    # showing that to the user is worse than a generic note.
+    if reason and any(
+        marker in reason
+        for marker in ("一句话说明", "If fail", "if fail", "actionable improv", "specific actionable")
+    ):
+        reason = ""
+
+    pass_tokens = ("通过", "采纳", "达标", "pass", "accept", "approve", "ok")
+    reject_tokens = ("退回", "未通过", "不通过", "不达标", "需重做", "重做", "revise", "reject", "fail")
+
+    m_verdict = _REVIEW_VERDICT_RE.search(raw)
+    if m_verdict:
+        # Decide by what the verdict line STARTS with (after stripping leading
+        # punctuation / brackets). This is robust to the common failure where a
+        # confused node echoes the option list itself ("通过 或 不通过") — it
+        # starts with 通过, so we fail-open ACCEPT instead of falsely rejecting
+        # a good deliverable (test8 RCA: that false-reject caused 12 reworks ->
+        # 900s ceiling -> error). A genuine reject reads "裁决: 不通过".
+        head = m_verdict.group(1).strip().lstrip(" :：[【(（`*\"'-—、。.")
+        hlow = head.lower()
+        if head.startswith(("不通过", "未通过", "退回", "不达标", "需重做", "重做")) or hlow.startswith(
+            ("revise", "reject", "fail", "no", "not ")
+        ):
+            return False, reason or "需重做（未给出具体理由）。"
+        if head.startswith(("通过", "采纳", "达标", "可以", "合格", "同意")) or hlow.startswith(
+            ("pass", "accept", "approve", "ok", "yes", "good")
+        ):
+            return True, reason or "通过。"
+    # No explicit 裁决 line. Scan the reply with the REASON portion removed (so
+    # "如被退回 / if rejected …" inside a reason can't false-trigger), and
+    # check REJECT FIRST — the negated forms ("不达标/不通过/未通过") contain the
+    # pass substrings ("达标/通过"), so reject must win on overlap.
+    scan = raw
+    if reason:
+        scan = scan.replace(reason, " ")
+    low = scan.lower()
+    has_reject = any(tok in scan for tok in reject_tokens[:5]) or any(
+        tok in low for tok in reject_tokens[5:]
+    )
+    if has_reject:
+        return False, reason or "需重做（未给出具体理由）。"
+    has_pass = any(tok in scan for tok in pass_tokens[:3]) or any(
+        tok in low for tok in pass_tokens[3:]
+    )
+    if has_pass:
+        return True, reason or "通过。"
+    return True, reason or "审阅无明确否决，默认采纳。"
+
+
 def _extract_text_from_response(resp: Any) -> str:
     """Pull a plain-text reply out of the Anthropic-shaped ``Message``.
 
@@ -793,6 +868,79 @@ class _BrainBackedNodeAgent:
             (blocks[i][0], results[i]) for i in range(len(blocks))
         ]
         return _aggregate_with_children(parent_text, children)
+
+    # ------------------------------------------------------------------
+    # 逐级校验 (核心1): a parent node reviews a direct report's output
+    # ------------------------------------------------------------------
+
+    async def review_child_output(
+        self,
+        *,
+        child_node_id: str,
+        task: str,
+        output: str,
+        cancel_event: asyncio.Event | None = None,
+    ) -> tuple[bool, str]:
+        """The parent node ACTUALLY reviews a direct report's deliverable.
+
+        核心1: completeness/quality is judged by the connected upstream node
+        (this agent), not by a central heuristic. The parent's own brain reads
+        the sub-task brief + the child's output and returns a verdict:
+
+            (ok=True,  reason="...")  -> accept, splice it, continue upward
+            (ok=False, reason="...")  -> send it back for rework with reason
+
+        Generic over any topology (root→mid→leaf). The call is deliberately
+        small (truncated output, low token budget) and **fail-open**: any
+        provider error / unparseable verdict resolves to ACCEPT so a flaky
+        reviewer can never permanently block convergence (the bounded rework
+        loop in the executor still caps retries on the reject path).
+        """
+        body = (output or "").strip()
+        if not body:
+            # Empty output is an unambiguous reject — no model call needed.
+            return False, "下级未产出任何内容（空产出），需重做并给出完整成果。"
+        role = (self._spec.role or "worker").strip()
+        persona = (self._spec.persona or "").strip()
+        # Truncate the reviewed output so review stays cheap on huge deliverables.
+        sample = body if len(body) <= 4000 else (body[:4000] + "\n…（内容过长已截断，仅审阅前 4000 字）")
+        system = (
+            f"{_NODE_SYSTEM_PREFIX} 你是节点 `{self._spec.node_id}`（角色：{role}）。"
+            + (f" 设定：{persona}。" if persona else "")
+            + " 现在你要审阅你的直属下级提交的成果，判断它是否达标、可被采纳并上汇。"
+            " 评判依据：是否真正完成了交办任务、是否是成文成果而非纯思考过程/中途自述、"
+            "是否有明显缺漏。请务实：只要是成文且基本覆盖任务要点，就应判定通过；"
+            "仅当明显未完成（只有思考、空泛、跑题、严重缺漏）才判定不通过。"
+            " 严格只输出两行，且第一行必须是下面两种之一（逐字）："
+            " `裁决: 通过` 或 `裁决: 不通过`。"
+            " 第二行：`理由: 一句话说明`（判不通过时，这句话要给出具体、可执行的改进点）。"
+        )
+        user = (
+            f"【交给下级 `{child_node_id}` 的任务】\n{(task or '').strip()[:1500]}\n\n"
+            f"【下级 `{child_node_id}` 的产出】\n{sample}\n\n"
+            "请给出你的审阅裁决。"
+        )
+        try:
+            kwargs: dict[str, Any] = {
+                "messages": [{"role": "user", "content": user}],
+                "system": system,
+                "tools": [],
+            }
+            if cancel_event is not None:
+                kwargs["cancel_event"] = cancel_event
+            resp = await self._brain.messages_create_async(**kwargs)
+            verdict_text = _extract_text_from_response(resp)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 -- fail-open: never block on a flaky review
+            _LOGGER.debug(
+                "parent review raised (parent=%s child=%s); defaulting to accept",
+                self._spec.node_id,
+                child_node_id,
+                exc_info=True,
+            )
+            return True, "审阅调用异常，默认采纳（保证收敛）。"
+        return _parse_review_verdict(verdict_text)
 
     # ------------------------------------------------------------------
     # Token-level streaming for the no-tools (writer/leaf) path

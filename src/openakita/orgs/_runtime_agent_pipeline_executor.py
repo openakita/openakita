@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import secrets
 import time
 from collections.abc import Mapping
@@ -41,6 +42,47 @@ if TYPE_CHECKING:
     from ._runtime_agent_pipeline import AgentCache, ProfileResolver
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _env_int(name: str, default: int, *, lo: int, hi: int) -> int:
+    """Read a bounded int env override (clamped to [lo, hi])."""
+    try:
+        val = int(os.environ.get(name, "").strip() or default)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, val))
+
+
+# Defaults for the orchestration knobs. They are read DYNAMICALLY (see the
+# ``_rework_max`` / ``_review_enabled`` / ``_node_timeout_s`` helpers) so a
+# deployment can override them via env at runtime and the test-suite can pin
+# them per-test (monkeypatch / env) without import-time freezing.
+
+# 核心2 (重做闭环): how many times a direct-upstream node may send a failed
+# deliverable back to its report before escalating. Bounded so a hard-to-satisfy
+# reviewer can't spin forever; on exhaustion we escalate (emit an event + return
+# the last output so the parent/supervisor can decide). 0 disables the loop.
+_REWORK_MAX_DEFAULT = 1
+
+# 核心3 (超时隔离): hard wall-clock cap on a SINGLE node activation. A node that
+# blocks past this (e.g. an LLM stuck generating an oversized write_file arg)
+# is failed-and-reported instead of stalling the whole org indefinitely. The
+# supervisor then continues with siblings / replans. Generous default; tune via
+# env. 0 disables the per-node cap (falls back to the supervisor hard-ceiling).
+_NODE_TIMEOUT_DEFAULT = 420
+
+
+def _review_enabled() -> bool:
+    """核心1: is the parent-executed review on? On by default; ``0`` disables."""
+    return os.environ.get("OPENAKITA_ORG_REVIEW_ENABLED", "1").strip() != "0"
+
+
+def _rework_max() -> int:
+    return _env_int("OPENAKITA_ORG_REWORK_MAX", _REWORK_MAX_DEFAULT, lo=0, hi=5)
+
+
+def _node_timeout_s() -> int:
+    return _env_int("OPENAKITA_ORG_NODE_TIMEOUT_S", _NODE_TIMEOUT_DEFAULT, lo=0, hi=3600)
 
 
 def _new_chain_id() -> str:
@@ -310,8 +352,48 @@ class AgentPipelineExecutor:
             # fires. Old test agents whose ``run`` signature has no
             # ``cancel_event`` kwarg keep working via the signature
             # probe inside ``_invoke_agent``.
-            output = await self._invoke_agent(
-                agent, content, cancel_event=cancel_event
+            node_timeout = _node_timeout_s()
+            # 核心3: the wall-clock cap applies ONLY to LEAF nodes (no direct
+            # reports). A coordinator / root activation legitimately spans its
+            # ENTIRE subtree (children + reviews + reworks run inside its gather),
+            # so capping it would kill the whole org the moment the tree gets
+            # deep — exactly the test8 RCA where the 主编 timed out at 300s and
+            # cancelled everyone. Coordinators are bounded by the supervisor
+            # ceiling + their leaves' own caps instead.
+            is_leaf_node = not bool(getattr(spec, "available_nodes", None))
+            if node_timeout > 0 and is_leaf_node:
+                # bound one stuck leaf (e.g. an LLM grinding on an oversized
+                # write_file arg) so it cannot freeze the org. On timeout we
+                # surface agent_run_failed and let the supervisor move on.
+                output = await asyncio.wait_for(
+                    self._invoke_agent(agent, content, cancel_event=cancel_event),
+                    timeout=node_timeout,
+                )
+            else:
+                output = await self._invoke_agent(
+                    agent, content, cancel_event=cancel_event
+                )
+        except TimeoutError:
+            node_timeout = _node_timeout_s()
+            _LOGGER.warning(
+                "node activation timed out after %ss (org=%s node=%s)",
+                node_timeout,
+                org_id,
+                node_id,
+            )
+            await self._emit(
+                "agent_run_failed",
+                {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "command_id": command_id,
+                    "chain_id": run_chain_id,
+                    "reason": "node_timeout",
+                    "error": f"node activation exceeded {node_timeout}s",
+                },
+            )
+            return self._result(
+                "error", command_id, reason="node_timeout"
             )
         except asyncio.CancelledError:
             # Sprint-3 P0-2 (audit ``_orgs_business_capability_audit_v3.md``
@@ -388,15 +470,16 @@ class AgentPipelineExecutor:
         # persistence is either disabled or hit an I/O snag, never that
         # the agent run itself failed.
         output_text = str(output) if output else ""
-        # Quality gate (test7 RCA 2026-06): classify the output BEFORE we
-        # persist or register anything. A raw ``thinking…`` leak or a
-        # mid-iteration reasoning stub ("让我再搜索一下") must NOT become a
-        # formal deliverable — it gets no artifact file (so it can't be
-        # named as a 交付物, 图5) and the ``incomplete`` flag tells the
-        # contract tap to keep the task open instead of marking it
-        # delivered (so the supervisor re-routes / escalates).
+        # Quality gate. 核心1: completeness for a CHILD node (one with a
+        # connected upstream ``parent_node_id``) is decided by that parent's
+        # review in :meth:`dispatch_subtask`, NOT by this central heuristic —
+        # so we DON'T let the heuristic suppress a child's artifact or stamp it
+        # ``incomplete`` here (that was the "中央门禁凭空判定" the user flagged).
+        # The ROOT node (no parent / no upstream reviewer) keeps the heuristic
+        # as its only guard against delivering a raw ``thinking…`` leak.
+        has_upstream_reviewer = bool(parent_node_id)
         quality_status, quality_reason = classify_node_output(output_text)
-        is_incomplete = quality_status != "ok"
+        is_incomplete = (quality_status != "ok") and not has_upstream_reviewer
         get_org_dir = getattr(self._lookup, "get_org_dir", None)
         artifact_path: str | None = None
         if output_text and command_id and not is_incomplete:
@@ -573,18 +656,166 @@ class AgentPipelineExecutor:
             }
         )
 
-        result = await self.activate_and_run(
-            org_id=org_id,
-            node_id=target,
-            content=body,
-            command_id=parent_command_id,
-            depth=next_depth,
-            parent_node_id=parent_node_id,
-            chain_id=child_chain_id,
-            parent_chain_id=parent_chain_id,
-            cancel_event=cancel_event,
-        )
-        return str(result.get("output") or "")
+        # 核心1 + 核心2: run the child, then the DIRECT UPSTREAM (this parent)
+        # reviews the deliverable. On reject, re-dispatch the child with the
+        # parent's concrete feedback (bounded rework); on exhaustion, escalate.
+        attempt = 0
+        feedback = ""
+        last_output = ""
+        rework_max = _rework_max()
+        review_enabled = _review_enabled()
+        while True:
+            child_body = body if not feedback else f"{body}\n\n{feedback}"
+            # Each rework run gets a fresh chain + a re-dispatch event so the
+            # timeline shows the node genuinely going back to 进行中.
+            run_chain = child_chain_id if attempt == 0 else _new_chain_id()
+            if attempt > 0:
+                await self._emit(
+                    "subtask_assigned",
+                    {
+                        "org_id": org_id,
+                        "command_id": parent_command_id,
+                        "node_id": target,
+                        "parent_node_id": parent_node_id,
+                        "child_node_id": target,
+                        "content_preview": f"[第{attempt}次重做] " + preview,
+                        "depth": next_depth,
+                        "kind": "rework_dispatch",
+                        "chain_id": run_chain,
+                        "rework_attempt": attempt,
+                        **({"parent_chain_id": parent_chain_id} if parent_chain_id else {}),
+                    },
+                )
+            result = await self.activate_and_run(
+                org_id=org_id,
+                node_id=target,
+                content=child_body,
+                command_id=parent_command_id,
+                depth=next_depth,
+                parent_node_id=parent_node_id,
+                chain_id=run_chain,
+                parent_chain_id=parent_chain_id,
+                cancel_event=cancel_event,
+            )
+            last_output = str(result.get("output") or "")
+            # A child that errored / timed out / was skipped is NOT re-reviewed:
+            # the supervisor handles those terminal states. Return what we have.
+            if result.get("status") != "ok":
+                return last_output
+            ok, reason = await self._parent_review(
+                org_id=org_id,
+                parent_node_id=parent_node_id,
+                child_node_id=target,
+                task=body,
+                output=last_output,
+                cancel_event=cancel_event,
+            )
+            if ok:
+                if attempt > 0 or review_enabled:
+                    await self._emit(
+                        "node_review_passed",
+                        {
+                            "org_id": org_id,
+                            "command_id": parent_command_id,
+                            "node_id": target,
+                            "parent_node_id": parent_node_id,
+                            "child_node_id": target,
+                            "chain_id": run_chain,
+                            "rework_attempt": attempt,
+                            "reason": reason,
+                        },
+                    )
+                return last_output
+            if attempt >= rework_max:
+                # 核心2: exhausted the rework budget — escalate to the parent /
+                # supervisor (who may swap, downgrade, accept or terminate). We
+                # still return the last output so the run converges rather than
+                # hanging on a node that can't satisfy its reviewer.
+                await self._emit(
+                    "node_review_escalated",
+                    {
+                        "org_id": org_id,
+                        "command_id": parent_command_id,
+                        "node_id": target,
+                        "parent_node_id": parent_node_id,
+                        "child_node_id": target,
+                        "chain_id": run_chain,
+                        "rework_attempts": attempt,
+                        "reason": reason,
+                    },
+                )
+                return last_output
+            attempt += 1
+            feedback = (
+                f"【直属上级 `{parent_node_id}` 第 {attempt} 次退回意见】{reason}\n"
+                "请据此修订并重新产出【完整成果】（不要只写思考过程或中途自述）。"
+            )
+            await self._emit(
+                "node_rework_requested",
+                {
+                    "org_id": org_id,
+                    "command_id": parent_command_id,
+                    "node_id": target,
+                    "parent_node_id": parent_node_id,
+                    "child_node_id": target,
+                    "rework_attempt": attempt,
+                    "reason": reason,
+                },
+            )
+
+    async def _parent_review(
+        self,
+        *,
+        org_id: str,
+        parent_node_id: str,
+        child_node_id: str,
+        task: str,
+        output: str,
+        cancel_event: asyncio.Event | None = None,
+    ) -> tuple[bool, str]:
+        """Resolve the parent node's agent and have it review the child output.
+
+        核心1: review is executed BY the connected upstream node (generic over
+        any topology), not by a central heuristic. Fail-open: if review is
+        disabled, the parent can't be resolved, or the agent doesn't support
+        review, we accept (return ``(True, "")``) so convergence is never
+        blocked by infrastructure gaps."""
+        if not _review_enabled() or not parent_node_id:
+            return True, ""
+        try:
+            spec = self._resolver.resolve(org_id=org_id, node_id=parent_node_id)
+            if spec is None:
+                return True, ""
+            agent = self._cache.get_or_create(spec)
+        except Exception:  # noqa: BLE001 -- never block convergence on resolve
+            _LOGGER.debug(
+                "parent review: resolve/cache failed (org=%s parent=%s)",
+                org_id,
+                parent_node_id,
+                exc_info=True,
+            )
+            return True, ""
+        review = getattr(agent, "review_child_output", None)
+        if not callable(review):
+            return True, ""
+        try:
+            return await review(
+                child_node_id=child_node_id,
+                task=task,
+                output=output,
+                cancel_event=cancel_event,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug(
+                "parent review raised (org=%s parent=%s child=%s)",
+                org_id,
+                parent_node_id,
+                child_node_id,
+                exc_info=True,
+            )
+            return True, ""
 
     async def pause_org_for_quota(self, org_id: str, *, reason: str) -> None:
         """v1 ``_pause_org_for_quota`` parity (78 LOC -> ~15 LOC).
