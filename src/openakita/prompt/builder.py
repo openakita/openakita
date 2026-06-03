@@ -505,6 +505,7 @@ def build_system_prompt(
     catalog_scope: list[str] | None = None,
     include_project_guidelines: bool | None = None,
     intent_tool_hints: list[str] | None = None,
+    agent_voice: str = "",
 ) -> str:
     """
     组装系统提示词
@@ -529,6 +530,8 @@ def build_system_prompt(
         model_id: 模型标识（用于 per-model 基础 prompt）
         prompt_profile: 产品场景 profile（None 回退到 LOCAL_AGENT）
         prompt_tier: 上下文窗口分档（None 回退到 LARGE）
+        agent_voice: 当前 Agent 的显示名，用于替换 SOUL.md / NONE-mode 中的
+            ``{{agent_name}}`` 占位符。空字符串时回退到 "OpenAkita"。
 
     Returns:
         完整的系统提示词
@@ -602,6 +605,7 @@ def build_system_prompt(
                     prompt_mode == PromptMode.FULL
                     and (tools_enabled or bool(_catalog_scope - {"index"}))
                 ),
+                agent_voice=agent_voice,
             ),
             force_recompute=True,
         )
@@ -619,7 +623,7 @@ def build_system_prompt(
                 system_parts.append(persona_section)
 
     elif prompt_mode == PromptMode.NONE:
-        system_parts.append("你是 OpenAkita，一个 AI 助手。")
+        system_parts.append(f"你是 {_resolve_agent_voice(agent_voice)}，一个 AI 助手。")
 
     # 5. Mode Rules（Ask/Plan/Agent 模式专属规则）
     mode_rules = build_mode_rules(mode)
@@ -1113,16 +1117,40 @@ def _read_with_fallback(path: Path, fallback_key: str) -> str:
     return fallback
 
 
+_AGENT_VOICE_PLACEHOLDER = "{{agent_name}}"
+_DEFAULT_AGENT_VOICE = "OpenAkita"
+
+
+def _resolve_agent_voice(agent_voice: str | None) -> str:
+    """Pick a non-empty agent voice for SOUL.md / NONE-mode placeholder substitution.
+
+    Returns the caller's value when it has any visible characters, otherwise
+    falls back to the legacy product name so the prompt remains grammatical for
+    callers that have not yet plumbed the AgentProfile through (e.g.
+    identity.IdentityManager._build_compiled_prompt).
+    """
+    if isinstance(agent_voice, str):
+        stripped = agent_voice.strip()
+        if stripped:
+            return stripped
+    return _DEFAULT_AGENT_VOICE
+
+
 def _build_identity_section(
     compiled: dict[str, str],
     identity_dir: Path,
     tools_enabled: bool,
     budget_tokens: int,
     include_tooling: bool = False,
+    agent_voice: str = "",
 ) -> str:
     """构建 Identity 层。
 
     常规 prompt 只注入编译后的短身份核心，避免 SOUL/AGENT 长文反复进入每轮请求。
+
+    ``agent_voice`` 用于把 SOUL.md / identity.core.md 里的 ``{{agent_name}}``
+    占位符替换为当前 Agent 的显示名，避免 SOUL.md 把所有 Agent 都钉死在
+    "OpenAkita" 这一个自称上。空字符串时回退到 ``_DEFAULT_AGENT_VOICE``。
     """
     parts = []
 
@@ -1161,7 +1189,10 @@ def _build_identity_section(
         except Exception:
             pass
 
-    return "\n".join(parts)
+    text = "\n".join(parts)
+    if _AGENT_VOICE_PLACEHOLDER in text:
+        text = text.replace(_AGENT_VOICE_PLACEHOLDER, _resolve_agent_voice(agent_voice))
+    return text
 
 
 def _get_current_time(timezone_name: str = "Asia/Shanghai") -> str:

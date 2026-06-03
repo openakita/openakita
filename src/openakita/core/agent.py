@@ -3438,6 +3438,30 @@ class Agent:
         """构建系统提示词（统一使用编译管线 v2）。"""
         return self._build_system_prompt_compiled_sync(task_description, session_type=session_type)
 
+    def _resolve_agent_voice(self) -> str:
+        """Return the display name that SOUL.md's ``{{agent_name}}`` should expand to.
+
+        Priority: profile's localized display name → profile.name → self.name →
+        ``settings.agent_name`` (legacy fallback). The string is what the LLM
+        will read as its own self-reference inside SOUL.md, so it should match
+        what the user sees in the chat header and the Agents list.
+        """
+        profile = getattr(self, "_agent_profile", None)
+        if profile is not None:
+            try:
+                display = profile.get_display_name("zh")
+            except Exception:
+                display = ""
+            if isinstance(display, str) and display.strip():
+                return display.strip()
+            primary = getattr(profile, "name", "")
+            if isinstance(primary, str) and primary.strip():
+                return primary.strip()
+        agent_name = getattr(self, "name", "")
+        if isinstance(agent_name, str) and agent_name.strip():
+            return agent_name.strip()
+        return getattr(settings, "agent_name", "") or ""
+
     def _build_system_prompt_compiled_sync(
         self, task_description: str = "", session_type: str = "cli"
     ) -> str:
@@ -3453,6 +3477,7 @@ class Agent:
             session_type=session_type,
             context_window=ctx_window,
             is_sub_agent=self._is_sub_agent_call,
+            agent_voice=self._resolve_agent_voice(),
         )
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
@@ -3730,6 +3755,7 @@ class Agent:
             )
         except Exception:
             _working_facts_cache_key = ""
+        _resolved_voice = self._resolve_agent_voice()
         _cache_key = (
             _conv_id,
             _effective_mode,
@@ -3748,6 +3774,7 @@ class Agent:
             tuple(sorted(_mem_keywords)) if _mem_keywords else (),
             _working_facts_cache_key,
             bool((session_context or {}).get("evidence_recommended", False)),
+            _resolved_voice,
         )
 
         if (
@@ -3777,6 +3804,7 @@ class Agent:
                 catalog_scope=_strategy.catalog_scope,
                 include_project_guidelines=_strategy.include_project_guidelines,
                 intent_tool_hints=_intent_tool_hints,
+                agent_voice=_resolved_voice,
             )
             self._system_prompt_cache[_cache_key] = prompt
             self._system_prompt_cache_dirty = False
