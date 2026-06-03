@@ -57,6 +57,42 @@ def _load_providers() -> list[dict]:
     return json.loads(providers_path.read_text(encoding="utf-8"))
 
 
+def _resolve_identity_template(rel_name: str) -> Path | None:
+    """Locate a packaged identity template (e.g. ``SOUL.md.example``).
+
+    Two resolution strategies are tried in order, matching the logic used by
+    ``api/routes/workspaces._resolve_template``:
+
+    1. Repo checkout: walk up from the running package directory looking for
+       a sibling ``identity/`` next to ``pyproject.toml`` or ``src/openakita``.
+       This is the path used during ``pip install -e .`` and ``python -m
+       openakita ...`` from a source tree.
+    2. Wheel install: look for the template inside the installed
+       ``openakita`` package directory itself, in case a future packaging
+       change force-includes ``identity/`` into the wheel.
+
+    Returns ``None`` when the template cannot be located so callers can
+    degrade gracefully (the runtime's ``Identity._sync_identity_file`` will
+    still create the file from the bundled example on first agent load).
+    """
+    pkg_root = Path(__file__).resolve().parents[1]
+
+    cursor = pkg_root
+    for _ in range(10):
+        candidate = cursor / "identity" / rel_name
+        if candidate.exists():
+            return candidate
+        parent = cursor.parent
+        if parent == cursor:
+            break
+        cursor = parent
+
+    candidate = pkg_root / "identity" / rel_name
+    if candidate.exists():
+        return candidate
+    return None
+
+
 class SetupWizard:
     """交互式安装向导"""
 
@@ -1741,31 +1777,45 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         return "\n".join(lines)
 
     def _create_identity_examples(self):
-        """创建 identity 目录下的示例文件"""
+        """Seed identity/SOUL.md by copying from the shipped SOUL.md.example.
+
+        Earlier the wizard wrote a short hardcoded stub that began with
+        ``你是 OpenAkita ...``. That stub bypassed the per-Agent
+        ``{{agent_name}}`` substitution introduced alongside the templated
+        ``SOUL.md.example``: once the stub existed on disk, the runtime
+        ``Identity._sync_identity_file`` saw a file present, recorded its
+        hash, and never replaced it with the templated example. Every Agent
+        profile then read back ``OpenAkita`` from the stub regardless of
+        what the user had named the profile in the Agents manager.
+
+        The wizard now resolves the bundled ``SOUL.md.example`` (either in
+        the repo checkout under dev install, or under the installed
+        ``openakita`` package directory for wheel installs) and copies it
+        verbatim. If neither location is available we deliberately leave
+        ``SOUL.md`` unwritten so that the runtime can still create it from
+        the same template on first agent load instead of pinning the
+        hardcoded English brand name on disk.
+        """
         identity_dir = self.project_dir / "identity"
         identity_dir.mkdir(exist_ok=True)
 
-        # SOUL.md - Agent 的核心身份
-        soul_example = identity_dir / "SOUL.md"
-        if not soul_example.exists():
-            soul_example.write_text(
-                """# Agent Soul
+        soul_target = identity_dir / "SOUL.md"
+        if soul_target.exists():
+            return
 
-你是 OpenAkita，一个忠诚可靠的 AI 助手。
-
-## 核心特质
-- 永不放弃，持续尝试直到成功
-- 诚实可靠，不会隐瞒问题
-- 主动学习，不断自我改进
-
-## 行为准则
-- 优先考虑用户的真实需求
-- 遇到困难时寻找替代方案
-- 保持简洁清晰的沟通方式
-""",
-                encoding="utf-8",
+        soul_template = _resolve_identity_template("SOUL.md.example")
+        if soul_template is None:
+            console.print(
+                "  [yellow]![/yellow] identity/SOUL.md.example not found; "
+                "skipping seed (runtime will create SOUL.md from the bundled "
+                "template on first agent start)"
             )
-            console.print("  [green]✓[/green] Created identity/SOUL.md")
+            return
+
+        import shutil
+
+        shutil.copy2(soul_template, soul_target)
+        console.print("  [green]✓[/green] Created identity/SOUL.md from SOUL.md.example")
 
     def _check_channel_deps(self):
         """检查并安装已选 IM 通道的可选依赖。"""

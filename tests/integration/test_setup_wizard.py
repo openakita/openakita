@@ -175,14 +175,28 @@ class TestWriteLLMEndpoints:
 
 
 class TestCreateIdentityExamples:
-    def test_creates_soul_md(self, wizard, tmp_path):
+    def test_creates_soul_md_from_template(self, wizard, tmp_path):
+        """SOUL.md must be seeded from the bundled SOUL.md.example so the
+        ``{{agent_name}}`` placeholder survives to the prompt builder.
+
+        Regression: the wizard used to inline a short hardcoded stub that
+        hardcoded ``你是 OpenAkita`` and that stub then masked the templated
+        example on every fresh install — every Agent profile read back the
+        product name regardless of what the user had picked in the Agents
+        manager.
+        """
         (tmp_path / "identity").mkdir(exist_ok=True)
         wizard._create_identity_examples()
 
         soul = tmp_path / "identity" / "SOUL.md"
         assert soul.exists()
         content = soul.read_text(encoding="utf-8")
-        assert "OpenAkita" in content
+        # The bundled example is the templated form; the literal placeholder
+        # must reach disk so the prompt builder can substitute per-Agent.
+        assert "{{agent_name}}" in content
+        # Conversely, the short hardcoded stub that previously preempted the
+        # templated example must no longer be written verbatim.
+        assert "你是 OpenAkita，一个忠诚可靠的 AI 助手。" not in content
 
     def test_does_not_overwrite_existing(self, wizard, tmp_path):
         identity_dir = tmp_path / "identity"
