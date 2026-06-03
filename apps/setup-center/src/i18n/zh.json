@@ -3381,7 +3381,7 @@
       "mcpOnline": "在线",
       "mcpOffline": "离线",
       "selectedMcp": "已选 {{count}} 个",
-      "skills": "技能",
+    "skills": "扩展工具",
       "skillsDesc": "已安装的专业技能包",
       "selectedSkills": "已选 {{count}} 个",
       "selectAll": "全选",

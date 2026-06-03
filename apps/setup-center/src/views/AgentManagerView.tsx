@@ -42,6 +42,14 @@ type SkillItem = {
   name: string;
   enabled: boolean;
   name_i18n?: Record<string, string> | null;
+  system?: boolean;
+  category?: string | null;
+};
+
+type MCPServerItem = {
+  name: string;
+  description: string;
+  tools: { name: string; description: string }[];
 };
 
 type ModelInfo = {
@@ -185,6 +193,8 @@ export function AgentManagerView({
   const [saving, setSaving] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [availableSkills, setAvailableSkills] = useState<SkillItem[]>([]);
+  const [mcpServers, setMcpServers] = useState<MCPServerItem[]>([]);
+  const [skillTab, setSkillTab] = useState<"system" | "external" | "mcp">("system");
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [iconCat, setIconCat] = useState("common");
@@ -197,6 +207,7 @@ export function AgentManagerView({
   const [newCatColor, setNewCatColor] = useState("#6b7280");
   const [batchSelected, setBatchSelected] = useState<Set<string>>(new Set());
   const [skillSearch, setSkillSearch] = useState("");
+  const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const importInputRef = useRef<HTMLInputElement>(null);
 
   // Isolation UI state
@@ -304,10 +315,22 @@ export function AgentManagerView({
           name: s.name,
           enabled: s.enabled !== false,
           name_i18n: s.name_i18n || null,
+          system: s.system,
+          category: s.category,
         })),
       );
     } catch {
       /* skills endpoint may not be available */
+    }
+  }, [apiBaseUrl]);
+
+  const fetchMCPTools = useCallback(async () => {
+    try {
+      const res = await safeFetch(`${apiBaseUrl}/api/mcp/servers`);
+      const data = await res.json();
+      setMcpServers(data.servers || []);
+    } catch {
+      /* mcp endpoint may not be available */
     }
   }, [apiBaseUrl]);
 
@@ -426,10 +449,11 @@ export function AgentManagerView({
     if (visible) {
       fetchProfiles();
       fetchSkills();
+      fetchMCPTools();
       fetchCategories();
       fetchModels();
     }
-  }, [visible, fetchProfiles, fetchSkills, fetchCategories, fetchModels]);
+  }, [visible, fetchProfiles, fetchSkills, fetchMCPTools, fetchCategories, fetchModels]);
 
   const openCreateEditor = () => {
     setEditingProfile({ ...EMPTY_PROFILE });
@@ -458,6 +482,8 @@ export function AgentManagerView({
     setEditorOpen(false);
     setEmojiPickerOpen(false);
     setSkillSearch("");
+    setSkillTab("system");
+    setExpandedServers(new Set());
   };
 
   const generateId = (name: string) =>
@@ -537,6 +563,17 @@ export function AgentManagerView({
         ? prev.skills.filter((s) => s !== skillName)
         : [...prev.skills, skillName];
       return { ...prev, skills };
+    });
+  };
+
+  const setSkillBatch = (names: string[], selected: boolean) => {
+    setEditingProfile((prev) => {
+      const set = new Set(prev.skills);
+      names.forEach((n) => {
+        if (selected) set.add(n);
+        else set.delete(n);
+      });
+      return { ...prev, skills: [...set] };
     });
   };
 
@@ -1202,9 +1239,9 @@ export function AgentManagerView({
               </div>
             </div>
 
-            {/* Skills Mode */}
+            {/* Extension Tools Mode */}
             <div className="space-y-1.5">
-              <Label className="text-xs opacity-70">{t("agentManager.skills")}</Label>
+              <Label className="text-xs opacity-70">扩展工具</Label>
               <Select
                 value={editingProfile.skills_mode}
                 onValueChange={(v) => { setEditingProfile((p) => ({ ...p, skills_mode: v })); setSkillSearch(""); }}
@@ -1218,44 +1255,140 @@ export function AgentManagerView({
               </Select>
             </div>
 
-            {/* Skills multi-select */}
-            {editingProfile.skills_mode !== "all" && availableSkills.length > 0 && (
+            {/* Extension Tools multi-select with tabs */}
+            {editingProfile.skills_mode !== "all" && (availableSkills.length > 0 || mcpServers.some((s) => s.tools.length > 0)) && (
               <div className="rounded-lg border">
-                <div className="p-1.5 border-b">
+                <div className="p-1.5 border-b space-y-1.5">
                   <Input
                     placeholder={t("agentManager.skillSearchPlaceholder")}
                     value={skillSearch}
                     onChange={(e) => setSkillSearch(e.target.value)}
                     className="h-7 text-xs"
                   />
-                </div>
-                <div className="max-h-[200px] overflow-y-auto p-1">
-                  {availableSkills
-                    .filter((skill) => {
-                      if (!skillSearch.trim()) return true;
+                  <div className="flex gap-1">
+                    {(["system", "external", "mcp"] as const).map((tab) => {
                       const q = skillSearch.trim().toLowerCase();
-                      const displayName = skill.name_i18n?.[i18n.language?.startsWith("zh") ? "zh" : i18n.language || "zh"] || skill.name;
-                      return displayName.toLowerCase().includes(q) || skill.name.toLowerCase().includes(q);
-                    })
-                    .map((skill) => {
-                      const checked = editingProfile.skills.includes(skill.skillId);
+                      const count = tab === "mcp"
+                        ? mcpServers.reduce((sum, s) => {
+                            const serverMatch = !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
+                            if (serverMatch) return sum + s.tools.length;
+                            return sum + s.tools.filter((t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q)).length;
+                          }, 0)
+                        : availableSkills.filter((s) => {
+                            if (tab === "system" && s.system !== true) return false;
+                            if (tab === "external" && s.system === true) return false;
+                            if (!q) return true;
+                            const dn = s.name_i18n?.[i18n.language?.startsWith("zh") ? "zh" : i18n.language || "zh"] || s.name;
+                            return dn.toLowerCase().includes(q) || s.name.toLowerCase().includes(q);
+                          }).length;
+                      const label = tab === "system" ? "系统工具" : tab === "external" ? "外部技能" : "MCP 工具";
                       return (
-                        <label
-                          key={skill.skillId}
-                          className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md cursor-pointer text-[13px] transition-colors ${
-                            checked ? "bg-primary/8" : "hover:bg-accent/50"
+                        <button
+                          key={tab}
+                          onClick={() => setSkillTab(tab)}
+                          className={`flex-1 px-2 py-1 text-xs rounded cursor-pointer border-none transition-colors ${
+                            skillTab === tab
+                              ? "bg-primary/10! text-primary font-medium"
+                              : "text-muted-foreground hover:bg-accent"
                           }`}
                         >
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={() => toggleSkill(skill.skillId)}
-                          />
-                          <span className="flex-1 min-w-0 truncate">
-                            {skill.name_i18n?.[i18n.language?.startsWith("zh") ? "zh" : i18n.language || "zh"] || skill.name}
-                          </span>
-                        </label>
+                          {label} {count}
+                        </button>
                       );
                     })}
+                  </div>
+                </div>
+                <div className="max-h-[200px] overflow-y-auto p-1">
+                  {skillTab === "mcp"
+                    ? mcpServers.map((server) => {
+                        const q = skillSearch.trim().toLowerCase();
+                        const serverMatch = !q || server.name.toLowerCase().includes(q) || server.description.toLowerCase().includes(q);
+                        const matchedTools = serverMatch
+                          ? server.tools
+                          : server.tools.filter((t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
+                        if (matchedTools.length === 0) return null;
+                        const mcpKey = (tool: { name: string }) => `${server.name}:${tool.name}`;
+                        const allSelected = matchedTools.every((t) => editingProfile.skills.includes(mcpKey(t)));
+                        const someSelected = matchedTools.some((t) => editingProfile.skills.includes(mcpKey(t)));
+                        const expanded = expandedServers.has(server.name);
+                        return (
+                          <div key={server.name}>
+                            <div
+                              className="flex items-center gap-1.5 px-2.5 py-2 rounded-md cursor-pointer select-none hover:bg-accent/50 transition-colors"
+                              onClick={() => {
+                                setExpandedServers((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(server.name)) next.delete(server.name);
+                                  else next.add(server.name);
+                                  return next;
+                                });
+                              }}
+                            >
+                              <Checkbox
+                                checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                                onCheckedChange={() => {
+                                  setSkillBatch(matchedTools.map((t) => mcpKey(t)), !allSelected);
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                              <span className="text-sm font-medium text-foreground flex-1 min-w-0 truncate">{server.name}</span>
+                              <span className="tabular-nums text-xs text-muted-foreground/60">{matchedTools.length}</span>
+                              <span className="text-muted-foreground/40 text-xs">{expanded ? "▾" : "▸"}</span>
+                            </div>
+                            {expanded && (
+                              <div className="ml-5">
+                                {matchedTools.map((tool) => {
+                                  const id = mcpKey(tool);
+                                  const checked = editingProfile.skills.includes(id);
+                                  return (
+                                    <label
+                                      key={id}
+                                      className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md cursor-pointer text-[13px] transition-colors ${
+                                        checked ? "bg-primary/8" : "hover:bg-accent/50"
+                                      }`}
+                                    >
+                                      <Checkbox
+                                        checked={checked}
+                                        onCheckedChange={() => toggleSkill(id)}
+                                      />
+                                      <span className="flex-1 min-w-0 truncate">{tool.name}</span>
+                                      <span className="text-[11px] text-muted-foreground/40 truncate max-w-[120px]">{server.name}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    : availableSkills
+                        .filter((skill) => {
+                          if (skillTab === "system" && skill.system !== true) return false;
+                          if (skillTab === "external" && skill.system === true) return false;
+                          if (!skillSearch.trim()) return true;
+                          const q = skillSearch.trim().toLowerCase();
+                          const displayName = skill.name_i18n?.[i18n.language?.startsWith("zh") ? "zh" : i18n.language || "zh"] || skill.name;
+                          return displayName.toLowerCase().includes(q) || skill.name.toLowerCase().includes(q);
+                        })
+                        .map((skill) => {
+                          const checked = editingProfile.skills.includes(skill.skillId);
+                          return (
+                            <label
+                              key={skill.skillId}
+                              className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-md cursor-pointer text-[13px] transition-colors ${
+                                checked ? "bg-primary/8" : "hover:bg-accent/50"
+                              }`}
+                            >
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={() => toggleSkill(skill.skillId)}
+                              />
+                              <span className="flex-1 min-w-0 truncate">
+                                {skill.name_i18n?.[i18n.language?.startsWith("zh") ? "zh" : i18n.language || "zh"] || skill.name}
+                              </span>
+                            </label>
+                          );
+                        })}
                 </div>
               </div>
             )}
