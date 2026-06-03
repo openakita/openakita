@@ -368,6 +368,7 @@ tests/e2e/_*.py
 
 # pytest / api 临时 dump
 .pytest_out.txt
+_diff_*.txt
 _agents.json
 _endpoints.json
 _openapi.json
