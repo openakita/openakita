@@ -1,9 +1,15 @@
 """L1 Unit Tests: Identity document loading and prompt generation."""
 
-import pytest
 from pathlib import Path
 
-from openakita.core.identity import Identity
+import pytest
+
+import openakita.core.identity as identity_mod
+from openakita.core.identity import (
+    Identity,
+    _file_hash,
+    _save_hashes,
+)
 
 
 @pytest.fixture
@@ -63,4 +69,133 @@ class TestIdentityUpdate:
         # update_memory returns bool
         result = identity.update_memory("preferences", "用户喜欢咖啡")
         assert isinstance(result, bool)
+
+
+class TestSyncIdentityFileBundledFallback:
+    """Regression coverage for the upgrade-install path.
+
+    The wizard only seeds ``identity/SOUL.md`` from ``SOUL.md.example`` once,
+    so on a wheel / Tauri upgrade the user's workspace typically has *no*
+    sibling ``.example``. Before the fallback was introduced,
+    ``_sync_identity_file`` returned the stale on-disk content untouched and
+    the decision matrix (silent-upgrade vs preserve-user-edits) never ran.
+
+    These tests pin down the four upgrade scenarios so we don't regress to
+    that behaviour and don't accidentally trample user edits when the bundled
+    template is the only source available.
+    """
+
+    def _make_user_identity(self, tmp_path: Path, soul_content: str) -> Path:
+        d = tmp_path / "user_identity"
+        d.mkdir()
+        (d / "SOUL.md").write_text(soul_content, encoding="utf-8")
+        return d
+
+    def _make_bundled(self, tmp_path: Path, content: str) -> Path:
+        bundled_dir = tmp_path / "bundled"
+        bundled_dir.mkdir()
+        target = bundled_dir / "SOUL.md.example"
+        target.write_text(content, encoding="utf-8")
+        return target
+
+    def _install_bundled_resolver(self, monkeypatch, bundled_example: Path) -> None:
+        def fake_resolver(rel_name: str) -> Path | None:
+            return bundled_example if rel_name == "SOUL.md.example" else None
+
+        monkeypatch.setattr(identity_mod, "_resolve_bundled_identity_template", fake_resolver)
+
+    def test_silent_upgrade_when_user_unmodified_and_only_bundled_exists(
+        self, tmp_path, monkeypatch
+    ):
+        old_stub = "# Soul\n\n你是 OpenAkita。\n"
+        new_template = "# Soul\n\n你是 {{agent_name}}，一只秋田犬。\n"
+
+        user_id = self._make_user_identity(tmp_path, old_stub)
+        soul = user_id / "SOUL.md"
+
+        _save_hashes(user_id, {"SOUL.md": _file_hash(soul)})
+
+        bundled_example = self._make_bundled(tmp_path, new_template)
+        self._install_bundled_resolver(monkeypatch, bundled_example)
+
+        identity = Identity(soul_path=soul)
+        identity.load()
+
+        assert "{{agent_name}}" in soul.read_text(encoding="utf-8")
+        assert "{{agent_name}}" in identity.soul
+
+    def test_preserves_user_edits_when_hash_mismatches_via_bundled(self, tmp_path, monkeypatch):
+        original = "# Soul\n\n你是 OpenAkita。\n"
+        user_edited = "# Soul\n\n你是 我的自定义角色。\n"
+        new_template = "# Soul\n\n你是 {{agent_name}}，一只秋田犬。\n"
+
+        user_id = self._make_user_identity(tmp_path, user_edited)
+        soul = user_id / "SOUL.md"
+
+        # Record a stale hash that does *not* match current SOUL.md → simulates
+        # "system wrote this once, user has since edited it without us knowing".
+        _save_hashes(user_id, {"SOUL.md": "stalehash00000000"})
+
+        bundled_example = self._make_bundled(tmp_path, new_template)
+        self._install_bundled_resolver(monkeypatch, bundled_example)
+
+        identity = Identity(soul_path=soul)
+        identity.load()
+
+        assert soul.read_text(encoding="utf-8") == user_edited
+        assert identity.soul == user_edited
+
+    def test_no_change_when_neither_local_nor_bundled_example_exists(self, tmp_path, monkeypatch):
+        content = "# Soul\n\n你是 OpenAkita。\n"
+        user_id = self._make_user_identity(tmp_path, content)
+        soul = user_id / "SOUL.md"
+
+        monkeypatch.setattr(
+            identity_mod, "_resolve_bundled_identity_template", lambda name: None
+        )
+
+        identity = Identity(soul_path=soul)
+        identity.load()
+
+        assert soul.read_text(encoding="utf-8") == content
+        assert identity.soul == content
+
+    def test_local_example_wins_over_bundled_when_both_exist(self, tmp_path, monkeypatch):
+        old_stub = "# Soul\n\n你是 OpenAkita。\n"
+        local_template = "# Soul\n\n你是 LOCAL_OVERRIDE。\n"
+        bundled_template = "# Soul\n\n你是 BUNDLED_FALLBACK。\n"
+
+        user_id = self._make_user_identity(tmp_path, old_stub)
+        soul = user_id / "SOUL.md"
+        (user_id / "SOUL.md.example").write_text(local_template, encoding="utf-8")
+        _save_hashes(user_id, {"SOUL.md": _file_hash(soul)})
+
+        bundled_example = self._make_bundled(tmp_path, bundled_template)
+        self._install_bundled_resolver(monkeypatch, bundled_example)
+
+        identity = Identity(soul_path=soul)
+        identity.load()
+
+        assert "LOCAL_OVERRIDE" in soul.read_text(encoding="utf-8")
+        assert "BUNDLED_FALLBACK" not in soul.read_text(encoding="utf-8")
+
+    def test_pending_upgrade_queued_when_no_hash_record(self, tmp_path, monkeypatch):
+        """Old-old user with no .file_hashes.json: SOUL.md content differs from
+        bundled but no recorded hash → scenario 4, queued for prompt, file
+        untouched."""
+        user_content = "# Soul\n\n你是 OpenAkita。\n"
+        bundled_content = "# Soul\n\n你是 {{agent_name}}，一只秋田犬。\n"
+
+        user_id = self._make_user_identity(tmp_path, user_content)
+        soul = user_id / "SOUL.md"
+
+        bundled_example = self._make_bundled(tmp_path, bundled_content)
+        self._install_bundled_resolver(monkeypatch, bundled_example)
+
+        identity = Identity(soul_path=soul)
+        identity.load()
+
+        assert soul.read_text(encoding="utf-8") == user_content
+        pending_names = [item["name"] for item in identity.get_pending_upgrades()]
+        assert "SOUL.md" in pending_names
 

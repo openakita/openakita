@@ -60,37 +60,12 @@ def _load_providers() -> list[dict]:
 def _resolve_identity_template(rel_name: str) -> Path | None:
     """Locate a packaged identity template (e.g. ``SOUL.md.example``).
 
-    Two resolution strategies are tried in order, matching the logic used by
-    ``api/routes/workspaces._resolve_template``:
-
-    1. Repo checkout: walk up from the running package directory looking for
-       a sibling ``identity/`` next to ``pyproject.toml`` or ``src/openakita``.
-       This is the path used during ``pip install -e .`` and ``python -m
-       openakita ...`` from a source tree.
-    2. Wheel install: look for the template inside the installed
-       ``openakita`` package directory itself, in case a future packaging
-       change force-includes ``identity/`` into the wheel.
-
-    Returns ``None`` when the template cannot be located so callers can
-    degrade gracefully (the runtime's ``Identity._sync_identity_file`` will
-    still create the file from the bundled example on first agent load).
+    Thin wrapper over ``core.identity._resolve_bundled_identity_template`` so
+    wizard-time and runtime template lookup share a single source of truth.
     """
-    pkg_root = Path(__file__).resolve().parents[1]
+    from openakita.core.identity import _resolve_bundled_identity_template
 
-    cursor = pkg_root
-    for _ in range(10):
-        candidate = cursor / "identity" / rel_name
-        if candidate.exists():
-            return candidate
-        parent = cursor.parent
-        if parent == cursor:
-            break
-        cursor = parent
-
-    candidate = pkg_root / "identity" / rel_name
-    if candidate.exists():
-        return candidate
-    return None
+    return _resolve_bundled_identity_template(rel_name)
 
 
 class SetupWizard:

@@ -58,6 +58,42 @@ def _file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
 
+def _resolve_bundled_identity_template(rel_name: str) -> Path | None:
+    """Locate a packaged identity template (e.g. ``SOUL.md.example``).
+
+    Resolution strategies, in order:
+
+    1. Repo checkout: walk up from this file's directory looking for a sibling
+       ``identity/`` (next to ``pyproject.toml`` or ``src/openakita``). Used
+       during ``pip install -e .`` and ``python -m openakita`` from source.
+    2. Wheel / Tauri install: look inside the installed ``openakita`` package
+       directory itself, which is where ``pyproject.toml``'s ``force-include``
+       drops the templates.
+
+    Returns ``None`` when the template cannot be located so callers can
+    degrade gracefully (current behaviour: keep existing on-disk content).
+
+    Shared with ``setup.wizard._resolve_identity_template`` so wizard-time and
+    runtime template lookup stay in lockstep.
+    """
+    pkg_root = Path(__file__).resolve().parents[1]
+
+    cursor = pkg_root
+    for _ in range(10):
+        candidate = cursor / "identity" / rel_name
+        if candidate.exists():
+            return candidate
+        parent = cursor.parent
+        if parent == cursor:
+            break
+        cursor = parent
+
+    candidate = pkg_root / "identity" / rel_name
+    if candidate.exists():
+        return candidate
+    return None
+
+
 class Identity:
     """Agent 身份管理器"""
 
@@ -156,7 +192,15 @@ class Identity:
             return ""
 
         if not example_path.exists():
-            return current_content
+            # Upgrade-install path: the user's identity/ rarely contains the
+            # *.example sibling (wizard only seeds SOUL.md from it once). Fall
+            # back to the template bundled inside the installed package so the
+            # decision matrix below (silent-upgrade vs preserve-user-edits vs
+            # queue-for-prompt) actually runs on subsequent app upgrades.
+            bundled = _resolve_bundled_identity_template(f"{path.name}.example")
+            if bundled is None:
+                return current_content
+            example_path = bundled
 
         try:
             current_hash = _file_hash(path)
