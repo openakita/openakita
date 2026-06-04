@@ -5384,7 +5384,14 @@ fn main() {
             // 旧实现仅依赖 startup_version_check 一次性探测，进程死后用户要等
             // 60+ 分钟才能在 autostart.log 里看到下一次探测。
             {
-                let app_handle = app.handle().clone();
+                // NOTE: this loop intentionally does NOT emit backend:status /
+                // backend:back / backend:lost to the webview. The frontend runs
+                // its own /api/health poll (App.tsx, with its own alive/suspect/
+                // degraded/dead state machine and tray updates), so those events
+                // had no listener — they were dead cross-thread emits that only
+                // added to the long-lived WebView2 event-loop traffic implicated
+                // in the idle/teardown crashes. The loop's real job is backend
+                // health monitoring + auto-restart, which needs no AppHandle.
                 let app_version_for_hb = app_version.clone();
                 std::thread::spawn(move || {
                     let mut consecutive_failures: u32 = 0;
@@ -5392,11 +5399,11 @@ fn main() {
                     let mut last_starting_log_at: u64 = 0;
                     loop {
                         // Sleep 5s in 1s increments and bail at the first
-                        // shutdown signal. Without this, the thread spends
-                        // up to 5s mid-sleep while the Tauri runtime is
-                        // being torn down by `app.exit()`, then wakes and
-                        // calls `app_handle.emit(...)` against half-dropped
-                        // state — the issue #591 SEH access violation.
+                        // shutdown signal so the thread exits promptly when the
+                        // Tauri runtime is being torn down by `app.exit()`
+                        // instead of waking mid-sleep and doing backend
+                        // spawn/health work against a half-dropped runtime
+                        // (the issue #591 teardown race).
                         for _ in 0..5 {
                             std::thread::sleep(std::time::Duration::from_secs(1));
                             if SHUTDOWN.load(Ordering::SeqCst) {
@@ -5404,8 +5411,8 @@ fn main() {
                                 return;
                             }
                         }
-                        // Also check before any AppHandle::emit so we cannot
-                        // touch the runtime after RunEvent::Exit fires
+                        // Re-check before doing any monitoring/spawn work so we
+                        // never act on the runtime after RunEvent::Exit fires
                         // mid-iteration.
                         if SHUTDOWN.load(Ordering::SeqCst) {
                             return;
@@ -5419,27 +5426,15 @@ fn main() {
                         let healthy = is_backend_http_healthy(Some(port));
                         // Re-check after the potentially slow HTTP call
                         // (2s timeout) to close the TOCTOU window between
-                        // the top-of-loop SHUTDOWN check and the emit calls
-                        // below. Without this, a stale emit could touch the
-                        // runtime after RunEvent::Exit has already fired.
+                        // the top-of-loop SHUTDOWN check and the spawn/monitor
+                        // work below, so we never auto-spawn a backend after
+                        // RunEvent::Exit has already fired.
                         if SHUTDOWN.load(Ordering::SeqCst) {
                             return;
                         }
                         if healthy {
                             consecutive_failures = 0;
-                            if last_status_was_healthy != Some(true) {
-                                let _ = app_handle.emit(
-                                    "backend:status",
-                                    serde_json::json!({"healthy": true, "port": port}),
-                                );
-                                if last_status_was_healthy == Some(false) {
-                                    let _ = app_handle.emit(
-                                        "backend:back",
-                                        serde_json::json!({"port": port}),
-                                    );
-                                }
-                                last_status_was_healthy = Some(true);
-                            }
+                            last_status_was_healthy = Some(true);
                             continue;
                         }
 
@@ -5449,21 +5444,17 @@ fn main() {
                         // 心跳 5s × 3 次失败 = 15s 就报 down 完全不合理：那时后端
                         // 才刚开始加载 skills，HTTP 还没绑定端口。
                         // 在宽限期内：
-                        //   - emit `backend:status starting=true` 让 UI 显示"正在启动"
-                        //   - 不发 backend:lost，不触发 auto-spawn
+                        //   - 不报 down、不触发 auto-spawn
                         //   - 不累加 consecutive_failures
+                        // （前端 /api/health 轮询自行显示"正在启动"，这里不再 emit）
                         if backend_in_boot_grace(&ws_id) {
                             let now = now_epoch_secs();
-                            // 最多每 30 秒打一条 log + emit，避免刷屏
+                            // 最多每 30 秒打一条 log，避免刷屏
                             if now.saturating_sub(last_starting_log_at) >= 30 {
                                 log_to_file(&format!(
                                     "[heartbeat] backend in boot-grace (port={}) — skipping down/spawn",
                                     port
                                 ));
-                                let _ = app_handle.emit(
-                                    "backend:status",
-                                    serde_json::json!({"healthy": false, "starting": true, "port": port}),
-                                );
                                 last_starting_log_at = now;
                             }
                             consecutive_failures = 0;
@@ -5474,7 +5465,7 @@ fn main() {
                         if consecutive_failures < 3 {
                             continue;
                         }
-                        // PID check BEFORE emitting backend:lost — if the
+                        // PID check before declaring the backend down — if the
                         // process is still alive, health failures are likely
                         // caused by a busy single-worker uvicorn, not a crash.
                         if let Some(pid_data) = read_pid_file(&ws_id) {
@@ -5483,22 +5474,11 @@ fn main() {
                                     "[heartbeat] backend PID {} still alive — skipping down/spawn (health may be blocked by long request)",
                                     pid_data.pid
                                 ));
-                                let _ = app_handle.emit(
-                                    "backend:status",
-                                    serde_json::json!({"healthy": false, "pid_alive": true, "port": port}),
-                                );
                                 consecutive_failures = 0;
                                 continue;
                             }
                         }
                         if last_status_was_healthy != Some(false) {
-                            let _ = app_handle.emit(
-                                "backend:lost",
-                                serde_json::json!({
-                                    "port": port,
-                                    "consecutive_failures": consecutive_failures,
-                                }),
-                            );
                             log_to_file(&format!(
                                 "[heartbeat] backend down for {}s, attempting auto spawn (port={})",
                                 consecutive_failures * 5,
