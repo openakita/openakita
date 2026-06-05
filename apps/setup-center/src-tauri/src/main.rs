@@ -140,6 +140,16 @@ fn take_startup_recovery_notice() -> Option<serde_json::Value> {
     STARTUP_RECOVERY_NOTICE.lock().ok().and_then(|mut guard| guard.take())
 }
 
+/// 前端在调用 `@tauri-apps/plugin-process` 的 `relaunch()`（更新后重启）**之前**
+/// 必须先调本命令。原因：Tauri 的 `app.restart()` 走 `std::process::exit(0)`
+/// 直接退出，**不会触发 `RunEvent::Exit`**，因此那条路径不会写 exit-handled 标记，
+/// 看门狗会把这次"主动重启"误判为硬崩溃而再拉起一个实例（虽被 single-instance
+/// 去重，但更新时 exe 正在被替换，时序很脏）。先打标记即可让看门狗安静放行。
+#[tauri::command]
+fn prepare_relaunch() {
+    mark_exit_handled();
+}
+
 fn record_frontend_session_marker(app_version: &str) {
     let marker = serde_json::json!({
         "ts": now_epoch_secs(),
@@ -185,6 +195,11 @@ const SELF_HEAL_COOLDOWN_MS: u64 = 30_000;
 
 fn try_self_heal_relaunch(panic_msg: &str) {
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    // 标记退出已被本路径处理：panic hook 这就要自己拉起新实例了，看门狗看到此
+    // 标记便不会重复再起一个（即便本函数因冷却而跳过 relaunch，也算"已处理"——
+    // 那意味着是快速 panic 风暴，应让用户察觉而非两条路径都狂拉）。
+    mark_exit_handled();
 
     // 写 marker（携带 ts/panic_brief/上次 workspace 等供前端恢复使用）
     let ts = SystemTime::now()
@@ -238,6 +253,164 @@ fn try_self_heal_relaunch(panic_msg: &str) {
             )),
             Err(e) => log_to_file(&format!("[self-heal] relaunch FAILED: {e}")),
         }
+    }
+}
+
+/// 看门狗：exit-handled 标记文件路径（`~/.openakita/exit-handled.marker`）。
+///
+/// 主进程"已正常处理过退出"时写入：优雅退出（RunEvent::Exit）或 panic hook
+/// 已自行自愈重启。看门狗据此区分父进程消失的性质：
+///   * 有标记（pid 匹配）→ 优雅退出 / 已自愈 → 不动。
+///   * 无标记 → 未被任何上层处理的硬崩溃（SEH 访问违例 / ud2 非法指令 /
+///     fast-fail 堆损坏）→ 需要外部把 GUI 自动拉起。
+/// 本次运行期间该文件应不存在（启动时清掉），所以"无标记"天然等价于"在跑时崩了"。
+fn exit_handled_marker_path() -> PathBuf {
+    let base = home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".openakita");
+    let _ = fs::create_dir_all(&base);
+    base.join("exit-handled.marker")
+}
+
+/// 标记"本进程的退出已被上层处理"，供看门狗判断不要再拉起。
+fn mark_exit_handled() {
+    let _ = fs::write(exit_handled_marker_path(), std::process::id().to_string());
+}
+
+/// 启动时清除上一次会话遗留的 exit-handled 标记。
+fn clear_exit_handled_marker() {
+    let _ = fs::remove_file(exit_handled_marker_path());
+}
+
+/// 看门狗自动重启的冷却时间戳标记（`~/.openakita/watchdog-relaunch.marker`），
+/// 防止"启动即崩"导致看门狗无限快速拉起把 CPU 烧穿。
+#[cfg(windows)]
+fn watchdog_relaunch_marker_path() -> PathBuf {
+    let base = home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".openakita");
+    let _ = fs::create_dir_all(&base);
+    base.join("watchdog-relaunch.marker")
+}
+
+/// 两次看门狗自动拉起的最小间隔（秒）。实测崩溃间隔在 10 分钟量级，
+/// 30s 冷却既能让每次真实崩溃都被恢复，又能拦住启动即崩的重启风暴。
+#[cfg(windows)]
+const WATCHDOG_RELAUNCH_COOLDOWN_SECS: u64 = 30;
+
+/// 启动看门狗子进程（仅 Windows）。
+///
+/// 背景：tao/wry 事件循环在 WebView2 重入下的 ud2 / 堆损坏崩溃，既不走 Rust
+/// panic hook，（fast-fail 时）也不走 SEH 顶层过滤器——进程直接被内核终止。
+/// 只有一个**独立进程**才能可靠地把 GUI 重新拉起。看门狗运行在健康进程里，
+/// 绝不触碰崩溃进程那已损坏的堆，因此能安全覆盖 panic / ud2 / fast-fail 全部
+/// 崩溃类型。该函数在 Tauri `setup`（只在主实例运行，single-instance 插件会让
+/// 第二实例在更早的插件 setup 阶段就退出）中调用，所以不会被瞬时第二实例误起。
+#[cfg(windows)]
+fn spawn_watchdog() {
+    // 仅在 release（已安装）构建启用。dev 构建（`tauri dev`）里用 Ctrl+C 杀
+    // dev 进程不会触发 RunEvent::Exit，会被看门狗误判为崩溃而把 debug exe 拉起，
+    // 弹出游离窗口干扰开发。崩溃韧性只对最终用户的发行版有意义。
+    if cfg!(debug_assertions) {
+        return;
+    }
+    use std::os::windows::process::CommandExt as _;
+    const DETACHED_PROCESS: u32 = 0x00000008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            log_to_file(&format!("[watchdog] current_exe failed: {e}"));
+            return;
+        }
+    };
+    let mut cmd = Command::new(&exe);
+    cmd.arg("--watchdog").arg(std::process::id().to_string());
+    cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    match cmd.spawn() {
+        Ok(child) => log_to_file(&format!(
+            "[watchdog] spawned (pid={}) watching parent {}",
+            child.id(),
+            std::process::id()
+        )),
+        Err(e) => log_to_file(&format!("[watchdog] spawn failed: {e}")),
+    }
+}
+
+#[cfg(not(windows))]
+fn spawn_watchdog() {}
+
+/// 看门狗主循环：被 `--watchdog <parent_pid>` 调起，运行在独立进程，不构建 GUI。
+///
+/// 等待父进程退出，再据 exit-handled 标记决定是否自动拉起新实例。
+#[cfg(windows)]
+fn run_watchdog(parent_pid: u32) {
+    // 用进程句柄阻塞等待，而不是轮询 PID：
+    //   1. `OpenProcess` 一拿到句柄就锁定了**那个具体的进程内核对象**，即使父进程
+    //      退出后系统把同一个 PID 复用给别的进程，我们等的也还是原来那个——彻底
+    //      规避 PID 复用导致"看门狗误以为父进程还活着、永不重启"的经典 bug。
+    //   2. `WaitForSingleObject` 阻塞到对象 signaled（进程结束），全程 0 CPU，
+    //      比 750ms 轮询更准更省。
+    // 若 OpenProcess 失败（父进程已经先一步退出/PID 非法），退回到一次性判定。
+    let handle = unsafe { win::OpenProcess(win::SYNCHRONIZE, 0, parent_pid) };
+    if !handle.is_null() {
+        unsafe {
+            win::WaitForSingleObject(handle, win::INFINITE);
+            win::CloseHandle(handle);
+        }
+    } else {
+        log_to_file(&format!(
+            "[watchdog] OpenProcess({parent_pid}) failed; parent likely already gone"
+        ));
+    }
+
+    // 父进程已退出。判断是否优雅退出 / 已自愈（exit-handled 标记 pid 匹配）。
+    let handled = fs::read_to_string(exit_handled_marker_path())
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .map(|pid| pid == parent_pid)
+        .unwrap_or(false);
+    if handled {
+        log_to_file("[watchdog] parent exited cleanly or self-healed; no relaunch");
+        return;
+    }
+
+    // 冷却：拦住"启动即崩"的快速重启风暴。
+    let now = now_epoch_secs();
+    if let Some(last) = fs::read_to_string(watchdog_relaunch_marker_path())
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+    {
+        if now >= last && now.saturating_sub(last) < WATCHDOG_RELAUNCH_COOLDOWN_SECS {
+            log_to_file(&format!(
+                "[watchdog] skip relaunch: last relaunch {}s ago < {}s cooldown",
+                now.saturating_sub(last),
+                WATCHDOG_RELAUNCH_COOLDOWN_SECS
+            ));
+            return;
+        }
+    }
+
+    // 拉起新实例。`--auto-restarted` 让新实例 sleep 1500ms 等旧 single-instance
+    // 锁释放，并触发前端"已自动恢复"提示。父进程已确认退出（轮询出口），锁通常
+    // 已释放；万一仍有实例存活，single-instance 插件会把这次启动去重为"聚焦已有
+    // 窗口"，不会产生重复实例。
+    let _ = fs::write(watchdog_relaunch_marker_path(), now.to_string());
+    match std::env::current_exe() {
+        Ok(exe) => {
+            use std::os::windows::process::CommandExt as _;
+            const DETACHED_PROCESS: u32 = 0x00000008;
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+            let mut cmd = Command::new(&exe);
+            cmd.arg("--auto-restarted");
+            cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+            match cmd.spawn() {
+                Ok(_) => log_to_file("[watchdog] relaunched app after hard crash"),
+                Err(e) => log_to_file(&format!("[watchdog] relaunch failed: {e}")),
+            }
+        }
+        Err(e) => log_to_file(&format!("[watchdog] relaunch current_exe failed: {e}")),
     }
 }
 
@@ -3836,9 +4009,14 @@ mod win {
         pub fn Process32FirstW(hSnapshot: *mut std::ffi::c_void, lppe: *mut PROCESSENTRY32W)
             -> i32;
         pub fn Process32NextW(hSnapshot: *mut std::ffi::c_void, lppe: *mut PROCESSENTRY32W) -> i32;
+        pub fn WaitForSingleObject(hHandle: *mut std::ffi::c_void, dwMilliseconds: u32) -> u32;
     }
     pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
     pub const PROCESS_TERMINATE: u32 = 0x0001;
+    /// Right to wait on the process object (for `WaitForSingleObject`).
+    pub const SYNCHRONIZE: u32 = 0x0010_0000;
+    /// Block indefinitely in `WaitForSingleObject`.
+    pub const INFINITE: u32 = 0xFFFF_FFFF;
     pub const TH32CS_SNAPPROCESS: u32 = 0x00000002;
     pub const INVALID_HANDLE_VALUE: *mut std::ffi::c_void = -1_isize as *mut std::ffi::c_void;
 
@@ -5073,6 +5251,24 @@ fn show_main_window_now(app: &tauri::AppHandle, reason: &str, open_status: bool)
 }
 
 fn main() {
+    // 看门狗模式：仅监视父进程、在硬崩溃时自动拉起 GUI，本身不构建任何窗口/运行时。
+    // 必须在最顶部短路返回——看门狗进程绝不能装 crash handler、起 Tauri 或抢
+    // single-instance 锁。
+    #[cfg(windows)]
+    {
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(pos) = args.iter().position(|a| a == "--watchdog") {
+            let parent_pid = args
+                .get(pos + 1)
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0);
+            if parent_pid != 0 {
+                run_watchdog(parent_pid);
+            }
+            return;
+        }
+    }
+
     // 自愈接力进程的启动时序兜底：
     // panic hook 在 spawn 新实例时旧进程还没真正退出，
     // tauri-plugin-single-instance 会让新实例的 callback 在旧进程里触发
@@ -5288,6 +5484,13 @@ fn main() {
                 set_startup_recovery_notice(payload);
             }
             record_frontend_session_marker(&app_version);
+
+            // ── 崩溃自动恢复看门狗 ──
+            // 清掉上一次会话遗留的 exit-handled 标记（本次运行期间"无标记=在跑"），
+            // 然后拉起看门狗子进程监视本进程。本块只在主实例执行：single-instance
+            // 插件会让第二实例在更早的插件 setup 阶段退出，到不了这里。
+            clear_exit_handled_marker();
+            spawn_watchdog();
 
             // ── 自愈恢复：检查上次崩溃留下的 restart.marker ──
             // 由 panic hook 在命中 tao#1180 特征时写入；这里读出后立刻删除
@@ -5628,6 +5831,7 @@ fn main() {
             append_onboarding_log_lines,
             append_frontend_log,
             take_startup_recovery_notice,
+            prepare_relaunch,
             save_log_export,
             start_dragging
         ])
@@ -5638,6 +5842,9 @@ fn main() {
             let msg = format!("Tauri build failed: {e}");
             eprintln!("{msg}");
             write_crash_log(&msg, true);
+            // setup() 可能已经起了看门狗才走到 build 失败这步；标记一下，避免看门狗
+            // 把这个"必然失败的启动"反复拉起（30s 冷却也只是减速，不如直接放行）。
+            mark_exit_handled();
             std::process::exit(1);
         }
     };
@@ -5665,6 +5872,9 @@ fn main() {
             // violation — exactly the pattern observed in issue #591. The
             // flag is cheap (one AtomicBool::store) and idempotent.
             SHUTDOWN.store(true, Ordering::SeqCst);
+            // 告知看门狗：这是一次"被处理过"的优雅退出（托盘退出 / 系统关机 /
+            // app.exit 等都会触发 RunEvent::Exit），不要把它当成硬崩溃去自动拉起。
+            mark_exit_handled();
             // Do NOT sleep here. The 1200ms blocking sleep we had before
             // (v1.27.14) stalled the tao event loop on the main thread,
             // causing Windows messages to pile up for 1.2 seconds. When
