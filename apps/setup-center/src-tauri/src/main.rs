@@ -282,8 +282,9 @@ fn clear_exit_handled_marker() {
     let _ = fs::remove_file(exit_handled_marker_path());
 }
 
-/// 看门狗自动重启的冷却时间戳标记（`~/.openakita/watchdog-relaunch.marker`），
-/// 防止"启动即崩"导致看门狗无限快速拉起把 CPU 烧穿。
+/// 看门狗断路器标记（`~/.openakita/watchdog-relaunch.marker`）：每行存一次
+/// 自动拉起的 epoch 秒。用于在"启动即崩 / 确定性崩溃循环"时彻底停手，而不是
+/// 无限把崩溃窗口拉起来骚扰用户。
 #[cfg(windows)]
 fn watchdog_relaunch_marker_path() -> PathBuf {
     let base = home_dir()
@@ -293,10 +294,17 @@ fn watchdog_relaunch_marker_path() -> PathBuf {
     base.join("watchdog-relaunch.marker")
 }
 
-/// 两次看门狗自动拉起的最小间隔（秒）。实测崩溃间隔在 10 分钟量级，
-/// 30s 冷却既能让每次真实崩溃都被恢复，又能拦住启动即崩的重启风暴。
+/// 断路器：滑动窗口长度（秒）与窗口内允许的最大自动拉起次数。
+///
+/// 实测真实崩溃间隔在 10 分钟量级，所以 3 分钟窗口内正常最多出现 1 次崩溃，
+/// 偶发崩溃永远不会触发断路器。一旦 3 分钟内连续自动拉起达到 3 次，说明这是
+/// 启动即崩 / 确定性崩溃循环——再拉起也只会立刻再崩，唯一效果是无限弹窗，
+/// 此时彻底放弃、等用户手动启动。窗口随时间自然滑出：循环停止超过窗口后，
+/// 历史时间戳被剔除，日后偶发的新崩溃仍会被正常恢复，不会被永久锁死。
 #[cfg(windows)]
-const WATCHDOG_RELAUNCH_COOLDOWN_SECS: u64 = 30;
+const WATCHDOG_BREAKER_WINDOW_SECS: u64 = 180;
+#[cfg(windows)]
+const WATCHDOG_BREAKER_MAX_RELAUNCHES: usize = 3;
 
 /// 启动看门狗子进程（仅 Windows）。
 ///
@@ -376,27 +384,44 @@ fn run_watchdog(parent_pid: u32) {
         return;
     }
 
-    // 冷却：拦住"启动即崩"的快速重启风暴。
+    // 断路器：滑动窗口内自动拉起达到上限就彻底停手，拦住"启动即崩 / 确定性
+    // 崩溃循环"。marker 每行存一次拉起的 epoch 秒；每次写回都把窗口外的旧条目
+    // 剔除，文件自然保持精简、循环平息后自动复位。
     let now = now_epoch_secs();
-    if let Some(last) = fs::read_to_string(watchdog_relaunch_marker_path())
+    let window_start = now.saturating_sub(WATCHDOG_BREAKER_WINDOW_SECS);
+    let mut recent: Vec<u64> = fs::read_to_string(watchdog_relaunch_marker_path())
         .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
-    {
-        if now >= last && now.saturating_sub(last) < WATCHDOG_RELAUNCH_COOLDOWN_SECS {
-            log_to_file(&format!(
-                "[watchdog] skip relaunch: last relaunch {}s ago < {}s cooldown",
-                now.saturating_sub(last),
-                WATCHDOG_RELAUNCH_COOLDOWN_SECS
-            ));
-            return;
-        }
+        .map(|s| {
+            s.lines()
+                .filter_map(|l| l.trim().parse::<u64>().ok())
+                // 只数窗口内、且不在未来（防时钟回拨）的拉起记录。
+                .filter(|&t| t <= now && t >= window_start)
+                .collect()
+        })
+        .unwrap_or_default();
+    if recent.len() >= WATCHDOG_BREAKER_MAX_RELAUNCHES {
+        log_to_file(&format!(
+            "[watchdog] circuit breaker tripped: {} relaunches within {}s; \
+             giving up to avoid a crash-loop relaunch storm (user must launch manually)",
+            recent.len(),
+            WATCHDOG_BREAKER_WINDOW_SECS
+        ));
+        return;
     }
 
     // 拉起新实例。`--auto-restarted` 让新实例 sleep 1500ms 等旧 single-instance
     // 锁释放，并触发前端"已自动恢复"提示。父进程已确认退出（轮询出口），锁通常
     // 已释放；万一仍有实例存活，single-instance 插件会把这次启动去重为"聚焦已有
     // 窗口"，不会产生重复实例。
-    let _ = fs::write(watchdog_relaunch_marker_path(), now.to_string());
+    recent.push(now);
+    let _ = fs::write(
+        watchdog_relaunch_marker_path(),
+        recent
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
     match std::env::current_exe() {
         Ok(exe) => {
             use std::os::windows::process::CommandExt as _;
