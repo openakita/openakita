@@ -131,6 +131,9 @@ jobs:
           npm ci
           npm run build
 
+      - name: Stage web/docs assets for Python wheel
+        run: python scripts/stage_package_assets.py
+
       - name: Build main package
         run: python -m build --wheel
 
@@ -1185,4 +1188,3 @@ jobs:
           path: apps/setup-center/src-tauri/target/**/bundle/_upload/*.sig
           if-no-files-found: ignore
           retention-days: 5
-

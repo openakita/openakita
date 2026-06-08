@@ -80,6 +80,8 @@ pnpm-debug.log*
 dist/
 dist-cli/
 .vite/
+src/openakita/web/
+src/openakita/docs_dist/
 # Plugins ship their built UI as part of the distributable source —
 # exempt plugins/*/ui/dist/ from the global `dist/` rule above.
 !plugins/*/ui/dist/
