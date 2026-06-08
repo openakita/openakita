@@ -445,8 +445,7 @@ jobs:
         working-directory: apps/setup-center
         env:
           NO_STRIP: true
-          APPIMAGE_EXTRACT_AND_RUN: 1
-        run: npx tauri build --bundles "deb,appimage"
+        run: npx tauri build --bundles "deb"
 
       - name: Verify bundle exists
         run: |
