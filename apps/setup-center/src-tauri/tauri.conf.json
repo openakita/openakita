@@ -42,9 +42,8 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFBNkE0NDkxRERCMTNBMzQKUldRME9ySGRrVVJxR25HeDhLZTNmK3hEc2hySHhmaVZkeVVmOUZpTitibEVjaC9KUStMamJJSjYK",
-      "dangerousInsecureTransportProtocol": true,
       "endpoints": [
-        "http://api-admin.openakita.ai/updater/release.json?version={{current_version}}&platform={{target}}",
+        "https://api-admin.openakita.ai/updater/release.json?version={{current_version}}&platform={{target}}",
         "https://dl-openakita.fzstack.com/api/release.json"
       ],
       "windows": {
