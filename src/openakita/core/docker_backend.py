@@ -142,7 +142,7 @@ class DockerBackend:
                 returncode=proc.returncode or 0,
             )
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             if proc and proc.returncode is None:
                 proc.kill()
                 await proc.wait()

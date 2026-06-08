@@ -78,10 +78,7 @@ async def list_pending(include: str = "active") -> JSONResponse:
            entries that haven't been archived yet).
     """
     store = _store()
-    if include == "all":
-        entries = store.list_all()
-    else:
-        entries = store.list_active()
+    entries = store.list_all() if include == "all" else store.list_active()
     return JSONResponse(
         {
             "entries": [_serialize(e) for e in entries],

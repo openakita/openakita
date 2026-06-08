@@ -665,7 +665,7 @@ ORG_NODE_TOOLS: list[dict] = [
 ]
 
 
-def build_org_node_tools(org: "object", node: "object") -> list[dict]:
+def build_org_node_tools(org: object, node: object) -> list[dict]:
     """Return a per-node customized copy of ORG_NODE_TOOLS.
 
     Customizations applied:

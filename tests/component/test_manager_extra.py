@@ -1,16 +1,11 @@
 """补充 manager 测试: record_turn+attachments, record_attachment, on_context_compressing."""
 
 import asyncio
-from pathlib import Path
 
 import pytest
 
 from openakita.memory.types import (
-    Attachment,
     AttachmentDirection,
-    Memory,
-    MemoryPriority,
-    MemoryType,
 )
 
 
@@ -131,22 +126,16 @@ class TestOnContextCompressing:
             {"role": "user", "content": "我喜欢使用 Python 开发"},
             {"role": "assistant", "content": "好的，我记住了"},
         ]
-        asyncio.get_event_loop().run_until_complete(
-            manager.on_context_compressing(messages)
-        )
+        asyncio.run(manager.on_context_compressing(messages))
 
     def test_handles_empty_messages(self, manager):
-        asyncio.get_event_loop().run_until_complete(
-            manager.on_context_compressing([])
-        )
+        asyncio.run(manager.on_context_compressing([]))
 
     def test_handles_rules(self, manager):
         messages = [
             {"role": "user", "content": "不要使用 var，必须用 const 或 let"},
         ]
-        asyncio.get_event_loop().run_until_complete(
-            manager.on_context_compressing(messages)
-        )
+        asyncio.run(manager.on_context_compressing(messages))
 
 
 class TestEndSession:
@@ -161,4 +150,3 @@ class TestEndSession:
 
     def test_end_session_empty(self, manager):
         manager.end_session("empty session")
-

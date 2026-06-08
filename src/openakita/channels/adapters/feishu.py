@@ -1544,10 +1544,7 @@ class FeishuAdapter(ChannelAdapter):
         ``settings`` 字段必须是 JSON **字符串**，sequence 严格递增。
         """
         # 摘要长度受飞书限制，截断到 60 字（聊天列表已显示不下更多）
-        if summary_text:
-            summary = summary_text.strip().replace("\n", " ")[:60]
-        else:
-            summary = ""
+        summary = summary_text.strip().replace("\n", " ")[:60] if summary_text else ""
         settings_obj = {
             "config": {
                 "streaming_mode": False,

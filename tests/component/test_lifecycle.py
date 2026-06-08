@@ -33,7 +33,8 @@ class TestDeduplication:
         store.save_semantic(SemanticMemory(content="totally different B", type=MemoryType.FACT))
 
         import asyncio
-        removed = asyncio.get_event_loop().run_until_complete(lifecycle.deduplicate_batch())
+
+        removed = asyncio.run(lifecycle.deduplicate_batch())
         assert removed == 0
 
     def test_removes_exact_duplicates(self, lifecycle, store):
@@ -55,7 +56,8 @@ class TestDeduplication:
         )
 
         import asyncio
-        removed = asyncio.get_event_loop().run_until_complete(lifecycle.deduplicate_batch())
+
+        removed = asyncio.run(lifecycle.deduplicate_batch())
         assert removed == 1
         remaining = store.load_all_memories()
         assert len(remaining) == 1

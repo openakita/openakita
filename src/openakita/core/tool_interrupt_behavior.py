@@ -301,10 +301,7 @@ def has_any_block_tool(names: list[str]) -> bool:
     the given in-flight tool names resolves to ``"block"`` (including
     unknown tools, which default to block).  An empty list returns
     False — nothing in flight means INTERRUPT is unambiguously safe."""
-    for n in names:
-        if get_tool_interrupt_behavior(n) == "block":
-            return True
-    return False
+    return any(get_tool_interrupt_behavior(n) == "block" for n in names)
 
 
 def partition_by_behavior(names: list[str]) -> tuple[list[str], list[str]]:
@@ -450,10 +447,7 @@ def has_any_block_in_flight(
     """Like :func:`has_any_block_tool` but understands MCP sub-tool
     encoding.  Use this in the preempt-or-queue resolver where the
     in_flight list can contain encoded MCP references."""
-    for n in names:
-        if resolve_in_flight_behavior(n, mcp_client=mcp_client) == "block":
-            return True
-    return False
+    return any(resolve_in_flight_behavior(n, mcp_client=mcp_client) == "block" for n in names)
 
 
 __all__ = [

@@ -8,8 +8,8 @@
 让 LLM 意识到该内容可能包含恶意指令。
 """
 
-import re
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 

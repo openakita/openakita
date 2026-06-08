@@ -315,6 +315,7 @@ class StickerEngine:
                         return await resp.read()
             except ImportError:
                 import httpx
+
                 from ..llm.providers.proxy_utils import get_httpx_client_kwargs
 
                 async with httpx.AsyncClient(

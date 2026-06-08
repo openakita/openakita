@@ -70,9 +70,8 @@ class ToolExperienceTracker:
             else "",
             "output_summary": _redact(output, limit=1200),
         }
-        with self._lock:
-            with self.path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        with self._lock, self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 _tracker: ToolExperienceTracker | None = None

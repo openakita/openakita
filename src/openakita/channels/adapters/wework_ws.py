@@ -764,7 +764,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             await self._send_auth()
             try:
                 await asyncio.wait_for(self._authenticated.wait(), timeout=10.0)
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 logger.error("Authentication timeout (10s)")
                 receive_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -916,7 +916,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 self._handle_msg_callback(frame),
                 timeout=MSG_PROCESS_TIMEOUT_S,
             )
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             logger.error(f"Message processing timed out ({MSG_PROCESS_TIMEOUT_S}s), msgid={msgid}")
             req_id = frame.get("headers", {}).get("req_id", "")
             if req_id:
@@ -2041,7 +2041,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
             try:
                 result = await asyncio.wait_for(fut, timeout=self.config.reply_ack_timeout)
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 self._pending_acks.pop(req_id, None)
                 raise TimeoutError(
                     f"Reply ack timeout ({self.config.reply_ack_timeout}s) for req_id={req_id}"
@@ -2246,7 +2246,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
         try:
             result = await asyncio.wait_for(fut, timeout=30.0)
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             self._pending_acks.pop(req_id, None)
             raise TimeoutError(f"Upload ack timeout for req_id={req_id}")
 

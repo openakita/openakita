@@ -12,8 +12,8 @@ Microcompact — 请求前轻量上下文清理
 
 from __future__ import annotations
 
-import logging
 import hashlib
+import logging
 import time
 
 logger = logging.getLogger(__name__)

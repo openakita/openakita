@@ -60,13 +60,13 @@ def clear_session_caches(
             logger.debug("readonly tool cache clear failed: %s", exc)
         try:
             if hasattr(agent, "_last_browser_navigate_url"):
-                setattr(agent, "_last_browser_navigate_url", "")
+                agent._last_browser_navigate_url = ""
                 cleared["browser_navigation_memory"] = True
         except Exception:
             pass
         try:
             if hasattr(agent, "_last_link_diagnostic"):
-                setattr(agent, "_last_link_diagnostic", None)
+                agent._last_link_diagnostic = None
                 cleared["last_link_diagnostic"] = True
         except Exception:
             pass

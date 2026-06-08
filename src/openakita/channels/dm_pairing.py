@@ -14,14 +14,13 @@ DM Pairing（配对授权）
 - 使用 secrets 生成安全随机码
 """
 
+import json as _json
 import logging
 import secrets
 import string
 import time
 from dataclasses import dataclass
 from pathlib import Path
-
-import json as _json
 
 from ..utils.atomic_io import safe_json_write
 

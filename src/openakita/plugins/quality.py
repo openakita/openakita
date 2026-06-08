@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-
 DEV_ONLY_UI_MARKERS = ("babel-standalone", "@babel/standalone", 'type="text/babel"')
 
 

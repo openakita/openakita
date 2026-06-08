@@ -252,10 +252,7 @@ class SkillEntry:
         # Infer exposure_level from metadata or trust level
         _exposure = getattr(meta, "exposure_level", "") or ""
         if not _exposure:
-            if meta.system or trust_level == "builtin":
-                _exposure = "core"
-            else:
-                _exposure = "recommended"
+            _exposure = "core" if meta.system or trust_level == "builtin" else "recommended"
 
         return cls(
             exposure_level=_exposure,

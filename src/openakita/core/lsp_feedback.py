@@ -96,7 +96,7 @@ class LSPFeedbackCollector:
                     timeout=timeout,
                 )
                 report.diagnostics.extend(diagnostics)
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 logger.warning("LSP backend '%s' timed out", name)
             except Exception as e:
                 logger.debug("LSP backend '%s' error: %s", name, e)

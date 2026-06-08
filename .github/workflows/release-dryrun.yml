@@ -130,6 +130,9 @@ jobs:
           npm ci
           npm run build
 
+      - name: Stage web/docs assets for Python wheel
+        run: python scripts/stage_package_assets.py
+
       - name: Build wheel
         run: |
           pip install build

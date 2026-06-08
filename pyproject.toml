@@ -209,15 +209,17 @@ include = [
     "pyproject.toml",
     "README.md",
     "LICENSE",
-    # Keep sdist and wheel inputs aligned; otherwise `python -m build`
-    # fails when wheel is built from sdist and force-include targets are absent.
-    "apps/setup-center/dist-web",
-    "docs-site/.vitepress/dist",
-    "docs-site/.vitepress/dist/.keep",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/openakita"]
+artifacts = [
+    # Optional release assets staged by `python scripts/stage_package_assets.py`.
+    # They are intentionally package-local build outputs so default
+    # `python -m build` / `pip install .` do not require Node/VitePress outputs.
+    "src/openakita/web/**",
+    "src/openakita/docs_dist/**",
+]
 
 # 把仓库根目录的系统技能、外部技能、内置 MCP 配置一并打进 wheel，
 # 保证 `pip install openakita` 后可用。
@@ -225,12 +227,6 @@ packages = ["src/openakita"]
 # skills/*      → site-packages/openakita/builtin_skills/external/  (不含 system/)
 # mcps          → site-packages/openakita/builtin_mcps/
 [tool.hatch.build.targets.wheel.force-include]
-# Web frontend (built with: cd apps/setup-center && VITE_BUILD_TARGET=web npm run build:web)
-# CI always builds the frontend before `python -m build --wheel`, so dist-web/ is present.
-# Local `pip install .` without building the frontend first will fail; run npm run build:web first.
-"apps/setup-center/dist-web" = "openakita/web"
-# User docs (built with: python scripts/build_docs.py)
-"docs-site/.vitepress/dist" = "openakita/docs_dist"
 "skills/system" = "openakita/builtin_skills/system"
 "mcps" = "openakita/builtin_mcps"
 "skills/xiaohongshu-creator" = "openakita/builtin_skills/external/xiaohongshu-creator"

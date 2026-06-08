@@ -210,7 +210,6 @@ class OrgNode:
     # Per-node runtime overrides. Default empty dict means "no override —
     # use the org-level / global defaults". Recognised keys:
     #   - max_iterations: int — caps ReAct loops for this node
-    #   - max_task_seconds: int — wall-clock timeout per delegated task
     #   - allowed_tools: list[str] — intersect with the node's tool grant
     #   - denied_tools: list[str] — subtract from the effective tool set
     # All keys are opt-in; unknown keys are ignored. Other organizations
@@ -1015,4 +1014,3 @@ class OrgProject:
         proj = cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
         proj.tasks = [ProjectTask.from_dict(t) for t in raw_tasks]
         return proj
-

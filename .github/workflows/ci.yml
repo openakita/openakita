@@ -518,12 +518,10 @@ jobs:
       - name: Build sentinel resources (web + docs placeholders)
         shell: bash
         run: |
-          # prepare_bootstrap_resources 校验 force-include 资产；本 smoke 不
-          # 关心前端，直接走 --allow-placeholder-assets 把 .keep 占位文件留下。
-          mkdir -p apps/setup-center/dist-web
-          mkdir -p docs-site/.vitepress/dist
-          : > apps/setup-center/dist-web/.keep
-          : > docs-site/.vitepress/dist/.keep
+          # prepare_bootstrap_resources validates the web/docs asset contract;
+          # this smoke does not care about real frontend output, so placeholders
+          # are allowed explicitly in the prepare step below.
+          echo "Using placeholder web/docs assets for bootstrap contract smoke."
 
       - name: Install build tooling
         run: |
@@ -618,6 +616,10 @@ jobs:
         run: |
           pip install -e .
           pip install pytest pytest-asyncio
+          if ! find tests -type f \( -name 'test_*.py' -o -name '*_test.py' \) | grep -q .; then
+            echo "No SDK tests found; skipping pytest."
+            exit 0
+          fi
           pytest tests/ -v
 
       - name: Build SDK wheel

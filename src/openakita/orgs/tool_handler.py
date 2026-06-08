@@ -151,7 +151,7 @@ class OrgToolHandler:
                 str(t.get("chain_id") or "") for t in candidates[:5]
             ]
             return raw, (
-                f"任务链前缀 {raw!r} 匹配到 {len(candidates)} 个候选，无法安全验收。"
+                f"任务链前缀 {raw!r} 匹配到多个候选（共 {len(candidates)} 个），无法安全验收。"
                 f"请先调用 org_list_delegated_tasks 查询当前可验收的完整 chain_id，"
                 f"再用完整 task_chain_id 重新调用。候选列表：{candidate_ids}"
             )
@@ -3471,4 +3471,3 @@ class OrgToolHandler:
         except Exception as e:
             logger.debug("org_create_project_task failed: %s", e)
             return f"创建失败: {e}"
-

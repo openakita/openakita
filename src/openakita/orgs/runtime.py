@@ -2087,25 +2087,13 @@ class OrgRuntime:
         self, agent: Any, prompt: str, session_id: str,
         org: Organization, node: OrgNode,
     ) -> str:
-        """Run a single agent task (with per-node runtime_overrides).
+        """Run a single agent task with per-node runtime overrides.
 
-        Honours two optional knobs from ``OrgNode.runtime_overrides``
-        (falling back to ``Organization.runtime_overrides`` for
-        ``max_iterations`` only — wall-clock timeouts are intentionally
-        node-scoped):
-
-        * ``max_iterations`` (int): caps the ReAct loop count for THIS
+        ``max_iterations`` caps the ReAct loop count for THIS
           delegated task by setting ``reasoning_engine._max_iterations_override``.
           The override is consumed in one chat call (see
           ``reasoning_engine.py``) so subsequent reuse of the cached
           agent is unaffected.
-        * ``max_task_seconds`` (int): wraps ``agent.chat`` in
-          ``asyncio.wait_for`` so a stuck plugin / network hang cannot
-          burn the whole user command. On timeout we treat it as a
-          retryable cancellation rather than a hard failure.
-
-        Nodes (or organizations) without these keys keep exactly the
-        legacy ``await agent.chat(...)`` behaviour.
         """
         from openakita.core.errors import UserCancelledError
 
@@ -2131,48 +2119,9 @@ class OrgRuntime:
                     "for %s:%s", org.id, node.id, exc_info=True,
                 )
 
-        max_task_seconds = node_ro.get("max_task_seconds")
         try:
-            max_task_seconds_f: float | None = (
-                float(max_task_seconds)
-                if max_task_seconds is not None and float(max_task_seconds) > 0
-                else None
-            )
-        except (TypeError, ValueError):
-            max_task_seconds_f = None
-
-        try:
-            if max_task_seconds_f is not None:
-                response = await asyncio.wait_for(
-                    agent.chat(prompt, session_id=session_id),
-                    timeout=max_task_seconds_f,
-                )
-            else:
-                response = await agent.chat(prompt, session_id=session_id)
+            response = await agent.chat(prompt, session_id=session_id)
             return response or ""
-        except TimeoutError:
-            logger.warning(
-                "[OrgRuntime] Task wall-clock timeout (max_task_seconds=%s) "
-                "for %s:%s — returning soft-failure marker",
-                max_task_seconds_f, org.id, node.id,
-            )
-            chain_id = self.get_current_chain_id(org.id, node.id)
-            if chain_id:
-                try:
-                    from openakita.orgs.models import TaskStatus
-                    from openakita.orgs.project_store import ProjectStore
-                    store = ProjectStore(self._manager._org_dir(org.id))
-                    task = store.find_task_by_chain(chain_id)
-                    if task and task.status == TaskStatus.IN_PROGRESS:
-                        store.update_task(task.project_id, task.id, {
-                            "status": TaskStatus.CANCELLED,
-                        })
-                except Exception as e:
-                    logger.debug(
-                        "[OrgRuntime] Failed to mark task cancelled on timeout: %s",
-                        e,
-                    )
-            return f"(节点 {node.id} 任务超时 {int(max_task_seconds_f)}s 自动终止)"
         except (asyncio.CancelledError, UserCancelledError) as cancel_err:
             logger.info(f"[OrgRuntime] Task cancelled for {node.id}: {type(cancel_err).__name__}")
             chain_id = self.get_current_chain_id(org.id, node.id)
@@ -5307,23 +5256,24 @@ class OrgRuntime:
         executor = engine._tool_executor
 
         original_with_policy = executor.execute_tool_with_policy
-        original_check_permission = executor.check_permission
         tool_handler = self._tool_handler
 
-        from ..core.permission import PermissionDecision as _PermissionDecision
+        original_check_permission = getattr(executor, "check_permission", None)
+        if original_check_permission is not None:
+            from ..core.permission import PermissionDecision as _PermissionDecision
 
-        def _patched_check_permission(
-            tool_name: str, tool_input: dict,
-        ) -> "PermissionDecision":
-            if tool_name.startswith("org_"):
-                return _PermissionDecision(
-                    behavior="allow",
-                    reason="org tool — managed by OrgRuntime",
-                    policy_name="org_runtime_bypass",
-                )
-            return original_check_permission(tool_name, tool_input)
+            def _patched_check_permission(
+                tool_name: str, tool_input: dict,
+            ) -> _PermissionDecision:
+                if tool_name.startswith("org_"):
+                    return _PermissionDecision(
+                        behavior="allow",
+                        reason="org tool — managed by OrgRuntime",
+                        policy_name="org_runtime_bypass",
+                    )
+                return original_check_permission(tool_name, tool_input)
 
-        executor.check_permission = _patched_check_permission
+            executor.check_permission = _patched_check_permission
 
         async def _patched_with_policy(
             tool_name: str, tool_input: dict, policy_result: Any = None,
@@ -6407,4 +6357,3 @@ class OrgRuntime:
             return _json.dumps(payload, ensure_ascii=False)
         except Exception:
             return None
-

@@ -26,7 +26,7 @@ import asyncio
 import contextvars
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +55,16 @@ class AbortScope:
 
     name: str
     event: asyncio.Event = field(default_factory=asyncio.Event)
-    parent: Optional["AbortScope"] = None
-    children: list["AbortScope"] = field(default_factory=list)
+    parent: AbortScope | None = None
+    children: list[AbortScope] = field(default_factory=list)
     reason: str = ""
     # 防止 ``abort()`` 重入扇出 + 调试链路：记录是从哪个 scope 传播来的
-    _aborted_by: Optional[str] = None
+    _aborted_by: str | None = None
 
     def is_aborted(self) -> bool:
         return self.event.is_set()
 
-    def abort(self, reason: str = "", _from: Optional[str] = None) -> None:
+    def abort(self, reason: str = "", _from: str | None = None) -> None:
         """触发当前 scope 取消，并扇出到所有未取消的 children。
 
         Args:
@@ -94,7 +94,7 @@ class AbortScope:
         for child in list(self.children):
             child.abort(reason, _from=self.name)
 
-    def create_child(self, name: str) -> "AbortScope":
+    def create_child(self, name: str) -> AbortScope:
         """派生子 scope。若父已 aborted，子立即 aborted（保证新派生的 tool/subagent
         不会在 cancel 后还跑一帧）。"""
         child = AbortScope(name=name, parent=self)
@@ -103,7 +103,7 @@ class AbortScope:
             child.abort(self.reason, _from=self.name)
         return child
 
-    def remove_child(self, child: "AbortScope") -> None:
+    def remove_child(self, child: AbortScope) -> None:
         """工具/子任务正常结束时调用，避免父 scope 持有大量已完成的子引用。"""
         try:
             self.children.remove(child)

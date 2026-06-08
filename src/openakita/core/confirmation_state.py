@@ -5,11 +5,11 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class ConfirmationDecision(str, Enum):
+class ConfirmationDecision(StrEnum):
     CONFIRM = "confirm_continue"
     INSPECT_ONLY = "inspect_only"
     CANCEL = "cancel"

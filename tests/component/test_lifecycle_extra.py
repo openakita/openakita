@@ -8,8 +8,6 @@ import pytest
 from openakita.memory.extractor import MemoryExtractor
 from openakita.memory.lifecycle import LifecycleManager
 from openakita.memory.types import (
-    Attachment,
-    AttachmentDirection,
     MemoryPriority,
     MemoryType,
     SemanticMemory,
@@ -100,7 +98,7 @@ class TestConsolidateDaily:
         store.save_semantic(SemanticMemory(
             content="test fact", type=MemoryType.FACT, importance_score=0.9,
         ))
-        report = asyncio.get_event_loop().run_until_complete(lifecycle.consolidate_daily())
+        report = asyncio.run(lifecycle.consolidate_daily())
         assert "started_at" in report
         assert "finished_at" in report
         assert "duplicates_removed" in report
@@ -108,7 +106,7 @@ class TestConsolidateDaily:
         assert "stale_attachments_cleaned" in report
 
     def test_consolidate_empty_store(self, lifecycle):
-        report = asyncio.get_event_loop().run_until_complete(lifecycle.consolidate_daily())
+        report = asyncio.run(lifecycle.consolidate_daily())
         assert report["unextracted_processed"] == 0
         assert report["duplicates_removed"] == 0
 
@@ -134,7 +132,7 @@ class TestDecayEdgeCases:
             importance_score=0.5,
         )
         store.save_semantic(mem)
-        decayed = lifecycle.compute_decay()
+        lifecycle.compute_decay()
         remaining = store.load_all_memories()
         assert any(m.content == "long term fact" for m in remaining)
 
@@ -157,7 +155,7 @@ class TestRefreshUserMd:
         ))
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir(exist_ok=True)
-        asyncio.get_event_loop().run_until_complete(lifecycle.refresh_user_md(identity_dir))
+        asyncio.run(lifecycle.refresh_user_md(identity_dir))
         user_md = identity_dir / "USER.md"
         if user_md.exists():
             content = user_md.read_text(encoding="utf-8")
@@ -166,7 +164,6 @@ class TestRefreshUserMd:
     def test_refresh_no_user_facts(self, lifecycle, tmp_path):
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir(exist_ok=True)
-        asyncio.get_event_loop().run_until_complete(lifecycle.refresh_user_md(identity_dir))
+        asyncio.run(lifecycle.refresh_user_md(identity_dir))
         user_md = identity_dir / "USER.md"
-        # Should not create file with no data
-
+        assert not user_md.exists()

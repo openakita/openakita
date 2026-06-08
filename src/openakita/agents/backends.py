@@ -120,7 +120,7 @@ class InProcessBackend(AgentBackend):
                 asyncio.gather(*tasks, return_exceptions=True),
                 timeout=timeout,
             )
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             logger.warning("InProcessBackend: timeout waiting for %d tasks", len(tasks))
 
         return list(self._results.values())

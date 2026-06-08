@@ -200,7 +200,7 @@ class TestRunner:
                     executor(test.input),
                     timeout=test.timeout,
                 )
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 return TestResult(
                     test_id=test.id,
                     passed=False,

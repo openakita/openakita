@@ -83,7 +83,7 @@ def _has_real_asset_tree(path: Path) -> bool:
     return any(item.is_file() and item.name != ".keep" for item in path.rglob("*"))
 
 
-def validate_force_include_assets(*, require_real_assets: bool, allow_placeholder_assets: bool) -> None:
+def validate_package_assets(*, require_real_assets: bool, allow_placeholder_assets: bool) -> None:
     missing: list[str] = []
     for label, path, command in (
         (
@@ -106,7 +106,7 @@ def validate_force_include_assets(*, require_real_assets: bool, allow_placeholde
     if missing and not allow_placeholder_assets:
         details = "\n  - ".join(missing)
         raise RuntimeError(
-            "Required force-include assets are missing or empty:\n"
+            "Required package assets are missing or empty:\n"
             f"  - {details}\n"
             "Release/dry-run packaging must pass --require-real-assets after building web/docs. "
             "For CI contract-only validation, pass --allow-placeholder-assets explicitly."
@@ -118,7 +118,7 @@ def validate_force_include_assets(*, require_real_assets: bool, allow_placeholde
             keep = path / ".keep"
             if not keep.exists():
                 keep.write_text("", encoding="utf-8")
-        print("Using placeholder force-include assets for bootstrap contract validation only.")
+        print("Using placeholder package assets for bootstrap contract validation only.")
 
 
 def sha256(path: Path) -> str:
@@ -324,6 +324,14 @@ def build_wheel() -> Path:
     if not wheels:
         raise RuntimeError("python -m build --wheel completed but no openakita wheel was found")
     return wheels[-1]
+
+
+def stage_package_assets() -> None:
+    subprocess.run(
+        [sys.executable, "scripts/stage_package_assets.py"],
+        cwd=ROOT,
+        check=True,
+    )
 
 
 def copy_wheel(wheel: Path, wheels_dir: Path) -> Path:
@@ -952,10 +960,13 @@ def main() -> int:
     bootstrap_dir, bin_dir, wheels_dir, wheelhouse_dir = bootstrap_paths(output_dir)
     bootstrap_dir.mkdir(parents=True, exist_ok=True)
     wheelhouse_dir.mkdir(parents=True, exist_ok=True)
-    validate_force_include_assets(
+    validate_package_assets(
         require_real_assets=args.require_real_assets,
         allow_placeholder_assets=args.allow_placeholder_assets,
     )
+
+    if args.require_real_assets and not args.skip_wheel_build:
+        stage_package_assets()
 
     wheel = sorted(DIST_DIR.glob("openakita-*.whl"), key=lambda item: item.stat().st_mtime)[-1] if args.skip_wheel_build else build_wheel()
     packaged_wheel = copy_wheel(wheel, wheels_dir)
