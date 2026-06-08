@@ -1,6 +1,5 @@
 import { useMemo, useRef, useState } from "react";
 import type { MdModules } from "../utils/chatTypes";
-import { preprocessMath } from "../utils/mathPreprocess";
 
 const MARKDOWN_PREVIEW_CHAR_LIMIT = 40_000;
 
@@ -27,11 +26,10 @@ export function MarkdownContent({
 
   const shouldPreview = !streaming && !wasStreaming && content.length > MARKDOWN_PREVIEW_CHAR_LIMIT;
   const displayContent = useMemo(() => {
-    // 先做 LaTeX 定界符归一（\(..\) → $..$，\[..\] → $$..$$），再按需折叠。
-    // 归一只作用于代码块之外的散文，详见 utils/mathPreprocess.ts。
-    const normalized = preprocessMath(content);
-    if (!shouldPreview || expanded) return normalized;
-    return `${normalized.slice(0, MARKDOWN_PREVIEW_CHAR_LIMIT)}\n\n... 内容过长，已折叠 ${normalized.length - MARKDOWN_PREVIEW_CHAR_LIMIT} 字符。`;
+    // LaTeX 定界符归一已统一在 useMdModules 包装的 ReactMarkdown 里做（全界面一致），
+    // 这里只负责超长内容折叠。
+    if (!shouldPreview || expanded) return content;
+    return `${content.slice(0, MARKDOWN_PREVIEW_CHAR_LIMIT)}\n\n... 内容过长，已折叠 ${content.length - MARKDOWN_PREVIEW_CHAR_LIMIT} 字符。`;
   }, [content, expanded, shouldPreview]);
 
   return (

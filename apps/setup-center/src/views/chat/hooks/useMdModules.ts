@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createElement, useEffect, useState } from "react";
 import type { MdModules } from "../utils/chatTypes";
 
 let _cached: MdModules | null = null;
@@ -95,14 +95,27 @@ function loadMdModules(): Promise<MdModules | null> {
     import("rehype-highlight"),
     import("rehype-raw"),
     import("rehype-sanitize"),
-    import("rehype-katex"),
+    // 带 LRU 缓存的 rehype-katex 替代，治流式逐 token 重渲染的卡顿，见 utils/katexMemo.ts。
+    import("../utils/katexMemo"),
+    // LaTeX 定界符归一（\[..\]→$$、\(..\)→$、货币转义），见 utils/mathPreprocess.ts。
+    import("../utils/mathPreprocess"),
     // KaTeX 自带的样式表（字体度量、定位 span 的 class）。动态 import 让
     // Vite 把它打进 markdown 的懒加载 chunk，只有真正渲染消息时才拉取。
     import("katex/dist/katex.min.css"),
-  ]).then(([md, gfm, math, hl, raw, sanitize, katex]) => {
+  ]).then(([md, gfm, math, hl, raw, sanitize, katexMemo, mathPre]) => {
     const schema = buildSanitizeSchema((sanitize as any).defaultSchema);
+    const RawMarkdown = md.default;
+    const { preprocessMath } = mathPre;
+    // 统一入口：所有消费方（聊天 + 记忆 + Org 面板 + 反馈 + …）共享这一个被包装过的
+    // 组件。在内容进入 react-markdown 之前先做一次 LaTeX 定界符归一，保证全部渲染
+    // 界面行为完全一致——避免"插件全局开、预处理只在聊天"那种割裂。
+    const ReactMarkdown = ((props: any) => {
+      const { children, ...rest } = props;
+      const processed = typeof children === "string" ? preprocessMath(children) : children;
+      return createElement(RawMarkdown as any, rest, processed);
+    }) as unknown as MdModules["ReactMarkdown"];
     _cached = {
-      ReactMarkdown: md.default,
+      ReactMarkdown,
       // remark-math 解析 `$...$` / `$$...$$`（定界符归一见 utils/mathPreprocess.ts）；
       // singleDollarTextMath 让单个 `$x$` 也按行内公式处理，这是 LLM 的事实习惯。
       remarkPlugins: [gfm.default, [math.default, { singleDollarTextMath: true }] as any],
@@ -118,15 +131,17 @@ function loadMdModules(): Promise<MdModules | null> {
       //                公式，再生成自己可信的 DOM，绕开 sanitizer；
       //   highlight —— 最后给剩余代码块加 hljs class（math 占位已被 katex 消费）。
       //
-      // KaTeX 选项：
-      //   throwOnError:false  渲染失败时不抛异常，按 errorColor 标红降级；
-      //   maxSize/maxExpand   限制 \rule / \kern 的尺寸与宏展开次数，防止
-      //                       LLM/记忆里出现 \rule{99999em}{99999em} 这类
-      //                       超大盒子撑爆布局（KaTeX 默认 maxSize 为 ∞）。
+      // 这里用 katexMemo（带 LRU 缓存的 rehype-katex 替代）而非原版：流式逐 token
+      // 重渲染时只重算"变化了的公式"，而不是把整条消息里所有公式每个 token 重跑
+      // 一遍，消除数学密集回答的流式卡顿。内含的 KaTeX 选项：
+      //   maxSize/maxExpand   限制 \rule / \kern 尺寸与宏展开次数，防止半可信内容
+      //                       里出现 \rule{99999em}{99999em} 这类超大盒子撑爆布局
+      //                       （KaTeX 默认 maxSize 为 ∞）；
+      //   errorColor          渲染失败时按此色标红降级（不抛异常、不整页崩）。
       rehypePlugins: [
         raw.default,
         [sanitize.default, schema] as any,
-        [katex.default, { throwOnError: false, errorColor: "#cc3333", maxSize: 50, maxExpand: 1000 }] as any,
+        katexMemo.createMemoizedRehypeKatex({ errorColor: "#cc3333", maxSize: 50, maxExpand: 1000 }) as any,
         hl.default,
       ],
     };
