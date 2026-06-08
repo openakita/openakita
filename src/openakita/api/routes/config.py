@@ -774,6 +774,16 @@ class DeleteEndpointRequest(BaseModel):
     clean_env: bool = True
 
 
+def _normalize_endpoint_api_key(api_key: str | None) -> str | None:
+    """Treat UI-masked secrets as an unchanged value, not a new API key."""
+    if api_key is None:
+        return None
+    stripped = api_key.strip()
+    if "****" in stripped:
+        return None
+    return api_key
+
+
 @router.post("/api/config/save-endpoint")
 async def save_endpoint(body: SaveEndpointRequest, request: Request):
     """Save or update an LLM endpoint atomically.
@@ -783,7 +793,7 @@ async def save_endpoint(body: SaveEndpointRequest, request: Request):
     """
     from openakita.llm.endpoint_manager import ConflictError
 
-    api_key = body.api_key
+    api_key = _normalize_endpoint_api_key(body.api_key)
     mgr = _get_endpoint_manager()
     existing_endpoint = None
     lookup_name = (body.original_name or body.endpoint.get("name") or "").strip()
@@ -868,7 +878,7 @@ async def save_endpoints(body: SaveEndpointsRequest, request: Request):
     """Save multiple LLM endpoints in one import operation."""
     from openakita.llm.endpoint_manager import ConflictError
 
-    api_key = body.api_key
+    api_key = _normalize_endpoint_api_key(body.api_key)
     mgr = _get_endpoint_manager()
     existing_by_name: dict[str, dict] = {}
     try:

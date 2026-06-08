@@ -5307,23 +5307,24 @@ class OrgRuntime:
         executor = engine._tool_executor
 
         original_with_policy = executor.execute_tool_with_policy
-        original_check_permission = executor.check_permission
         tool_handler = self._tool_handler
 
-        from ..core.permission import PermissionDecision as _PermissionDecision
+        original_check_permission = getattr(executor, "check_permission", None)
+        if original_check_permission is not None:
+            from ..core.permission import PermissionDecision as _PermissionDecision
 
-        def _patched_check_permission(
-            tool_name: str, tool_input: dict,
-        ) -> _PermissionDecision:
-            if tool_name.startswith("org_"):
-                return _PermissionDecision(
-                    behavior="allow",
-                    reason="org tool — managed by OrgRuntime",
-                    policy_name="org_runtime_bypass",
-                )
-            return original_check_permission(tool_name, tool_input)
+            def _patched_check_permission(
+                tool_name: str, tool_input: dict,
+            ) -> _PermissionDecision:
+                if tool_name.startswith("org_"):
+                    return _PermissionDecision(
+                        behavior="allow",
+                        reason="org tool — managed by OrgRuntime",
+                        policy_name="org_runtime_bypass",
+                    )
+                return original_check_permission(tool_name, tool_input)
 
-        executor.check_permission = _patched_check_permission
+            executor.check_permission = _patched_check_permission
 
         async def _patched_with_policy(
             tool_name: str, tool_input: dict, policy_result: Any = None,
