@@ -176,7 +176,8 @@ Examples:
 ## Known Gotchas
 
 - Windows shell: use `write_file` + `run_powershell` to execute `python script.py` for complex text processing; use `run_shell` only when bash/Git Bash/POSIX shell semantics are explicitly required.
-- Windows / PowerShell `gh issue comment`: backticks are PowerShell's escape character, so `` `SkillLoader` `` in `--body "..."` gets mangled into `\SkillLoader\`. Always write the comment body to a temp file and use `gh issue comment <number> --body-file <file>` instead of `--body`.
+- Windows / PowerShell `gh issue comment`: backticks are PowerShell's escape character, so `` `SkillLoader` `` in `--body "..."` gets mangled into `\SkillLoader\`. Always write the comment body to a temp file and use `gh issue comment <number> --body-file <file>` instead of `--body`. The same `--body-file` rule applies to any non-ASCII (e.g. Chinese) body — keep the file UTF-8 encoded.
+- Windows / PowerShell `gh` mutations (`issue comment` / `close` / `edit`): two unrelated traps. (1) The GraphQL call intermittently fails with `Post "https://api.github.com/graphql": EOF` — this is a transient network drop, not a broken command, so retry a few times (usually succeeds within 2-3 attempts). (2) Redirecting `gh` output with `2>&1` can render CJK text as mojibake in the console, but that is only a console code-page display artifact — content sent via a UTF-8 `--body-file` is stored correctly. Don't trust the console echo; verify the real state with `gh issue view <number> --json state,labels,comments`.
 - `identity/AGENT.md` is OpenAkita's own behavior spec, NOT the industry-standard `AGENTS.md` file — don't confuse them.
 - The `prompt/compiler.py` must be re-run when identity files change; `builder.py` auto-detects staleness via `check_compiled_outdated()`.
 - Skill loading order: `__builtin__` → workspace → `.cursor/skills` → `.claude/skills` → `skills/` → global home dirs.
