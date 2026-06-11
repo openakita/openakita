@@ -45,17 +45,17 @@ PLATFORM_PATTERNS = {
     "darwin-aarch64": {
         "extensions": [".app.tar.gz", ".dmg"],
         "keywords": ["macos-arm64", "aarch64", "arm64"],
-        "exclude": [],
+        "exclude": ["macos-x64", "x86_64", "intel"],
     },
     "darwin-x86_64": {
         "extensions": [".app.tar.gz", ".dmg"],
         "keywords": ["macos-x64", "x86_64", "intel"],
-        "exclude": [],
+        "exclude": ["macos-arm64", "aarch64", "arm64"],
     },
     "linux-x86_64": {
-        "extensions": [".AppImage", ".appimage"],
-        "keywords": [],
-        "exclude": [],
+        "extensions": [".AppImage", ".appimage", ".deb"],
+        "keywords": ["ubuntu24-amd64", "ubuntu22-amd64", "amd64", "x86_64"],
+        "exclude": ["arm64", "aarch64"],
     },
 }
 
@@ -73,16 +73,15 @@ def fetch_json(url: str, token: str | None = None) -> dict:
 def find_asset(assets: list[dict], platform_config: dict) -> dict | None:
     """Find the best matching asset for a platform."""
     candidates = []
-    for asset in assets:
-        name = asset["name"].lower()
-        # Check if any extension matches
-        ext_match = any(name.endswith(ext.lower()) for ext in platform_config["extensions"])
-        if not ext_match:
-            continue
-        # Skip excluded patterns
-        if any(excl in name for excl in platform_config["exclude"]):
-            continue
-        candidates.append(asset)
+    for ext in platform_config["extensions"]:
+        for asset in assets:
+            name = asset["name"].lower()
+            if not name.endswith(ext.lower()):
+                continue
+            # Skip excluded patterns
+            if any(excl in name for excl in platform_config["exclude"]):
+                continue
+            candidates.append(asset)
 
     if not candidates:
         return None
@@ -209,12 +208,12 @@ def main():
         "macos-arm64": {
             "extensions": [".dmg"],
             "keywords": ["macos-arm64", "aarch64", "arm64"],
-            "exclude": [],
+            "exclude": ["macos-x64", "x86_64", "intel"],
         },
         "macos-x64": {
             "extensions": [".dmg"],
             "keywords": ["macos-x64", "x86_64", "intel"],
-            "exclude": [],
+            "exclude": ["macos-arm64", "aarch64", "arm64"],
         },
         "linux-deb-ubuntu22-amd64": {
             "extensions": [".deb"],
@@ -287,4 +286,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

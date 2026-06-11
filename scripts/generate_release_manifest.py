@@ -55,17 +55,17 @@ UPDATER_PATTERNS: dict[str, dict] = {
     "darwin-aarch64": {
         "extensions": [".app.tar.gz", ".dmg"],
         "keywords": ["macos-arm64", "aarch64", "arm64"],
-        "exclude": [],
+        "exclude": ["macos-x64", "x86_64", "intel"],
     },
     "darwin-x86_64": {
         "extensions": [".app.tar.gz", ".dmg"],
         "keywords": ["macos-x64", "x86_64", "intel"],
-        "exclude": [],
+        "exclude": ["macos-arm64", "aarch64", "arm64"],
     },
     "linux-x86_64": {
-        "extensions": [".AppImage", ".appimage"],
-        "keywords": [],
-        "exclude": [],
+        "extensions": [".AppImage", ".appimage", ".deb"],
+        "keywords": ["ubuntu24-amd64", "ubuntu22-amd64", "amd64", "x86_64"],
+        "exclude": ["arm64", "aarch64"],
     },
 }
 
@@ -87,14 +87,14 @@ PLATFORM_DOWNLOADS: dict[str, list[dict]] = {
             "key": "macos-arm64",
             "extensions": [".dmg"],
             "keywords": ["macos-arm64", "aarch64", "arm64"],
-            "exclude": [],
+            "exclude": ["macos-x64", "x86_64", "intel"],
             "nickname": "macOS Apple Silicon (.dmg)",
         },
         {
             "key": "macos-x64",
             "extensions": [".dmg"],
             "keywords": ["macos-x64", "x86_64", "intel"],
-            "exclude": [],
+            "exclude": ["macos-arm64", "aarch64", "arm64"],
             "nickname": "macOS Intel (.dmg)",
         },
     ],
@@ -170,13 +170,16 @@ def fetch_json(url: str, token: str | None = None) -> dict:
 
 def find_asset(assets: list[dict], config: dict) -> dict | None:
     candidates = []
-    for asset in assets:
-        name = asset["name"].lower()
-        if not any(name.endswith(ext.lower()) for ext in config["extensions"]):
-            continue
-        if any(excl in name for excl in config.get("exclude", [])):
-            continue
-        candidates.append(asset)
+    for ext in config["extensions"]:
+        ext_candidates = []
+        for asset in assets:
+            name = asset["name"].lower()
+            if not name.endswith(ext.lower()):
+                continue
+            if any(excl in name for excl in config.get("exclude", [])):
+                continue
+            ext_candidates.append(asset)
+        candidates.extend(ext_candidates)
     if not candidates:
         return None
     for kw in config.get("keywords", []):
@@ -529,4 +532,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
