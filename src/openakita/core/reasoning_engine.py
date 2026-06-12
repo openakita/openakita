@@ -8222,10 +8222,15 @@ class ReasoningEngine:
         if not drained:
             return []
         # Settle the answer the model just produced into the transcript so the
-        # follow-up turn sees what was already told to the user.
-        working_messages.append(
-            {"role": "assistant", "content": [{"type": "text", "text": final_text}]}
-        )
+        # follow-up turn sees what was already told to the user. Skip the fold
+        # when the final answer is blank (the empty-content / model-glitch
+        # exit can return ""): an empty text block is rejected by strict
+        # providers, and the downstream context layer already collapses the
+        # resulting consecutive user turns just like the empty-retry path does.
+        if final_text and final_text.strip():
+            working_messages.append(
+                {"role": "assistant", "content": [{"type": "text", "text": final_text}]}
+            )
         for _text in drained:
             working_messages.append(state.build_user_insert_message(_text))
         return drained

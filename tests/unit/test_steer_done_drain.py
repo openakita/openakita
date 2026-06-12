@@ -102,6 +102,33 @@ class TestDrainSteerBeforeFinishBehaviour:
         assert "[用户插入消息]" in wm[2]["content"]
         assert "再补一句：顺便翻译成英文" in wm[2]["content"]
 
+    async def test_blank_final_text_drains_without_empty_assistant_block(self) -> None:
+        """The empty-content / model-glitch exit can return "". Folding an
+        empty text block would be rejected by strict providers, so the helper
+        must still drain + inject the steer but skip the assistant fold."""
+        ts = TaskState(task_id="t1")
+        await ts.add_user_insert("继续上一个请求")
+        wm: list[dict] = [{"role": "user", "content": "原始任务"}]
+
+        out = await ReasoningEngine._drain_steer_before_finish(
+            state=ts,
+            working_messages=wm,
+            final_text="   ",  # whitespace-only / blank answer
+            iteration=1,
+            max_iterations=10,
+        )
+
+        assert out == ["继续上一个请求"]
+        assert ts.pending_user_inserts == []
+        # no empty assistant block was inserted …
+        assert all(
+            not (m["role"] == "assistant" and not str(m["content"][0]["text"]).strip())
+            for m in wm
+            if m["role"] == "assistant"
+        )
+        # … and the steered message is still present
+        assert any("[用户插入消息]" in m["content"] for m in wm if m["role"] == "user")
+
     async def test_multiple_pending_all_drained_in_order(self) -> None:
         ts = TaskState(task_id="t1")
         await ts.add_user_insert("first")
