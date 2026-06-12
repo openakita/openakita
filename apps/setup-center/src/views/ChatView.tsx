@@ -39,7 +39,7 @@ import type {
   MessagePart,
 } from "../types";
 import { genId, timeAgo } from "../utils";
-import { notifyError } from "../utils/notify";
+import { notifyError, notifyInfo } from "../utils/notify";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import {
   IconSend, IconPaperclip, IconMic, IconStopCircle,
@@ -139,6 +139,11 @@ export function ChatView({
   const STORAGE_KEY_CONVS = `chat_conversations_${wsTag}`;
   const STORAGE_KEY_ACTIVE = `chat_activeConvId_${wsTag}`;
   const STORAGE_KEY_MSGS_PREFIX = `chat_msgs_${wsTag}_`;
+  // data_epoch is PER-WORKSPACE (each workspace owns its own
+  // data/web_access.json and thus its own randomly generated epoch), so its
+  // factory-reset cache MUST also be workspace-scoped — keep it here alongside
+  // the other scoped keys so it can't silently drift back to a global key (#635).
+  const STORAGE_KEY_DATA_EPOCH = `openakita_data_epoch_${wsTag}`;
 
   // Old (pre-isolation) global keys — used only for the one-time migration
   // performed in the workspace-change effect.
@@ -1253,11 +1258,16 @@ export function ChatView({
         // Session serialisation and _load_sessions silently skips all old
         // sessions, yet sessions.json on disk is still intact.
         const epoch = data.data_epoch as string | undefined;
-        const EPOCH_KEY = "openakita_data_epoch";
+        // Drop the legacy GLOBAL epoch key that caused #635: it was shared across
+        // all workspaces, so switching workspaces always made it differ from the
+        // new workspace's epoch and was misread as a factory reset, wiping the
+        // local conversation list of the workspace you just switched into.
+        // Harmless if absent; idempotent.
+        try { localStorage.removeItem("openakita_data_epoch"); } catch { /* ignore */ }
 
         if (epoch) {
-          const cached = localStorage.getItem(EPOCH_KEY);
-          localStorage.setItem(EPOCH_KEY, epoch);
+          const cached = localStorage.getItem(STORAGE_KEY_DATA_EPOCH);
+          localStorage.setItem(STORAGE_KEY_DATA_EPOCH, epoch);
           if (cached && cached !== epoch) {
             setConversations((prev) => {
               for (const c of prev) {
@@ -2039,17 +2049,21 @@ export function ChatView({
 
   // ── 发送消息（overrideText 用于 ask_user 回复等场景，绕过 inputText；targetConvId 用于自动出队等需要指定目标会话的场景） ──
   // displayContent: 当发送给 API 的原文（如 JSON）不适合直接展示时，可指定用户气泡中的显示文本
-  const sendMessage = useCallback(async (overrideText?: string, targetConvId?: string, displayContent?: string, modeOverride?: "agent" | "plan" | "ask") => {
+  const sendMessage = useCallback(async (overrideText?: string, targetConvId?: string, displayContent?: string, modeOverride?: "agent" | "plan" | "ask", attachmentsOverride?: ChatAttachment[]) => {
     const text = (overrideText ?? inputTextRef.current).trim();
-    if (!text && pendingAttachments.length === 0) return;
-    const pendingUploads = pendingAttachments.filter((a) =>
+    // ``attachmentsOverride`` lets callers (e.g. the queue drain) replay a
+    // previously-captured attachment set instead of the live composer state.
+    // When omitted we fall back to the composer's pending attachments.
+    const attachmentsToSend = attachmentsOverride ?? pendingAttachments;
+    if (!text && attachmentsToSend.length === 0) return;
+    const pendingUploads = attachmentsToSend.filter((a) =>
       a.type !== "image" && a.type !== "video" && (!a.url || a.uploadStatus === "uploading")
     );
     if (pendingUploads.length > 0) {
       notifyError(t("chat.uploadStillRunning", "附件还在上传，请稍等一下"));
       return;
     }
-    const failedUploads = pendingAttachments.filter((a) => a.uploadStatus === "failed");
+    const failedUploads = attachmentsToSend.filter((a) => a.uploadStatus === "failed");
     if (failedUploads.length > 0) {
       notifyError(t("chat.uploadFailedRetry", "有附件上传失败，请重新选择或稍后重试"));
       return;
@@ -2112,7 +2126,7 @@ export function ChatView({
       id: genId(),
       role: "user",
       content: displayContent || text,
-      attachments: pendingAttachments.length > 0 ? pendingAttachments.map(({ _uploadId, ...rest }) => rest) : undefined,
+      attachments: attachmentsToSend.length > 0 ? attachmentsToSend.map(({ _uploadId, ...rest }) => rest) : undefined,
       timestamp: Date.now(),
     };
 
@@ -2127,8 +2141,16 @@ export function ChatView({
 
     let convId = resolvedConvId;
 
-    setInputValue("");
-    setPendingAttachments([]);
+    // Clear the composer for every send that draws on it (normal send,
+    // regenerate, ask_user reply — all use the live composer attachments).
+    // The ONLY sends that must leave the composer untouched are replays that
+    // bring their own attachment set (``attachmentsOverride`` defined): the
+    // queue drain and the steer-fallback. Wiping the composer there would
+    // destroy a draft the user is typing for their next message.
+    if (attachmentsOverride === undefined) {
+      setInputValue("");
+      setPendingAttachments([]);
+    }
     setSlashOpen(false);
     if (!convId) {
       convId = genId();
@@ -2178,6 +2200,7 @@ export function ChatView({
       isDelegating: false,
       pollingTimer: null,
       _hadError: false,
+      mode: modeOverride ?? chatMode,
     };
     streamContexts.current.set(thisConvId, sctx);
     const isTargetConversationActive = () =>
@@ -2392,8 +2415,8 @@ export function ChatView({
       };
 
       // 附件信息
-      if (pendingAttachments.length > 0) {
-        body.attachments = pendingAttachments.map((a) => ({
+      if (attachmentsToSend.length > 0) {
+        body.attachments = attachmentsToSend.map((a) => ({
           type: a.type,
           name: a.name,
           url: a.url,
@@ -2417,7 +2440,7 @@ export function ChatView({
         endpoint: typeof selectedEndpoint === "string" ? selectedEndpoint : "auto",
         thinkingMode,
         thinkingDepth: thinkingMode !== "off" ? thinkingDepth : null,
-        attachments: pendingAttachments.length,
+        attachments: attachmentsToSend.length,
         textLen: text.length,
         orgMode: Boolean(orgMode && selectedOrgId),
       });
@@ -2430,12 +2453,70 @@ export function ChatView({
       const _lastSeq = thisConvId ? lastSeqByConv.current.get(thisConvId) ?? 0 : 0;
       const _headers: Record<string, string> = { "Content-Type": "application/json" };
       if (_lastSeq > 0) _headers["Last-Event-ID"] = String(_lastSeq);
-      const response = await safeFetch(`${apiBase}/api/chat`, {
+      let response = await safeFetch(`${apiBase}/api/chat`, {
         method: "POST",
         headers: _headers,
         body: JSON.stringify(body),
         signal: abort.signal,
       });
+
+      // 方案3 STEER: desktop 默认策略是 steer。当前端以为会话空闲、但后端
+      // 的上一轮 turn 其实还在跑时（典型场景：SSE 断连或页面重载后丢了流），
+      // 后端不再排队 6s 后报错，而是把这条消息注入到正在运行的 turn，并返回
+      // HTTP 202（JSON，而非 SSE 流）。这里把 202 拦下来：
+      //   - status=steered  → 消息已注入 → 改去 /api/chat/resume 挂载原始流，
+      //                        让用户看到 Agent 读到新消息后的续写。
+      //   - status=steer_failed → 旧任务恰好已结束、未注入 → 当作新消息重发一次。
+      if (response.status === 202) {
+        let steerData: { status?: string } | null = null;
+        try { steerData = await response.json(); } catch { /* 容错 */ }
+        if (steerData?.status === "steered") {
+          const sinceSeq = thisConvId ? (lastSeqByConv.current.get(thisConvId) ?? 0) : 0;
+          const resumeUrl =
+            `${apiBase}/api/chat/resume?conversation_id=${encodeURIComponent(thisConvId)}&since_seq=${sinceSeq}`;
+          response = await safeFetch(resumeUrl, { method: "GET", signal: abort.signal });
+          if (!response.ok) {
+            // 后端没有可恢复的流。两种情况，必须区分，否则会话状态会卡住：
+            //   1) 任务仍在跑，只是没有可挂载的 SSE writer（少见）→ 保持 running。
+            //   2) 任务其实已经结束（重启 / 超时 GC / 刚好跑完）→ 必须置 idle，
+            //      否则 UI 会永远显示“运行中”，输入框停在 steer 态无法发新消息。
+            // 用 /api/chat/busy 查后端真实状态来决定，不再无条件 running。
+            let stillBusy = false;
+            try {
+              const busyResp = await safeFetch(
+                `${apiBase}/api/chat/busy?conversation_id=${encodeURIComponent(thisConvId)}`,
+                { method: "GET", signal: abort.signal },
+              );
+              if (busyResp.ok) {
+                const busyData = await busyResp.json().catch(() => null);
+                stillBusy = Boolean(busyData?.busy);
+              }
+            } catch { /* 查询失败时保守按已结束处理，至少不卡 running */ }
+            updateMessages((prev) => prev.map((m) =>
+              m.id === assistantMsg.id
+                ? {
+                    ...m,
+                    content: stillBusy
+                      ? t("chat.steeredNoResume", "已加入当前任务的上下文，正在后台继续处理。")
+                      : t("chat.steeredTaskEnded", "已加入当前任务的上下文，该任务已结束。"),
+                    streaming: false,
+                  }
+                : m
+            ));
+            if (thisConvId) updateConvStatus(thisConvId, stillBusy ? "running" : "idle");
+            return;
+          }
+          // response 现在是 resume 的 SSE 流 → 落入下方 reader 循环正常处理续写。
+        } else {
+          // steer_failed：作为全新消息重发一次（此时旧任务已结束，应能正常开流）。
+          response = await safeFetch(`${apiBase}/api/chat`, {
+            method: "POST",
+            headers: _headers,
+            body: JSON.stringify(body),
+            signal: abort.signal,
+          });
+        }
+      }
 
       if (!response.ok) {
         if (response.status === 409) {
@@ -3889,40 +3970,130 @@ export function ChatView({
     });
   }, [apiBase, activeConvId, stopStreaming]);
 
+  // Steer: hand a pure-text message to the running turn via /api/chat/insert.
+  // We confirm delivery BEFORE echoing the user bubble, so there is never a
+  // double bubble and never a silent loss:
+  //   - insert accepted  → echo the user message in front of the live answer.
+  //   - no active task / error → the turn already ended; resend as a brand-new
+  //     turn (after the local SSE has wound down) instead of dropping it.
   const handleInsertMessage = useCallback((text: string) => {
-    if (!text.trim()) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
     const convId = activeConvIdRef.current;
-    const inserter = (prev: ChatMessage[]) => {
-      const uMsg = { id: genId(), role: "user" as const, content: text.trim(), timestamp: Date.now() };
-      const streamingIdx = prev.findIndex((m) => m.role === "assistant" && m.streaming);
-      if (streamingIdx >= 0) {
-        const newArr = [...prev];
-        newArr.splice(streamingIdx, 0, uMsg);
-        return newArr;
+    // The running turn's mode, captured now — used only if we end up parking
+    // the message as a fresh turn (see the queue fallback below).
+    const steerMode = convId ? streamContexts.current.get(convId)?.mode : undefined;
+
+    const echoOptimistic = () => {
+      const inserter = (prev: ChatMessage[]) => {
+        const uMsg = { id: genId(), role: "user" as const, content: trimmed, timestamp: Date.now() };
+        const streamingIdx = prev.findIndex((m) => m.role === "assistant" && m.streaming);
+        if (streamingIdx >= 0) {
+          const newArr = [...prev];
+          newArr.splice(streamingIdx, 0, uMsg);
+          return newArr;
+        }
+        return [...prev, uMsg];
+      };
+      const ctx = convId ? streamContexts.current.get(convId) : null;
+      if (ctx) ctx.messages = inserter(ctx.messages);
+      setMessages(inserter);
+      if (convId) {
+        setConversations((prev) => prev.map((c) =>
+          c.id === convId ? { ...c, messageCount: (c.messageCount || 0) + 1 } : c
+        ));
       }
-      return [...prev, uMsg];
     };
-    const ctx = convId ? streamContexts.current.get(convId) : null;
-    if (ctx) ctx.messages = inserter(ctx.messages);
-    setMessages(inserter);
-    if (convId) {
-      setConversations((prev) => prev.map((c) =>
-        c.id === convId ? { ...c, messageCount: (c.messageCount || 0) + 1 } : c
-      ));
-    }
+
+    // Resend as a fresh turn once the local stream has actually closed.
+    // The backend turn ended (that's why insert was rejected), but the
+    // frontend SSE may take a beat to wind down; sending while the client
+    // still thinks it is streaming would early-return and lose the message.
+    let resendAttempts = 0;
+    const resendAsFreshTurn = () => {
+      const stillStreaming = convId ? !!streamContexts.current.get(convId)?.isStreaming : false;
+      if (stillStreaming) {
+        if (resendAttempts < 25) {
+          resendAttempts += 1;
+          setTimeout(resendAsFreshTurn, 200);
+          return;
+        }
+        // The backend turn ended but the local SSE refuses to close after 5s.
+        // sendMessage would early-return on the streaming guard and silently
+        // drop the text, so instead park it in the local queue: it drains as
+        // a fresh turn the moment the stream finally ends, and stays visible
+        // to the user if it somehow never does. No silent loss.
+        if (convId) {
+          setMessageQueue(prev => [...prev, {
+            id: genId(), text: trimmed, timestamp: Date.now(), convId, mode: steerMode,
+          }]);
+        }
+        return;
+      }
+      // Steer is always text-only, so the resent turn must be too — pass an
+      // explicit [] so it never picks up files the user staged in the
+      // meantime.
+      void sendMessage(trimmed, convId || undefined, undefined, undefined, []);
+    };
+
     safeFetch(`${apiBaseRef.current}/api/chat/insert`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversation_id: convId, message: text }),
-    }).catch(() => {});
-  }, []);
+      body: JSON.stringify({ conversation_id: convId, message: trimmed }),
+    })
+      .then(async (res) => {
+        let data: { status?: string; action?: string } | null = null;
+        try { data = await res.json(); } catch { /* non-JSON → decide by HTTP status */ }
+        const droppedNoTask =
+          data?.status === "error" ||
+          (data?.status === "warning" && data?.action === "insert");
+        if (!res.ok || droppedNoTask) {
+          resendAsFreshTurn();
+        } else {
+          // action may be "insert" (normal), "cancel"/"skip" (the text was a
+          // stop/skip command) — in every accepted case echo the user bubble.
+          echoOptimistic();
+        }
+      })
+      .catch(() => {
+        // Transport failure on localhost almost always means the request
+        // never landed → resend instead of leaving the message stranded.
+        resendAsFreshTurn();
+      });
+  }, [sendMessage]);
 
+  // Queue a message to run as its own turn after the current one finishes.
+  // Unlike steer, a queued message carries its own attachments and mode so
+  // the drain can replay it faithfully (see the auto-dequeue effect below).
   const handleQueueMessage = useCallback(() => {
     const text = inputTextRef.current.trim();
-    if (!text || !activeConvId) return;
-    setMessageQueue(prev => [...prev, { id: genId(), text, timestamp: Date.now(), convId: activeConvId }]);
+    const attachments = pendingAttachments;
+    if ((!text && attachments.length === 0) || !activeConvId) return;
+    // Mirror sendMessage's upload guards: only fully-uploaded attachments may
+    // enter the queue, otherwise the drain would reject them and drop the
+    // message. Keeping them in the composer lets the user retry/wait.
+    const pendingUploads = attachments.filter((a) =>
+      a.type !== "image" && a.type !== "video" && (!a.url || a.uploadStatus === "uploading")
+    );
+    if (pendingUploads.length > 0) {
+      notifyError(t("chat.uploadStillRunning", "附件还在上传，请稍等一下"));
+      return;
+    }
+    if (attachments.some((a) => a.uploadStatus === "failed")) {
+      notifyError(t("chat.uploadFailedRetry", "有附件上传失败，请重新选择或稍后重试"));
+      return;
+    }
+    setMessageQueue(prev => [...prev, {
+      id: genId(),
+      text,
+      timestamp: Date.now(),
+      convId: activeConvId,
+      attachments: attachments.length > 0 ? attachments.map(({ _uploadId, ...rest }) => rest) : undefined,
+      mode: chatMode,
+    }]);
     setInputValue("");
-  }, [activeConvId, setInputValue]);
+    setPendingAttachments([]);
+  }, [activeConvId, setInputValue, pendingAttachments, chatMode, t]);
 
   const handleRemoveQueued = useCallback((id: string) => {
     setMessageQueue(prev => prev.filter(m => m.id !== id));
@@ -3939,11 +4110,18 @@ export function ChatView({
 
   const handleSendQueuedNow = useCallback((id: string) => {
     const item = messageQueue.find(m => m.id === id);
-    if (item) {
-      handleInsertMessage(item.text);
-      setMessageQueue(prev => prev.filter(m => m.id !== id));
+    if (!item) return;
+    // A queued message with attachments cannot be steered into the running
+    // turn (insert is text-only). Rather than silently dropping the files,
+    // leave it queued — the auto-dequeue will replay it (attachments and all)
+    // as its own turn the moment the current one finishes.
+    if (item.attachments && item.attachments.length > 0) {
+      notifyInfo(t("chat.queuedAttachmentDeferred", "含附件的消息会在当前任务结束后自动发送。"));
+      return;
     }
-  }, [messageQueue, handleInsertMessage]);
+    handleInsertMessage(item.text);
+    setMessageQueue(prev => prev.filter(m => m.id !== id));
+  }, [messageQueue, handleInsertMessage, t]);
 
   const handleMoveQueued = useCallback((id: string, direction: "up" | "down") => {
     setMessageQueue(prev => {
@@ -3956,6 +4134,39 @@ export function ChatView({
       return next;
     });
   }, []);
+
+  // Single decision point for "user submitted while the current turn is still
+  // streaming". This keeps the Enter key, the send button, and any other entry
+  // in lockstep so steer-vs-queue is decided in exactly one place:
+  //   • empty composer        → drain this conversation's first queued item
+  //   • attachments present    → queue (steer is text-only; can't carry files)
+  //   • composer mode changed  → queue (user wants different behaviour now)
+  //   • otherwise (plain text) → steer into the running turn immediately
+  const submitWhileStreaming = useCallback(() => {
+    const text = inputTextRef.current.trim();
+    const hasAttachments = pendingAttachments.length > 0;
+
+    if (!text && !hasAttachments) {
+      const myFirst = messageQueue.find(m => m.convId === activeConvId);
+      if (!myFirst) return;
+      if (myFirst.attachments && myFirst.attachments.length > 0) {
+        notifyInfo(t("chat.queuedAttachmentDeferred", "含附件的消息会在当前任务结束后自动发送。"));
+        return;
+      }
+      setMessageQueue(prev => prev.filter(m => m.id !== myFirst.id));
+      handleInsertMessage(myFirst.text);
+      return;
+    }
+
+    const runningMode = activeConvId ? streamContexts.current.get(activeConvId)?.mode : undefined;
+    const modeChanged = runningMode !== undefined && runningMode !== chatMode;
+    if (hasAttachments || modeChanged) {
+      handleQueueMessage();
+    } else {
+      handleInsertMessage(text);
+      setInputValue("");
+    }
+  }, [pendingAttachments, messageQueue, activeConvId, chatMode, handleInsertMessage, handleQueueMessage, setInputValue, t]);
 
   // ── 排队消息自动出队 ──
   // 后端支持并发流式 — 每会话独立 Agent 实例。
@@ -3977,7 +4188,12 @@ export function ChatView({
           setMessageQueue(prev => prev.filter((_, i) => i !== nextIdx));
           const targetId = next.convId;
           setTimeout(() => {
-            sendMessage(next.text, targetId);
+            // Replay as a brand-new turn carrying the attachments and mode
+            // captured at queue time (not the live composer state). Pass an
+            // explicit [] when the queued item had no attachments, otherwise
+            // sendMessage would fall back to whatever is staged in the
+            // composer right now and attach the wrong files.
+            sendMessage(next.text, targetId, undefined, next.mode, next.attachments ?? []);
           }, 100);
           break;
         }
@@ -4373,34 +4589,22 @@ export function ChatView({
     }
 
     if (isCurrentConvStreaming) {
-      // 当前会话正在流式传输:
-      //   Escape             = 停止生成（快捷键面板打开时让面板处理）
-      //   有文本 + Ctrl+Enter = 立即插入（仅当前会话流式时可用）
-      //   有文本 + Enter     = 排队
-      //   空文本 + Enter     = 取队列第一条立即插入
+      // 当前会话正在流式传输（方案3：默认 steer，对齐 Claude Code 的“边跑边追加指令”）:
+      //   Escape           = 停止生成（快捷键面板打开时让面板处理）
+      //   Enter            = 提交（submitWhileStreaming 决定 steer / 排队）
+      //   Ctrl/Cmd+Enter   = 强制排队（等本轮结束后作为新消息发送）
+      // 是否 steer 还是排队由 submitWhileStreaming 统一裁决（附件 / 改模式 → 排队）。
       if (e.key === "Escape" && !shortcutsOpen) {
         e.preventDefault();
         handleCancelTask();
         return;
       }
-      const domText = (e.target as HTMLTextAreaElement).value.trim();
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        if (domText) {
-          handleInsertMessage(domText);
-          setInputValue("");
-        }
+        handleQueueMessage();
       } else if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        if (domText) {
-          handleQueueMessage();
-        } else {
-          const myFirst = messageQueue.find(m => m.convId === activeConvId);
-          if (myFirst) {
-            setMessageQueue(prev => prev.filter(m => m.id !== myFirst.id));
-            handleInsertMessage(myFirst.text);
-          }
-        }
+        submitWhileStreaming();
       }
     } else {
       // 非当前会话流式中: Enter / Ctrl+Enter 直接发送（后端支持并发）
@@ -4412,7 +4616,7 @@ export function ChatView({
         sendMessage();
       }
     }
-  }, [atAgentOpen, atAgentFilter, atAgentIdx, agentProfiles, slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage, isCurrentConvStreaming, handleInsertMessage, handleQueueMessage, messageQueue, activeConvId, setInputValue, shortcutsOpen, handleCancelTask]);
+  }, [atAgentOpen, atAgentFilter, atAgentIdx, agentProfiles, slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage, isCurrentConvStreaming, submitWhileStreaming, handleQueueMessage, setInputValue, shortcutsOpen, handleCancelTask]);
 
   // ── 输入变化处理（非受控模式：仅更新 ref，不触发全局重渲染） ──
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -5133,7 +5337,11 @@ export function ChatView({
                           <IconCircle size={10} />
                         </span>
                         <span className="queuedItemText" title={qm.text}>
-                          {qm.text.length > 80 ? qm.text.slice(0, 80) + "..." : qm.text}
+                          {qm.text
+                            ? (qm.text.length > 80 ? qm.text.slice(0, 80) + "..." : qm.text)
+                            : (qm.attachments && qm.attachments.length > 0
+                                ? `📎 ${qm.attachments.length}`
+                                : "")}
                         </span>
                         <div className="queuedItemActions">
                           <button
@@ -5545,12 +5753,12 @@ export function ChatView({
                   );
                 })()}
                 {isCurrentConvStreaming || orgCommandPending ? (
-                  hasInputText && !orgCommandPending ? (
+                  (hasInputText || pendingAttachments.length > 0) && !orgCommandPending ? (
                     <button
-                      data-slot="queue"
-                      onClick={handleQueueMessage}
+                      data-slot="steer"
+                      onClick={() => submitWhileStreaming()}
                       className="chatInputSendBtn"
-                      title={t("chat.queueHint")}
+                      title={t("chat.steerHint", "注入到当前任务（不打断，回车发送 / Ctrl+Enter 排队）")}
                     >
                       <IconSend size={14} />
                     </button>
