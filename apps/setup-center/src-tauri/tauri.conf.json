@@ -42,7 +42,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFBNkE0NDkxRERCMTNBMzQKUldRME9ySGRrVVJxR25HeDhLZTNmK3hEc2hySHhmaVZkeVVmOUZpTitibEVjaC9KUStMamJJSjYK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhDODlGOTVDQzcwOUNCOUEKUldTYXl3bkhYUG1KakxTS09JOGlHT21tOFduMEptVnc4Qk1ycVYycDJScEtMZlVGYlhiQUVQTzYK",
       "endpoints": [
         "https://openakita-admin-api.fzstack.com/updater/release.json?version={{current_version}}&platform={{target}}",
         "https://dl-openakita.fzstack.com/api/release.json"
