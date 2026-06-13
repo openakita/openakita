@@ -136,6 +136,31 @@ async def test_prompt_assembler_passes_intent_tool_hints(monkeypatch):
     assert captured["intent_tool_hints"] == ["File System"]
 
 
+@pytest.mark.asyncio
+async def test_prompt_assembler_uses_explicit_identity_dir(monkeypatch, tmp_path: Path):
+    captured = {}
+    identity_dir = tmp_path / "profile-identity"
+
+    def fake_build_system_prompt(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr("openakita.prompt.builder.build_system_prompt", fake_build_system_prompt)
+    assembler = PromptAssembler(
+        tool_catalog=None,
+        skill_catalog=None,
+        mcp_catalog=None,
+        memory_manager=None,
+        profile_manager=None,
+        brain=None,
+    )
+
+    result = await assembler.build_system_prompt_compiled(identity_dir=identity_dir)
+
+    assert result == "ok"
+    assert captured["identity_dir"] == identity_dir
+
+
 def test_list_skills_defaults_to_compact_directory(tmp_path: Path):
     long_description = "A skill with " + ("long trigger description " * 120)
     skill_path = tmp_path / "long-skill" / "SKILL.md"

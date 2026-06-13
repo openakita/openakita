@@ -7,6 +7,7 @@
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from ..config import settings
@@ -84,6 +85,7 @@ class PromptAssembler:
         include_project_guidelines: bool | None = None,
         intent_tool_hints: list[str] | None = None,
         agent_voice: str = "",
+        identity_dir: Path | None = None,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2) - 异步版本。
@@ -108,14 +110,14 @@ class PromptAssembler:
         from ..prompt.budget import BudgetConfig
         from ..prompt.builder import build_system_prompt
 
-        identity_dir = settings.identity_path
+        effective_identity_dir = identity_dir or settings.identity_path
 
         budget_config = (
             BudgetConfig.for_context_window(context_window) if context_window > 0 else None
         )
 
         return build_system_prompt(
-            identity_dir=identity_dir,
+            identity_dir=effective_identity_dir,
             tools_enabled=tools_enabled,
             tool_catalog=self._tool_catalog if tools_enabled else None,
             skill_catalog=self._skill_catalog if tools_enabled else None,
@@ -153,24 +155,25 @@ class PromptAssembler:
         context_window: int = 0,
         is_sub_agent: bool = False,
         agent_voice: str = "",
+        identity_dir: Path | None = None,
     ) -> str:
         """同步版本：启动时构建初始系统提示词"""
         from ..prompt.budget import BudgetConfig
         from ..prompt.builder import build_system_prompt
         from ..prompt.compiler import check_compiled_outdated, compile_all
 
-        identity_dir = settings.identity_path
+        effective_identity_dir = identity_dir or settings.identity_path
 
-        if check_compiled_outdated(identity_dir):
+        if check_compiled_outdated(effective_identity_dir):
             logger.info("Compiled identity files outdated, recompiling...")
-            compile_all(identity_dir)
+            compile_all(effective_identity_dir)
 
         budget_config = (
             BudgetConfig.for_context_window(context_window) if context_window > 0 else None
         )
 
         return build_system_prompt(
-            identity_dir=identity_dir,
+            identity_dir=effective_identity_dir,
             tools_enabled=True,
             tool_catalog=self._tool_catalog,
             skill_catalog=self._skill_catalog,
@@ -185,4 +188,3 @@ class PromptAssembler:
             is_sub_agent=is_sub_agent,
             agent_voice=agent_voice,
         )
-
