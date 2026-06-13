@@ -991,11 +991,27 @@ class TestAgentOrchestrator:
     async def test_handle_message_routes_correctly(self, orchestrator, mock_pool):
         session = _make_session(agent_profile_id="default")
         result = await orchestrator.handle_message(session, "Hello")
-        # orchestrator 现在通过 ``DelegationResult.to_tool_response`` 给响应加结构化 header
-        # （``[任务完成通知] Agent: ... | 状态: ... | 耗时: ...`` + ``工具调用:`` 一行 + 原文）
-        # ，所以这里改为 substring 断言。
-        assert "Agent response" in result
+        assert result == "Agent response"
+        assert "任务完成通知" not in result
+        assert "工具调用:" not in result
         mock_pool.get_or_create.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_sub_agent_dispatch_keeps_structured_tool_response(self, orchestrator):
+        session = _make_session()
+
+        result = await orchestrator._dispatch(
+            session,
+            "sub task",
+            "helper",
+            depth=1,
+            from_agent="default",
+        )
+
+        assert "Agent response" in result
+        assert "任务完成通知" in result
+        assert "Agent:" in result
+        assert "工具调用: 0 次" in result
 
     @pytest.mark.asyncio
     async def test_handle_message_resets_delegation_chain(self, orchestrator):

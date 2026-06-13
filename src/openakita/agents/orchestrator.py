@@ -1176,7 +1176,9 @@ class AgentOrchestrator:
                     elapsed_s=round(time.time() - _start, 2),
                     exit_reason=exit_reason,
                 )
-                return delegation_result.to_tool_response()
+                if is_sub_agent:
+                    return delegation_result.to_tool_response()
+                return _with_budget_guide(delegation_result.text, delegation_result.exit_reason)
             finally:
                 agent._is_sub_agent_call = False
                 _cleanup_sub_agent_resources(agent, session)
