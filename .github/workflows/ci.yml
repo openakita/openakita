@@ -447,7 +447,12 @@ jobs:
         working-directory: apps/setup-center
         env:
           NO_STRIP: true
-        run: npx tauri build --bundles "deb"
+        # Fork PRs do not receive repository secrets. Disable updater artifact
+        # signing in CI; release/dryrun workflows still sign updater artifacts.
+        run: >
+          npx tauri build
+          --bundles "deb"
+          --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Verify bundle exists
         run: |
