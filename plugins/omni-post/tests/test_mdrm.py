@@ -108,7 +108,9 @@ class _CapturingMemory:
     def __init__(self) -> None:
         self.adds: list[tuple[Any, str, str]] = []
 
-    def add_memory(self, memory: Any, scope: str = "global", scope_owner: str = "") -> str:
+    def add_memory(
+        self, memory: Any, scope: str = "global", scope_owner: str = ""
+    ) -> str:
         self.adds.append((memory, scope, scope_owner))
         return "mem-42"
 
@@ -146,7 +148,9 @@ async def test_adapter_writes_full_memory_object() -> None:
 
 
 class _BadMemory:
-    def add_memory(self, memory: Any, scope: str = "global", scope_owner: str = "") -> str:
+    def add_memory(
+        self, memory: Any, scope: str = "global", scope_owner: str = ""
+    ) -> str:
         raise ValueError("db locked")
 
 

@@ -204,7 +204,9 @@ def _pip_install(specs: list[str], target: Path) -> tuple[bool, str]:
 def _drop_stale_modules(import_name: str) -> None:
     root_name = import_name.partition(".")[0]
     for stale in [
-        m for m in sys.modules if m in (root_name, import_name) or m.startswith(root_name + ".")
+        m
+        for m in sys.modules
+        if m in (root_name, import_name) or m.startswith(root_name + ".")
     ]:
         sys.modules.pop(stale, None)
 

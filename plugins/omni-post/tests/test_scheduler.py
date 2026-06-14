@@ -132,15 +132,11 @@ async def test_schedule_ticker_triggers_only_due_rows(tmp_path: Path) -> None:
         past_iso = "2020-01-01T00:00:00Z"
         future_iso = "2099-12-31T23:59:59Z"
         past_task = await tm.create_task(
-            platform="douyin",
-            account_id=acc_id,
-            asset_id=None,
+            platform="douyin", account_id=acc_id, asset_id=None,
             payload={"title": "p"},
         )
         future_task = await tm.create_task(
-            platform="douyin",
-            account_id=acc_id,
-            asset_id=None,
+            platform="douyin", account_id=acc_id, asset_id=None,
             payload={"title": "f"},
         )
         past_sched = await tm.create_schedule(task_id=past_task, scheduled_at=past_iso)
@@ -156,7 +152,9 @@ async def test_schedule_ticker_triggers_only_due_rows(tmp_path: Path) -> None:
             # don't need a PluginAPI in tests.
             return asyncio.ensure_future(coro)
 
-        ticker = ScheduleTicker(task_manager=tm, runner=_runner, spawn=_spawn, poll_seconds=5.0)
+        ticker = ScheduleTicker(
+            task_manager=tm, runner=_runner, spawn=_spawn, poll_seconds=5.0
+        )
         await ticker._tick_once()
         # Give the spawned coro a chance to run.
         await asyncio.sleep(0)
@@ -189,7 +187,9 @@ async def test_schedule_ticker_stop_is_idempotent(tmp_path: Path) -> None:
         def _spawn(coro, name=None):
             return asyncio.ensure_future(coro)
 
-        ticker = ScheduleTicker(task_manager=tm, runner=_runner, spawn=_spawn, poll_seconds=5.0)
+        ticker = ScheduleTicker(
+            task_manager=tm, runner=_runner, spawn=_spawn, poll_seconds=5.0
+        )
         ticker.start()
         await ticker.stop()
         await ticker.stop()  # no-op, must not raise

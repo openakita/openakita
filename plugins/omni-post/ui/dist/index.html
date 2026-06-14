@@ -828,10 +828,18 @@ const I18N_DICT = {
     "omniPost.publish.action.pickExisting": "从素材库选",
     "omniPost.publish.action.consumeBus": "从 Asset Bus 拉取",
     "omniPost.publish.action.publishNow": "立即发布",
+    "omniPost.publish.action.schedule": "定时发布",
     "omniPost.publish.action.dryRun": "预检",
     "omniPost.publish.action.refresh": "刷新",
+    "omniPost.publish.field.engine": "本次引擎",
+    "omniPost.publish.field.scheduleAt": "定时时间",
+    "omniPost.publish.field.scheduleToggle": "定时发布",
     "omniPost.publish.summary.headline": "将发布到 {platforms} 平台 × {accounts} 账号，共 {tasks} 条任务",
     "omniPost.publish.summary.empty": "选择素材、平台和账号后查看摘要",
+    "omniPost.publish.summary.scheduled": "定时：{time}",
+    "omniPost.publish.toast.noSchedule": "请选择一个未来的定时时间",
+    "omniPost.publish.toast.topLevelRequired": "MultiPost 扩展发布需要在顶层页面发起",
+    "omniPost.publish.toast.templateApplied": "已套用模板",
     "omniPost.publish.toast.noAsset": "请先选择或上传一个素材",
     "omniPost.publish.toast.noTitle": "请填写标题",
     "omniPost.publish.toast.noPlatform": "请至少选择一个平台",
@@ -914,6 +922,8 @@ const I18N_DICT = {
     "omniPost.calendar.conflict": "同账号 30 分钟内出现多条发布，建议错峰。",
     "omniPost.calendar.day.header": "{date} · {weekday}",
     "omniPost.calendar.item.status": "状态：{status}",
+    "omniPost.calendar.action.reschedule": "改期",
+    "omniPost.calendar.reschedule.prompt": "新的本地时间（YYYY-MM-DDTHH:mm）",
     "omniPost.calendar.reschedule.ok": "已改期",
     "omniPost.calendar.reschedule.fail": "改期失败：{msg}",
     "omniPost.calendar.timezone": "时区 {tz}",
@@ -946,6 +956,7 @@ const I18N_DICT = {
     "omniPost.library.templates.kind.topic": "话题",
     "omniPost.library.templates.kind.cover": "封面",
     "omniPost.library.templates.add": "新增模板",
+    "omniPost.library.templates.use": "套用到发布",
     "omniPost.library.templates.tags": "标签：{tags}",
     "omniPost.library.templates.delete.confirm": "确认删除此模板？",
     "omniPost.library.templates.modal.title": "新建模板",
@@ -970,10 +981,18 @@ const I18N_DICT = {
     "omniPost.mp.status.trust.fail": "信任域未配置（需要 {domain}）",
     "omniPost.mp.install.title": "安装 / 更新 MultiPost-Extension",
     "omniPost.mp.install.desc": "推荐从 Chrome 商店或 Edge 商店安装 v{min}+ 版本；安装后点击「立即探测」重新识别。",
+    "omniPost.mp.install.desktopHint": "注意：Chrome/Edge 扩展只能在对应浏览器页面里运行；如果你正在使用 OpenAkita 桌面端内嵌页面，请用已安装扩展的 Chrome/Edge 打开 OpenAkita Web 地址后再探测。",
+    "omniPost.mp.install.iframeHint": "当前插件页在 iframe 中；如果扩展没有响应，请打开顶层检测页，它会让 MultiPost content script 更稳定地注入。",
+    "omniPost.mp.install.openDirect": "打开顶层检测页",
     "omniPost.mp.install.cws": "Chrome 应用商店",
     "omniPost.mp.install.github": "GitHub 仓库",
     "omniPost.mp.trust.title": "配置信任域",
     "omniPost.mp.trust.desc": "扩展需要允许 OpenAkita 宿主域名（{domain}）才能接收发布指令。",
+    "omniPost.mp.trust.manual": "如果授权后仍失败，请打开 MultiPost 扩展侧边栏/设置，在 Trusted Domains 中手动添加 hostname：{domain}。不要填写协议、端口或路径。",
+    "omniPost.mp.trust.request": "授权当前域名",
+    "omniPost.mp.trust.openChrome": "打开 Chrome 授权页",
+    "omniPost.mp.trust.openEdge": "打开 Edge 授权页",
+    "omniPost.mp.status.detail": "探测详情：{detail}",
     "omniPost.engine.label": "引擎",
     "omniPost.engine.desc.auto": "自动：探测到 MultiPost 则走扩展，否则走 Playwright。",
     "omniPost.engine.desc.pw": "Playwright：0 依赖，适合无头服务端。",
@@ -1198,10 +1217,18 @@ const I18N_DICT = {
     "omniPost.mp.status.trust.fail": "Trusted domain missing (need {domain})",
     "omniPost.mp.install.title": "Install / Update MultiPost-Extension",
     "omniPost.mp.install.desc": "Install v{min}+ from the Chrome Web Store or Edge Add-ons; then click \"Probe now\" to re-detect.",
+    "omniPost.mp.install.desktopHint": "Note: Chrome/Edge extensions only run inside their browser pages. If you are using the OpenAkita desktop shell, open the OpenAkita web URL in the browser where MultiPost is installed, then probe again.",
+    "omniPost.mp.install.iframeHint": "This plugin page is inside an iframe. If the extension does not respond, open the top-level probe page so the MultiPost content script can inject more reliably.",
+    "omniPost.mp.install.openDirect": "Open top-level probe",
     "omniPost.mp.install.cws": "Chrome Web Store",
     "omniPost.mp.install.github": "GitHub repo",
     "omniPost.mp.trust.title": "Configure trusted domain",
     "omniPost.mp.trust.desc": "The extension must allow the OpenAkita host domain ({domain}) to accept publish requests.",
+    "omniPost.mp.trust.manual": "If it still fails after authorization, open the MultiPost extension side panel/settings and manually add this hostname under Trusted Domains: {domain}. Do not include protocol, port, or path.",
+    "omniPost.mp.trust.request": "Authorize current domain",
+    "omniPost.mp.trust.openChrome": "Open Chrome trust page",
+    "omniPost.mp.trust.openEdge": "Open Edge trust page",
+    "omniPost.mp.status.detail": "Probe detail: {detail}",
     "omniPost.engine.label": "Engine",
     "omniPost.engine.desc.auto": "Auto: use the extension when detected, otherwise fall back to Playwright.",
     "omniPost.engine.desc.pw": "Playwright: zero-dep, headless-friendly.",
@@ -1256,6 +1283,17 @@ const I18N_DICT = {
     "omniPost.common.close": "Close",
     "omniPost.common.copy": "Copy",
     "omniPost.common.confirm": "Confirm",
+    "omniPost.publish.action.schedule": "Schedule",
+    "omniPost.publish.field.engine": "Engine for this run",
+    "omniPost.publish.field.scheduleAt": "Scheduled time",
+    "omniPost.publish.field.scheduleToggle": "Schedule instead of publish now",
+    "omniPost.publish.summary.scheduled": "Scheduled for {time}",
+    "omniPost.publish.toast.noSchedule": "Pick a future scheduled time",
+    "omniPost.publish.toast.topLevelRequired": "MultiPost extension publishing must be started from the top-level page",
+    "omniPost.publish.toast.templateApplied": "Template applied",
+    "omniPost.calendar.action.reschedule": "Reschedule",
+    "omniPost.calendar.reschedule.prompt": "New local time (YYYY-MM-DDTHH:mm)",
+    "omniPost.library.templates.use": "Use in Publish",
     "omniPost.common.cancel": "Cancel",
   },
 };
@@ -1331,6 +1369,36 @@ function formatTs(ts) {
   return (d.getMonth() + 1) + "/" + d.getDate() + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
 }
 function shortId(s) { return s ? String(s).slice(0, 8) : ""; }
+function directPluginUiUrl() {
+  return _detectApiBase() + "/api/plugins/" + ((_ctx && _ctx.pluginId) || PLUGIN_ID_DEFAULT) + "/ui/?_top=1";
+}
+function isEmbeddedFrame() {
+  return typeof window !== "undefined" && window.top !== window;
+}
+function toLocalDateTimeValue(date) {
+  const d = date instanceof Date ? date : new Date(date || Date.now());
+  if (isNaN(d.getTime())) return "";
+  const pad = function (n) { return String(n).padStart(2, "0"); };
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+}
+function templateToPublishFields(tpl) {
+  const body = tpl && tpl.body;
+  const out = { title: "", description: "", tags: "", topic: "" };
+  if (!tpl) return out;
+  if (typeof body === "string") {
+    if (tpl.kind === "topic") out.topic = body;
+    else out.description = body;
+    return out;
+  }
+  if (body && typeof body === "object") {
+    out.title = body.title || body.name || "";
+    out.description = body.description || body.text || body.caption || "";
+    out.topic = body.topic || "";
+    if (Array.isArray(body.tags)) out.tags = body.tags.join(", ");
+    else out.tags = body.tags || "";
+  }
+  return out;
+}
 
 /* ─── Status → badge class mapping ──────────────────────────────── */
 function statusBadge(status) {
@@ -1640,6 +1708,9 @@ function PublishTab() {
   const [topic, setTopic] = useState("");
   const [pickedPlatforms, setPickedPlatforms] = useState([]);
   const [pickedAccounts, setPickedAccounts] = useState([]);
+  const [publishEngine, setPublishEngine] = useState("auto");
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const dock = useUploadDock();
   const fileInputRef = useRef(null);
@@ -1654,6 +1725,34 @@ function PublishTab() {
     const off = onEvent("plugin:omni-post:upload_completed", refreshAssets);
     return function () {};
   }, [refreshAssets]);
+  useEffect(function () {
+    pluginApi("GET", "/settings").then(function (r) {
+      const body = (r && r.body) || r || {};
+      if (body.engine) setPublishEngine(body.engine);
+    }).catch(function () {});
+  }, []);
+  useEffect(function () {
+    if (window.__omniPostPendingTemplate) {
+      const fields = templateToPublishFields(window.__omniPostPendingTemplate);
+      window.__omniPostPendingTemplate = null;
+      if (fields.title) setTitle(fields.title);
+      if (fields.description) setDescription(fields.description);
+      if (fields.tags) setTagsStr(fields.tags);
+      if (fields.topic) setTopic(fields.topic);
+      showToast(t("omniPost.publish.toast.templateApplied"), "success");
+    }
+    function onTemplate(ev) {
+      const tpl = ev && ev.detail;
+      const fields = templateToPublishFields(tpl);
+      if (fields.title) setTitle(fields.title);
+      if (fields.description) setDescription(fields.description);
+      if (fields.tags) setTagsStr(fields.tags);
+      if (fields.topic) setTopic(fields.topic);
+      showToast(t("omniPost.publish.toast.templateApplied"), "success");
+    }
+    window.addEventListener("omni-post:use-template", onTemplate);
+    return function () { window.removeEventListener("omni-post:use-template", onTemplate); };
+  }, [t]);
 
   const accountsOfPickedPlatforms = useMemo(function () {
     if (!pickedPlatforms.length) return accounts;
@@ -1682,22 +1781,45 @@ function PublishTab() {
   }
 
   const matchingTaskCount = pickedPlatforms.length > 0
-    ? pickedAccounts.filter(function (aid) {
+    ? (publishEngine === "mp" ? 1 : pickedAccounts.filter(function (aid) {
         const acc = accounts.find(function (a) { return a.id === aid; });
         return acc && pickedPlatforms.indexOf(acc.platform) >= 0;
-      }).length
+      }).length)
     : 0;
+  const matchingAccountIds = useMemo(function () {
+    return pickedAccounts.filter(function (aid) {
+      const acc = accounts.find(function (a) { return a.id === aid; });
+      return acc && pickedPlatforms.indexOf(acc.platform) >= 0;
+    });
+  }, [pickedAccounts, pickedPlatforms, accounts]);
+  const needsTopLevelForMp = publishEngine === "mp" && isEmbeddedFrame();
+  const topLevelUrl = directPluginUiUrl();
 
   async function doPublish() {
-    if (!pickedAsset) { showToast(t("omniPost.publish.toast.noAsset"), "warn"); return; }
+    const isMp = publishEngine === "mp";
+    if (!isMp && !pickedAsset) { showToast(t("omniPost.publish.toast.noAsset"), "warn"); return; }
     if (!title.trim()) { showToast(t("omniPost.publish.toast.noTitle"), "warn"); return; }
     if (!pickedPlatforms.length) { showToast(t("omniPost.publish.toast.noPlatform"), "warn"); return; }
-    if (!pickedAccounts.length) { showToast(t("omniPost.publish.toast.noAccount"), "warn"); return; }
+    if (!isMp && !matchingAccountIds.length) { showToast(t("omniPost.publish.toast.noAccount"), "warn"); return; }
+    if (needsTopLevelForMp) {
+      showToast(t("omniPost.publish.toast.topLevelRequired"), "warn");
+      window.open(topLevelUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    let scheduleIso = null;
+    if (scheduleEnabled) {
+      const when = new Date(scheduledAt);
+      if (!scheduledAt || isNaN(when.getTime()) || when <= new Date()) {
+        showToast(t("omniPost.publish.toast.noSchedule"), "warn");
+        return;
+      }
+      scheduleIso = when.toISOString();
+    }
     setSubmitting(true);
     try {
       const tags = tagsStr.split(",").map(function (s) { return s.trim(); }).filter(function (s) { return !!s; });
       const body = {
-        asset_id: pickedAsset,
+        asset_id: pickedAsset || null,
         payload: {
           title: title.trim(),
           description: description.trim(),
@@ -1705,12 +1827,13 @@ function PublishTab() {
           topic: topic.trim() || undefined,
         },
         platforms: pickedPlatforms,
-        account_ids: pickedAccounts,
+        account_ids: isMp ? [] : matchingAccountIds,
         client_trace_id: uid(),
-        engine: "auto",
+        engine: publishEngine,
         auto_submit: true,
       };
-      const r = await pluginApi("POST", "/publish", body);
+      if (scheduleIso) body.scheduled_at = scheduleIso;
+      const r = await pluginApi("POST", scheduleIso ? "/schedule" : "/publish", body);
       if (r && r.ok && r.body && r.body.ok) {
         showToast(t("omniPost.publish.toast.publishOk", { count: r.body.count || 0 }), "success");
         setPickedAccounts([]);
@@ -1723,16 +1846,17 @@ function PublishTab() {
   }
 
   async function doDryRun() {
-    if (!pickedAsset || !pickedPlatforms.length || !pickedAccounts.length) {
+    const isMp = publishEngine === "mp";
+    if ((!isMp && !pickedAsset) || !pickedPlatforms.length || (!isMp && !matchingAccountIds.length)) {
       showToast(t("omniPost.publish.toast.noAccount"), "warn"); return;
     }
     const body = {
-      asset_id: pickedAsset,
+      asset_id: pickedAsset || null,
       payload: { title: title.trim() || "(untitled)" },
       platforms: pickedPlatforms,
-      account_ids: pickedAccounts,
+      account_ids: isMp ? [] : matchingAccountIds,
       client_trace_id: uid(),
-      engine: "auto",
+      engine: publishEngine,
       auto_submit: true,
     };
     const r = await pluginApi("POST", "/publish/dry-run", body);
@@ -1822,6 +1946,40 @@ function PublishTab() {
                      onChange={function (e) { setTopic(e.target.value); }} />
             </div>
           </div>
+          <div className="grid-2" style={{ marginTop: 8 }}>
+            <div className="form-row">
+              <label className="text-sm" htmlFor="omp-engine">{t("omniPost.publish.field.engine")}</label>
+              <select id="omp-engine" className="input select" value={publishEngine}
+                      onChange={function (e) { setPublishEngine(e.target.value); }}>
+                <option value="auto">{t("omniPost.engine.auto")}</option>
+                <option value="pw">{t("omniPost.engine.pw")}</option>
+                <option value="mp">{t("omniPost.engine.mp")}</option>
+              </select>
+            </div>
+            <label className="form-row" style={{ justifyContent: "end" }}>
+              <span className="text-sm">{t("omniPost.publish.field.scheduleToggle")}</span>
+              <input type="checkbox" checked={scheduleEnabled}
+                     onChange={function (e) {
+                       setScheduleEnabled(e.target.checked);
+                       if (e.target.checked && !scheduledAt) setScheduledAt(toLocalDateTimeValue(new Date(Date.now() + 3600000)));
+                     }} />
+            </label>
+          </div>
+          {scheduleEnabled ? (
+            <div className="form-row" style={{ marginTop: 8 }}>
+              <label className="text-sm" htmlFor="omp-scheduled-at">{t("omniPost.publish.field.scheduleAt")}</label>
+              <input id="omp-scheduled-at" className="input" type="datetime-local" value={scheduledAt}
+                     onChange={function (e) { setScheduledAt(e.target.value); }} />
+            </div>
+          ) : null}
+          {needsTopLevelForMp ? (
+            <div className="lib-card" style={{ marginTop: 10 }}>
+              <p className="cal-sub" style={{ margin: 0 }}>{t("omniPost.publish.toast.topLevelRequired")}</p>
+              <a className="btn btn-sm" style={{ marginTop: 8 }} href={topLevelUrl} target="_blank" rel="noreferrer noopener">
+                {t("omniPost.mp.install.openDirect")}
+              </a>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -1902,13 +2060,14 @@ function PublishTab() {
           <span>{t("omniPost.publish.section.summary")}</span>
         </div>
         <div className="publish-dock__summary">
-          {pickedAsset && pickedPlatforms.length && pickedAccounts.length ? (
+          {pickedPlatforms.length && (publishEngine === "mp" || (pickedAsset && pickedAccounts.length)) ? (
             <span>
               {t("omniPost.publish.summary.headline", {
                 platforms: pickedPlatforms.length,
-                accounts: pickedAccounts.length,
+                accounts: publishEngine === "mp" && matchingAccountIds.length === 0 ? 1 : matchingAccountIds.length,
                 tasks: matchingTaskCount,
               })}
+              {scheduleEnabled && scheduledAt ? " · " + t("omniPost.publish.summary.scheduled", { time: scheduledAt }) : ""}
             </span>
           ) : (
             t("omniPost.publish.summary.empty")
@@ -1920,7 +2079,7 @@ function PublishTab() {
             <Ico name="check" /> {t("omniPost.publish.action.dryRun")}
           </button>
           <button className="btn btn-primary" disabled={submitting} onClick={doPublish}>
-            <Ico name="send" /> {t("omniPost.publish.action.publishNow")}
+            <Ico name="send" /> {scheduleEnabled ? t("omniPost.publish.action.schedule") : t("omniPost.publish.action.publishNow")}
           </button>
         </div>
       </div>
@@ -2596,6 +2755,19 @@ function CalendarTab() {
     if (sameDay) return t("omniPost.calendar.upcoming.todayAt", { time: hm });
     return (d.getMonth() + 1) + "/" + d.getDate() + " " + hm;
   }
+  async function rescheduleTask(task) {
+    const next = window.prompt(t("omniPost.calendar.reschedule.prompt"), toLocalDateTimeValue(task.scheduled_at));
+    if (!next) return;
+    const d = new Date(next);
+    if (isNaN(d.getTime())) return;
+    const r = await pluginApi("PUT", "/calendar/" + encodeURIComponent(task.id), { scheduled_at: d.toISOString() });
+    if (r && r.ok && r.body && r.body.ok) {
+      showToast(t("omniPost.calendar.reschedule.ok"), "success");
+      refresh();
+    } else {
+      showToast(t("omniPost.calendar.reschedule.fail", { msg: (r && r.body && (r.body.detail || r.body.reason)) || r.status }), "error");
+    }
+  }
 
   return (
     <div role="tabpanel" id="omnipost-pane-calendar">
@@ -2662,6 +2834,7 @@ function CalendarTab() {
                         <div key={task.id}
                              className={"cal-item" + (conflict ? " cal-item--conflict" : "")}
                              data-platform={task.platform}
+                             onDoubleClick={function () { rescheduleTask(task); }}
                              title={t("omniPost.calendar.item.status", { status: task.status })}>
                           <div className="cal-item__time">{hm} · {task.platform}</div>
                           <div className="cal-item__meta">
@@ -2670,6 +2843,9 @@ function CalendarTab() {
                               <Ico name="warn" /> {t("omniPost.calendar.conflict")}
                             </span>) : null}
                           </div>
+                          <button className="btn btn-sm btn-ghost" style={{ marginTop: 6 }} onClick={function (e) { e.stopPropagation(); rescheduleTask(task); }}>
+                            {t("omniPost.calendar.action.reschedule")}
+                          </button>
                         </div>
                       );
                     })}
@@ -2848,6 +3024,10 @@ function LibraryTemplates() {
     const r = await pluginApi("DELETE", "/templates/" + encodeURIComponent(tpl.id));
     if (r && r.ok) refresh();
   }
+  function useTemplate(tpl) {
+    window.__omniPostPendingTemplate = tpl;
+    window.dispatchEvent(new CustomEvent("omni-post:use-template", { detail: tpl }));
+  }
 
   const kinds = ["all", "caption", "topic", "cover"];
   return (
@@ -2889,6 +3069,9 @@ function LibraryTemplates() {
                   </div>
                 ) : null}
                 <div className="lib-card__actions">
+                  <button className="btn btn-sm btn-primary" onClick={function () { useTemplate(tpl); }}>
+                    <Ico name="check" /> {t("omniPost.library.templates.use")}
+                  </button>
                   <button className="btn btn-sm" onClick={function () { onDelete(tpl); }}>
                     <Ico name="trash" /> {t("omniPost.library.assets.delete")}
                   </button>
@@ -2980,6 +3163,180 @@ function TemplateAddModal({ onClose, onSaved }) {
 /* ─── MultiPost install / probe guide (S4) ─────────────────────────── */
 const MP_STORE_URL = "https://chromewebstore.google.com/detail/multipost/dhohkaclnjgcikfoaacfgijgjgceofih";
 const MP_GITHUB_URL = "https://github.com/leaperone/MultiPost-Extension";
+const MP_CHROME_EXTENSION_ID = "dhohkaclnjgcikfoaacfgijgjgceofih";
+const MP_EDGE_EXTENSION_ID = "ckoiphiceimehjkolnfffgbmihoppgjg";
+
+function mpBody(resp) {
+  return resp && resp.body ? resp.body : (resp || {});
+}
+
+function mpVersionOk(version, minVersion) {
+  const parts = String(version || "").split(".").map(function (x) { return parseInt(x, 10) || 0; });
+  const minParts = String(minVersion || "0.0.0").split(".").map(function (x) { return parseInt(x, 10) || 0; });
+  for (let i = 0; i < 3; i++) {
+    const a = parts[i] || 0, b = minParts[i] || 0;
+    if (a > b) return true;
+    if (a < b) return false;
+  }
+  return true;
+}
+
+function mpRequest(action, data, timeoutMs) {
+  return new Promise(function (resolve) {
+    const traceId = "mp-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+    let settled = false;
+    function finish(value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      window.removeEventListener("message", handler);
+      resolve(value);
+    }
+    function handler(e) {
+      const d = e && e.data;
+      if (!d || typeof d !== "object") return;
+      if (d.type === "response" && d.traceId === traceId) {
+        finish({ ok: d.code === 0, code: d.code, message: d.message || "", data: d.data || {}, raw: d });
+        return;
+      }
+      if (d.action === "MULTIPOST_EXTENSION_SERVICE_STATUS_RESPONSE" || d.type === "MULTIPOST_EXTENSION_SERVICE_STATUS_RESPONSE") {
+        if (d.request_id && d.request_id !== traceId) return;
+        finish({ ok: true, code: 0, message: "", data: d.data || d, raw: d });
+      }
+    }
+    const timer = setTimeout(function () {
+      finish({ ok: false, code: "timeout", message: "MultiPost extension did not respond", data: {} });
+    }, timeoutMs || 3000);
+    window.addEventListener("message", handler);
+    try {
+      const targets = [window.top, window.parent, window];
+      const seen = new Set();
+      targets.forEach(function (w) {
+        if (!w || seen.has(w)) return;
+        seen.add(w);
+        try {
+          w.postMessage({
+            type: "request",
+            traceId: traceId,
+            action: action,
+            data: data || {},
+            request_id: traceId,
+            origin: data && data.origin,
+          }, "*");
+        } catch (err) {}
+      });
+    } catch (err) {
+      finish({ ok: false, code: "post_failed", message: String(err && err.message || err), data: {} });
+    }
+  });
+}
+
+function mpTrustPageUrl(extensionId, domain) {
+  let encoded = "";
+  try {
+    encoded = btoa(JSON.stringify({
+      action: "MULTIPOST_EXTENSION_REQUEST_TRUST_DOMAIN",
+      origin: domain,
+    }));
+  } catch (err) {}
+  return "chrome-extension://" + extensionId + "/tabs/trust-domain.html#" + encoded;
+}
+
+function absolutizeMpFileUrls(value) {
+  if (!value || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    value.forEach(function (item) { absolutizeMpFileUrls(item); });
+    return value;
+  }
+  if (typeof value.url === "string" && value.url.charAt(0) === "/") {
+    value.url = new URL(value.url, window.location.origin).href;
+  }
+  Object.keys(value).forEach(function (key) {
+    if (value[key] && typeof value[key] === "object") absolutizeMpFileUrls(value[key]);
+  });
+  return value;
+}
+
+function mpAck(taskId, patch) {
+  return pluginApi("POST", "/mp/ack", Object.assign({
+    task_id: taskId,
+    success: false,
+    error_kind: "unknown",
+    error_message: "",
+    metrics: {},
+  }, patch || {})).catch(function () {});
+}
+
+function useMultiPostDispatcher() {
+  const inFlightRef = useRef({});
+  const dispatchOne = useCallback(function (item) {
+    if (!item || !item.task_id || !item.payload) return;
+    if (isEmbeddedFrame()) return;
+    if (inFlightRef.current[item.task_id]) return;
+    inFlightRef.current[item.task_id] = true;
+    const payload = JSON.parse(JSON.stringify(item.payload));
+    absolutizeMpFileUrls(payload.data);
+    const action = payload.action || "MULTIPOST_EXTENSION_PUBLISH";
+    const expectsPopup = action === "MULTIPOST_EXTENSION_PUBLISH";
+    function finishFailure(res) {
+      delete inFlightRef.current[item.task_id];
+      return mpAck(item.task_id, {
+        success: false,
+        error_kind: "dependency",
+        error_message: (res && res.message) || "MultiPost extension dispatch failed",
+        metrics: { accepted_by_extension: false },
+      });
+    }
+    function finishSuccess(res) {
+      delete inFlightRef.current[item.task_id];
+      const tabs = res && res.data && res.data.tabs;
+      const firstUrl = Array.isArray(tabs) && tabs[0] && tabs[0].tab ? tabs[0].tab.url : null;
+      return mpAck(item.task_id, {
+        success: true,
+        published_url: firstUrl || null,
+        error_kind: null,
+        error_message: "",
+        metrics: {
+          accepted_by_extension: true,
+          popup_dispatched: expectsPopup,
+          response_timeout_expected: expectsPopup && res && res.code === "timeout",
+        },
+      });
+    }
+    function sendPublish() {
+      return mpRequest(action, payload.data || {}, expectsPopup ? 5000 : 120000).then(function (res) {
+        if (res && res.ok) {
+          return finishSuccess(res);
+        }
+        if (expectsPopup && res && res.code === "timeout") {
+          return finishSuccess(res);
+        }
+        return finishFailure(res);
+      });
+    }
+    if (expectsPopup) {
+      mpRequest("MULTIPOST_EXTENSION_CHECK_SERVICE_STATUS", { origin: window.location.hostname }, 3000).then(function (check) {
+        if (!check || !check.ok) return finishFailure(check);
+        return sendPublish();
+      });
+      return;
+    }
+    sendPublish();
+  }, []);
+  useEffect(function () {
+    function handleEvent(data) { dispatchOne(data); }
+    onEvent("plugin:omni-post:mp_dispatch", handleEvent);
+    onEvent("mp_dispatch", handleEvent);
+    const timer = setInterval(function () {
+      if (isEmbeddedFrame()) return;
+      pluginApi("GET", "/mp/pending").then(function (r) {
+        const body = (r && r.body) || r || {};
+        (body.items || []).forEach(dispatchOne);
+      }).catch(function () {});
+    }, 2000);
+    return function () { clearInterval(timer); };
+  }, [dispatchOne]);
+}
 
 function MultiPostGuide() {
   const t = useT();
@@ -2990,15 +3347,16 @@ function MultiPostGuide() {
 
   const loadSnapshot = useCallback(function () {
     pluginApi("GET", "/mp/status").then(function (r) {
-      if (!r) return;
-      if (r.min_version) setMinVersion(r.min_version);
-      if (r.trusted_domain) setTrustedDomain(r.trusted_domain);
+      const body = mpBody(r);
+      if (!body) return;
+      if (body.min_version) setMinVersion(body.min_version);
+      if (body.trusted_domain) setTrustedDomain(body.trusted_domain);
       setStatus({
-        installed: !!r.installed,
-        version: r.version || "",
-        version_ok: !!r.version_ok,
-        trusted_domain_ok: !!r.trusted_domain_ok,
-        updated_at: r.updated_at || null,
+        installed: !!body.installed,
+        version: body.version || "",
+        version_ok: !!body.version_ok,
+        trusted_domain_ok: !!body.trusted_domain_ok,
+        updated_at: body.updated_at || null,
       });
     }).catch(function () {});
   }, []);
@@ -3008,67 +3366,52 @@ function MultiPostGuide() {
   const runProbe = useCallback(function () {
     if (probing) return;
     setProbing(true);
-    const reqId = "mp-probe-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
     const host = (typeof window !== "undefined" && window.location && window.location.hostname) || "";
     const currentDomain = trustedDomain || host;
-    let settled = false;
-
-    function handler(e) {
-      const d = e && e.data;
-      if (!d || typeof d !== "object") return;
-      if (d.action !== "MULTIPOST_EXTENSION_SERVICE_STATUS_RESPONSE" && d.type !== "MULTIPOST_EXTENSION_SERVICE_STATUS_RESPONSE") return;
-      if (d.request_id && d.request_id !== reqId) return;
-      if (settled) return;
-      settled = true;
-      window.removeEventListener("message", handler);
-      const version = (d.version || (d.data && d.data.version) || "").toString();
-      const parts = version.split(".").map(function (x) { return parseInt(x, 10) || 0; });
-      const minParts = (minVersion || "0.0.0").split(".").map(function (x) { return parseInt(x, 10) || 0; });
-      let versionOk = true;
-      for (let i = 0; i < 3; i++) {
-        const a = parts[i] || 0, b = minParts[i] || 0;
-        if (a > b) break;
-        if (a < b) { versionOk = false; break; }
+    mpRequest("MULTIPOST_EXTENSION_CHECK_SERVICE_STATUS", { origin: currentDomain }, 3000).then(function (res) {
+      const data = res.data || {};
+      const raw = res.raw || {};
+      if (res.ok) {
+        const reportedVersion = String(data.version || raw.version || "").trim();
+        const version = reportedVersion || minVersion;
+        const versionOk = reportedVersion ? mpVersionOk(version, minVersion) : true;
+        reportStatus({ installed: true, version, trusted_domain_ok: true });
+        setStatus({ installed: true, version, version_ok: versionOk, trusted_domain_ok: true, error: "" });
+      } else if (res.code === 403) {
+        reportStatus({ installed: true, version: minVersion, trusted_domain_ok: false });
+        setStatus({ installed: true, version: minVersion, version_ok: true, trusted_domain_ok: false, error: res.message || "Untrusted origin" });
+      } else {
+        reportStatus({ installed: false, version: "", trusted_domain_ok: false });
+        setStatus({ installed: false, version: "", version_ok: false, trusted_domain_ok: false, error: res.message || String(res.code || "timeout") });
       }
-      const trustedOk = d.trusted === true || d.trusted_domain_ok === true || (d.data && d.data.trusted === true);
-      reportStatus({ installed: true, version, trusted_domain_ok: !!trustedOk });
-      setStatus({ installed: true, version, version_ok: versionOk, trusted_domain_ok: !!trustedOk });
       setProbing(false);
-    }
-    window.addEventListener("message", handler);
-
-    try {
-      const targets = [window.top, window.parent, window];
-      const seen = new Set();
-      targets.forEach(function (w) {
-        if (!w || seen.has(w)) return;
-        seen.add(w);
-        try {
-          w.postMessage({
-            action: "MULTIPOST_EXTENSION_CHECK_SERVICE_STATUS",
-            type: "MULTIPOST_EXTENSION_CHECK_SERVICE_STATUS",
-            request_id: reqId,
-            origin: currentDomain,
-          }, "*");
-        } catch (err) {}
-      });
-    } catch (err) {}
-
-    setTimeout(function () {
-      if (settled) return;
-      settled = true;
-      window.removeEventListener("message", handler);
-      reportStatus({ installed: false, version: "", trusted_domain_ok: false });
-      setStatus({ installed: false, version: "", version_ok: false, trusted_domain_ok: false });
-      setProbing(false);
-    }, 3000);
+    });
   }, [probing, minVersion, trustedDomain]);
 
   function reportStatus(payload) {
     pluginApi("POST", "/mp/status", payload).catch(function () {});
   }
 
+  function requestTrustDomain() {
+    if (probing) return;
+    setProbing(true);
+    const host = (typeof window !== "undefined" && window.location && window.location.hostname) || "";
+    const currentDomain = trustedDomain || host;
+    mpRequest("MULTIPOST_EXTENSION_REQUEST_TRUST_DOMAIN", { origin: currentDomain }, 30000).then(function (res) {
+      if (res.ok && res.data && res.data.trusted) {
+        setProbing(false);
+        runProbe();
+        return;
+      }
+      setProbing(false);
+    });
+  }
+
   const displayDomain = trustedDomain || (typeof window !== "undefined" && window.location ? window.location.hostname : "");
+  const isFramed = typeof window !== "undefined" && window.top !== window;
+  const directProbeUrl = _detectApiBase() + "/api/plugins/" + ((_ctx && _ctx.pluginId) || PLUGIN_ID_DEFAULT) + "/ui/?_mp_top=1";
+  const chromeTrustUrl = mpTrustPageUrl(MP_CHROME_EXTENSION_ID, displayDomain);
+  const edgeTrustUrl = mpTrustPageUrl(MP_EDGE_EXTENSION_ID, displayDomain);
   const notInstalled = status && status.installed === false;
   const outdated = status && status.installed && !status.version_ok;
   const trustFailed = status && status.installed && status.version_ok && !status.trusted_domain_ok;
@@ -3104,6 +3447,11 @@ function MultiPostGuide() {
                 : <span className="badge badge-cancelled">{t("omniPost.mp.status.trust.fail").replace("{domain}", displayDomain)}</span>
             )}
           </div>
+          {status.error && (
+            <p className="cal-sub" style={{ margin: "8px 0 0 0" }}>
+              {t("omniPost.mp.status.detail").replace("{detail}", status.error)}
+            </p>
+          )}
         </div>
       )}
 
@@ -3111,7 +3459,14 @@ function MultiPostGuide() {
         <div className="lib-card" style={{ marginBottom: 10 }}>
           <h4 style={{ margin: "0 0 6px 0" }}>{t("omniPost.mp.install.title")}</h4>
           <p className="cal-sub" style={{ margin: 0 }}>{t("omniPost.mp.install.desc").replace("{min}", minVersion)}</p>
-          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <p className="cal-sub" style={{ margin: "6px 0 0 0" }}>{t("omniPost.mp.install.desktopHint")}</p>
+          {isFramed && (
+            <p className="cal-sub" style={{ margin: "6px 0 0 0" }}>{t("omniPost.mp.install.iframeHint")}</p>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <a className="btn btn-sm" href={directProbeUrl} target="_blank" rel="noreferrer noopener">
+              {t("omniPost.mp.install.openDirect")}
+            </a>
             <a className="btn btn-sm btn-primary" href={MP_STORE_URL} target="_blank" rel="noreferrer noopener">
               {t("omniPost.mp.install.cws")}
             </a>
@@ -3126,6 +3481,24 @@ function MultiPostGuide() {
         <div className="lib-card">
           <h4 style={{ margin: "0 0 6px 0" }}>{t("omniPost.mp.trust.title")}</h4>
           <p className="cal-sub" style={{ margin: 0 }}>{t("omniPost.mp.trust.desc").replace("{domain}", displayDomain)}</p>
+          <p className="cal-sub" style={{ margin: "6px 0 0 0" }}>{t("omniPost.mp.trust.manual").replace("{domain}", displayDomain)}</p>
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <button className="btn btn-sm btn-primary" disabled={probing} onClick={requestTrustDomain}>
+              {probing ? t("omniPost.mp.status.detecting") : t("omniPost.mp.trust.request")}
+            </button>
+            <button className="btn btn-sm" disabled={probing} onClick={runProbe}>
+              {t("omniPost.mp.probe")}
+            </button>
+            <a className="btn btn-sm" href={directProbeUrl} target="_blank" rel="noreferrer noopener">
+              {t("omniPost.mp.install.openDirect")}
+            </a>
+            <a className="btn btn-sm" href={chromeTrustUrl} target="_blank" rel="noreferrer noopener">
+              {t("omniPost.mp.trust.openChrome")}
+            </a>
+            <a className="btn btn-sm" href={edgeTrustUrl} target="_blank" rel="noreferrer noopener">
+              {t("omniPost.mp.trust.openEdge")}
+            </a>
+          </div>
         </div>
       )}
     </div>
@@ -3439,6 +3812,12 @@ function StubTab({ titleKey, descKey }) {
 /* ─── Root app ─────────────────────────────────────────────────────── */
 function App() {
   const [tab, setTab] = useState("publish");
+  useMultiPostDispatcher();
+  useEffect(function () {
+    function focusPublish() { setTab("publish"); }
+    window.addEventListener("omni-post:use-template", focusPublish);
+    return function () { window.removeEventListener("omni-post:use-template", focusPublish); };
+  }, []);
   let pane;
   switch (tab) {
     case "publish":  pane = <PublishTab />; break;

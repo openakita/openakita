@@ -23,7 +23,9 @@ class _FakeMemory:
     def __init__(self) -> None:
         self.writes: list[Any] = []
 
-    def add_memory(self, memory: Any, scope: str = "global", scope_owner: str = "") -> str:
+    def add_memory(
+        self, memory: Any, scope: str = "global", scope_owner: str = ""
+    ) -> str:
         self.writes.append(memory)
         return f"mem-{len(self.writes)}"
 

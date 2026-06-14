@@ -75,7 +75,9 @@ async def test_calendar_filters_by_platform(tm: OmniPostTaskManager) -> None:
 
 @pytest.mark.asyncio()
 async def test_reschedule_pending_task(tm: OmniPostTaskManager) -> None:
-    tid = await _mk_scheduled(tm, trace="r", scheduled_at="2026-05-01T08:00:00+00:00")
+    tid = await _mk_scheduled(
+        tm, trace="r", scheduled_at="2026-05-01T08:00:00+00:00"
+    )
     ok = await tm.reschedule_task(
         task_id=tid,
         new_scheduled_at="2026-05-02T10:00:00+00:00",
@@ -87,7 +89,9 @@ async def test_reschedule_pending_task(tm: OmniPostTaskManager) -> None:
 
 @pytest.mark.asyncio()
 async def test_reschedule_refuses_running_task(tm: OmniPostTaskManager) -> None:
-    tid = await _mk_scheduled(tm, trace="run", scheduled_at="2026-05-01T08:00:00+00:00")
+    tid = await _mk_scheduled(
+        tm, trace="run", scheduled_at="2026-05-01T08:00:00+00:00"
+    )
     await tm.update_task_safe(tid, {"status": "running"})
     ok = await tm.reschedule_task(
         task_id=tid,

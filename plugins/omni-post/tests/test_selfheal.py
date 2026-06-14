@@ -43,7 +43,9 @@ class FakeTM:
             "last_error": last_error,
             "last_alerted_at": self.rows.get(platform, {}).get("last_alerted_at"),
         }
-        self.records.append({"platform": platform, "hit": hit_rate, "failed": failed_probes})
+        self.records.append(
+            {"platform": platform, "hit": hit_rate, "failed": failed_probes}
+        )
 
     async def mark_selector_alerted(self, platform: str) -> None:
         row = self.rows.setdefault(platform, {"platform": platform})

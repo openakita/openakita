@@ -66,13 +66,13 @@ def test_build_mp_payload_contains_no_cookie_fields() -> None:
         asset_info={"kind": "image", "storage_path": "/tmp/x.png", "filename": "x.png"},
         settings={"auto_submit": False},
     )
-    assert payload["action"] == "MULTIPOST_EXTENSION_REQUEST_PUBLISH"
+    assert payload["action"] == "MULTIPOST_EXTENSION_PUBLISH"
     assert payload["contract_version"] == DEFAULT_MIN_VERSION
-    assert payload["data"]["platform"] == "xiaohongshu"  # remapped
-    assert payload["data"]["task_id"] == "tk-1"
-    assert payload["data"]["client_trace_id"] == "trace-1"
-    assert payload["data"]["asset"]["path"] == "/tmp/x.png"
-    assert payload["data"]["auto_submit"] is False
+    assert payload["data"]["platforms"][0]["name"] == "DYNAMIC_REDNOTE"  # remapped
+    assert payload["data"]["origin"]["task_id"] == "tk-1"
+    assert payload["data"]["origin"]["client_trace_id"] == "trace-1"
+    assert payload["data"]["data"]["images"][0]["url"] == ""
+    assert payload["data"]["isAutoPublish"] is False
     flat = repr(payload).lower()
     for banned in ("cookie", "bearer", "authorization", "set-cookie"):
         assert banned not in flat
@@ -89,8 +89,53 @@ def test_build_mp_payload_passthrough_for_unmapped_platform() -> None:
         },
         asset_info=None,
     )
-    assert payload["data"]["platform"] == "some_future_thing"
-    assert "asset" not in payload["data"]
+    assert payload["data"]["platforms"][0]["name"] == "some_future_thing"
+    assert payload["data"]["data"]["images"] == []
+
+
+def test_build_mp_payload_uses_typed_wechat_platforms() -> None:
+    article_payload = build_mp_payload(
+        task={
+            "id": "tk-wechat",
+            "platform": "wechat_mp",
+            "payload": {"title": "t", "content": "body"},
+        },
+        asset_info={"kind": "article", "filename": "cover.png"},
+    )
+    assert article_payload["data"]["platforms"][0]["name"] == "ARTICLE_WEIXIN"
+    assert "htmlContent" in article_payload["data"]["data"]
+    assert "markdownContent" in article_payload["data"]["data"]
+
+    video_payload = build_mp_payload(
+        task={
+            "id": "tk-channel",
+            "platform": "wechat_channels",
+            "payload": {"title": "t", "content": "body"},
+        },
+        asset_info={"kind": "video", "filename": "v.mp4"},
+    )
+    assert video_payload["data"]["platforms"][0]["name"] == "VIDEO_WEIXINCHANNEL"
+
+
+def test_build_mp_payload_batches_multiple_platforms() -> None:
+    payload = build_mp_payload(
+        task={
+            "id": "tk-batch",
+            "platform": "bilibili",
+            "payload": {
+                "title": "t",
+                "content": "body",
+                "_mp_platforms": ["bilibili", "weibo", "wechat_mp"],
+            },
+        },
+        asset_info={"kind": "article", "filename": "cover.png"},
+    )
+    assert [p["name"] for p in payload["data"]["platforms"]] == [
+        "ARTICLE_BILIBILI",
+        "ARTICLE_WEIBO",
+        "ARTICLE_WEIXIN",
+    ]
+    assert payload["data"]["origin"]["platforms"] == ["bilibili", "weibo", "wechat_mp"]
 
 
 # ---------------------------------------------------------------------------
@@ -181,11 +226,26 @@ async def test_dispatch_timeout_returns_typed_error(engine: MultiPostCompatEngin
 
 
 @pytest.mark.asyncio
-async def test_dispatch_refuses_when_extension_unavailable() -> None:
+async def test_dispatch_allows_explicit_mp_without_cached_probe() -> None:
     eng = MultiPostCompatEngine(settings={})
+    async def _ack_soon() -> None:
+        await asyncio.sleep(0.05)
+        assert await eng.ack(task_id="tk-u", success=True)
+
+    asyncio.create_task(_ack_soon())
     # Never record_status → extension counts as missing.
     out = await eng.dispatch(
         task={"id": "tk-u", "platform": "douyin", "payload": {}},
+        asset_info=None,
+    )
+    assert out.success is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_can_require_cached_probe_for_auto_gate() -> None:
+    eng = MultiPostCompatEngine(settings={"mp_require_cached_status": True})
+    out = await eng.dispatch(
+        task={"id": "tk-gated", "platform": "douyin", "payload": {}},
         asset_info=None,
     )
     assert out.success is False

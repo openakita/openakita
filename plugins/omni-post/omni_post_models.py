@@ -434,7 +434,7 @@ class PublishRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    asset_id: str
+    asset_id: str | None = None
     payload: PublishPayload
     platforms: list[str]
     account_ids: list[str]
@@ -464,7 +464,7 @@ class MatrixPublishRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    asset_id: str
+    asset_id: str | None = None
     payload: PublishPayload
     platforms: list[str] = Field(min_length=1, max_length=16)
     account_ids: list[str] = Field(min_length=1, max_length=64)

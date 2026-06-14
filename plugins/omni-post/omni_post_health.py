@@ -69,7 +69,9 @@ def build_playwright_probe(
             logger.warning("health probe: no bundle for %s", platform_id)
             return "unknown"
 
-        action = bundle.get("actions", {}).get("probe") or bundle.get("actions", {}).get("precheck")
+        action = bundle.get("actions", {}).get("probe") or bundle.get("actions", {}).get(
+            "precheck"
+        )
         if not action or not action.get("url"):
             logger.warning("health probe: %s has no probe/precheck action", platform_id)
             return "unknown"
@@ -96,7 +98,9 @@ def build_playwright_probe(
         try:
             page = await context.new_page()
             try:
-                await page.goto(action["url"], wait_until="domcontentloaded", timeout=timeout_ms)
+                await page.goto(
+                    action["url"], wait_until="domcontentloaded", timeout=timeout_ms
+                )
             except Exception as e:  # noqa: BLE001
                 logger.debug("health probe goto %s failed: %s", action["url"], e)
                 return "cookie_expired"

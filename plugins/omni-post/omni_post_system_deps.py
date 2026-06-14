@@ -50,10 +50,7 @@ def _read_registry_path_windows() -> str:
         return ""
     parts: list[str] = []
     for root, sub in (
-        (
-            winreg.HKEY_LOCAL_MACHINE,
-            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
-        ),
+        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
         (winreg.HKEY_CURRENT_USER, r"Environment"),
     ):
         try:
