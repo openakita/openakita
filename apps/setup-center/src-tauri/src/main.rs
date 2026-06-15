@@ -133,6 +133,16 @@ const PIP_INSTALL_DEFAULT_ID: &str = "default";
 const PIP_INSTALL_KEEPALIVE_SECS: u64 = 30;
 const PIP_INSTALL_TOTAL_TIMEOUT_SECS: u64 = 2 * 60 * 60;
 const PIP_INSTALL_READER_DRAIN_GRACE_MS: u64 = 2_000;
+const PIP_NETWORK_OPTIONS: &[&str] = &[
+    "--disable-pip-version-check",
+    "--prefer-binary",
+    "--timeout",
+    "120",
+    "--retries",
+    "8",
+    "--progress-bar",
+    "off",
+];
 const PIP_INSTALL_RUNNING_STALE_MS: u64 = 20 * 60 * 1_000;
 
 #[derive(Default)]
@@ -8885,17 +8895,8 @@ async fn pip_install(
             "pip",
             "setuptools",
             "wheel",
-            "--disable-pip-version-check",
-            "--prefer-binary",
-            "--timeout",
-            "120",
-            "--retries",
-            "8",
-            "--resume-retries",
-            "8",
-            "--progress-bar",
-            "off",
         ]);
+        up.args(PIP_NETWORK_OPTIONS);
         up.args(["-i", effective_index]);
         if !effective_host.is_empty() {
             up.args(["--trusted-host", effective_host]);
@@ -8923,17 +8924,8 @@ async fn pip_install(
             "install",
             "-U",
             &package_spec,
-            "--disable-pip-version-check",
-            "--prefer-binary",
-            "--timeout",
-            "120",
-            "--retries",
-            "8",
-            "--resume-retries",
-            "8",
-            "--progress-bar",
-            "off",
         ]);
+        c.args(PIP_NETWORK_OPTIONS);
         c.args(["-i", effective_index]);
         if !effective_host.is_empty() {
             c.args(["--trusted-host", effective_host]);
@@ -11578,6 +11570,17 @@ mod tests {
             .expect("pip --version should run after ensure_pip_available");
         assert!(status.success());
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_pip_network_options_use_stable_pip_flags() {
+        assert!(PIP_NETWORK_OPTIONS.contains(&"--timeout"));
+        assert!(PIP_NETWORK_OPTIONS.contains(&"--retries"));
+        assert!(PIP_NETWORK_OPTIONS.contains(&"--progress-bar"));
+        assert!(
+            !PIP_NETWORK_OPTIONS.contains(&"--resume-retries"),
+            "pip install bootstrap must not use unsupported pip options"
+        );
     }
 
     #[test]
