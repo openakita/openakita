@@ -1201,10 +1201,10 @@ async def write_skills_config(body: SkillsWriteRequest, request: Request):
     if isinstance(al, list):
         set_skill_external_allowlist([str(x).strip() for x in al if str(x).strip()])
     else:
-        from openakita.utils.atomic_io import safe_json_write
+        from openakita.utils.atomic_io import atomic_json_write
 
         sk_path = _project_root() / "data" / "skills.json"
-        safe_json_write(sk_path, content)
+        atomic_json_write(sk_path, content)
         logger.warning(
             "[Config API] skills.json written via non-standard payload — "
             "consider using set_skill_external_allowlist or allowlist_io APIs"
@@ -1247,10 +1247,10 @@ async def read_disabled_views():
 @router.post("/api/config/disabled-views")
 async def write_disabled_views(body: DisabledViewsRequest):
     """Update the list of disabled module views."""
-    from openakita.utils.atomic_io import safe_json_write
+    from openakita.utils.atomic_io import atomic_json_write
 
     dv_path = _project_root() / "data" / "disabled_views.json"
-    safe_json_write(dv_path, {"disabled_views": body.views})
+    atomic_json_write(dv_path, {"disabled_views": body.views})
     logger.info(f"[Config API] Updated disabled_views: {body.views}")
     return {"status": "ok", "disabled_views": body.views}
 

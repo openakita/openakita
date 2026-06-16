@@ -2,7 +2,7 @@
 Todo 状态 JSON 持久化层
 
 原子写 + 防抖，复用项目已有的 atomic_io 工具：
-safe_json_write (.tmp → .bak → replace) / read_json_safe (.bak 回退)
+atomic_json_write (.tmp → .bak → replace) / read_json_safe (.bak 回退)
 
 仅持久化 status == "in_progress" 的 plan，已完成/取消的自动清理。
 """
@@ -13,7 +13,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from ...utils.atomic_io import read_json_safe, safe_json_write
+from ...utils.atomic_io import atomic_json_write, read_json_safe
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class TodoStore:
             "todos": {k: v for k, v in self._data.items() if v.get("status") == "in_progress"},
         }
         try:
-            safe_json_write(self._path, payload)
+            atomic_json_write(self._path, payload)
             self._dirty = False
             return True
         except Exception as e:

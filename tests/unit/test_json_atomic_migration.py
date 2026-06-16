@@ -1,4 +1,4 @@
-"""Stage 2 regression tests: every JSON writer migrated to safe_json_write.
+"""Stage 2 regression tests: every JSON writer migrated to atomic_json_write.
 
 For each migrated writer we verify two invariants:
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from openakita.utils.atomic_io import read_json_safe, safe_json_write
+from openakita.utils.atomic_io import atomic_json_write, read_json_safe
 
 
 def _corrupt(path: Path) -> None:
@@ -33,10 +33,10 @@ def _corrupt(path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_safe_json_write_creates_bak_on_overwrite(tmp_path):
+def test_atomic_json_write_creates_bak_on_overwrite(tmp_path):
     path = tmp_path / "config.json"
-    safe_json_write(path, {"v": 1})
-    safe_json_write(path, {"v": 2})
+    atomic_json_write(path, {"v": 1})
+    atomic_json_write(path, {"v": 2})
 
     bak = path.with_suffix(path.suffix + ".bak")
     assert bak.exists(), "second write should leave a .bak backup of v1"
@@ -44,10 +44,32 @@ def test_safe_json_write_creates_bak_on_overwrite(tmp_path):
     assert json.loads(path.read_text(encoding="utf-8"))["v"] == 2
 
 
+def test_atomic_json_write_can_fail_without_direct_overwrite(tmp_path, monkeypatch):
+    path = tmp_path / "state.json"
+    atomic_json_write(path, {"v": 1})
+
+    path_type = type(path)
+
+    def locked_replace(self, target):
+        if self.name == "state.json.tmp":
+            raise PermissionError("locked by another process")
+        return original_replace(self, target)
+
+    original_replace = path_type.replace
+    monkeypatch.setattr(path_type, "replace", locked_replace)
+    monkeypatch.setattr("openakita.utils.atomic_io.time.sleep", lambda _seconds: None)
+
+    with pytest.raises(PermissionError):
+        atomic_json_write(path, {"v": 2}, allow_fallback=False)
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"v": 1}
+    assert not path.with_suffix(path.suffix + ".tmp").exists()
+
+
 def test_read_json_safe_falls_back_to_bak(tmp_path):
     path = tmp_path / "data.json"
-    safe_json_write(path, {"good": True})
-    safe_json_write(path, {"good": True, "more": 2})
+    atomic_json_write(path, {"good": True})
+    atomic_json_write(path, {"good": True, "more": 2})
     _corrupt(path)
 
     data = read_json_safe(path)
@@ -59,8 +81,8 @@ def test_read_json_safe_falls_back_to_bak(tmp_path):
 
 def test_read_json_safe_returns_none_when_both_corrupt(tmp_path):
     path = tmp_path / "lost.json"
-    safe_json_write(path, {"good": True})
-    safe_json_write(path, {"good": True, "v": 2})
+    atomic_json_write(path, {"good": True})
+    atomic_json_write(path, {"good": True, "v": 2})
     _corrupt(path)
     bak = path.with_suffix(path.suffix + ".bak")
     _corrupt(bak)
@@ -72,19 +94,19 @@ def test_read_json_safe_returns_none_when_both_corrupt(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_orchestrator_persist_uses_safe_json_write(tmp_path, monkeypatch):
-    """``Orchestrator._persist_sub_states`` writes via safe_json_write."""
+def test_orchestrator_persist_uses_atomic_json_write(tmp_path, monkeypatch):
+    """``Orchestrator._persist_sub_states`` writes via atomic_json_write."""
     calls = {}
 
     from openakita.utils import atomic_io as _io
 
-    real = _io.safe_json_write
+    real = _io.atomic_json_write
 
     def spy(path, data, **kw):
         calls["path"] = Path(path)
         return real(path, data, **kw)
 
-    monkeypatch.setattr("openakita.agents.orchestrator.safe_json_write", spy, raising=False)
+    monkeypatch.setattr("openakita.agents.orchestrator.atomic_json_write", spy, raising=False)
 
     # We can't run the full orchestrator; instead exercise the imported
     # symbol path. The import statement inside the method ensures any
@@ -129,7 +151,7 @@ def test_migrated_module_exports_target_functions(module_path, functions):
         assert f"def {fn}(" in src, f"{module_path} missing function {fn} after refactor"
 
 
-def test_device_id_persists_via_safe_json_write(tmp_path):
+def test_device_id_persists_via_atomic_json_write(tmp_path):
     from openakita.hub.device import get_or_create_device_id
 
     did = get_or_create_device_id(tmp_path)
@@ -159,7 +181,7 @@ def test_device_id_recovers_from_corruption(tmp_path):
     get_or_create_device_id(tmp_path)  # idempotent
 
     # Now write something else so we get a .bak
-    safe_json_write(p, {"device_id": "ffffeeee00001111"})
+    atomic_json_write(p, {"device_id": "ffffeeee00001111"})
     assert bak.exists()
 
     # Corrupt the primary; reader should still get a valid id back.

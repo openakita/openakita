@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ..utils.atomic_io import safe_json_write
+from ..utils.atomic_io import atomic_json_write
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class ConsolidationTracker:
 
     def _save(self) -> None:
         try:
-            safe_json_write(self.tracker_file, self._state)
+            atomic_json_write(self.tracker_file, self._state)
         except Exception as e:
             logger.error(f"Failed to save consolidation tracker: {e}")
 

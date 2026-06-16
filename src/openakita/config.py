@@ -1294,14 +1294,14 @@ class RuntimeState:
 
     def save(self) -> None:
         """把当前 settings 中的可持久化字段写入 JSON 文件（原子写入 + 备份）。"""
-        from .utils.atomic_io import safe_json_write
+        from .utils.atomic_io import atomic_json_write
         from .utils.redaction import redact_value
 
         data: dict = {}
         for key in _PERSISTABLE_KEYS:
             data[key] = getattr(settings, key)
         try:
-            safe_json_write(self.state_file, data)
+            atomic_json_write(self.state_file, data)
             logger.info(f"[RuntimeState] Saved: {redact_value(data)}")
         except Exception as e:
             logger.error(f"[RuntimeState] Failed to save: {e}")

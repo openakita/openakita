@@ -133,10 +133,10 @@ def read_backup_settings(workspace_path: Path) -> dict[str, Any]:
 
 def write_backup_settings(workspace_path: Path, settings: dict[str, Any]) -> None:
     """Persist backup settings to data/backup_settings.json."""
-    from openakita.utils.atomic_io import safe_json_write
+    from openakita.utils.atomic_io import atomic_json_write
 
     settings_path = workspace_path / "data" / BACKUP_SETTINGS_FILE
-    safe_json_write(settings_path, settings)
+    atomic_json_write(settings_path, settings)
 
 
 # ── Backup creation ─────────────────────────────────────────────────

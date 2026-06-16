@@ -1183,14 +1183,14 @@ class AgentOrchestrator:
     def _persist_sub_states(self) -> None:
         """Write _sub_agent_states to disk so they survive restarts.
 
-        Uses ``safe_json_write`` for atomic temp+rename + ``.bak`` backup
+        Uses ``atomic_json_write`` for atomic temp+rename + ``.bak`` backup
         so kill -9 mid-write can't leave a half-written JSON that would
         crash next boot.
         """
         if self._log_dir is None:
             return
         try:
-            from openakita.utils.atomic_io import safe_json_write
+            from openakita.utils.atomic_io import atomic_json_write
 
             path = self._log_dir.parent / "sub_agent_states.json"
             snapshot = {}
@@ -1200,7 +1200,7 @@ class AgentOrchestrator:
                     for k, v in state.items()
                     if isinstance(v, (str, int, float, bool, list, dict, type(None)))
                 }
-            safe_json_write(path, snapshot)
+            atomic_json_write(path, snapshot)
         except Exception:
             logger.debug("[Orchestrator] Failed to persist sub-agent states", exc_info=True)
 

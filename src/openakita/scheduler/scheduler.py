@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from ..utils.atomic_io import safe_json_write, safe_write
+from ..utils.atomic_io import atomic_json_write, safe_write
 from ._naming import quarantine_invalid_task_name, validate_task_name
 from .locks import (
     HEARTBEAT_INTERVAL_SECONDS,
@@ -1230,7 +1230,7 @@ class TaskScheduler:
                 for task in self._tasks.values()
                 if task.durability != TaskDurability.SESSION
             ]
-            safe_json_write(tasks_file, data, fsync=True)
+            atomic_json_write(tasks_file, data, fsync=True)
 
         except Exception as e:
             logger.error(f"Failed to save tasks: {e}")

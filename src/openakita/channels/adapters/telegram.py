@@ -139,10 +139,10 @@ class TelegramPairingManager:
 
     def _save_paired_users(self) -> None:
         """保存已配对用户"""
-        from openakita.utils.atomic_io import safe_json_write
+        from openakita.utils.atomic_io import atomic_json_write
 
         try:
-            safe_json_write(self.paired_file, self.paired_users)
+            atomic_json_write(self.paired_file, self.paired_users)
         except Exception as e:
             logger.error(f"Failed to save paired users: {e}")
 

@@ -384,13 +384,13 @@ class UserManager:
 
     def _save_users(self) -> None:
         """保存用户数据"""
-        from openakita.utils.atomic_io import safe_json_write
+        from openakita.utils.atomic_io import atomic_json_write
 
         users_file = self.storage_path / "users.json"
 
         try:
             data = [user.to_dict() for user in self._users.values()]
-            safe_json_write(users_file, data)
+            atomic_json_write(users_file, data)
             logger.debug(f"Saved {len(data)} users to storage")
 
         except Exception as e:

@@ -455,9 +455,9 @@ class UserProfileManager:
     def _save_state(self) -> None:
         """保存状态"""
         try:
-            from openakita.utils.atomic_io import safe_json_write
+            from openakita.utils.atomic_io import atomic_json_write
 
-            safe_json_write(self.state_file, self.state.to_dict())
+            atomic_json_write(self.state_file, self.state.to_dict())
         except Exception as e:
             logger.error(f"Failed to save profile state: {e}")
 

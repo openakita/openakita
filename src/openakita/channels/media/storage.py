@@ -257,9 +257,9 @@ class MediaStorage:
 
     def _save_index(self) -> None:
         """保存索引"""
-        from openakita.utils.atomic_io import safe_json_write
+        from openakita.utils.atomic_io import atomic_json_write
 
         try:
-            safe_json_write(self.index_file, self._index)
+            atomic_json_write(self.index_file, self._index)
         except Exception as e:
             logger.error(f"Failed to save media index: {e}")

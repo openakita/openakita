@@ -2705,7 +2705,7 @@ class LLMClient:
         if not self._config_path:
             return
 
-        from ..utils.atomic_io import read_json_safe, safe_json_write
+        from ..utils.atomic_io import atomic_json_write, read_json_safe
 
         config_data = read_json_safe(self._config_path)
         if config_data is None:
@@ -2721,7 +2721,7 @@ class LLMClient:
 
         ep_list.sort(key=lambda e: (int(e.get("priority", 999)), e.get("name", "")))
         config_data["endpoints"] = ep_list
-        safe_json_write(self._config_path, config_data)
+        atomic_json_write(self._config_path, config_data)
 
     async def close(self):
         """关闭所有 Provider"""

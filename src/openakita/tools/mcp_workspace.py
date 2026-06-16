@@ -145,10 +145,10 @@ async def add_server_to_workspace(
     if headers:
         metadata["headers"] = headers
 
-    from openakita.utils.atomic_io import safe_json_write
+    from openakita.utils.atomic_io import atomic_json_write
 
     metadata_file = server_dir / "SERVER_METADATA.json"
-    safe_json_write(metadata_file, metadata)
+    atomic_json_write(metadata_file, metadata)
 
     if instructions:
         (server_dir / "INSTRUCTIONS.md").write_text(instructions, encoding="utf-8")

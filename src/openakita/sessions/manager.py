@@ -195,7 +195,8 @@ class SessionManager:
         assistant 回复完成后调用。调用方无需关心 mark_dirty + flush 细节。
         """
         self._dirty = False
-        self._save_sessions()
+        if not self._save_sessions():
+            self._dirty = True
 
     def _dispatch_hook_fire_and_forget(self, hook_name: str, **kwargs) -> None:
         """Dispatch a plugin hook from sync context (best-effort, non-blocking)."""
@@ -227,7 +228,8 @@ class SessionManager:
         """
         if self._dirty:
             self._dirty = False
-            self._save_sessions()
+            if not self._save_sessions():
+                self._dirty = True
 
     def set_turn_loader(self, loader) -> None:
         """设置 turn_loader 回调（延迟绑定，Agent 初始化完成后调用）。
@@ -711,9 +713,7 @@ class SessionManager:
             data = self._try_load_sessions_file(temp_file)
             if data is not None:
                 try:
-                    if sessions_file.exists():
-                        sessions_file.unlink()
-                    temp_file.rename(sessions_file)
+                    temp_file.replace(sessions_file)
                     logger.info("Recovered sessions.json from .tmp successfully")
                 except Exception as e:
                     logger.warning(f"Failed to promote .tmp to sessions.json: {e}")
@@ -1000,39 +1000,19 @@ class SessionManager:
         返回 True 表示保存成功，False 表示失败（调用方应重试）。
         """
         sessions_file = self.storage_path / "sessions.json"
-        temp_file = self.storage_path / "sessions.json.tmp"
-        backup_file = self.storage_path / "sessions.json.bak"
-
         try:
             data = [session.to_dict() for session in self._sessions.values()]
-
-            # 1. 先写入临时文件
-            with open(temp_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            # 2. 验证临时文件可以正确解析
-            with open(temp_file, encoding="utf-8") as f:
-                json.load(f)  # 验证 JSON 格式正确
-
-            # 3. 备份旧文件（如果存在）
-            if sessions_file.exists():
-                try:
-                    sessions_file.replace(backup_file)
-                except Exception as e:
-                    logger.warning(f"Failed to backup sessions file: {e}")
-
-            # 4. 原子重命名临时文件为正式文件 (replace works on Windows too)
-            temp_file.replace(sessions_file)
-
-            logger.debug(f"Saved {len(data)} sessions to storage (atomic)")
+            atomic_json_write(
+                sessions_file,
+                data,
+                fsync=True,
+                allow_fallback=False,
+            )
+            logger.debug(f"Saved {len(data)} sessions to storage (atomic fsync)")
             return True
 
         except Exception as e:
             logger.error(f"Failed to save sessions: {e}", exc_info=True)
-            # 清理临时文件
-            if temp_file.exists():
-                with contextlib.suppress(Exception):
-                    temp_file.unlink()
             return False
 
     async def _save_sessions_async(self) -> None:
