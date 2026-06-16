@@ -539,3 +539,17 @@ class TestAllReasoningTransitionsGuarded:
             "without a `try:` guard within 5 lines. Issue #572 was caused "
             f"by exactly this oversight. Offending lines: {bare}"
         )
+
+
+class TestContentSafetyMinimalPromptIdentity:
+    def test_run_impl_accepts_agent_voice_for_content_safety_prompt(self) -> None:
+        src = inspect.getsource(ReasoningEngine._run_impl)
+        assert 'agent_voice: str = ""' in src
+        assert '_content_safety_identity = _content_safety_name or "一个 AI 助手"' in src
+        assert "你是 {_content_safety_identity}" in src
+
+    def test_reason_stream_accepts_agent_voice_for_content_safety_prompt(self) -> None:
+        src = inspect.getsource(ReasoningEngine._reason_stream_impl)
+        assert 'agent_voice: str = ""' in src
+        assert '_content_safety_identity = _content_safety_name or "一个 AI 助手"' in src
+        assert "你是 {_content_safety_identity}" in src

@@ -58,6 +58,59 @@ class TestIdentityLoading:
         assert isinstance(prompt, str)
         assert len(prompt) > 0
 
+    def test_get_system_prompt_does_not_inject_openakita_self_identity(self, tmp_path):
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "SOUL.md").write_text("# Soul\n\n你是 CloseBeta。", encoding="utf-8")
+        (identity_dir / "AGENT.md").write_text("# Agent\n\n保持诚实。", encoding="utf-8")
+        (identity_dir / "USER.md").write_text("# User\n\n用户偏好中文。", encoding="utf-8")
+        (identity_dir / "MEMORY.md").write_text("# Memory\n\n无。", encoding="utf-8")
+
+        identity = Identity(
+            soul_path=identity_dir / "SOUL.md",
+            agent_path=identity_dir / "AGENT.md",
+            user_path=identity_dir / "USER.md",
+            memory_path=identity_dir / "MEMORY.md",
+        )
+        identity.load()
+
+        prompt = identity.get_system_prompt(include_active_task=False)
+        assert "你是 CloseBeta" in prompt
+        assert "你是 OpenAkita，一个全能自进化AI助手。" not in prompt
+
+    def test_get_system_prompt_replaces_agent_name_placeholder(self, tmp_path):
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "SOUL.md").write_text(
+            "# Soul\n\n我是 {{agent_name}}，由 CloseBeta 项目驱动。",
+            encoding="utf-8",
+        )
+        (identity_dir / "AGENT.md").write_text(
+            "# Agent\n\n{{agent_name}} 保持诚实。",
+            encoding="utf-8",
+        )
+        (identity_dir / "USER.md").write_text(
+            "# User\n\n用户正在和 {{agent_name}} 聊天。",
+            encoding="utf-8",
+        )
+        (identity_dir / "MEMORY.md").write_text(
+            "# Memory\n\n{{agent_name}} 的独立记忆。",
+            encoding="utf-8",
+        )
+
+        identity = Identity(
+            soul_path=identity_dir / "SOUL.md",
+            agent_path=identity_dir / "AGENT.md",
+            user_path=identity_dir / "USER.md",
+            memory_path=identity_dir / "MEMORY.md",
+        )
+        identity.load()
+
+        prompt = identity.get_system_prompt(include_active_task=False, agent_voice="叮叮")
+        assert "我是 叮叮" in prompt
+        assert "叮叮 保持诚实" in prompt
+        assert "{{agent_name}}" not in prompt
+
     def test_get_soul_summary(self, identity_dir):
         identity = Identity(soul_path=identity_dir / "SOUL.md")
         identity.load()
@@ -69,7 +122,6 @@ class TestIdentityUpdate:
     def test_update_memory(self, identity_dir):
         identity = Identity(memory_path=identity_dir / "MEMORY.md")
         identity.load()
-        original = identity.memory
         # update_memory returns bool
         result = identity.update_memory("preferences", "用户喜欢咖啡")
         assert isinstance(result, bool)
@@ -129,7 +181,6 @@ class TestSyncIdentityFileBundledFallback:
         assert "{{agent_name}}" in identity.soul
 
     def test_preserves_user_edits_when_hash_mismatches_via_bundled(self, tmp_path, monkeypatch):
-        original = "# Soul\n\n你是 OpenAkita。\n"
         user_edited = "# Soul\n\n你是 我的自定义角色。\n"
         new_template = "# Soul\n\n你是 {{agent_name}}，一只秋田犬。\n"
 

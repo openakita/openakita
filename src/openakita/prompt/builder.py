@@ -326,8 +326,8 @@ _SAFETY_SECTION = """\
 - 告诉用户你记得他什么（USER.md 的内容）、当前所处的目录结构
 - 说明为什么某个操作做不了（缺哪个工具/技能/凭据）
 
-不需要把内部配置文件原文整段贴出来，但**不要装神秘**——OpenAkita 是开源项目，\
-源码和默认配置在 GitHub 上公开。
+不需要把内部配置文件原文整段贴出来，但**不要装神秘**——运行平台/上游项目 \
+OpenAkita 是开源项目，源码和默认配置在 GitHub 上公开。
 
 ## 解释失败的语气
 当工具调用因配置缺失、凭据不足、模式限制等原因没法执行时：
@@ -571,7 +571,7 @@ def build_system_prompt(
     user_parts: list[str] = []
 
     # 1. Per-model base prompt
-    base_prompt = _select_base_prompt(model_id)
+    base_prompt = _select_base_prompt(model_id, agent_voice=agent_voice)
     if base_prompt:
         system_parts.append(base_prompt)
 
@@ -926,7 +926,7 @@ def _build_persona_section(persona_manager: "PersonaManager") -> str:
         return ""
 
 
-def _select_base_prompt(model_id: str) -> str:
+def _select_base_prompt(model_id: str, agent_voice: str = "") -> str:
     """根据模型 ID 选择 per-model 基础提示词。
 
     查找 prompt/models/ 目录下的 .txt 文件，按模型族匹配。
@@ -957,9 +957,10 @@ def _select_base_prompt(model_id: str) -> str:
         return ""
 
     try:
-        return prompt_file.read_text(encoding="utf-8").strip()
+        text = prompt_file.read_text(encoding="utf-8").strip()
     except Exception:
         return ""
+    return _apply_agent_voice(text, agent_voice)
 
 
 def build_mode_rules(mode: str) -> str:
@@ -1126,6 +1127,7 @@ def _read_with_fallback(path: Path, fallback_key: str) -> str:
 
 _AGENT_VOICE_PLACEHOLDER = "{{agent_name}}"
 _DEFAULT_AGENT_VOICE = "OpenAkita"
+_DEFAULT_BASE_PROMPT_SELF_INTRO = "你是 OpenAkita，一个帮助用户完成各类任务的 AI 助手。"
 
 
 def _resolve_agent_voice(agent_voice: str | None) -> str:
@@ -1141,6 +1143,15 @@ def _resolve_agent_voice(agent_voice: str | None) -> str:
         if stripped:
             return stripped
     return _DEFAULT_AGENT_VOICE
+
+
+def _apply_agent_voice(text: str, agent_voice: str | None) -> str:
+    """Apply the current Agent display name to prompt self-reference text."""
+    resolved = _resolve_agent_voice(agent_voice)
+    return text.replace(_AGENT_VOICE_PLACEHOLDER, resolved).replace(
+        _DEFAULT_BASE_PROMPT_SELF_INTRO,
+        f"你是 {resolved}，一个帮助用户完成各类任务的 AI 助手。",
+    )
 
 
 def _build_identity_section(
@@ -1161,8 +1172,17 @@ def _build_identity_section(
     """
     parts = []
 
-    parts.append("# OpenAkita System")
+    parts.append("# Agent Identity")
     parts.append("")
+
+    resolved_voice = _resolve_agent_voice(agent_voice)
+    if resolved_voice != _DEFAULT_AGENT_VOICE:
+        parts.append(
+            f"当前 Agent 的自称是「{resolved_voice}」。OpenAkita 仅指运行平台或上游"
+            "开源项目，不是当前 Agent 的自称；除非身份文件明确要求，不要把自己"
+            "介绍为 OpenAkita。"
+        )
+        parts.append("")
 
     identity_core = compiled.get("identity_core") or _BUILT_IN_DEFAULTS.get("soul", "")
     if identity_core:
@@ -1201,9 +1221,7 @@ def _build_identity_section(
             pass
 
     text = "\n".join(parts)
-    if _AGENT_VOICE_PLACEHOLDER in text:
-        text = text.replace(_AGENT_VOICE_PLACEHOLDER, _resolve_agent_voice(agent_voice))
-    return text
+    return _apply_agent_voice(text, agent_voice)
 
 
 def _get_current_time(timezone_name: str = "Asia/Shanghai") -> str:

@@ -504,6 +504,7 @@ class AgentFactory:
         isolated_mm = MemoryManager(
             data_dir=memory_dir,
             memory_md_path=memory_md_path,
+            identity_dir=profile_dir / "identity",
             brain=agent.brain,
             embedding_model=settings.embedding_model,
             embedding_device=settings.embedding_device,

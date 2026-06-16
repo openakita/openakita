@@ -184,6 +184,33 @@ class TestBuildSystemPrompt:
         assert "你是 码哥，一个 AI 助手。" in prompt
         assert "你是 OpenAkita，一个 AI 助手。" not in prompt
 
+    def test_agent_voice_replaces_per_model_base_prompt(self, tmp_path):
+        """Per-model 基础提示词不能把自定义 Agent 重新钉死为 OpenAkita。"""
+        from openakita.prompt.builder import PromptMode, PromptProfile, build_system_prompt
+
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "SOUL.md").write_text(
+            "# Soul\n你是 CloseBeta，当前名称是 {{agent_name}}。",
+            encoding="utf-8",
+        )
+        (identity_dir / "AGENT.md").write_text("# Agent\n保持诚实。", encoding="utf-8")
+
+        prompt = build_system_prompt(
+            identity_dir=identity_dir,
+            tools_enabled=False,
+            prompt_mode=PromptMode.MINIMAL,
+            prompt_profile=PromptProfile.CONSUMER_CHAT,
+            model_id="qwen3-max",
+            agent_voice="叮叮",
+        )
+
+        assert "你是 叮叮，一个帮助用户完成各类任务的 AI 助手。" in prompt
+        assert "你是 OpenAkita，一个帮助用户完成各类任务的 AI 助手。" not in prompt
+        assert "# Agent Identity" in prompt
+        assert "# OpenAkita System" not in prompt
+        assert "OpenAkita 仅指运行平台或上游开源项目，不是当前 Agent 的自称" in prompt
+
     def test_agent_voice_whitespace_only_falls_back(self, tmp_path):
         """全空白的 agent_voice 也算作"未提供"，回退到默认产品名。"""
         from openakita.prompt.builder import build_system_prompt

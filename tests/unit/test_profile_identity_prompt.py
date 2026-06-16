@@ -1,7 +1,9 @@
 from pathlib import Path
 
+import openakita.core.identity as identity_mod
+from openakita.agents.identity_resolver import ProfileIdentityResolver
 from openakita.core.agent import Agent
-from openakita.core.identity import Identity
+from openakita.core.identity import Identity, _file_hash, _save_hashes
 
 
 def test_agent_materializes_mixed_profile_identity(monkeypatch, tmp_path: Path):
@@ -34,3 +36,52 @@ def test_agent_materializes_mixed_profile_identity(monkeypatch, tmp_path: Path):
     assert (resolved_dir / "SOUL.md").read_text(encoding="utf-8") == "clawra soul"
     assert (resolved_dir / "AGENT.md").read_text(encoding="utf-8") == "global agent behavior"
     assert (resolved_dir / "USER.md").read_text(encoding="utf-8") == "clawra user"
+
+
+def test_profile_identity_load_does_not_sync_bundled_templates(monkeypatch, tmp_path: Path):
+    global_dir = tmp_path / "identity"
+    profile_dir = tmp_path / "agents" / "a-bot" / "identity"
+    bundled_dir = tmp_path / "bundled"
+    global_dir.mkdir(parents=True)
+    profile_dir.mkdir(parents=True)
+    bundled_dir.mkdir(parents=True)
+
+    profile_soul = profile_dir / "SOUL.md"
+    profile_agent = profile_dir / "AGENT.md"
+    profile_user = profile_dir / "USER.md"
+    profile_soul.write_text("# Soul\n\n你是 CloseBeta。", encoding="utf-8")
+    profile_agent.write_text("# Agent\n\n我是 CloseBeta。", encoding="utf-8")
+    profile_user.write_text("# User\n\n由 CloseBeta 自动维护。", encoding="utf-8")
+
+    _save_hashes(
+        profile_dir,
+        {
+            "SOUL.md": _file_hash(profile_soul),
+            "AGENT.md": _file_hash(profile_agent),
+            "USER.md": _file_hash(profile_user),
+        },
+    )
+
+    bundled_soul = bundled_dir / "SOUL.md.example"
+    bundled_agent = bundled_dir / "AGENT.md.example"
+    bundled_user = bundled_dir / "USER.md.example"
+    bundled_soul.write_text("# Soul\n\n你是 OpenAkita。", encoding="utf-8")
+    bundled_agent.write_text("# Agent\n\n我是 OpenAkita。", encoding="utf-8")
+    bundled_user.write_text("# User\n\n由 OpenAkita 自动维护。", encoding="utf-8")
+
+    def fake_resolver(rel_name: str) -> Path | None:
+        return {
+            "SOUL.md.example": bundled_soul,
+            "AGENT.md.example": bundled_agent,
+            "USER.md.example": bundled_user,
+        }.get(rel_name)
+
+    monkeypatch.setattr(identity_mod, "_resolve_bundled_identity_template", fake_resolver)
+
+    identity = ProfileIdentityResolver(profile_dir, global_dir).build_identity()
+    identity.load()
+
+    assert profile_soul.read_text(encoding="utf-8") == "# Soul\n\n你是 CloseBeta。"
+    assert profile_agent.read_text(encoding="utf-8") == "# Agent\n\n我是 CloseBeta。"
+    assert profile_user.read_text(encoding="utf-8") == "# User\n\n由 CloseBeta 自动维护。"
+    assert identity.get_pending_upgrades() == []

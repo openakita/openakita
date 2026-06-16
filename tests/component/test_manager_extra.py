@@ -155,3 +155,34 @@ class TestEndSession:
 
     def test_end_session_empty(self, manager):
         manager.end_session("empty session")
+
+
+class TestIdentityDirWriteback:
+    def test_memory_manager_defaults_identity_dir_to_memory_md_parent(self, tmp_path, mock_brain):
+        from openakita.memory.manager import MemoryManager
+
+        identity_dir = tmp_path / "agent" / "identity"
+        memory_md = identity_dir / "MEMORY.md"
+
+        manager = MemoryManager(
+            data_dir=tmp_path / "agent" / "memory",
+            memory_md_path=memory_md,
+            brain=mock_brain,
+        )
+
+        assert manager.identity_dir == identity_dir
+
+    def test_memory_manager_accepts_explicit_identity_dir(self, tmp_path, mock_brain):
+        from openakita.memory.manager import MemoryManager
+
+        identity_dir = tmp_path / "profiles" / "a-bot" / "identity"
+        memory_md = tmp_path / "elsewhere" / "MEMORY.md"
+
+        manager = MemoryManager(
+            data_dir=tmp_path / "profiles" / "a-bot" / "memory",
+            memory_md_path=memory_md,
+            identity_dir=identity_dir,
+            brain=mock_brain,
+        )
+
+        assert manager.identity_dir == identity_dir

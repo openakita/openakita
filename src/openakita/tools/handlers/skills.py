@@ -903,6 +903,9 @@ class SkillsHandler:
             endpoint_override = skill.model
 
         try:
+            agent_voice = ""
+            if hasattr(self.agent, "_resolve_agent_voice"):
+                agent_voice = self.agent._resolve_agent_voice()
             result = await self.agent.reasoning_engine.run(
                 fork_messages,
                 tools=tools,
@@ -913,6 +916,7 @@ class SkillsHandler:
                 conversation_id=fork_conv_id,
                 is_sub_agent=True,
                 endpoint_override=endpoint_override,
+                agent_voice=agent_voice,
             )
         except Exception as e:
             logger.error("Fork execution of skill '%s' failed: %s", skill_name, e, exc_info=True)
