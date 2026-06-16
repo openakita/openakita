@@ -702,14 +702,14 @@ async def update_skill_config(request: Request):
     except Exception:
         config_file = Path.cwd() / "data" / "skill_configs.json"
 
-    from openakita.utils.atomic_io import read_json_safe, safe_json_write
+    from openakita.utils.atomic_io import atomic_json_write, read_json_safe
 
     existing = read_json_safe(config_file) or {}
     if not isinstance(existing, dict):
         existing = {}
 
     existing[skill_name] = config_values
-    safe_json_write(config_file, existing)
+    atomic_json_write(config_file, existing)
 
     return {"status": "ok", "skill": skill_name, "config": config_values}
 

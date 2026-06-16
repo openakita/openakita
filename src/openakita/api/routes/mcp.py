@@ -379,14 +379,14 @@ async def toggle_mcp_server(request: Request, server_name: str, body: MCPToggleR
     catalog.invalidate_cache()
 
     if server_info.config_dir:
-        from openakita.utils.atomic_io import read_json_safe, safe_json_write
+        from openakita.utils.atomic_io import atomic_json_write, read_json_safe
 
         metadata_path = Path(server_info.config_dir) / "SERVER_METADATA.json"
         if metadata_path.exists():
             try:
                 metadata = read_json_safe(metadata_path) or {}
                 metadata["enabled"] = body.enabled
-                safe_json_write(metadata_path, metadata)
+                atomic_json_write(metadata_path, metadata)
             except Exception as e:
                 logger.warning("Failed to persist enabled state for %s: %s", server_name, e)
 

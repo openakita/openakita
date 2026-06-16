@@ -205,12 +205,12 @@ class PluginAPI:
     def set_config(self, updates: dict) -> None:
         if not self._check_permission("config.write"):
             return
-        from openakita.utils.atomic_io import safe_json_write
+        from openakita.utils.atomic_io import atomic_json_write
 
         config = self._read_config_file()
         config.update(updates)
         config_path = self._data_dir / "config.json"
-        safe_json_write(config_path, config)
+        atomic_json_write(config_path, config)
 
     def get_data_dir(self) -> Path | None:
         if not self._check_permission("data.own"):

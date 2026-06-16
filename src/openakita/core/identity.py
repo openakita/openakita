@@ -49,10 +49,10 @@ def _load_hashes(identity_dir: Path) -> dict[str, str]:
 
 
 def _save_hashes(identity_dir: Path, hashes: dict[str, str]) -> None:
-    from openakita.utils.atomic_io import safe_json_write
+    from openakita.utils.atomic_io import atomic_json_write
 
     hash_path = identity_dir / _HASH_FILE
-    safe_json_write(hash_path, hashes)
+    atomic_json_write(hash_path, hashes)
 
 
 def _file_hash(path: Path) -> str:

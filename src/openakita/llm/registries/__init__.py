@@ -110,10 +110,10 @@ def load_custom_providers() -> list[dict]:
 
 def save_custom_providers(entries: list[dict]) -> None:
     """保存自定义服务商列表到工作区 (atomic write + .bak backup)."""
-    from openakita.utils.atomic_io import safe_json_write
+    from openakita.utils.atomic_io import atomic_json_write
 
     path = _get_custom_providers_path()
-    safe_json_write(path, entries)
+    atomic_json_write(path, entries)
     _logger.info(f"Saved {len(entries)} custom providers to {path}")
 
 

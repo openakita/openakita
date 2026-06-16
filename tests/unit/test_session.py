@@ -87,6 +87,37 @@ class TestSessionCreation:
         assert restored.context.focus_terms == s.context.focus_terms
 
 
+class TestSessionPersistence:
+    def test_save_sessions_uses_strict_atomic_json_write(self, tmp_path, monkeypatch):
+        manager = SessionManager(storage_path=tmp_path / "sessions")
+        session = manager.get_session("cli", "chat-1", "user-1")
+        session.add_message("user", "hello")
+        calls = {}
+
+        def spy(path, data, **kwargs):
+            calls["path"] = path
+            calls["data"] = data
+            calls["kwargs"] = kwargs
+
+        monkeypatch.setattr("openakita.sessions.manager.atomic_json_write", spy)
+
+        assert manager._save_sessions() is True
+
+        assert calls["path"] == tmp_path / "sessions" / "sessions.json"
+        assert calls["kwargs"]["fsync"] is True
+        assert calls["kwargs"]["allow_fallback"] is False
+        assert calls["data"][0]["context"]["messages"][0]["content"] == "hello"
+
+    def test_persist_keeps_dirty_on_atomic_write_failure(self, tmp_path, monkeypatch):
+        manager = SessionManager(storage_path=tmp_path / "sessions")
+        manager._dirty = True
+        monkeypatch.setattr(manager, "_save_sessions", lambda: False)
+
+        manager.persist()
+
+        assert manager._dirty is True
+
+
 class TestSessionState:
     def test_all_states_exist(self):
         assert SessionState.ACTIVE.value == "active"

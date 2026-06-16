@@ -7,102 +7,124 @@
 
 import json
 import logging
+import os
 import shutil
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_LOCKS_GUARD = threading.Lock()
+_WRITE_LOCKS: dict[Path, threading.Lock] = {}
 
-def atomic_json_write(path: Path, data: Any, *, indent: int = 2) -> None:
-    """原子写入 JSON 文件（temp + rename 模式）。
 
-    先写入临时文件，验证 JSON 正确性后再重命名为目标文件。
-    在 POSIX 系统上 rename 是原子操作；Windows 上通过 replace 保证覆盖。
+def _lock_for_path(path: Path) -> threading.Lock:
+    resolved = path.resolve()
+    with _LOCKS_GUARD:
+        lock = _WRITE_LOCKS.get(resolved)
+        if lock is None:
+            lock = threading.Lock()
+            _WRITE_LOCKS[resolved] = lock
+        return lock
 
-    Args:
-        path: 目标文件路径
-        data: 可 JSON 序列化的数据
-        indent: JSON 缩进级别
-    """
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
 
+def _fsync_parent_dir(path: Path) -> None:
+    """Best-effort directory fsync so a committed rename survives power loss."""
+    if os.name == "nt":
+        return
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=indent)
-
-        # Windows 不支持 rename 覆盖已存在文件，使用 replace
-        tmp.replace(path)
-    except Exception:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-        raise
-
-
-# ---------------------------------------------------------------------------
-# Enhanced: atomic write with .bak backup + Windows PermissionError retry
-# ---------------------------------------------------------------------------
+        fd = os.open(path.parent, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def safe_write(
-    path: Path, content: str, *, backup: bool = True, retries: int = 3, fsync: bool = False
+    path: Path,
+    content: str,
+    *,
+    backup: bool = True,
+    retries: int = 3,
+    fsync: bool = False,
+    allow_fallback: bool = True,
 ) -> None:
     """Atomic text write with optional .bak backup and Windows retry.
 
     Flow: backup existing → write to .tmp → (fsync) → rename .tmp → target.
     On Windows, PermissionError on rename is retried up to *retries* times
-    before falling back to a direct (non-atomic) write.
+    before falling back to a direct (non-atomic) write, unless
+    ``allow_fallback`` is disabled.
     """
-    import os
-
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-
-    if backup and path.exists():
-        bak = path.with_suffix(path.suffix + ".bak")
-        try:
-            shutil.copy2(path, bak)
-        except OSError as e:
-            logger.warning("Failed to create backup %s: %s", bak, e)
-
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(content)
-        if fsync:
-            f.flush()
-            os.fsync(f.fileno())
 
-    last_err: Exception | None = None
-    for attempt in range(retries):
+    with _lock_for_path(path):
+        if backup and path.exists():
+            bak = path.with_suffix(path.suffix + ".bak")
+            try:
+                shutil.copy2(path, bak)
+                if fsync:
+                    _fsync_parent_dir(path)
+            except OSError as e:
+                logger.warning("Failed to create backup %s: %s", bak, e)
+
         try:
-            tmp.replace(path)
-            return
-        except PermissionError as e:
-            last_err = e
-            if attempt < retries - 1:
-                time.sleep(0.2 * (attempt + 1))
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(content)
+                if fsync:
+                    f.flush()
+                    os.fsync(f.fileno())
 
-    logger.warning(
-        "Atomic rename failed after %d retries (%s), falling back to direct write",
-        retries,
-        last_err,
-    )
-    path.write_text(content, encoding="utf-8")
-    tmp.unlink(missing_ok=True)
+            last_err: Exception | None = None
+            for attempt in range(retries):
+                try:
+                    tmp.replace(path)
+                    if fsync:
+                        _fsync_parent_dir(path)
+                    return
+                except PermissionError as e:
+                    last_err = e
+                    if attempt < retries - 1:
+                        time.sleep(0.2 * (attempt + 1))
+
+            if not allow_fallback:
+                raise PermissionError(
+                    f"Atomic replace failed after {retries} attempts for {path}"
+                ) from last_err
+
+            logger.warning(
+                "Atomic rename failed after %d retries (%s), falling back to direct write",
+                retries,
+                last_err,
+            )
+            path.write_text(content, encoding="utf-8")
+            if fsync:
+                with open(path, "r+", encoding="utf-8") as f:
+                    f.flush()
+                    os.fsync(f.fileno())
+                _fsync_parent_dir(path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
-def safe_json_write(
-    path: Path, data: Any, *, indent: int = 2, backup: bool = True, fsync: bool = False
+def atomic_json_write(
+    path: Path,
+    data: Any,
+    *,
+    indent: int = 2,
+    backup: bool = True,
+    fsync: bool = False,
+    allow_fallback: bool = True,
 ) -> None:
-    """Atomic JSON write with .bak backup (convenience wrapper around safe_write)."""
+    """Atomic JSON write with optional .bak backup and fsync."""
     content = json.dumps(data, ensure_ascii=False, indent=indent) + "\n"
-    safe_write(path, content, backup=backup, fsync=fsync)
+    safe_write(path, content, backup=backup, fsync=fsync, allow_fallback=allow_fallback)
 
 
 def append_jsonl(path: Path, obj: dict, *, fsync: bool = False) -> None:

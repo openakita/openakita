@@ -81,7 +81,7 @@ class ProactiveFeedbackTracker:
             logger.warning(f"Failed to load proactive feedback: {e}")
 
     def _save(self) -> None:
-        from openakita.utils.atomic_io import safe_json_write
+        from openakita.utils.atomic_io import atomic_json_write
 
         data = {
             "records": [
@@ -94,7 +94,7 @@ class ProactiveFeedbackTracker:
                 for r in self.records[-200:]
             ]
         }
-        safe_json_write(self.data_file, data)
+        atomic_json_write(self.data_file, data)
 
     def record_send(self, msg_type: str, timestamp: datetime | None = None) -> None:
         """记录一次主动消息发送"""

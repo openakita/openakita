@@ -591,10 +591,10 @@ class OrgManager:
         return data if isinstance(data, dict) else {}
 
     def save_state(self, org_id: str, state: dict) -> None:
-        from openakita.utils.atomic_io import safe_json_write
+        from openakita.utils.atomic_io import atomic_json_write
 
         p = self._state_json(org_id)
-        safe_json_write(p, state)
+        atomic_json_write(p, state)
 
     # ------------------------------------------------------------------
     # Internal
