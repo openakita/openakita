@@ -362,6 +362,52 @@ class EndpointManager:
             self._write_json(config)
             return removed
 
+    def delete_endpoints(
+        self,
+        names: list[str],
+        endpoint_type: str = "endpoints",
+        clean_env: bool = True,
+    ) -> list[dict]:
+        """Delete multiple endpoints by name in one write."""
+        if endpoint_type not in _ENDPOINT_LISTS:
+            raise ValueError(f"Invalid endpoint_type: {endpoint_type}")
+
+        wanted = {str(name).strip() for name in names if str(name).strip()}
+        if not wanted:
+            raise ValueError("No endpoint names to delete")
+
+        with self._lock:
+            config, _ = self._read_json_versioned()
+            ep_list = config.get(endpoint_type, [])
+
+            removed: list[dict] = []
+            new_list = []
+            for ep in ep_list:
+                if ep.get("name") in wanted:
+                    removed.append(ep)
+                else:
+                    new_list.append(ep)
+
+            if not removed:
+                return []
+
+            config[endpoint_type] = new_list
+
+            if clean_env:
+                removed_env_vars = {
+                    str(ep.get("api_key_env") or "").strip()
+                    for ep in removed
+                    if str(ep.get("api_key_env") or "").strip()
+                }
+                for env_var in sorted(removed_env_vars):
+                    still_used = self._find_endpoints_using_env_var(config, env_var)
+                    if not still_used:
+                        self._delete_env_key(env_var)
+                        os.environ.pop(env_var, None)
+
+            self._write_json(config)
+            return removed
+
     def list_endpoints(self, endpoint_type: str = "endpoints") -> list[dict]:
         """Read endpoints from config file."""
         config = self._read_json()

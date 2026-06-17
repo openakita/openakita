@@ -18,6 +18,7 @@ class _FakeEndpointManager:
         self.enabled = False
         self.endpoints = []
         self.deleted_endpoint = None
+        self.deleted_endpoints = None
 
     def save_endpoint(
         self,
@@ -75,6 +76,20 @@ class _FakeEndpointManager:
             "clean_env": clean_env,
         }
         return {"name": name, "api_key_env": "STT_API_KEY"}
+
+    def delete_endpoints(
+        self,
+        names: list[str],
+        endpoint_type: str = "endpoints",
+        clean_env: bool = True,
+    ) -> list[dict]:
+        self.deleted_endpoints = {
+            "names": names,
+            "endpoint_type": endpoint_type,
+            "clean_env": clean_env,
+        }
+        wanted = set(names)
+        return [dict(ep) for ep in self.endpoints if ep.get("name") in wanted]
 
 
 @pytest.mark.asyncio
@@ -655,6 +670,44 @@ def test_delete_last_chat_endpoint_is_allowed(monkeypatch):
     assert manager.deleted_endpoint == {
         "name": "solo",
         "endpoint_type": "endpoints",
+        "clean_env": True,
+    }
+
+
+def test_delete_endpoints_batches_names_and_reloads_once(monkeypatch):
+    manager = _FakeEndpointManager()
+    manager.endpoints = [
+        {"name": "one", "provider": "openai", "model": "gpt-4o"},
+        {"name": "two", "provider": "openai", "model": "gpt-4o-mini"},
+    ]
+    reload_calls = []
+    monkeypatch.setattr(config_routes, "_get_endpoint_manager", lambda: manager)
+    monkeypatch.setattr(
+        config_routes,
+        "_trigger_reload",
+        lambda request: reload_calls.append(request) or {"status": "ok"},
+    )
+
+    app = FastAPI()
+    app.include_router(config_routes.router)
+    client = TestClient(app)
+
+    response = client.request(
+        "DELETE",
+        "/api/config/endpoints",
+        json={"names": ["one", "missing"], "endpoint_type": "compiler_endpoints"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["removed_count"] == 1
+    assert data["removed"][0]["name"] == "one"
+    assert data["not_found"] == ["missing"]
+    assert len(reload_calls) == 1
+    assert manager.deleted_endpoints == {
+        "names": ["one", "missing"],
+        "endpoint_type": "compiler_endpoints",
         "clean_env": True,
     }
 

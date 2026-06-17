@@ -772,6 +772,12 @@ class DeleteEndpointRequest(BaseModel):
     clean_env: bool = True
 
 
+class DeleteEndpointsRequest(BaseModel):
+    names: list[str]
+    endpoint_type: str = "endpoints"
+    clean_env: bool = True
+
+
 def _normalize_endpoint_api_key(api_key: str | None) -> str | None:
     """Treat UI-masked secrets as an unchanged value, not a new API key."""
     if api_key is None:
@@ -944,6 +950,36 @@ async def save_endpoints(body: SaveEndpointsRequest, request: Request):
             "可以继续配置；如果马上要使用新模型，请重启服务或稍后再试。"
         )
     return response
+
+
+@router.delete("/api/config/endpoints")
+async def delete_endpoints(body: DeleteEndpointsRequest, request: Request):
+    """Delete multiple LLM endpoints by name and reload running clients once."""
+    mgr = _get_endpoint_manager()
+    try:
+        removed = mgr.delete_endpoints(
+            body.names,
+            endpoint_type=body.endpoint_type,
+            clean_env=body.clean_env,
+        )
+    except (ValueError, Exception) as e:
+        logger.error("[Config API] delete-endpoints failed: %s", e, exc_info=True)
+        return {"status": "error", "error": str(e)}
+
+    removed_names = {str(ep.get("name") or "") for ep in removed}
+    requested_names = [str(name).strip() for name in body.names if str(name).strip()]
+    not_found = [name for name in requested_names if name not in removed_names]
+    reload_result = (
+        _trigger_reload(request) if removed else {"status": "skipped", "reason": "no_match"}
+    )
+    return {
+        "status": "ok",
+        "removed": removed,
+        "removed_count": len(removed),
+        "not_found": not_found,
+        "version": mgr.get_version(),
+        "reload": reload_result,
+    }
 
 
 @router.delete("/api/config/endpoint/{name:path}")
