@@ -201,6 +201,7 @@ jobs:
   desktop_release:
     needs: [bootstrap_contract, create_release]
     permissions:
+      actions: read
       contents: write
     strategy:
       fail-fast: false
@@ -1030,6 +1031,7 @@ jobs:
           find "${BUNDLE_DIR}" -maxdepth 4 -type f -print || true
 
       - name: Collect installer bundles
+        id: collect_installers
         shell: bash
         run: |
           set -euo pipefail
@@ -1118,6 +1120,143 @@ jobs:
             echo "ERROR: no updater signature files found. Check bundle.createUpdaterArtifacts and TAURI_SIGNING_PRIVATE_KEY." >&2
             exit 1
           fi
+
+          echo "out_dir=${OUT_DIR}" >> "${GITHUB_OUTPUT}"
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            SIGNPATH_OUTPUT_DIR="${BUNDLE_DIR}/_signpath-signed"
+            rm -rf "${SIGNPATH_OUTPUT_DIR}"
+            mkdir -p "${SIGNPATH_OUTPUT_DIR}"
+
+            mapfile -t windows_installers < <(find "${OUT_DIR}" -maxdepth 1 -type f -name "*.exe" | sort)
+            if [ "${#windows_installers[@]}" -ne 1 ]; then
+              echo "ERROR: expected exactly one Windows installer in ${OUT_DIR}, found ${#windows_installers[@]}." >&2
+              printf '  %s\n' "${windows_installers[@]}" >&2
+              exit 1
+            fi
+            echo "windows_installer=${windows_installers[0]}" >> "${GITHUB_OUTPUT}"
+            echo "signpath_output_dir=${SIGNPATH_OUTPUT_DIR}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Upload unsigned Windows installer for SignPath
+        if: runner.os == 'Windows'
+        id: upload_unsigned_windows_installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: unsigned-windows-installer-${{ matrix.suffix }}
+          path: ${{ steps.collect_installers.outputs.windows_installer }}
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Verify SignPath release configuration
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $missing = @()
+          if (-not $env:SIGNPATH_API_TOKEN) { $missing += "secret SIGNPATH_API_TOKEN" }
+
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing SignPath configuration: $($missing -join ', ')"
+            exit 1
+          }
+
+          Write-Host "SignPath configuration is present."
+          Write-Host "Project slug: openakita"
+          Write-Host "Signing policy slug: openakita-test-sign-policy"
+          Write-Host "Artifact configuration slug: openakita-test-cert"
+          Write-Host "Test certificate slug in SignPath: OpenAkita_Test_Signing_Certificate"
+
+      - name: Sign Windows installer with SignPath
+        if: runner.os == 'Windows'
+        id: signpath_windows_installer
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: fbb6fb8c-4af2-4876-903e-a4b878e40b84
+          project-slug: openakita
+          signing-policy-slug: openakita-test-sign-policy
+          artifact-configuration-slug: openakita-test-cert
+          github-artifact-id: ${{ steps.upload_unsigned_windows_installer.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: "1800"
+          output-artifact-directory: ${{ steps.collect_installers.outputs.signpath_output_dir }}
+
+      - name: Replace Windows installer with SignPath signed artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ORIGINAL_INSTALLER: ${{ steps.collect_installers.outputs.windows_installer }}
+          SIGNPATH_OUTPUT_DIR: ${{ steps.collect_installers.outputs.signpath_output_dir }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $workspace = $env:GITHUB_WORKSPACE
+          $originalPath = Join-Path $workspace $env:ORIGINAL_INSTALLER
+          $signedDir = Join-Path $workspace $env:SIGNPATH_OUTPUT_DIR
+
+          if (-not (Test-Path -LiteralPath $originalPath)) {
+            Write-Error "Original Windows installer not found: $originalPath"
+            exit 1
+          }
+          if (-not (Test-Path -LiteralPath $signedDir)) {
+            Write-Error "SignPath output directory not found: $signedDir"
+            exit 1
+          }
+
+          $signedInstallers = @(Get-ChildItem -LiteralPath $signedDir -Filter "*.exe" -File -Recurse)
+          if ($signedInstallers.Count -ne 1) {
+            Write-Error "Expected exactly one signed Windows installer in $signedDir, found $($signedInstallers.Count)."
+            $signedInstallers | ForEach-Object { Write-Host "  $($_.FullName)" }
+            exit 1
+          }
+
+          $signedInstaller = $signedInstallers[0].FullName
+          Copy-Item -LiteralPath $signedInstaller -Destination $originalPath -Force
+
+          $authenticode = Get-AuthenticodeSignature -LiteralPath $originalPath
+          if ($authenticode.Status -eq "NotSigned") {
+            Write-Error "SignPath output is not Authenticode-signed: $originalPath"
+            exit 1
+          }
+          Write-Host "SignPath signing request: ${{ steps.signpath_windows_installer.outputs.signing-request-web-url }}"
+          Write-Host "Authenticode status: $($authenticode.Status)"
+          if ($authenticode.SignerCertificate) {
+            Write-Host "Signer subject: $($authenticode.SignerCertificate.Subject)"
+          }
+
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            Write-Error "TAURI_SIGNING_PRIVATE_KEY secret is missing; cannot regenerate updater signature for signed Windows installer."
+            exit 1
+          }
+
+          $signaturePath = "$originalPath.sig"
+          Remove-Item -LiteralPath $signaturePath -Force -ErrorAction SilentlyContinue
+
+          Push-Location (Join-Path $workspace "apps/setup-center")
+          try {
+            & ".\node_modules\.bin\tauri.cmd" signer sign $originalPath
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "tauri signer sign failed for $originalPath"
+              exit 1
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
+          if (-not (Test-Path -LiteralPath $signaturePath)) {
+            Write-Error "tauri signer sign did not create updater signature file: $signaturePath"
+            exit 1
+          }
+          $sigFile = Get-Item -LiteralPath $signaturePath
+          if ($sigFile.Length -le 0) {
+            Write-Error "Updater signature file is empty: $signaturePath"
+            exit 1
+          }
+          Write-Host "Regenerated updater signature: $signaturePath"
 
       # Archive Rust release-build PDB symbols into the same _upload/ directory
       # so the next step's `gh release upload ${OUT_DIR}/*` ships them as a
