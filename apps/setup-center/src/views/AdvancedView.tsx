@@ -40,6 +40,8 @@ export interface AdvancedViewProps {
     running: boolean;
     pid: number | null;
     pidFile: string;
+    managedBy?: "tauri" | "external" | "unknown";
+    isManagedChild?: boolean;
     port?: number;
     heartbeatPhase?: string;
     heartbeatHttpReady?: boolean;

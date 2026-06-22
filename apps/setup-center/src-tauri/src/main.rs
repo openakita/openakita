@@ -3886,6 +3886,17 @@ fn write_pid_file(workspace_id: &str, pid: u32, started_by: &str) -> Result<(), 
     Ok(())
 }
 
+fn status_managed_by_from_pid_file(data: &PidFileData) -> &str {
+    if data.started_by == "external" {
+        "external"
+    } else {
+        // A PID file can outlive the Tauri process that wrote it. Without a
+        // live MANAGED_CHILD handle in this process, "tauri" only means
+        // historical origin, not current ownership.
+        "unknown"
+    }
+}
+
 /// 判断当前 workspace 的后端是否仍在"启动宽限期"内。
 ///
 /// 宽限规则：
@@ -6219,6 +6230,14 @@ struct ServiceStatus {
     running: bool,
     pid: Option<u32>,
     pid_file: String,
+    /// "tauri" = Tauri owns/started the backend; "external" = already-running
+    /// local backend adopted from the port; "unknown" = no trustworthy source.
+    #[serde(default)]
+    managed_by: String,
+    /// True only when this process is still held in MANAGED_CHILD and Tauri can
+    /// stop/start it through the child handle.
+    #[serde(default)]
+    is_managed_child: bool,
     /// 后端心跳阶段："starting" | "initializing" | "http_ready" | "starting_im" | "running" | "restarting" | "stopping" | ""
     #[serde(default)]
     heartbeat_phase: String,
@@ -6245,6 +6264,8 @@ fn build_service_status(
     running: bool,
     pid: Option<u32>,
     pid_file_str: String,
+    managed_by: &str,
+    is_managed_child: bool,
 ) -> ServiceStatus {
     let (
         heartbeat_phase,
@@ -6272,6 +6293,8 @@ fn build_service_status(
         running,
         pid,
         pid_file: pid_file_str,
+        managed_by: managed_by.to_string(),
+        is_managed_child,
         heartbeat_phase,
         heartbeat_http_ready,
         heartbeat_im_ready,
@@ -6301,14 +6324,28 @@ fn openakita_service_status(workspace_id: String) -> Result<ServiceStatus, Strin
             if mp.workspace_id == workspace_id {
                 match mp.child.try_wait() {
                     Ok(None) => {
-                        return Ok(build_service_status(&workspace_id, true, Some(mp.pid), pf));
+                        return Ok(build_service_status(
+                            &workspace_id,
+                            true,
+                            Some(mp.pid),
+                            pf,
+                            "tauri",
+                            true,
+                        ));
                     }
                     _ => {
                         // 进程已退出，清理 handle、PID 文件和心跳文件
                         *guard = None;
                         let _ = fs::remove_file(&pid_file);
                         remove_heartbeat_file(&workspace_id);
-                        return Ok(build_service_status(&workspace_id, false, None, pf));
+                        return Ok(build_service_status(
+                            &workspace_id,
+                            false,
+                            None,
+                            pf,
+                            "unknown",
+                            false,
+                        ));
                     }
                 }
             }
@@ -6317,7 +6354,8 @@ fn openakita_service_status(workspace_id: String) -> Result<ServiceStatus, Strin
 
     // ── 2. 回退到 PID 文件 ──
     if let Some(data) = read_pid_file(&workspace_id) {
-        if is_pid_file_valid(&data) {
+        let valid = is_pid_file_valid(&data);
+        if valid {
             // PID 文件有效，但如果心跳超过 60 秒没更新，进程可能卡死
             // 此时仍报告 running（让前端根据心跳状态决定是否提示用户）
             return Ok(build_service_status(
@@ -6325,6 +6363,8 @@ fn openakita_service_status(workspace_id: String) -> Result<ServiceStatus, Strin
                 true,
                 Some(data.pid),
                 pf,
+                status_managed_by_from_pid_file(&data),
+                false,
             ));
         } else {
             // Stale PID，清理 PID 文件和心跳文件
@@ -6332,7 +6372,14 @@ fn openakita_service_status(workspace_id: String) -> Result<ServiceStatus, Strin
             remove_heartbeat_file(&workspace_id);
         }
     }
-    Ok(build_service_status(&workspace_id, false, None, pf))
+    Ok(build_service_status(
+        &workspace_id,
+        false,
+        None,
+        pf,
+        "unknown",
+        false,
+    ))
 }
 
 /// 检查进程是否仍在运行（供前端心跳二次确认用）。
@@ -6692,11 +6739,24 @@ fn openakita_service_start_impl(
                 ));
                 let pid_file = service_pid_file(&workspace_id);
                 let pf = pid_file.to_string_lossy().to_string();
-                let pid_opt = read_pid_file(&workspace_id).map(|d| d.pid);
-                let running = read_pid_file(&workspace_id)
-                    .map(|d| is_pid_file_valid(&d))
+                let pid_data = read_pid_file(&workspace_id);
+                let pid_opt = pid_data.as_ref().map(|d| d.pid);
+                let running = pid_data
+                    .as_ref()
+                    .map(|d| is_pid_file_valid(d))
                     .unwrap_or(false);
-                return Ok(build_service_status(&workspace_id, running, pid_opt, pf));
+                let managed_by = pid_data
+                    .as_ref()
+                    .map(status_managed_by_from_pid_file)
+                    .unwrap_or("unknown");
+                return Ok(build_service_status(
+                    &workspace_id,
+                    running,
+                    pid_opt,
+                    pf,
+                    managed_by,
+                    false,
+                ));
             }
         }
         last_map.insert(workspace_id.clone(), now);
@@ -6720,7 +6780,14 @@ fn openakita_service_start_impl(
             if mp.workspace_id == workspace_id {
                 match mp.child.try_wait() {
                     Ok(None) => {
-                        return Ok(build_service_status(&workspace_id, true, Some(mp.pid), pf));
+                        return Ok(build_service_status(
+                            &workspace_id,
+                            true,
+                            Some(mp.pid),
+                            pf,
+                            "tauri",
+                            true,
+                        ));
                     }
                     _ => {
                         *guard = None;
@@ -6746,6 +6813,8 @@ fn openakita_service_start_impl(
                         true,
                         Some(data.pid),
                         pf,
+                        status_managed_by_from_pid_file(&data),
+                        false,
                     ));
                 }
             } else {
@@ -6754,6 +6823,8 @@ fn openakita_service_start_impl(
                     true,
                     Some(data.pid),
                     pf,
+                    status_managed_by_from_pid_file(&data),
+                    false,
                 ));
             }
         } else {
@@ -6979,7 +7050,14 @@ fn openakita_service_start_impl(
         "[service_start] completed in {}ms",
         service_start_started.elapsed().as_millis()
     ));
-    Ok(build_service_status(&workspace_id, true, Some(pid), pf))
+    Ok(build_service_status(
+        &workspace_id,
+        true,
+        Some(pid),
+        pf,
+        "tauri",
+        true,
+    ))
 }
 
 #[tauri::command]
@@ -7012,6 +7090,8 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
                     false,
                     None,
                     pid_file.to_string_lossy().to_string(),
+                    "unknown",
+                    false,
                 ));
             } else {
                 *guard = Some(mp);
@@ -7038,6 +7118,8 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
         false,
         None,
         pid_file.to_string_lossy().to_string(),
+        "unknown",
+        false,
     ))
 }
 

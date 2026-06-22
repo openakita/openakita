@@ -64,6 +64,33 @@ import { safeFetch } from "./providers";
 import {
   joinPath,
 } from "./utils";
+import type { AppServiceStatus } from "./AppContext";
+
+type ServiceStatus = AppServiceStatus & {
+  port?: number;
+  heartbeatPhase?: string;
+  heartbeatHttpReady?: boolean;
+  heartbeatImReady?: boolean;
+  heartbeatReady?: boolean;
+  lastLinkDiagnostic?: LinkDiagnostic | null;
+};
+
+const externalRunningStatus = (pid: number | null = null): ServiceStatus => ({
+  running: true,
+  pid,
+  pidFile: "",
+  managedBy: "external",
+  isManagedChild: false,
+});
+
+const stoppedStatus = (): ServiceStatus => ({
+  running: false,
+  pid: null,
+  pidFile: "",
+  managedBy: "unknown",
+  isManagedChild: false,
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 // 前后端交互路由原则（全局适用）：
 //   后端运行中 → 所有配置读写、模型列表、连接测试 **优先走后端 HTTP API**
@@ -631,7 +658,7 @@ function MainApp() {
       // 2. 设置服务状态为已运行
       const baseUrl = "http://127.0.0.1:18900";
       setApiBaseUrl(baseUrl);
-      setServiceStatus({ running: true, pid: obDetectedService?.pid ?? null, pidFile: "" });
+      setServiceStatus(externalRunningStatus(obDetectedService?.pid ?? null));
       // 3. 刷新状态 & 自动检查端点
       refreshStatus("local", baseUrl, true);
       autoCheckEndpoints(baseUrl);
@@ -727,17 +754,7 @@ function MainApp() {
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean | null>(null);
   // autoStartBackend 已合并到"开机自启"：--background 模式自动拉起后端，无需独立开关
-  const [serviceStatus, setServiceStatus] = useState<{
-    running: boolean;
-    pid: number | null;
-    pidFile: string;
-    port?: number;
-    heartbeatPhase?: string;
-    heartbeatHttpReady?: boolean;
-    heartbeatImReady?: boolean;
-    heartbeatReady?: boolean;
-    lastLinkDiagnostic?: LinkDiagnostic | null;
-  } | null>(null);
+  const [serviceStatus, setServiceStatus] = useState<ServiceStatus | null>(null);
   // ── 后端启动阶段（独立于 serviceStatus）──
   // serviceStatus 只能表达 "running:true|false"，无法区分"未启动"和"正在启动中"。
   // 老 UI 在自动启动期间一旦 invoke is_backend_auto_starting 偶发返回 false 或失败，
@@ -873,7 +890,7 @@ function MainApp() {
       if (cancelled) return;
       const capBase = IS_CAPACITOR ? apiBaseUrl : "";
       if (!IS_CAPACITOR) setApiBaseUrl("");
-      setServiceStatus({ running: true, pid: null, pidFile: "" });
+      setServiceStatus(externalRunningStatus());
       try {
         const hRes = await safeFetch(`${capBase}/api/health`, { signal: AbortSignal.timeout(3_000) });
         const hData = await hRes.json();
@@ -957,6 +974,8 @@ function MainApp() {
                 running: true,
                 pid: healthData.pid || null,
                 pidFile: "",
+                managedBy: "external",
+                isManagedChild: false,
                 heartbeatPhase: readinessPhase || undefined,
                 heartbeatHttpReady: readiness.http_ready,
                 heartbeatImReady: readiness.im_ready,
@@ -1026,7 +1045,7 @@ function MainApp() {
                       notifySuccess(t("topbar.autoStartSuccess"));
                     } else {
                       clearBackendStartingHold();
-                      setServiceStatus({ running: false, pid: null, pidFile: "" });
+                      setServiceStatus(stoppedStatus());
                       setBackendBootPhase("error");
                       notifyError(t("topbar.autoStartFail"));
                     }
@@ -1054,7 +1073,7 @@ function MainApp() {
                   // backend_in_boot_grace_cmd / is_backend_auto_starting，
                   // 若仍在 boot grace 就保持 "starting"；若真的死了再降级 dead。
                   // 这里保留 unknown，避免 mount 与 spawn 竞态时刺出一个 stopped 帧。
-                  setServiceStatus({ running: false, pid: null, pidFile: "" });
+                  setServiceStatus(stoppedStatus());
                   holdBackendStarting(BACKEND_STARTUP_PROBE_HOLD_MS);
                 }
               }
@@ -1177,6 +1196,8 @@ function MainApp() {
             ...(prev || { pid: null, pidFile: "" }),
             running: true,
             pid: healthPid ?? prev?.pid ?? null,
+            managedBy: prev?.isManagedChild ? prev.managedBy : "external",
+            isManagedChild: prev?.isManagedChild === true,
             heartbeatPhase: readinessPhase || prev?.heartbeatPhase,
             heartbeatHttpReady: readinessHttpReady ?? prev?.heartbeatHttpReady,
             heartbeatImReady: readinessImReady ?? prev?.heartbeatImReady,
@@ -1203,7 +1224,7 @@ function MainApp() {
           }
           setBackendBootPhase("starting");
           setServiceStatus(prev =>
-            prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" }
+              prev ? { ...prev, running: false } : stoppedStatus()
           );
           return;
         }
@@ -1259,7 +1280,9 @@ function MainApp() {
                 setHeartbeatState("degraded");
                 try { await invoke("set_tray_backend_status", { status: "degraded" }); } catch { /* ignore */ }
               }
-              setServiceStatus(prev => prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" });
+              setServiceStatus(prev =>
+                prev ? { ...prev, running: true } : externalRunningStatus(),
+              );
               return;
             }
           } catch { /* invoke 失败，视为不可用 */ }
@@ -1271,7 +1294,9 @@ function MainApp() {
           setHeartbeatState("dead");
           if (IS_TAURI) try { await invoke("set_tray_backend_status", { status: "dead" }); } catch { /* ignore */ }
         }
-        setServiceStatus(prev => prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" });
+        setServiceStatus(prev =>
+          prev ? { ...prev, running: false } : stoppedStatus(),
+        );
         clearBackendStartingHold();
         setBackendBootPhase("stopped");
         setBackendVersion(null);
@@ -1582,7 +1607,7 @@ function MainApp() {
                 doneMessage: t("topbar.switchWorkspaceRestartSuccess", { id: opts.targetId }),
               });
               setServiceStatus((prev) =>
-                prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" },
+                prev ? { ...prev, running: true } : externalRunningStatus(),
               );
               await refreshAll();
               try { await refreshStatus(undefined, undefined, true); } catch { /* ignore */ }
@@ -1621,7 +1646,7 @@ function MainApp() {
                 doneMessage: t("topbar.switchWorkspaceRestartSuccess", { id: opts.targetId }),
               });
               setServiceStatus((prev) =>
-                prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" },
+                prev ? { ...prev, running: true } : externalRunningStatus(),
               );
               await refreshAll();
               try { await refreshStatus(undefined, undefined, true); } catch { /* ignore */ }
@@ -1656,7 +1681,7 @@ function MainApp() {
           setRestartOverlay({ phase: "waiting", hint });
 
           try {
-            const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>(
+            const ss = await invoke<ServiceStatus>(
               "openakita_service_start", { venvDir, workspaceId: opts.targetId },
             );
             setServiceStatus(ss);
@@ -1676,7 +1701,7 @@ function MainApp() {
               doneMessage: t("topbar.switchWorkspaceRestartSuccess", { id: opts.targetId }),
             });
             setServiceStatus((prev) =>
-              prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" },
+              prev ? { ...prev, running: true } : externalRunningStatus(),
             );
             try { await refreshStatus("local", "http://127.0.0.1:18900", true); } catch { /* ignore */ }
             autoCheckEndpoints("http://127.0.0.1:18900");
@@ -2093,10 +2118,19 @@ function MainApp() {
 
       // 检测服务是否运行
       let alive = false;
+      let liveBackendPid: number | null = null;
       try {
         const ping = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
         alive = ping.ok;
-      } catch { alive = false; }
+        if (ping.ok) {
+          try {
+            const healthData = await ping.json();
+            liveBackendPid = typeof healthData?.pid === "number" ? healthData.pid : null;
+          } catch { /* health payload is best-effort for ownership checks */ }
+        }
+      } catch {
+        alive = false;
+      }
 
       if (!alive) {
         setRestartOverlay({ phase: "notRunning" });
@@ -2111,7 +2145,29 @@ function MainApp() {
       setRestartOverlay({ phase: "restarting" });
       const wsId = currentWorkspaceId || workspaces[0]?.id;
 
-      if (IS_TAURI && wsId && venvDir && dataMode === "local") {
+      let freshServiceStatus: ServiceStatus | null = null;
+      if (IS_TAURI && wsId && dataMode === "local") {
+        try {
+          const ss = await invoke<ServiceStatus>("openakita_service_status", { workspaceId: wsId });
+          freshServiceStatus = ss.running ? ss : externalRunningStatus(liveBackendPid);
+          setServiceStatus(freshServiceStatus);
+        } catch {
+          freshServiceStatus = externalRunningStatus(liveBackendPid);
+        }
+      }
+      // Only the live MANAGED_CHILD handle means this Tauri instance can safely
+      // do process-level stop/start. A stale PID file may still say
+      // managedBy="tauri" from an older desktop session while the current
+      // backend was started manually from a terminal; treat that as external
+      // and let openakita serve restart itself via /api/config/restart.
+      // If the status command fails or cannot match a PID file, the HTTP health
+      // check above has already proved a backend exists, so default to external.
+      const tauriStatusMatchesHealthPid =
+        liveBackendPid === null || freshServiceStatus?.pid === liveBackendPid;
+      const tauriManagedBackend =
+        freshServiceStatus?.isManagedChild === true && tauriStatusMatchesHealthPid;
+
+      if (IS_TAURI && wsId && venvDir && dataMode === "local" && tauriManagedBackend) {
         // ── Tauri 本地模式：进程级重启（杀旧进程 → 启新进程） ──
         try {
           const shutRes = await fetch(`${base}/api/shutdown`, { method: "POST", signal: AbortSignal.timeout(2000) });
@@ -2126,7 +2182,7 @@ function MainApp() {
 
         setRestartOverlay({ phase: "waiting" });
         try {
-          const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>(
+          const ss = await invoke<ServiceStatus>(
             "openakita_service_start", { venvDir, workspaceId: wsId },
           );
           setServiceStatus(ss);
@@ -2139,7 +2195,7 @@ function MainApp() {
           return;
         }
       } else {
-        // ── Web / Capacitor 模式：进程内重启（唯一可用方式） ──
+        // ── Web / Capacitor / 外部本地后端：进程内重启 ──
         try {
           await fetch(`${base}/api/config/restart`, { method: "POST", signal: AbortSignal.timeout(3000) });
         } catch { /* 请求可能因服务关闭而失败 */ }
@@ -2172,7 +2228,7 @@ function MainApp() {
       if (recovered) {
         setRestartOverlay({ phase: "done" });
         setServiceStatus((prev) =>
-          prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" }
+          prev ? { ...prev, running: true } : externalRunningStatus()
         );
         notifyPluginAppsReady();
         try { await refreshStatus(undefined, undefined, true); } catch { /* ignore */ }
@@ -2395,6 +2451,8 @@ function MainApp() {
                 ...(prev || { pid: healthData.pid || null, pidFile: "" }),
                 running: true,
                 pid: healthPid ?? prev?.pid ?? null,
+                managedBy: prev?.isManagedChild ? prev.managedBy : "external",
+                isManagedChild: prev?.isManagedChild === true,
                 heartbeatPhase: phase || prev?.heartbeatPhase,
                 heartbeatHttpReady: readiness.http_ready ?? prev?.heartbeatHttpReady,
                 heartbeatImReady: readiness.im_ready ?? prev?.heartbeatImReady,
@@ -2411,7 +2469,7 @@ function MainApp() {
               setBackendBootPhase("starting");
             }
             setServiceStatus((prev) =>
-              prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" }
+            prev ? { ...prev, running: false } : stoppedStatus()
             );
           }
         }
@@ -2563,19 +2621,13 @@ function MainApp() {
         // was started externally (not via this app).
         if (effectiveDataMode !== "remote" && currentWorkspaceId) {
           try {
-            const ss = await invoke<{
-              running: boolean;
-              pid: number | null;
-              pidFile: string;
-              heartbeatPhase?: string;
-              heartbeatHttpReady?: boolean;
-              heartbeatImReady?: boolean;
-              heartbeatReady?: boolean;
-            }>("openakita_service_status", { workspaceId: currentWorkspaceId });
+            const ss = await invoke<ServiceStatus>("openakita_service_status", { workspaceId: currentWorkspaceId });
             setServiceStatus((prev) => ({
               running: prev?.running ?? serviceAlive,
               pid: serviceAlive && healthPid !== undefined ? healthPid : (ss.pid ?? prev?.pid ?? null),
               pidFile: ss.pidFile ?? prev?.pidFile ?? "",
+              managedBy: ss.managedBy ?? "external",
+              isManagedChild: ss.isManagedChild === true,
               heartbeatPhase: ss.heartbeatPhase ?? prev?.heartbeatPhase,
               heartbeatHttpReady: ss.heartbeatHttpReady ?? prev?.heartbeatHttpReady,
               heartbeatImReady: ss.heartbeatImReady ?? prev?.heartbeatImReady,
@@ -2667,15 +2719,7 @@ function MainApp() {
       // This is the fallback when the HTTP API is not alive.
       if (effectiveDataMode !== "remote") {
         try {
-          const ss = await invoke<{
-            running: boolean;
-            pid: number | null;
-            pidFile: string;
-            heartbeatPhase?: string;
-            heartbeatHttpReady?: boolean;
-            heartbeatImReady?: boolean;
-            heartbeatReady?: boolean;
-          }>("openakita_service_status", {
+          const ss = await invoke<ServiceStatus>("openakita_service_status", {
             workspaceId: currentWorkspaceId,
           });
           setServiceStatus(ss);
@@ -2842,13 +2886,13 @@ function MainApp() {
     try {
       setDataMode("local");
       setApiBaseUrl("http://127.0.0.1:18900");
-      const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_start", {
+      const ss = await invoke<ServiceStatus>("openakita_service_start", {
         venvDir,
         workspaceId: effectiveWsId,
       });
       setServiceStatus(ss);
       const ready = await waitForServiceReady("http://127.0.0.1:18900", LOCAL_SERVICE_READY_TIMEOUT_MS);
-      const real = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", {
+      const real = await invoke<ServiceStatus>("openakita_service_status", {
         workspaceId: effectiveWsId,
       });
       setServiceStatus(real);
@@ -2914,7 +2958,13 @@ function MainApp() {
     const existingPid = conflictDialog?.pid ?? null;
     setDataMode("local");
     setApiBaseUrl("http://127.0.0.1:18900");
-    setServiceStatus({ running: true, pid: existingPid, pidFile: "" });
+    setServiceStatus({
+      running: true,
+      pid: existingPid,
+      pidFile: "",
+      managedBy: "external",
+      isManagedChild: false,
+    });
     setConflictDialog(null);
     setPendingStartWsId(null);
     const _busyId = notifyLoading(t("connect.testing"));
@@ -2976,7 +3026,7 @@ function MainApp() {
     }
     // 2. PID-based kill as fallback (handles locally started services)
     try {
-      const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_stop", { workspaceId: id });
+      const ss = await invoke<ServiceStatus>("openakita_service_stop", { workspaceId: id });
       setServiceStatus(ss);
     } catch { /* PID file might not exist for externally started services */ }
     // 3. Quick verify — is the port freed?
@@ -2992,7 +3042,7 @@ function MainApp() {
     }
     // Final status
     try {
-      const final_ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", { workspaceId: id });
+      const final_ss = await invoke<ServiceStatus>("openakita_service_status", { workspaceId: id });
       setServiceStatus(final_ss);
       if (!final_ss.running) setBackendBootPhase("stopped");
     } catch { /* ignore */ }
@@ -3152,8 +3202,7 @@ function MainApp() {
           startLocalServiceWithConflictCheck={startLocalServiceWithConflictCheck}
           refreshStatus={refreshStatus}
           doStopService={doStopService}
-          waitForServiceDown={waitForServiceDown}
-          doStartLocalService={doStartLocalService}
+          restartService={restartService}
           onOpenRuntimeEnvironment={() => setRuntimeDialogOpen(true)}
           setView={navigateToView}
         />
@@ -3794,7 +3843,13 @@ function MainApp() {
         const backendStartInFlight = ["checking", "starting", "waiting"].includes(obBackendStartup.phase);
         if (earlyProbe) {
           log("[OK] 后端已在运行（由 ob-welcome 提前启动）");
-          setServiceStatus({ running: true, pid: null, pidFile: "" });
+          setServiceStatus({
+            running: true,
+            pid: null,
+            pidFile: "",
+            managedBy: "external",
+            isManagedChild: false,
+          });
           setObBackendStartupPhase("ready", t("onboarding.backendStartup.ready"));
           httpReady = true;
           updateTask("service-start", { status: "done", detail: "已在运行" });
@@ -3809,7 +3864,8 @@ function MainApp() {
           } else {
             log(t("onboarding.progress.startingService"));
             setObBackendStartupPhase("starting", t("onboarding.backendStartup.starting"));
-            await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
+            const ss = await invoke<ServiceStatus>("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
+            setServiceStatus(ss);
             log(t("onboarding.progress.serviceStarted"));
             updateTask("service-start", { status: "done" });
             logTask("启动后端服务", "done");
@@ -3839,7 +3895,17 @@ function MainApp() {
               const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
               if (res.ok) {
                 log("[OK] HTTP 服务已就绪");
-                setServiceStatus({ running: true, pid: null, pidFile: "" });
+                setServiceStatus((prev) => (
+                  prev
+                    ? { ...prev, running: true }
+                    : {
+                        running: true,
+                        pid: null,
+                        pidFile: "",
+                        managedBy: "external",
+                        isManagedChild: false,
+                      }
+                ));
                 setObBackendStartupPhase("ready", t("onboarding.backendStartup.ready"));
                 httpReady = true;
                 updateTask("http-wait", { status: "done", detail: `${waitedSec}s` });
@@ -4287,7 +4353,8 @@ function MainApp() {
                           return;
                         }
                         setObBackendStartupPhase("starting", t("onboarding.backendStartup.starting"));
-                        await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: wsId });
+                        const ss = await invoke<ServiceStatus>("openakita_service_start", { venvDir: effectiveVenv, workspaceId: wsId });
+                        setServiceStatus(ss);
                         setObBackendStartupPhase("waiting", t("onboarding.backendStartup.waiting"));
                         let earlyHttpReady = false;
                         const maxEarlyHttpWaitTicks = Math.ceil(ONBOARDING_HTTP_READY_TIMEOUT_MS / HTTP_READY_POLL_INTERVAL_MS);
@@ -4300,9 +4367,19 @@ function MainApp() {
                             detail: t("onboarding.backendStartup.waitingDetail", { seconds: waitedSec }),
                           }));
                           try {
-                            const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
-                            if (res.ok) {
-                              setServiceStatus({ running: true, pid: null, pidFile: "" });
+                          const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
+                          if (res.ok) {
+                              setServiceStatus((prev) => (
+                                prev
+                                  ? { ...prev, running: true }
+                                  : {
+                                      running: true,
+                                      pid: null,
+                                      pidFile: "",
+                                      managedBy: "external",
+                                      isManagedChild: false,
+                                    }
+                              ));
                               setObBackendStartupPhase("ready", t("onboarding.backendStartup.ready"));
                               earlyHttpReady = true;
                               break;
@@ -4954,7 +5031,13 @@ function MainApp() {
         installFetchInterceptor();
         setTauriRemoteLoginUrl(null);
         setDataMode("remote");
-        setServiceStatus({ running: true, pid: null, pidFile: "" });
+        setServiceStatus({
+          running: true,
+          pid: null,
+          pidFile: "",
+          managedBy: "external",
+          isManagedChild: false,
+        });
         notifySuccess(t("connect.success"));
         void refreshStatus("remote", tauriRemoteLoginUrl, true).then(() => {
           autoCheckEndpoints(tauriRemoteLoginUrl);
@@ -5089,7 +5172,7 @@ function MainApp() {
               setTauriRemoteMode(false);
               setDataMode("local");
               setApiBaseUrl(DEFAULT_LOCAL_API_BASE);
-              setServiceStatus({ running: false, pid: null, pidFile: "" });
+              setServiceStatus(stoppedStatus());
               resetEnvLoaded();
               notifySuccess(t("topbar.disconnected"));
             } else {
@@ -5253,7 +5336,13 @@ function MainApp() {
                       setApiBaseUrl(url);
                       localStorage.setItem("openakita_apiBaseUrl", url);
                       setDataMode("remote");
-                      setServiceStatus({ running: true, pid: null, pidFile: "" });
+                      setServiceStatus({
+                        running: true,
+                        pid: null,
+                        pidFile: "",
+                        managedBy: "external",
+                        isManagedChild: false,
+                      });
                       setConnectDialogOpen(false);
                       connected = true;
                       notifySuccess(t("connect.success"));
