@@ -86,6 +86,7 @@ export interface LLMViewProps {
   providers: ProviderInfo[];
   doLoadProviders: () => Promise<void>;
   loadSavedEndpoints: () => Promise<void>;
+  onEndpointConfigChanged?: (endpointType: EndpointType) => Promise<void> | void;
   readWorkspaceFile: (path: string) => Promise<string>;
   writeWorkspaceFile: (path: string, content: string) => Promise<void>;
   venvDir: string;
@@ -100,7 +101,7 @@ export function LLMView(props: LLMViewProps) {
     secretShown, setSecretShown,
     busy, currentWorkspaceId, dataMode,
     shouldUseHttpApi, httpApiBase, askConfirm,
-    providers, doLoadProviders, loadSavedEndpoints,
+    providers, doLoadProviders, loadSavedEndpoints, onEndpointConfigChanged,
     venvDir, ensureEnvLoaded, serviceRunning,
   } = props;
 
@@ -239,6 +240,7 @@ export function LLMView(props: LLMViewProps) {
 
   async function syncEndpointConfigChange(_endpointType: EndpointType): Promise<void> {
     await loadSavedEndpoints();
+    await onEndpointConfigChanged?.(_endpointType);
   }
 
   function selectedNamesForType(endpointType: EndpointType): string[] {
@@ -1294,7 +1296,7 @@ export function LLMView(props: LLMViewProps) {
       }
       if (json.status !== "ok") {
         notifyError(json.error || "模型列表同步失败");
-        loadSavedEndpoints().catch(() => {});
+        syncEndpointConfigChange(endpointType).catch(() => {});
         return;
       }
       notifySuccess(
@@ -1303,7 +1305,7 @@ export function LLMView(props: LLMViewProps) {
             ? "（配置已保存，但运行时未刷新；下次启动生效）"
             : ""),
       );
-      loadSavedEndpoints().catch(() => {});
+      syncEndpointConfigChange(endpointType).catch(() => {});
     } catch (e) {
       notifyError(String(e));
     } finally {
@@ -1325,7 +1327,7 @@ export function LLMView(props: LLMViewProps) {
       if (json.reload?.status === "failed") {
         notifyError("端点状态已保存，但当前聊天会话暂未加载新配置；稍后重试或重启服务即可。");
       }
-      loadSavedEndpoints().catch(() => {});
+      syncEndpointConfigChange(endpointType).catch(() => {});
     } catch (e) {
       notifyError(String(e));
     }
