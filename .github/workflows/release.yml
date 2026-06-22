@@ -1140,12 +1140,16 @@ jobs:
       - name: Upload unsigned Windows installer for SignPath
         if: runner.os == 'Windows'
         id: upload_unsigned_windows_installer
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: unsigned-windows-installer-${{ matrix.suffix }}
           path: ${{ steps.collect_installers.outputs.windows_installer }}
           if-no-files-found: error
           retention-days: 5
+          # SignPath's current artifact configuration signs a raw PE file.
+          # actions/upload-artifact archives files by default; GitHub connector
+          # downloads that archive verbatim, so keep the installer unarchived.
+          archive: false
 
       - name: Verify SignPath release configuration
         if: runner.os == 'Windows'
@@ -1162,11 +1166,45 @@ jobs:
             exit 1
           }
 
+          $organizationId = "fbb6fb8c-4af2-4876-903e-a4b878e40b84"
+          $projectSlug = "openakita"
+          $policySlug = "openakita-test-sign-policy"
+          $artifactConfigurationSlug = "initial"
+          $certificateSlug = "openakita-test-cert"
+          $baseUrl = "https://app.signpath.io/api/v1/$organizationId"
+          $headers = @{ Authorization = "Bearer $env:SIGNPATH_API_TOKEN" }
+
+          function Test-SignPathEndpoint {
+            param(
+              [string] $Name,
+              [string] $Uri
+            )
+
+            try {
+              Invoke-RestMethod -Uri $Uri -Headers $headers -Method Get -ErrorAction Stop | Out-Null
+              Write-Host "$Name is available."
+            }
+            catch {
+              if ($_.Exception.Response) {
+                $statusCode = [int]$_.Exception.Response.StatusCode
+                Write-Error "$Name is not available (HTTP $statusCode): $Uri"
+              } else {
+                Write-Error "$Name is not available: $($_.Exception.Message)"
+              }
+              exit 1
+            }
+          }
+
+          Test-SignPathEndpoint "SignPath project" "$baseUrl/Projects/$projectSlug"
+          Test-SignPathEndpoint "SignPath signing policy" "$baseUrl/Projects/$projectSlug/SigningPolicies/$policySlug"
+          Test-SignPathEndpoint "SignPath artifact configuration XML" "$baseUrl/Projects/$projectSlug/ArtifactConfigurations/$artifactConfigurationSlug/Xml"
+          Test-SignPathEndpoint "SignPath certificate" "$baseUrl/Certificates/$certificateSlug"
+
           Write-Host "SignPath configuration is present."
           Write-Host "Project slug: openakita"
           Write-Host "Signing policy slug: openakita-test-sign-policy"
-          Write-Host "Artifact configuration slug: openakita-test-cert"
-          Write-Host "Test certificate slug in SignPath: OpenAkita_Test_Signing_Certificate"
+          Write-Host "Artifact configuration slug: initial"
+          Write-Host "Certificate slug in SignPath: openakita-test-cert"
 
       - name: Sign Windows installer with SignPath
         if: runner.os == 'Windows'
@@ -1177,11 +1215,13 @@ jobs:
           organization-id: fbb6fb8c-4af2-4876-903e-a4b878e40b84
           project-slug: openakita
           signing-policy-slug: openakita-test-sign-policy
-          artifact-configuration-slug: openakita-test-cert
+          artifact-configuration-slug: initial
           github-artifact-id: ${{ steps.upload_unsigned_windows_installer.outputs.artifact-id }}
           wait-for-completion: true
           wait-for-completion-timeout-in-seconds: "1800"
+          service-unavailable-timeout-in-seconds: "1800"
           output-artifact-directory: ${{ steps.collect_installers.outputs.signpath_output_dir }}
+          skip-decompress: true
 
       - name: Replace Windows installer with SignPath signed artifact
         if: runner.os == 'Windows'

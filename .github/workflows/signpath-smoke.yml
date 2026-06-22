@@ -1,0 +1,219 @@
+name: SignPath Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      size_mb:
+        description: "Size of the generated PE fixture in MiB. Use 1 for quick smoke, 300 to mimic the installer."
+        required: false
+        default: "1"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  windows_signpath_smoke:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build PE signing fixture
+        id: fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $sizeMb = [int]"${{ inputs.size_mb }}"
+          if (($sizeMb -lt 1) -or ($sizeMb -gt 1024)) {
+            Write-Error "size_mb must be between 1 and 1024."
+            exit 1
+          }
+
+          $projectDir = Join-Path $env:GITHUB_WORKSPACE "signpath-smoke"
+          $publishDir = Join-Path $projectDir "publish"
+          New-Item -ItemType Directory -Path $projectDir -Force | Out-Null
+
+          $csproj = @"
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <TargetFramework>net8.0</TargetFramework>
+              <ImplicitUsings>enable</ImplicitUsings>
+              <Nullable>enable</Nullable>
+            </PropertyGroup>
+          </Project>
+          "@
+          [System.IO.File]::WriteAllText(
+            (Join-Path $projectDir "SignPathSmoke.csproj"),
+            $csproj,
+            (New-Object System.Text.UTF8Encoding($false))
+          )
+
+          $program = @"
+          Console.WriteLine("OpenAkita SignPath smoke fixture");
+          "@
+          [System.IO.File]::WriteAllText(
+            (Join-Path $projectDir "Program.cs"),
+            $program,
+            (New-Object System.Text.UTF8Encoding($false))
+          )
+
+          dotnet publish (Join-Path $projectDir "SignPathSmoke.csproj") `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained false `
+            -p:PublishSingleFile=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            --output $publishDir
+
+          $exePath = Join-Path $publishDir "SignPathSmoke.exe"
+          if (-not (Test-Path -LiteralPath $exePath)) {
+            Write-Error "Fixture executable was not created: $exePath"
+            exit 1
+          }
+
+          $targetBytes = [int64]$sizeMb * 1MB
+          $currentBytes = (Get-Item -LiteralPath $exePath).Length
+          if ($targetBytes -gt $currentBytes) {
+            $stream = [System.IO.File]::Open($exePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite)
+            try {
+              $stream.SetLength($targetBytes)
+            }
+            finally {
+              $stream.Dispose()
+            }
+          }
+
+          $relativePath = "signpath-smoke/publish/SignPathSmoke.exe"
+          $hash = Get-FileHash -LiteralPath $exePath -Algorithm SHA256
+          $length = (Get-Item -LiteralPath $exePath).Length
+
+          Write-Host "Fixture path: $relativePath"
+          Write-Host "Fixture size: $length bytes"
+          Write-Host "Fixture SHA256: $($hash.Hash)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "fixture_path=$relativePath"
+
+      - name: Upload unsigned fixture for SignPath
+        id: upload_unsigned_fixture
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.fixture.outputs.fixture_path }}
+          if-no-files-found: error
+          retention-days: 1
+          archive: false
+
+      - name: Verify SignPath smoke configuration
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:SIGNPATH_API_TOKEN) {
+            Write-Error "Missing secret SIGNPATH_API_TOKEN."
+            exit 1
+          }
+
+          $organizationId = "fbb6fb8c-4af2-4876-903e-a4b878e40b84"
+          $projectSlug = "openakita"
+          $policySlug = "openakita-test-sign-policy"
+          $artifactConfigurationSlug = "initial"
+          $certificateSlug = "openakita-test-cert"
+          $baseUrl = "https://app.signpath.io/api/v1/$organizationId"
+          $headers = @{ Authorization = "Bearer $env:SIGNPATH_API_TOKEN" }
+
+          function Test-SignPathEndpoint {
+            param(
+              [string] $Name,
+              [string] $Uri
+            )
+
+            try {
+              Invoke-RestMethod -Uri $Uri -Headers $headers -Method Get -ErrorAction Stop | Out-Null
+              Write-Host "$Name is available."
+            }
+            catch {
+              if ($_.Exception.Response) {
+                $statusCode = [int]$_.Exception.Response.StatusCode
+                Write-Error "$Name is not available (HTTP $statusCode): $Uri"
+              } else {
+                Write-Error "$Name is not available: $($_.Exception.Message)"
+              }
+              exit 1
+            }
+          }
+
+          Test-SignPathEndpoint "SignPath project" "$baseUrl/Projects/$projectSlug"
+          Test-SignPathEndpoint "SignPath signing policy" "$baseUrl/Projects/$projectSlug/SigningPolicies/$policySlug"
+          Test-SignPathEndpoint "SignPath artifact configuration XML" "$baseUrl/Projects/$projectSlug/ArtifactConfigurations/$artifactConfigurationSlug/Xml"
+          Test-SignPathEndpoint "SignPath certificate" "$baseUrl/Certificates/$certificateSlug"
+
+      - name: Sign fixture with SignPath
+        id: signpath_fixture
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: fbb6fb8c-4af2-4876-903e-a4b878e40b84
+          project-slug: openakita
+          signing-policy-slug: openakita-test-sign-policy
+          artifact-configuration-slug: initial
+          github-artifact-id: ${{ steps.upload_unsigned_fixture.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: "1800"
+          service-unavailable-timeout-in-seconds: "1800"
+          output-artifact-directory: signpath-smoke-signed
+          skip-decompress: true
+
+      - name: Verify signed fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $signedDir = Join-Path $env:GITHUB_WORKSPACE "signpath-smoke-signed"
+          if (-not (Test-Path -LiteralPath $signedDir)) {
+            Write-Error "Signed artifact directory does not exist: $signedDir"
+            exit 1
+          }
+
+          $signedFiles = @(Get-ChildItem -LiteralPath $signedDir -Filter "*.exe" -File -Recurse)
+          if ($signedFiles.Count -ne 1) {
+            Write-Error "Expected exactly one signed .exe, found $($signedFiles.Count)."
+            $signedFiles | ForEach-Object { Write-Host "  $($_.FullName)" }
+            exit 1
+          }
+
+          $signedExe = $signedFiles[0].FullName
+          $authenticode = Get-AuthenticodeSignature -LiteralPath $signedExe
+          if ($authenticode.Status -eq "NotSigned") {
+            Write-Error "Signed fixture is not Authenticode-signed: $signedExe"
+            exit 1
+          }
+          if (-not $authenticode.SignerCertificate) {
+            Write-Error "Signed fixture has no signer certificate: $signedExe"
+            exit 1
+          }
+          if (-not $authenticode.TimeStamperCertificate) {
+            Write-Error "Signed fixture has no timestamp certificate: $signedExe"
+            exit 1
+          }
+
+          Write-Host "Signing request: ${{ steps.signpath_fixture.outputs.signing-request-web-url }}"
+          Write-Host "Authenticode status: $($authenticode.Status)"
+          Write-Host "Signer subject: $($authenticode.SignerCertificate.Subject)"
+          Write-Host "Timestamp subject: $($authenticode.TimeStamperCertificate.Subject)"
+
+      - name: Upload signed smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: signpath-smoke-signed
+          path: signpath-smoke-signed/**
+          if-no-files-found: ignore
+          retention-days: 1
