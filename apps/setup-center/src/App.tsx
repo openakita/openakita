@@ -59,7 +59,7 @@ import logoUrl from "./assets/logo.png";
 import "highlight.js/styles/github.css";
 import { getThemePref, setThemePref, THEME_CHANGE_EVENT, type Theme } from "./theme";
 import { copyToClipboard } from "./utils/clipboard";
-import { BUILTIN_PROVIDERS, PIP_INDEX_PRESETS } from "./constants";
+import { BUILTIN_PROVIDERS, PIP_INDEX_PRESETS, WEB_SEARCH_ENV_KEYS } from "./constants";
 import { safeFetch } from "./providers";
 import {
   joinPath,
@@ -2241,6 +2241,7 @@ function MainApp() {
           "DESKTOP_VISION_ENABLED", "DESKTOP_VISION_MAX_RETRIES", "DESKTOP_VISION_TIMEOUT",
           "DESKTOP_CLICK_DELAY", "DESKTOP_TYPE_INTERVAL", "DESKTOP_MOVE_DURATION",
           "DESKTOP_FAILSAFE", "DESKTOP_PAUSE",
+          ...WEB_SEARCH_ENV_KEYS,
           "GITHUB_TOKEN",
         ];
       case "agent":
@@ -3467,8 +3468,7 @@ function MainApp() {
                 envDraft={envDraft}
                 onEnvChange={setEnvDraft}
                 onSaveEnv={async () => {
-                  const keys = ["WEB_SEARCH_PROVIDER", "BOCHA_API_KEY", "TAVILY_API_KEY", "JINA_API_KEY", "SEARXNG_BASE_URL"];
-                  await saveEnvKeys(keys);
+                  await saveEnvKeys(WEB_SEARCH_ENV_KEYS);
                 }}
                 busy={busy}
                 apiBaseUrl={apiBaseUrl}

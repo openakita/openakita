@@ -8,6 +8,14 @@ import SHARED_PROVIDERS from "@shared/providers.json";
 // registry_class 字段仅 Python 使用，前端忽略
 export const BUILTIN_PROVIDERS: ProviderInfo[] = SHARED_PROVIDERS as ProviderInfo[];
 
+export const WEB_SEARCH_ENV_KEYS = [
+  "WEB_SEARCH_PROVIDER",
+  "BOCHA_API_KEY",
+  "TAVILY_API_KEY",
+  "JINA_API_KEY",
+  "SEARXNG_BASE_URL",
+];
+
 /** STT 推荐模型（按 provider slug 索引） */
 export const STT_RECOMMENDED_MODELS: Record<string, { id: string; note: string }[]> = {
   "openai":          [{ id: "gpt-4o-transcribe", note: "推荐" }, { id: "whisper-1", note: "" }],
@@ -25,4 +33,3 @@ export const PIP_INDEX_PRESETS: { id: "official" | "tuna" | "ustc" | "aliyun" | 
   { id: "official", label: "官方 PyPI", url: "https://pypi.org/simple/" },
   { id: "custom", label: "自定义…", url: "" },
 ];
-
