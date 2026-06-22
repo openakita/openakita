@@ -3183,6 +3183,12 @@ function MainApp() {
         providers={providers}
         doLoadProviders={doLoadProviders}
         loadSavedEndpoints={loadSavedEndpoints}
+        onEndpointConfigChanged={async (endpointType) => {
+          await refreshStatus(undefined, undefined, true);
+          if (endpointType === "endpoints") {
+            autoCheckEndpoints(httpApiBase());
+          }
+        }}
         readWorkspaceFile={readWorkspaceFile}
         writeWorkspaceFile={writeWorkspaceFile}
         venvDir={venvDir}
