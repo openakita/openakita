@@ -3385,7 +3385,7 @@
       "mcpOnline": "Online",
       "mcpOffline": "Offline",
       "selectedMcp": "{{count}} selected",
-      "skills": "Skills",
+    "skills": "Extension Tools",
       "skillsDesc": "Installed skill packs",
       "selectedSkills": "{{count}} selected",
       "selectAll": "Select All",
