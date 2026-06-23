@@ -12,6 +12,7 @@ import logging
 import re
 import threading
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -369,26 +370,29 @@ class SessionContext:
 
     def to_dict(self) -> dict:
         """序列化"""
-        return {
-            "messages": self.messages,
-            "variables": self.variables,
-            "current_task": self.current_task,
-            "memory_scope": self.memory_scope,
-            "summary": self.summary,
-            "topic_boundaries": self.topic_boundaries,
-            "current_topic_start": self.current_topic_start,
-            "agent_profile_id": self.agent_profile_id,
-            "agent_switch_history": self.agent_switch_history,
-            "working_facts": self.working_facts,
-            "handoff_events": self.handoff_events,
-            "active_agents": self.active_agents,
-            "delegation_chain": self.delegation_chain,
-            "sub_agent_records": self.sub_agent_records,
-            "task_checkpoints": self.task_checkpoints,
-            "focus_terms": self.focus_terms,
-            "focus_updated_at": self.focus_updated_at,
-            "precompact_snapshot": self.precompact_snapshot,
-        }
+        with self._msg_lock:
+            return deepcopy(
+                {
+                    "messages": self.messages,
+                    "variables": self.variables,
+                    "current_task": self.current_task,
+                    "memory_scope": self.memory_scope,
+                    "summary": self.summary,
+                    "topic_boundaries": self.topic_boundaries,
+                    "current_topic_start": self.current_topic_start,
+                    "agent_profile_id": self.agent_profile_id,
+                    "agent_switch_history": self.agent_switch_history,
+                    "working_facts": self.working_facts,
+                    "handoff_events": self.handoff_events,
+                    "active_agents": self.active_agents,
+                    "delegation_chain": self.delegation_chain,
+                    "sub_agent_records": self.sub_agent_records,
+                    "task_checkpoints": self.task_checkpoints,
+                    "focus_terms": self.focus_terms,
+                    "focus_updated_at": self.focus_updated_at,
+                    "precompact_snapshot": self.precompact_snapshot,
+                }
+            )
 
     @classmethod
     def from_dict(cls, data: dict) -> "SessionContext":
