@@ -18,6 +18,7 @@
     "lint:hooks": "eslint --rule \"react-hooks/rules-of-hooks: error\" --no-eslintrc --config eslint.config.js \"src/**/*.{ts,tsx}\"",
     "audit:tauri-lifecycle": "uv run --no-sync python ../../tools/audit_tauri_lifecycle.py",
     "tauri": "tauri",
+    "tauri:dev:external-backend": "cross-env OPENAKITA_EXTERNAL_BACKEND_DEV=1 tauri dev --config src-tauri/tauri.external-backend.dev.conf.json",
     "cap:sync": "npx cap sync",
     "cap:android": "npx cap open android",
     "cap:ios": "npx cap open ios"
