@@ -324,6 +324,33 @@ def _has_web_frontend_mount(app: FastAPI) -> bool:
     return any(getattr(route, "name", None) == "web-frontend" for route in app.routes)
 
 
+def _attach_agent_to_app(app: FastAPI, agent: Any) -> None:
+    app.state.agent = agent
+
+    pm = getattr(agent, "_plugin_manager", None)
+    if pm is None:
+        return
+
+    # Writes go to the shared backing dict; ``_host_refs`` is a filtered
+    # read-only view for plugins (no ``__setitem__`` / ``pop``).
+    ext = pm._external_host_refs
+    ext["api_app"] = app
+    pending = ext.pop("_pending_plugin_routers", [])
+    for plugin_id, router in pending:
+        try:
+            app.include_router(router, prefix=f"/api/plugins/{plugin_id}")
+            logger.info("Mounted pending plugin routes for '%s'", plugin_id)
+        except Exception as e:
+            logger.warning("Failed to mount pending routes for plugin '%s': %s", plugin_id, e)
+
+    pending_ui = ext.pop("_pending_plugin_ui_mounts", [])
+    for plugin_id, ui_dist_dir in pending_ui:
+        try:
+            pm._do_mount_plugin_ui(app, plugin_id, ui_dist_dir)
+        except Exception as e:
+            logger.warning("Failed to mount pending UI for plugin '%s': %s", plugin_id, e)
+
+
 def _startup_health_check_clients(app_state: Any) -> tuple[Any | None, Any | None, Any | None]:
     _agent = getattr(app_state, "agent", None)
     _brain = getattr(_agent, "brain", None) if _agent else None
@@ -545,28 +572,7 @@ def create_app(
     }
 
     if agent is not None:
-        pm = getattr(agent, "_plugin_manager", None)
-        if pm is not None:
-            # Writes go to the shared backing dict; ``_host_refs`` is a filtered
-            # read-only view for plugins (no ``__setitem__`` / ``pop``).
-            ext = pm._external_host_refs
-            ext["api_app"] = app
-            pending = ext.pop("_pending_plugin_routers", [])
-            for plugin_id, router in pending:
-                try:
-                    app.include_router(router, prefix=f"/api/plugins/{plugin_id}")
-                    logger.info("Mounted pending plugin routes for '%s'", plugin_id)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to mount pending routes for plugin '%s': %s", plugin_id, e
-                    )
-
-            pending_ui = ext.pop("_pending_plugin_ui_mounts", [])
-            for plugin_id, ui_dist_dir in pending_ui:
-                try:
-                    pm._do_mount_plugin_ui(app, plugin_id, ui_dist_dir)
-                except Exception as e:
-                    logger.warning("Failed to mount pending UI for plugin '%s': %s", plugin_id, e)
+        _attach_agent_to_app(app, agent)
 
     # Initialize OrgManager & OrgRuntime
     from openakita.orgs.manager import OrgManager
@@ -1116,7 +1122,7 @@ async def start_api_server(
 
 def update_agent(app: FastAPI, agent: Any) -> None:
     """Update the agent reference in the running app (e.g. after initialization)."""
-    app.state.agent = agent
+    _attach_agent_to_app(app, agent)
 
 
 def update_runtime_refs(
@@ -1140,9 +1146,12 @@ def update_runtime_refs(
     if app is None:
         return False
     if agent is not None:
-        app.state.agent = agent
+        _attach_agent_to_app(app, agent)
     if session_manager is not None:
         app.state.session_manager = session_manager
+        org_command_service = getattr(app.state, "org_command_service", None)
+        if org_command_service is not None and hasattr(org_command_service, "_session_manager"):
+            org_command_service._session_manager = session_manager
     if gateway is not None:
         app.state.gateway = gateway
     if orchestrator is not None:

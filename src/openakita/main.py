@@ -1973,20 +1973,10 @@ def serve(
         )
 
         agent = get_agent()
-
-        console.print("[bold green]正在初始化 Agent...[/bold green]")
-        await agent.initialize()
-        console.print(f"[green]✓[/green] Agent 已初始化 (技能: {agent.skill_registry.count})")
-
         agent_or_master = agent
 
-        # 初始化核心服务（SessionManager、Agent Pool、Orchestrator）
-        console.print("[bold green]正在初始化核心服务...[/bold green]")
-        await init_core_services(agent_or_master)
-        console.print("[green]✓[/green] 核心服务已就绪")
-
-        # 先启动 HTTP API（供 Setup Center/桌面端使用）。
-        # IM 通道依赖安装可能很慢，不能阻塞 /api/health 就绪。
+        # 先启动 HTTP API（供 Setup Center/桌面端使用）。Agent 初始化、
+        # 核心服务和 IM 通道可能很慢，不能阻塞 /api/health 与 Web UI 就绪。
         api_task = None
         _api_fatal = False
         try:
@@ -2023,12 +2013,12 @@ def serve(
                     )
 
             api_task = await start_api_server(
-                agent=agent_or_master,
+                agent=None,
                 shutdown_event=shutdown_event,
-                session_manager=_session_manager,
-                gateway=_message_gateway,
-                orchestrator=_orchestrator,
-                agent_pool=_desktop_pool,
+                session_manager=None,
+                gateway=None,
+                orchestrator=None,
+                agent_pool=None,
                 host=_api_host,
                 port=_api_port,
             )
@@ -2037,14 +2027,31 @@ def serve(
                 f"[green]✓[/green] HTTP API 已启动: http://{_display_host}:{_api_port}"
                 + ("  [dim](lan_mode: 0.0.0.0)[/dim]" if _api_host == "0.0.0.0" else "")
             )
-            # HTTP API 已可访问，但 IM 通道、晚绑定 gateway、部分后台服务可能仍在启动。
+            # HTTP API 已可访问，但 Agent、核心服务、IM 通道仍在启动。
             # 不要在这里把 phase 标成 running，否则前端会把"HTTP ready"误解为
-            # "整个后端已完成启动"，这正是状态面板反复出现假运行/未知 IM 的根因。
-            _heartbeat_phase = "http_ready"
+            # "整个后端已完成启动"。
+            _heartbeat_phase = "agent_initializing"
             _heartbeat_http_ready = True
             _heartbeat_im_ready = False
             _heartbeat_ready = False
             _write_heartbeat()  # 立即刷新心跳，标记 HTTP 就绪
+            try:
+                from openakita.api.server import update_runtime_refs
+
+                update_runtime_refs(
+                    api_task,
+                    startup_phase="agent_initializing",
+                    readiness={
+                        "phase": "agent_initializing",
+                        "http_ready": True,
+                        "agent_ready": False,
+                        "core_ready": False,
+                        "im_ready": False,
+                        "ready": False,
+                    },
+                )
+            except Exception:
+                logger.debug("Failed to update API startup readiness", exc_info=True)
         except ImportError:
             console.print("[yellow]⚠[/yellow] HTTP API 未启动（缺少 fastapi/uvicorn 依赖）")
         except Exception as e:
@@ -2061,6 +2068,57 @@ def serve(
             shutdown_event.set()
 
         if not _api_fatal:
+            console.print("[bold green]正在初始化 Agent...[/bold green]")
+            await agent.initialize()
+            console.print(f"[green]✓[/green] Agent 已初始化 (技能: {agent.skill_registry.count})")
+
+            if api_task is not None:
+                try:
+                    from openakita.api.server import update_runtime_refs
+
+                    update_runtime_refs(
+                        api_task,
+                        agent=agent_or_master,
+                        startup_phase="core_initializing",
+                        readiness={
+                            "phase": "core_initializing",
+                            "http_ready": True,
+                            "agent_ready": True,
+                            "core_ready": False,
+                            "im_ready": False,
+                            "ready": False,
+                        },
+                    )
+                except Exception:
+                    logger.debug("Failed to update API agent readiness", exc_info=True)
+
+            # 初始化核心服务（SessionManager、Agent Pool、Orchestrator）
+            console.print("[bold green]正在初始化核心服务...[/bold green]")
+            await init_core_services(agent_or_master)
+            console.print("[green]✓[/green] 核心服务已就绪")
+
+            if api_task is not None:
+                try:
+                    from openakita.api.server import update_runtime_refs
+
+                    update_runtime_refs(
+                        api_task,
+                        session_manager=_session_manager,
+                        orchestrator=_orchestrator,
+                        agent_pool=_desktop_pool,
+                        startup_phase="http_ready",
+                        readiness={
+                            "phase": "http_ready",
+                            "http_ready": True,
+                            "agent_ready": True,
+                            "core_ready": True,
+                            "im_ready": False,
+                            "ready": False,
+                        },
+                    )
+                except Exception:
+                    logger.debug("Failed to update API core readiness", exc_info=True)
+
             # 启动 IM 通道（可选）。放在 HTTP API 之后，避免首次安装通道依赖时
             # 桌面端长时间无法访问本地健康检查。
             _heartbeat_phase = "starting_im"

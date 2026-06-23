@@ -1449,6 +1449,7 @@ class Agent:
 
         # 状态
         self._initialized = False
+        self._initialize_lock = asyncio.Lock()
         self._running = False
 
         self._last_finalized_trace: list[dict] = []
@@ -2084,6 +2085,21 @@ class Agent:
         if self._initialized:
             return
 
+        async with self._initialize_lock:
+            if self._initialized:
+                return
+            await self._initialize_unlocked(
+                start_scheduler=start_scheduler,
+                lightweight=lightweight,
+                share_from=share_from,
+            )
+
+    async def _initialize_unlocked(
+        self,
+        start_scheduler: bool = True,
+        lightweight: bool = False,
+        share_from: "Agent | None" = None,
+    ) -> None:
         if share_from is not None and not lightweight:
             # share_from 隐含 lightweight：full-init 路径会再次跑一遍
             # _load_plugins，等于白白浪费 share_from 的缓存。这里直接报错让
