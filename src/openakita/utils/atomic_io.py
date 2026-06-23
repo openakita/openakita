@@ -117,7 +117,7 @@ def atomic_json_write(
     path: Path,
     data: Any,
     *,
-    indent: int = 2,
+    indent: int | str | None = 2,
     backup: bool = True,
     fsync: bool = False,
     allow_fallback: bool = True,
