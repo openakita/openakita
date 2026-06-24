@@ -22,7 +22,15 @@ npm install
 npm run tauri dev
 ```
 
+如果后端已通过 `openakita serve` 单独启动，优先使用外部后端开发模式：
+
+```bash
+npm run tauri:dev:external-backend
+```
+
+该模式不会把 `src-tauri/resources/openakita-server` 和 `src-tauri/resources/bootstrap`
+复制到 Tauri debug 资源目录；桌面端只连接已经运行的 `http://127.0.0.1:18900`。
+
 ### 说明
 
 - **Windows 图标**：为避免开发环境因缺少 `src-tauri/icons/icon.ico` 导致构建失败，`src-tauri/build.rs` 会在缺失时自动生成一个透明占位 `icon.ico`。正式发布请用 `tauri icon` 生成完整图标集。
-

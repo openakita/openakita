@@ -94,6 +94,7 @@ class SessionManager:
         # 活跃会话缓存 {session_key: Session}
         self._sessions: dict[str, Session] = {}
         self._sessions_lock = threading.RLock()
+        self._save_sessions_lock = threading.RLock()
 
         # 通道注册表：记录每个 IM 通道最后已知的 chat_id / user_id
         # 不受 session 过期清理影响，用于定时任务等场景回溯通道目标
@@ -999,21 +1000,25 @@ class SessionManager:
         使用临时文件 + 重命名的方式，确保写入过程中断不会损坏原文件。
         返回 True 表示保存成功，False 表示失败（调用方应重试）。
         """
-        sessions_file = self.storage_path / "sessions.json"
-        try:
-            data = [session.to_dict() for session in self._sessions.values()]
-            atomic_json_write(
-                sessions_file,
-                data,
-                fsync=True,
-                allow_fallback=False,
-            )
-            logger.debug(f"Saved {len(data)} sessions to storage (atomic fsync)")
-            return True
+        with self._save_sessions_lock:
+            sessions_file = self.storage_path / "sessions.json"
+            try:
+                with self._sessions_lock:
+                    sessions = list(self._sessions.values())
+                data = [session.to_dict() for session in sessions]
+                atomic_json_write(
+                    sessions_file,
+                    data,
+                    indent=None,
+                    fsync=True,
+                    allow_fallback=False,
+                )
+                logger.debug(f"Saved {len(data)} sessions to storage (atomic fsync)")
+                return True
 
-        except Exception as e:
-            logger.error(f"Failed to save sessions: {e}", exc_info=True)
-            return False
+            except Exception as e:
+                logger.error(f"Failed to save sessions: {e}", exc_info=True)
+                return False
 
     async def _save_sessions_async(self) -> None:
         """异步保存会话（在线程池中执行同步 I/O）"""

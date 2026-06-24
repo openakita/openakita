@@ -324,6 +324,129 @@ def _has_web_frontend_mount(app: FastAPI) -> bool:
     return any(getattr(route, "name", None) == "web-frontend" for route in app.routes)
 
 
+def _attach_agent_to_app(app: FastAPI, agent: Any) -> None:
+    app.state.agent = agent
+
+    pm = getattr(agent, "_plugin_manager", None)
+    if pm is None:
+        return
+
+    # Writes go to the shared backing dict; ``_host_refs`` is a filtered
+    # read-only view for plugins (no ``__setitem__`` / ``pop``).
+    ext = pm._external_host_refs
+    ext["api_app"] = app
+    pending = ext.pop("_pending_plugin_routers", [])
+    for plugin_id, router in pending:
+        try:
+            app.include_router(router, prefix=f"/api/plugins/{plugin_id}")
+            logger.info("Mounted pending plugin routes for '%s'", plugin_id)
+        except Exception as e:
+            logger.warning("Failed to mount pending routes for plugin '%s': %s", plugin_id, e)
+
+    pending_ui = ext.pop("_pending_plugin_ui_mounts", [])
+    for plugin_id, ui_dist_dir in pending_ui:
+        try:
+            pm._do_mount_plugin_ui(app, plugin_id, ui_dist_dir)
+        except Exception as e:
+            logger.warning("Failed to mount pending UI for plugin '%s': %s", plugin_id, e)
+
+
+def _startup_health_check_clients(app_state: Any) -> tuple[Any | None, Any | None, Any | None]:
+    _agent = getattr(app_state, "agent", None)
+    _brain = getattr(_agent, "brain", None) if _agent else None
+    _llm_client = getattr(_brain, "_llm_client", None) if _brain else None
+    _compiler_client = getattr(_brain, "_compiler_client", None) if _brain else None
+
+    if not (_llm_client and hasattr(_llm_client, "startup_health_check")):
+        _llm_client = None
+    if not (_compiler_client and hasattr(_compiler_client, "startup_health_check")):
+        _compiler_client = None
+
+    return _brain, _llm_client, _compiler_client
+
+
+async def _run_startup_llm_health_checks(app_state: Any) -> None:
+    try:
+        _brain, _llm_client, _compiler_client = _startup_health_check_clients(app_state)
+    except Exception as e:
+        logger.debug(f"[Startup] Endpoint health check skipped: {e}")
+        return
+
+    # Endpoint health check: detect stale/broken endpoints early.
+    try:
+        if _llm_client:
+            _results = await _llm_client.startup_health_check()
+            _ok = sum(1 for v in _results.values() if v == "ok")
+            _fail = len(_results) - _ok
+            if _fail:
+                logger.warning(
+                    f"[Startup] Endpoint health check: {_ok} ok, {_fail} failed — "
+                    f"{', '.join(f'{k}={v}' for k, v in _results.items() if v != 'ok')}"
+                )
+            else:
+                logger.info(f"[Startup] All {_ok} endpoints healthy")
+    except Exception as e:
+        logger.debug(f"[Startup] Endpoint health check skipped: {e}")
+
+    # Compiler endpoint health check.
+    try:
+        if _compiler_client:
+            comp_result = await _compiler_client.startup_health_check()
+            comp_failed = {k: v for k, v in comp_result.items() if v != "ok"}
+            if comp_failed:
+                for ep_name, status in comp_failed.items():
+                    _brain._compiler_on_failure(f"startup: {ep_name}={status}")
+                logger.warning(
+                    f"[Startup] Compiler health check failed: "
+                    f"{', '.join(f'{k}={v}' for k, v in comp_failed.items())}. "
+                    f"Compiler tasks will use main model."
+                )
+            else:
+                logger.info(f"[Startup] Compiler endpoints all healthy: {list(comp_result.keys())}")
+    except Exception as e:
+        logger.debug(f"[Startup] Compiler health check skipped: {e}")
+
+
+def _schedule_startup_llm_health_check(app_state: Any) -> asyncio.Task[None] | None:
+    existing = getattr(app_state, "llm_startup_health_check_task", None)
+    if existing is not None and not existing.done():
+        return existing
+
+    try:
+        _, _llm_client, _compiler_client = _startup_health_check_clients(app_state)
+    except Exception as e:
+        logger.debug(f"[Startup] Endpoint health check skipped: {e}")
+        app_state.llm_startup_health_check_task = None
+        return None
+
+    if _llm_client is None and _compiler_client is None:
+        app_state.llm_startup_health_check_task = None
+        return None
+
+    task = asyncio.create_task(
+        _run_startup_llm_health_checks(app_state),
+        name="openakita-startup-llm-health-check",
+    )
+    app_state.llm_startup_health_check_task = task
+    logger.info("[Startup] LLM endpoint health check scheduled in background")
+    return task
+
+
+async def _cancel_startup_llm_health_check(app_state: Any) -> None:
+    task = getattr(app_state, "llm_startup_health_check_task", None)
+    if task is None or task.done():
+        app_state.llm_startup_health_check_task = None
+        return
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        logger.debug("[Shutdown] Startup LLM health check cancelled")
+    finally:
+        app_state.llm_startup_health_check_task = None
+
+
 def create_app(
     agent: Any = None,
     shutdown_event: asyncio.Event | None = None,
@@ -449,28 +572,7 @@ def create_app(
     }
 
     if agent is not None:
-        pm = getattr(agent, "_plugin_manager", None)
-        if pm is not None:
-            # Writes go to the shared backing dict; ``_host_refs`` is a filtered
-            # read-only view for plugins (no ``__setitem__`` / ``pop``).
-            ext = pm._external_host_refs
-            ext["api_app"] = app
-            pending = ext.pop("_pending_plugin_routers", [])
-            for plugin_id, router in pending:
-                try:
-                    app.include_router(router, prefix=f"/api/plugins/{plugin_id}")
-                    logger.info("Mounted pending plugin routes for '%s'", plugin_id)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to mount pending routes for plugin '%s': %s", plugin_id, e
-                    )
-
-            pending_ui = ext.pop("_pending_plugin_ui_mounts", [])
-            for plugin_id, ui_dist_dir in pending_ui:
-                try:
-                    pm._do_mount_plugin_ui(app, plugin_id, ui_dist_dir)
-                except Exception as e:
-                    logger.warning("Failed to mount pending UI for plugin '%s': %s", plugin_id, e)
+        _attach_agent_to_app(app, agent)
 
     # Initialize OrgManager & OrgRuntime
     from openakita.orgs.manager import OrgManager
@@ -766,47 +868,7 @@ def create_app(
             except Exception as e:
                 logger.warning(f"OrgRuntime startup error (non-fatal): {e}")
 
-        # Endpoint health check: detect stale/broken endpoints early
-        try:
-            _agent = getattr(app.state, "agent", None)
-            _brain = getattr(_agent, "brain", None) if _agent else None
-            _llm_client = getattr(_brain, "_llm_client", None) if _brain else None
-            if _llm_client and hasattr(_llm_client, "startup_health_check"):
-                _results = await _llm_client.startup_health_check()
-                _ok = sum(1 for v in _results.values() if v == "ok")
-                _fail = len(_results) - _ok
-                if _fail:
-                    logger.warning(
-                        f"[Startup] Endpoint health check: {_ok} ok, {_fail} failed — "
-                        f"{', '.join(f'{k}={v}' for k, v in _results.items() if v != 'ok')}"
-                    )
-                else:
-                    logger.info(f"[Startup] All {_ok} endpoints healthy")
-        except Exception as e:
-            logger.debug(f"[Startup] Endpoint health check skipped: {e}")
-
-        # Compiler endpoint health check
-        try:
-            _agent = getattr(app.state, "agent", None)
-            _brain = getattr(_agent, "brain", None) if _agent else None
-            _compiler_client = getattr(_brain, "_compiler_client", None) if _brain else None
-            if _compiler_client and hasattr(_compiler_client, "startup_health_check"):
-                comp_result = await _compiler_client.startup_health_check()
-                comp_failed = {k: v for k, v in comp_result.items() if v != "ok"}
-                if comp_failed:
-                    for ep_name, status in comp_failed.items():
-                        _brain._compiler_on_failure(f"startup: {ep_name}={status}")
-                    logger.warning(
-                        f"[Startup] Compiler health check failed: "
-                        f"{', '.join(f'{k}={v}' for k, v in comp_failed.items())}. "
-                        f"Compiler tasks will use main model."
-                    )
-                else:
-                    logger.info(
-                        f"[Startup] Compiler endpoints all healthy: {list(comp_result.keys())}"
-                    )
-        except Exception as e:
-            logger.debug(f"[Startup] Compiler health check skipped: {e}")
+        _schedule_startup_llm_health_check(app.state)
 
     @app.on_event("shutdown")
     async def _shutdown_org_runtime():
@@ -817,6 +879,10 @@ def create_app(
                 await to_engine(app.state.org_runtime.shutdown())
             except Exception as e:
                 logger.warning(f"OrgRuntime shutdown error: {e}")
+
+    @app.on_event("shutdown")
+    async def _shutdown_startup_llm_health_check():
+        await _cancel_startup_llm_health_check(app.state)
 
     @app.on_event("shutdown")
     async def _shutdown_policy_hot_reloader():
@@ -1056,7 +1122,7 @@ async def start_api_server(
 
 def update_agent(app: FastAPI, agent: Any) -> None:
     """Update the agent reference in the running app (e.g. after initialization)."""
-    app.state.agent = agent
+    _attach_agent_to_app(app, agent)
 
 
 def update_runtime_refs(
@@ -1080,9 +1146,12 @@ def update_runtime_refs(
     if app is None:
         return False
     if agent is not None:
-        app.state.agent = agent
+        _attach_agent_to_app(app, agent)
     if session_manager is not None:
         app.state.session_manager = session_manager
+        org_command_service = getattr(app.state, "org_command_service", None)
+        if org_command_service is not None and hasattr(org_command_service, "_session_manager"):
+            org_command_service._session_manager = session_manager
     if gateway is not None:
         app.state.gateway = gateway
     if orchestrator is not None:

@@ -13,6 +13,7 @@ from openakita.skills.parser import parse_skill
 from openakita.skills.runtime_registry import (
     mark_skill_loaded,
     mark_skill_pending_update,
+    mark_skills_loaded,
     read_skill_runtime_registry,
 )
 
@@ -132,6 +133,47 @@ def test_skill_runtime_registry_tracks_loaded_and_pending_update(monkeypatch, tm
     assert state["reload_required"] is True
     assert state["update_policy"] == "disk-only"
     assert state["deps_hash"]
+
+
+def test_skill_runtime_registry_batches_loaded_records(monkeypatch, tmp_path):
+    monkeypatch.setattr("openakita.skills.runtime_registry._get_openakita_root", lambda: tmp_path)
+
+    mark_skill_loaded(
+        "existing-skill",
+        source_path=str(tmp_path / "skills" / "existing-skill"),
+        dependencies=["requests"],
+    )
+    first_state = read_skill_runtime_registry()["skills"]["existing-skill"]
+    first_installed_at = first_state["installed_at"]
+
+    mark_skills_loaded(
+        [
+            {
+                "skill_id": "existing-skill",
+                "source_path": str(tmp_path / "skills" / "existing-skill-v2"),
+                "dependencies": ["requests", "pandas==2.2.0"],
+            },
+            {
+                "skill_id": "new-skill",
+                "source_path": str(tmp_path / "skills" / "new-skill"),
+                "enabled": False,
+                "dependencies": [],
+            },
+        ]
+    )
+
+    skills = read_skill_runtime_registry()["skills"]
+    existing = skills["existing-skill"]
+    assert existing["installed_at"] == first_installed_at
+    assert existing["source_path"].endswith("existing-skill-v2")
+    assert existing["dependencies"] == ["requests", "pandas==2.2.0"]
+    assert existing["reload_required"] is False
+
+    new_skill = skills["new-skill"]
+    assert new_skill["installed"] is True
+    assert new_skill["loaded"] is True
+    assert new_skill["enabled"] is False
+    assert new_skill["update_policy"] == "disk-only"
 
 
 def test_tool_experience_redacts_secrets(tmp_path):

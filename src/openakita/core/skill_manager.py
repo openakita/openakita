@@ -88,10 +88,11 @@ class SkillManager:
         - skills/ (项目级别)
         - .cursor/skills/ (Cursor 兼容)
         """
-        loaded = self._loader.load_all(settings.project_root)
-        logger.info(f"Loaded {loaded} skills from standard directories")
-
-        # 外部技能 allowlist 过滤（支持 DEFAULT_DISABLED_SKILLS 默认禁用）
+        # 外部技能 allowlist 过滤（支持 DEFAULT_DISABLED_SKILLS 默认禁用）。
+        # 先读取 allowlist，并在扫描阶段跳过未启用的外部技能，避免启动时
+        # 解析/注册几百个随后会被 prune 掉的 SKILL.md。
+        agent_skills: set[str] = set()
+        effective: set[str] | None = None
         try:
             cfg_path = settings.project_root / "data" / "skills.json"
             external_allowlist: set[str] | None = None
@@ -101,10 +102,24 @@ class SkillManager:
                 al = cfg.get("external_allowlist", None)
                 if isinstance(al, list):
                     external_allowlist = {str(x).strip() for x in al if str(x).strip()}
-            effective = self._loader.compute_effective_allowlist(external_allowlist)
             from openakita.skills.preset_utils import collect_preset_referenced_skills
 
             agent_skills = collect_preset_referenced_skills()
+            if external_allowlist is not None:
+                effective = self._loader.compute_effective_allowlist(external_allowlist)
+        except Exception as e:
+            logger.warning(f"Failed to read skills allowlist before scan: {e}")
+
+        load_filter = self._loader.build_preparse_allowlist_filter(
+            effective,
+            agent_referenced_skills=agent_skills,
+        )
+        loaded = self._loader.load_all(settings.project_root, load_filter=load_filter)
+        logger.info(f"Loaded {loaded} skills from standard directories")
+
+        try:
+            if effective is None:
+                effective = self._loader.compute_effective_allowlist(None)
             removed = self._loader.prune_external_by_allowlist(
                 effective,
                 agent_referenced_skills=agent_skills,
@@ -112,7 +127,7 @@ class SkillManager:
             if removed:
                 logger.info(f"External skills filtered: {removed} disabled")
         except Exception as e:
-            logger.warning(f"Failed to apply skills allowlist: {e}")
+            logger.warning(f"Failed to apply skills allowlist after scan: {e}")
 
         self._catalog_text = self._catalog.generate_catalog()
         logger.info(f"Generated skill catalog with {self._catalog.skill_count} skills")

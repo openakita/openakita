@@ -127,6 +127,7 @@ const SERVICE_START_DEDUPE_MS: u64 = 3_000;
 static SERVICE_START_LAST_AT: Lazy<Mutex<HashMap<String, u64>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 const OPENAKITA_ROOT_MARKER: &str = ".openakita-root";
+const EXTERNAL_BACKEND_DEV_ENV: &str = "OPENAKITA_EXTERNAL_BACKEND_DEV";
 
 const PIP_INSTALL_LOG_MAX_CHUNKS: usize = 512;
 const PIP_INSTALL_DEFAULT_ID: &str = "default";
@@ -1362,6 +1363,13 @@ fn save_log_export(filename: String, content: String) -> Result<String, String> 
 
 fn modules_dir() -> PathBuf {
     openakita_root_dir().join("modules")
+}
+
+fn external_backend_dev_mode() -> bool {
+    matches!(
+        std::env::var(EXTERNAL_BACKEND_DEV_ENV).ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
+    )
 }
 
 /// 获取内嵌 PyInstaller 打包后端的目录
@@ -5297,6 +5305,7 @@ fn healthy_backend_pid(port: u16) -> Option<u32> {
 /// 此函数合并了「是否有后端在运行」和「版本是否匹配」两个检查，
 /// 只发一次 HTTP 请求，避免 setup 阶段重复探测。
 fn startup_version_check(workspace_id: &str, app_version: &str, port: u16) -> VersionCheckResult {
+    let external_dev = external_backend_dev_mode();
     let client = match reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .no_proxy()
@@ -5319,10 +5328,18 @@ fn startup_version_check(workspace_id: &str, app_version: &str, port: u16) -> Ve
                 "[version_check] health check non-success: {}",
                 r.status()
             ));
+            if external_dev {
+                log_to_file("[version_check] external-backend dev mode: backend is not healthy; skip bundled auto-start");
+                return VersionCheckResult::RunningOk;
+            }
             return VersionCheckResult::NotRunning;
         }
         Err(e) => {
             log_to_file(&format!("[version_check] health check failed: {e}"));
+            if external_dev {
+                log_to_file("[version_check] external-backend dev mode: backend is not running; skip bundled auto-start");
+                return VersionCheckResult::RunningOk;
+            }
             return VersionCheckResult::NotRunning;
         }
     };
@@ -5338,6 +5355,18 @@ fn startup_version_check(workspace_id: &str, app_version: &str, port: u16) -> Ve
         .unwrap_or("")
         .trim_start_matches('v');
     let desktop_version = app_version.trim_start_matches('v');
+
+    if external_dev {
+        if let Some(pid) = json.get("pid").and_then(|v| v.as_u64()).map(|p| p as u32) {
+            let _ = write_pid_file(workspace_id, pid, "external");
+        }
+        log_to_file(&format!(
+            "[version_check] external-backend dev mode: keeping running backend version={} for ws={}",
+            if backend_version.is_empty() { "unknown" } else { backend_version },
+            workspace_id
+        ));
+        return VersionCheckResult::RunningOk;
+    }
 
     // 版本无法判断或 dev 后端 → 保守保持现有后端。
     if backend_version.is_empty() || backend_version == "0.0.0-dev" {
@@ -5821,7 +5850,7 @@ fn main() {
             let state = read_state_file();
             if let Some(ref ws_id) = state.current_workspace_id {
                 let port = read_workspace_api_port(ws_id).unwrap_or(18900);
-                if cfg!(debug_assertions) {
+                if cfg!(debug_assertions) || external_backend_dev_mode() {
                     if let Some(pid) = healthy_backend_pid(port) {
                         let should_adopt = read_pid_file(ws_id)
                             .map(|data| !is_pid_file_valid(&data))
@@ -5847,7 +5876,9 @@ fn main() {
                     "[auto-start] app_version={}, ws_id={}, port={}, need_start={}",
                     app_version, ws_id, port, need_start
                 ));
-                if need_start {
+                if need_start && external_backend_dev_mode() {
+                    log_to_file("[auto-start] external-backend dev mode: skip bundled auto-start");
+                } else if need_start {
                     AUTO_START_IN_PROGRESS.store(true, Ordering::SeqCst);
                     AUTO_START_STARTED_AT_MS.store(now_ms(), Ordering::SeqCst);
                     let venv_dir = openakita_root_dir().join("venv").to_string_lossy().to_string();
@@ -5983,6 +6014,15 @@ fn main() {
                             return;
                         }
                         if AUTO_START_IN_PROGRESS.load(Ordering::SeqCst) || pip_install_is_running() {
+                            continue;
+                        }
+                        if external_backend_dev_mode() {
+                            let now = now_epoch_secs();
+                            if now.saturating_sub(last_starting_log_at) >= 30 {
+                                log_to_file("[heartbeat] external-backend dev mode: backend is down; skip auto-spawn");
+                                last_starting_log_at = now;
+                            }
+                            consecutive_failures = 0;
                             continue;
                         }
                         let venv_dir = openakita_root_dir().join("venv");
@@ -6718,6 +6758,30 @@ fn openakita_service_start_impl(
         "[service_start] called: ws={}, venv={}",
         workspace_id, venv_dir
     ));
+    if external_backend_dev_mode() {
+        let port = read_workspace_api_port(&workspace_id).unwrap_or(18900);
+        if let Some(pid) = healthy_backend_pid(port) {
+            write_pid_file(&workspace_id, pid, "external")?;
+            let pid_file = service_pid_file(&workspace_id).to_string_lossy().to_string();
+            log_to_file(&format!(
+                "[service_start] external-backend dev mode: adopted running backend pid={} for ws={}",
+                pid, workspace_id
+            ));
+            return Ok(build_service_status(
+                &workspace_id,
+                true,
+                Some(pid),
+                pid_file,
+                "external",
+                false,
+            ));
+        }
+        log_to_file("[service_start] external-backend dev mode: backend is not running; refusing bundled start");
+        return Err(format!(
+            "外部后端开发模式已启用，请先在另一个终端启动 `openakita serve` 并确认 http://127.0.0.1:{}/api/health 可访问。",
+            port
+        ));
+    }
     if pip_install_is_running() {
         log_to_file("[service_start] rejected: pip install is still running");
         return Err("后端环境仍在安装中，请稍候再启动后端".to_string());
