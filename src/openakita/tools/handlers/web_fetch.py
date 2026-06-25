@@ -32,6 +32,16 @@ _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _BINARY_CONTENT_MARKERS = ("image/", "audio/", "video/", "application/pdf")
 
 
+def _unsafe_url_hint(reason: str) -> str:
+    if "198.18.0.0/15" in reason or "proxy/TUN/DNS interception" in reason:
+        return (
+            f"{reason}。该域名被本机 DNS/代理/TUN 解析到了保留测试网段，"
+            "web_fetch 出于 SSRF 防护不会直接访问。请检查代理、TUN 模式、DNS 分流或安全软件；"
+            "如确认需要人工打开页面，可改用浏览器工具。"
+        )
+    return f"{reason}。请使用浏览器工具访问本地/内网服务。"
+
+
 @dataclass(slots=True)
 class WebFetchMeta:
     requested_url: str
@@ -223,7 +233,7 @@ class WebFetchHandler:
                 redirect_chain=[url],
                 fetched_at=_utc_now_iso(),
                 error_code="unsafe_url",
-                hint=f"{reason}。请使用浏览器工具访问本地/内网服务。",
+                hint=_unsafe_url_hint(reason),
             )
             return _build_fetch_error_text(meta)
 

@@ -156,6 +156,31 @@ async def test_web_fetch_reports_binary_content(_fake_httpx):
 
 
 @pytest.mark.asyncio
+async def test_web_fetch_reserved_benchmark_dns_hint_does_not_fetch(monkeypatch, _fake_httpx):
+    async def _unsafe_19818(_url: str):
+        return (
+            False,
+            "DNS resolved to blocked IP: www.weather.com.cn -> 198.18.0.13 "
+            "(reserved benchmark range 198.18.0.0/15, often caused by proxy/TUN/DNS "
+            "interception)",
+        )
+
+    monkeypatch.setattr("openakita.utils.url_safety.is_safe_url", _unsafe_19818)
+
+    result = await WebFetchHandler(agent=None)._web_fetch(
+        {"url": "https://www.weather.com.cn/weather/101230101.shtml"}
+    )
+
+    assert "unsafe_url" in result
+    assert "198.18.0.0/15" in result
+    assert "代理" in result
+    assert "DNS" in result
+    assert "TUN" in result
+    assert "本地/内网服务" not in result
+    assert _fake_httpx.calls == []
+
+
+@pytest.mark.asyncio
 async def test_web_fetch_respects_session_domain_block(_fake_httpx):
     """Once a user blocks a host in this conversation, web_fetch must refuse it."""
 

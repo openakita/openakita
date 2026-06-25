@@ -34,6 +34,7 @@ from ..tool_hints import ConfigHintErrorCode, ToolConfigError
 from ..web_search import (
     AuthFailedError,
     ContentFilterError,
+    MissingCredentialError,
     NetworkUnreachableError,
     NoProviderAvailable,
     RateLimitedError,
@@ -201,6 +202,15 @@ def _raise_config_error(code: ConfigHintErrorCode, *, scope: str = "web_search")
     )
 
 
+def _explicit_provider_missing_message(provider_id: str | None) -> str:
+    if provider_id:
+        return (
+            f"搜索源 {provider_id!r} 已注册但当前不可用，通常是缺少 API Key 或该源未启用。"
+            "请在 OpenAkita 桌面端配置该搜索源，或去掉 provider 参数让系统自动尝试其他源。"
+        )
+    return _MESSAGE_BY_CODE["missing_credential"]
+
+
 # ---- Handler ------------------------------------------------------------------------
 
 
@@ -246,6 +256,16 @@ class WebSearchHandler:
             )
         except NoProviderAvailable as exc:
             _raise_config_error(exc.error_code)
+        except MissingCredentialError:
+            if provider_id:
+                raise ToolConfigError(
+                    scope="web_search",
+                    error_code="missing_credential",
+                    title="搜索源未配置",
+                    message=_explicit_provider_missing_message(provider_id),
+                    actions=_actions_for("missing_credential"),
+                )
+            _raise_config_error("missing_credential")
         except AuthFailedError:
             _raise_config_error("auth_failed")
         except RateLimitedError:
@@ -322,6 +342,16 @@ class WebSearchHandler:
                     actions=_actions_for("missing_credential"),
                 )
             _raise_config_error(exc.error_code)
+        except MissingCredentialError:
+            if provider_id:
+                raise ToolConfigError(
+                    scope="web_search",
+                    error_code="missing_credential",
+                    title="搜索源未配置",
+                    message=_explicit_provider_missing_message(provider_id),
+                    actions=_actions_for("missing_credential"),
+                )
+            _raise_config_error("missing_credential")
         except AuthFailedError:
             _raise_config_error("auth_failed")
         except RateLimitedError:
@@ -369,6 +399,10 @@ class WebSearchHandler:
         output = []
         if provider_id:
             output.append(f"[搜索源: {provider_id}]")
+        output.append(
+            "[系统提示] 本次 web_search 已返回可用结果。后续其他搜索源、web_fetch 或网页抓取"
+            "如果失败，只能说明那些源或页面不可用；最终回答不得概括为“所有搜索源不可用”。"
+        )
         if hidden_count:
             output.append(
                 f"[系统提示] 已隐藏 {hidden_count} 条明显垃圾或可能触发平台安全审核的搜索结果。"
@@ -396,6 +430,10 @@ class WebSearchHandler:
         output = []
         if provider_id:
             output.append(f"[搜索源: {provider_id}]")
+        output.append(
+            "[系统提示] 本次 news_search 已返回可用结果。后续其他搜索源、web_fetch 或网页抓取"
+            "如果失败，只能说明那些源或页面不可用；最终回答不得概括为“所有搜索源不可用”。"
+        )
         if hidden_count:
             output.append(
                 f"[系统提示] 已隐藏 {hidden_count} 条明显垃圾或可能触发平台安全审核的新闻搜索结果。"
