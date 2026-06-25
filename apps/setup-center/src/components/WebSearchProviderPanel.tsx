@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 
 import { FieldText, FieldLabel } from "./EnvFields";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectTrigger,
@@ -28,6 +29,7 @@ import {
   SelectItem,
   SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { safeFetch } from "../providers";
 import { envGet, envSet } from "../utils";
 import type { EnvMap } from "../types";
@@ -81,6 +83,12 @@ interface ProviderUIConfig {
   recommended?: boolean;
 }
 
+function getEnvFieldLabel(envKey: string, t: (key: string, defaultValue: string) => string): string {
+  return envKey.endsWith("API_KEY")
+    ? t("toolsWebSearch.apiSecretLabel", "API密钥")
+    : envKey;
+}
+
 const PROVIDER_UI: Record<string, ProviderUIConfig> = {
   bocha: {
     envKey: "BOCHA_API_KEY",
@@ -103,6 +111,21 @@ const PROVIDER_UI: Record<string, ProviderUIConfig> = {
     envKey: "JINA_API_KEY",
     envType: "password",
     envPlaceholder: "jina_... (可选)",
+  },
+  exa: {
+    envKey: "EXA_API_KEY",
+    envType: "password",
+    envPlaceholder: "exa_...",
+  },
+  zhipu: {
+    envKey: "ZHIPU_SEARCH_API_KEY",
+    envType: "password",
+    envPlaceholder: "zhipu_...",
+  },
+  querit: {
+    envKey: "QUERIT_API_KEY",
+    envType: "password",
+    envPlaceholder: "qr_...",
   },
   duckduckgo: {
     envKey: "",  // no credential
@@ -268,7 +291,7 @@ export default function WebSearchProviderPanel({
 
   return (
     <div className="space-y-3">
-      <div className="text-xs text-muted-foreground leading-relaxed">
+      <div className="rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
         {t(
           "toolsWebSearch.intro",
           "DuckDuckGo 在国内常无法访问，建议配置博查（国内）或 Tavily（海外）等替代源。留空「激活源」走自动检测，按优先级（博查 → Tavily → SearXNG → Jina → DuckDuckGo）尝试已配置的可用源。",
@@ -307,19 +330,19 @@ export default function WebSearchProviderPanel({
       </div>
 
       {loading && (
-        <div className="text-xs text-muted-foreground">
+        <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
           {t("common.loading", "加载中...")}
         </div>
       )}
 
       {loadError && (
-        <div className="text-xs text-red-500">
+        <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-300">
           {t("toolsWebSearch.loadError", "加载搜索源列表失败：")}{loadError}
         </div>
       )}
 
-      {!loading && !loadError && (
-        <div className="wsProviderGrid">
+      {!loading && !loadError && providers.length > 0 && (
+        <div className="grid gap-3 md:grid-cols-2">
           {providers.map((p) => {
             const ui = PROVIDER_UI[p.id] || {};
             const isActive = p.id === active;
@@ -327,62 +350,74 @@ export default function WebSearchProviderPanel({
             return (
               <div
                 key={p.id}
-                className="wsProviderCard"
-                data-active={isActive}
-                data-available={p.is_available}
+                className={cn(
+                  "rounded-xl border border-border/80 bg-card/70 p-3 shadow-sm transition-colors",
+                  isActive && "border-primary/50 shadow-[0_0_0_1px_hsl(var(--primary)/0.1)]",
+                  !p.is_available && "bg-muted/20",
+                )}
               >
-                <div className="wsProviderHeader">
-                  <div className="wsProviderTitle">
-                    <span>{p.label}</span>
-                  </div>
-                  <div className="wsProviderBadges">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="text-sm font-semibold text-foreground">{p.label}</div>
+                  <div className="flex flex-wrap justify-end gap-1">
                     {isActive && (
-                      <span className="wsBadge wsBadge-active">
+                      <Badge
+                        variant="outline"
+                        className="border-primary/35 bg-primary/10 text-primary"
+                      >
                         {t("toolsWebSearch.badgeActive", "已激活")}
-                      </span>
+                      </Badge>
                     )}
                     {ui.recommended && (
-                      <span className="wsBadge wsBadge-recommended">
+                      <Badge
+                        variant="outline"
+                        className="border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                      >
                         {t("toolsWebSearch.badgeRecommended", "推荐")}
-                      </span>
+                      </Badge>
                     )}
                     {p.is_available ? (
-                      <span className="wsBadge wsBadge-available">
+                      <Badge
+                        variant="outline"
+                        className="border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      >
                         {t("toolsWebSearch.badgeAvailable", "可用")}
-                      </span>
+                      </Badge>
                     ) : (
-                      <span className="wsBadge wsBadge-unconfigured">
+                      <Badge variant="outline" className="text-muted-foreground">
                         {t("toolsWebSearch.badgeUnconfigured", "未配置")}
-                      </span>
+                      </Badge>
                     )}
                   </div>
                 </div>
 
-                {ui.envKey ? (
-                  <FieldText
-                    k={ui.envKey}
-                    label={ui.envKey}
-                    placeholder={ui.envPlaceholder}
-                    type={ui.envType || "password"}
-                    help={ui.envHelp}
-                    envDraft={envDraft}
-                    onEnvChange={onEnvChange}
-                    busy={busy}
-                  />
-                ) : (
-                  <div className="text-xs text-muted-foreground">
-                    {t(
-                      "toolsWebSearch.noKeyNeeded",
-                      "无需 API Key（依赖 ddgs Python 包；国内通常不可达）",
-                    )}
-                  </div>
-                )}
+                <div className="mt-2">
+                  {ui.envKey ? (
+                    <FieldText
+                      k={ui.envKey}
+                      label={getEnvFieldLabel(ui.envKey, t)}
+                      placeholder={ui.envPlaceholder}
+                      type={ui.envType || "password"}
+                      help={ui.envHelp}
+                      envDraft={envDraft}
+                      onEnvChange={onEnvChange}
+                      busy={busy}
+                    />
+                  ) : (
+                    <div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-2.5 py-2 text-xs text-muted-foreground">
+                      {t(
+                        "toolsWebSearch.noKeyNeeded",
+                        "无需 API Key（依赖 ddgs Python 包；国内通常不可达）",
+                      )}
+                    </div>
+                  )}
+                </div>
 
-                <div className="wsProviderActions">
+                <div className="mt-2 flex flex-wrap items-center gap-2">
                   {ui.envKey && (
                     <Button
                       variant="default"
                       size="sm"
+                      className="h-7 px-2 text-xs"
                       disabled={!!testingId}
                       onClick={() => void handleTest(p.id)}
                     >
@@ -396,9 +431,9 @@ export default function WebSearchProviderPanel({
                       href={p.signup_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                      className="text-xs text-primary hover:underline"
                     >
-                      {t("toolsWebSearch.signup", "申请 Key →")}
+                      {t("toolsWebSearch.signup", "申请 API Key")}
                     </a>
                   )}
                   {p.docs_url && p.docs_url !== p.signup_url && (
@@ -408,36 +443,40 @@ export default function WebSearchProviderPanel({
                       rel="noopener noreferrer"
                       className="text-xs text-muted-foreground hover:underline"
                     >
-                      {t("toolsWebSearch.docs", "文档")}
+                      {t("toolsWebSearch.docs", "查看文档")}
                     </a>
                   )}
                 </div>
 
                 {test && (
                   <div
-                    className="wsProviderTestResult"
-                    data-state={test.ok ? "ok" : "error"}
+                    className={cn(
+                      "mt-2 space-y-1.5 rounded-md border px-2.5 py-2 text-xs",
+                      test.ok
+                        ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300",
+                    )}
                   >
                     {test.ok ? (
                       <>
-                        <strong>
+                        <div className="font-medium">
                           {t("toolsWebSearch.testOk", "测试成功，返回 {{n}} 条结果", {
                             n: (test.results || []).length,
                           })}
-                        </strong>
+                        </div>
                         {(test.results || []).slice(0, 3).map((it, i) => (
-                          <div key={i} className="text-xs opacity-80">
-                            {i + 1}. {it.title} <span className="opacity-60">— {it.url}</span>
+                          <div key={i} className="opacity-90">
+                            {i + 1}. {it.title} <span className="opacity-70">— {it.url}</span>
                           </div>
                         ))}
                       </>
                     ) : (
                       <>
-                        <strong>
+                        <div className="font-medium">
                           {t("toolsWebSearch.testFail", "测试失败")}
                           {test.error_code ? ` [${test.error_code}]` : ""}
-                        </strong>
-                        <div className="text-xs">{test.message}</div>
+                        </div>
+                        <div>{test.message}</div>
                       </>
                     )}
                   </div>
@@ -445,6 +484,12 @@ export default function WebSearchProviderPanel({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {!loading && !loadError && providers.length === 0 && (
+        <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          {t("toolsWebSearch.noProviders", "当前未发现可配置的网页搜索源。")}
         </div>
       )}
     </div>

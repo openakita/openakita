@@ -39,6 +39,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _record_skill_usage_event(skill_name: str, action: str) -> None:
+    """记录一条技能用量事件（供监控面板「技能用量」统计）。
+
+    埋点是尽力而为的：任何异常都吞掉，绝不影响技能加载/执行主流程。
+    """
+    try:
+        from ...skills.usage_events import get_skill_usage_log
+
+        get_skill_usage_log().record(skill_name, action)
+    except Exception:  # noqa: BLE001
+        logger.debug("skill usage event record failed", exc_info=True)
+
+
 # Skill 内容专用阈值（~32000 tokens），高于通用的 MAX_TOOL_RESULT_CHARS (16000 chars)。
 # Skill body 是高质量结构化指令，截断会严重影响 LLM 执行效果。
 # 部分技能（如 docx）的 SKILL.md 引用了多个同目录子文件，内联后总量可达 50K+。
@@ -305,6 +319,7 @@ class SkillsHandler:
         usage_tracker = getattr(self.agent, "_skill_usage_tracker", None)
         if usage_tracker:
             usage_tracker.record(skill.skill_id)
+        _record_skill_usage_event(skill.name, "load")
 
         # F7: inject allowed_tools into policy engine
         if skill.allowed_tools:
@@ -842,6 +857,7 @@ class SkillsHandler:
         usage_tracker = getattr(self.agent, "_skill_usage_tracker", None)
         if usage_tracker:
             usage_tracker.record(skill.skill_id)
+        _record_skill_usage_event(skill.name, "load")
 
         # F7: inject temporary tool allowlist
         if skill.allowed_tools:

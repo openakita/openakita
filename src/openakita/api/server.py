@@ -54,6 +54,7 @@ from .routes import (
     scheduler,
     sessions,
     skill_categories,
+    skill_stats,
     skills,
     token_stats,
     upload,
@@ -615,6 +616,7 @@ def create_app(
     app.include_router(sessions.router, tags=["会话"])
     app.include_router(skills.router, tags=["技能"])
     app.include_router(skill_categories.router, tags=["技能分类"])
+    app.include_router(skill_stats.router, tags=["统计"])
     app.include_router(token_stats.router, tags=["统计"])
     app.include_router(upload.router, tags=["文件"])
     app.include_router(web_search_routes.router)

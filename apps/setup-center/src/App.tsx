@@ -13,6 +13,7 @@ import type { LinkDiagnostic } from "./components/LinkDiagnosticsPanel";
 const SkillManager = lazy(() => import("./views/SkillManager").then(m => ({ default: m.SkillManager })));
 const IMView = lazy(() => import("./views/IMView").then(m => ({ default: m.IMView })));
 const TokenStatsView = lazy(() => import("./views/TokenStatsView").then(m => ({ default: m.TokenStatsView })));
+const SkillUsageView = lazy(() => import("./views/SkillUsageView").then(m => ({ default: m.SkillUsageView })));
 const MCPView = lazy(() => import("./views/MCPView").then(m => ({ default: m.MCPView })));
 const PluginManagerView = lazy(() => import("./views/PluginManagerView"));
 const PluginAppHost = lazy(() => import("./views/PluginAppHost"));
@@ -104,7 +105,6 @@ const stoppedStatus = (): ServiceStatus => ({
 //   1. Onboarding（打包模式）：NSIS → onboarding wizard → 写本地 → 启动服务 → HTTP API
 //   2. Wizard Full（开发者模式）：选工作区 → 装 venv → 配置端点(本地) → 启动服务 → HTTP API
 // ═══════════════════════════════════════════════════════════════════════
-import { FieldText, FieldBool, FieldSelect } from "./components/EnvFields";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DegradedBanner } from "./components/DegradedBanner";
 import { ModalOverlay } from "./components/ModalOverlay";
@@ -116,10 +116,9 @@ import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { useVersionCheck } from "./hooks/useVersionCheck";
 import { useEnvManager } from "./hooks/useEnvManager";
-import { useExpandPanel } from "./hooks/useExpandPanel";
 import { AdvancedView } from "./views/AdvancedView";
+import { ToolsView } from "./views/ToolsView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import WebSearchProviderPanel from "./components/WebSearchProviderPanel";
 import { INBOX_REFRESH_EVENT, INBOX_UNREAD_CHANGED_EVENT } from "./components/InboxBadge";
 import { isHighPriorityInbox, type InboxUpdatePayload, type InboxWsMessagePayload } from "./inboxTypes";
 
@@ -154,7 +153,7 @@ const EnvFieldContext = createContext<EnvFieldCtx | null>(null);
 const _HASH_TO_VIEW: Record<string, ViewId> = {
   "chat": "chat", "im": "im", "skills": "skills", "mcp": "mcp",
   "scheduler": "scheduler", "memory": "memory", "status": "status",
-  "token-stats": "token_stats", "identity": "identity",
+  "token-stats": "token_stats", "skill-usage": "skill_usage", "identity": "identity",
   "dashboard": "dashboard", "org-editor": "org_editor",
   "pixel-office": "pixel_office",
   "agent-manager": "agent_manager", "agent-store": "agent_store",
@@ -749,8 +748,6 @@ function MainApp() {
   const [skillsDetail, setSkillsDetail] = useState<
     { skill_id: string; name: string; description: string; name_i18n?: Record<string, string> | null; description_i18n?: Record<string, string> | null; system: boolean; enabled?: boolean; tool_name?: string | null; category?: string | null; path?: string | null }[] | null
   >(null);
-  const [skillsSelection, setSkillsSelection] = useState<Record<string, boolean>>({});
-  const [skillsTouched, setSkillsTouched] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean | null>(null);
   // autoStartBackend 已合并到"开机自启"：--background 模式自动拉起后端，无需独立开关
@@ -836,12 +833,6 @@ function MainApp() {
   const envFieldCtx = useMemo<EnvFieldCtx>(() => ({
     envDraft, setEnvDraft, secretShown, setSecretShown, busy, t,
   }), [envDraft, secretShown, busy, t]);
-
-  // Refs for cross-view <details> panels that ConfigHintCard / chat-side
-  // hints can deep-link into via dispatchExpandPanel(anchor).
-  // Anchor names must match the backend ``actions[i].anchor`` strings emitted
-  // by tool handlers (see src/openakita/tools/handlers/web_search.py).
-  const webSearchPanelRef = useExpandPanel("web-search");
 
   async function refreshAll() {
     if (IS_TAURI) {
@@ -1550,7 +1541,6 @@ function MainApp() {
     setSavedSttEndpoints([]);
     setSkillSummary(null);
     setSkillsDetail(null);
-    setSkillsSelection({});
     setServiceLog(null);
     setServiceLogError(null);
   }
@@ -3096,19 +3086,6 @@ function MainApp() {
     if (el && logAtBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [serviceLog?.content]);
 
-  // Skills selection default sync (only when user hasn't changed it)
-  useEffect(() => {
-    if (!skillsDetail) return;
-    if (skillsTouched) return;
-    const m: Record<string, boolean> = {};
-    for (const s of skillsDetail) {
-      if (!s?.skill_id) continue;
-      if (s.system) m[s.skill_id] = true;
-      else m[s.skill_id] = typeof s.enabled === "boolean" ? s.enabled : true;
-    }
-    setSkillsSelection(m);
-  }, [skillsDetail, skillsTouched]);
-
   // 自动获取 skills：进入“工具与技能”页就拉一次（且仅在尚未拿到 skillsDetail 时）
   useEffect(() => {
     if (view !== "wizard") return;
@@ -3248,15 +3225,6 @@ function MainApp() {
     );
   }
 
-  // FieldText/FieldBool/FieldSelect/FieldCombo/TelegramPairingCodeHint -> ./components/EnvFields.tsx
-  // Wrapper closures that pass envDraft/onEnvChange automatically to extracted field components
-  const _envBase = { envDraft, onEnvChange: setEnvDraft, busy };
-  const FT = (p: { k: string; label: string; placeholder?: string; help?: string; type?: "text" | "password" }) =>
-    <FieldText key={p.k} {...p} {..._envBase} />;
-  const FB = (p: { k: string; label: string; help?: string; defaultValue?: boolean }) =>
-    <FieldBool key={p.k} {...p} {..._envBase} />;
-  const FS = (p: { k: string; label: string; options: { value: string; label: string }[]; help?: string; defaultValue?: string }) =>
-    <FieldSelect key={p.k} {...p} {..._envBase} />;
   async function renderIntegrationsSave(keys: string[], successText: string) {
     if (!currentWorkspaceId) { notifyError(t("common.error")); return; }
     const _busyId = notifyLoading(t("common.loading"));
@@ -3301,240 +3269,18 @@ function MainApp() {
 
   function renderTools() {
     return (
-      <>
-        <div className="card">
-          <h3 className="text-base font-bold tracking-tight">{t("config.toolsTitle")}</h3>
-          <p className="text-sm text-muted-foreground mt-1 mb-3">{t("config.toolsHint")}</p>
-
-          {/* ── MCP ── */}
-          <details className="group rounded-lg border border-border">
-            <summary className="cursor-pointer flex items-center justify-between px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <span className="flex items-center gap-1.5">
-                <ChevronRight className="size-4 shrink-0 transition-transform group-open:rotate-90 text-muted-foreground" />
-                {t("config.toolsMCP")}
-              </span>
-              <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
-                <span>{disabledViews.includes("mcp") ? t("config.toolsSkillsDisabled") : t("config.toolsSkillsEnabled")}</span>
-                <div
-                  onClick={async () => {
-                    const willDisable = !disabledViews.includes("mcp");
-                    toggleViewDisabled("mcp");
-                    setEnvDraft((p) => ({ ...p, MCP_ENABLED: willDisable ? "false" : "true" }));
-                    try {
-                      const entries = { MCP_ENABLED: willDisable ? "false" : "true" };
-                      if (shouldUseHttpApi()) {
-                        await safeFetch(`${httpApiBase()}/api/config/env`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ entries }),
-                        });
-                        notifySuccess(willDisable
-                          ? t("config.mcpDisabledNeedRestart", { defaultValue: "MCP 已禁用，重启后生效" })
-                          : t("config.mcpEnabledNeedRestart", { defaultValue: "MCP 已启用，重启后生效" }));
-                      }
-                    } catch { /* ignore */ }
-                  }}
-                  className="relative shrink-0 transition-colors duration-200 rounded-full"
-                  style={{
-                    width: 40, height: 22,
-                    background: disabledViews.includes("mcp") ? "var(--line, #d1d5db)" : "var(--ok, #22c55e)",
-                  }}
-                >
-                  <div className="absolute top-0.5 rounded-full bg-white shadow-sm transition-[left] duration-200" style={{
-                    width: 18, height: 18,
-                    left: disabledViews.includes("mcp") ? 2 : 20,
-                  }} />
-                </div>
-              </label>
-            </summary>
-            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-              <div className="grid2">
-                {FT({ k: "MCP_TIMEOUT", label: "Timeout (s)", placeholder: "60" })}
-              </div>
-            </div>
-          </details>
-
-          {/* ── Skills ── */}
-          <details className="group/skills rounded-lg border border-border mt-2">
-            <summary className="cursor-pointer flex items-center justify-between px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <span className="flex items-center gap-1.5">
-                <ChevronRight className="size-4 shrink-0 transition-transform group-open/skills:rotate-90 text-muted-foreground" />
-                {t("config.toolsSkills")}
-              </span>
-              <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
-                <span>{disabledViews.includes("skills") ? t("config.toolsSkillsDisabled") : t("config.toolsSkillsEnabled")}</span>
-                <div
-                  onClick={() => toggleViewDisabled("skills")}
-                  className="relative shrink-0 transition-colors duration-200 rounded-full"
-                  style={{
-                    width: 40, height: 22,
-                    background: disabledViews.includes("skills") ? "var(--line, #d1d5db)" : "var(--ok, #22c55e)",
-                  }}
-                >
-                  <div className="absolute top-0.5 rounded-full bg-white shadow-sm transition-[left] duration-200" style={{
-                    width: 18, height: 18,
-                    left: disabledViews.includes("skills") ? 2 : 20,
-                  }} />
-                </div>
-              </label>
-            </summary>
-            <div className="flex items-center gap-2 px-4 py-3 border-t border-border">
-              <button
-                className="px-3 py-1.5 text-xs font-medium rounded-md border border-border hover:bg-accent/50 transition-colors"
-                onClick={() => {
-                  if (!skillsDetail) return;
-                  const m: Record<string, boolean> = {};
-                  for (const s of skillsDetail) { if (s?.skill_id) m[s.skill_id] = true; }
-                  setSkillsSelection(m);
-                  setSkillsTouched(true);
-                }}
-              >
-                {t("config.toolsEnableAll")}
-              </button>
-              <button
-                className="px-3 py-1.5 text-xs font-medium rounded-md border border-border hover:bg-accent/50 transition-colors"
-                onClick={() => {
-                  if (!skillsDetail) return;
-                  const m: Record<string, boolean> = {};
-                  for (const s of skillsDetail) { if (s?.skill_id) m[s.skill_id] = false; }
-                  setSkillsSelection(m);
-                  setSkillsTouched(true);
-                }}
-              >
-                {t("config.toolsDisableAll")}
-              </button>
-              <span className="text-xs text-muted-foreground ml-auto">
-                {skillsDetail ? t("config.toolsSkillsCount", { enabled: Object.values(skillsSelection).filter(Boolean).length, total: skillsDetail.length }) : ""}
-              </span>
-            </div>
-          </details>
-
-          {/* ── Desktop Automation ── */}
-          <details className="group/desktop rounded-lg border border-border mt-2">
-            <summary className="cursor-pointer flex items-center justify-between px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <span className="flex items-center gap-1.5">
-                <ChevronRight className="size-4 shrink-0 transition-transform group-open/desktop:rotate-90 text-muted-foreground" />
-                {t("config.toolsDesktop")}
-              </span>
-              <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
-                <span>{envDraft["DESKTOP_ENABLED"] === "false" ? t("config.toolsSkillsDisabled") : t("config.toolsSkillsEnabled")}</span>
-                <div
-                  onClick={() => setEnvDraft((p) => ({ ...p, DESKTOP_ENABLED: p.DESKTOP_ENABLED === "false" ? "true" : "false" }))}
-                  className="relative shrink-0 transition-colors duration-200 rounded-full"
-                  style={{
-                    width: 40, height: 22,
-                    background: envDraft["DESKTOP_ENABLED"] === "false" ? "var(--line, #d1d5db)" : "var(--ok, #22c55e)",
-                  }}
-                >
-                  <div className="absolute top-0.5 rounded-full bg-white shadow-sm transition-[left] duration-200" style={{
-                    width: 18, height: 18,
-                    left: envDraft["DESKTOP_ENABLED"] === "false" ? 2 : 20,
-                  }} />
-                </div>
-              </label>
-            </summary>
-            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-              <div className="grid3">
-                {FT({ k: "DESKTOP_DEFAULT_MONITOR", label: t("config.toolsMonitor"), placeholder: "0" })}
-                {FT({ k: "DESKTOP_MAX_WIDTH", label: t("config.toolsMaxW"), placeholder: "1920" })}
-                {FT({ k: "DESKTOP_MAX_HEIGHT", label: t("config.toolsMaxH"), placeholder: "1080" })}
-              </div>
-              <details className="group/deskadv rounded-lg border border-border">
-                <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors text-muted-foreground">
-                  <ChevronRight className="size-4 shrink-0 transition-transform group-open/deskadv:rotate-90" />
-                  {t("config.toolsDesktopAdvanced")}
-                </summary>
-                <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-                  <div className="grid3">
-                    {FT({ k: "DESKTOP_COMPRESSION_QUALITY", label: t("config.toolsCompression"), placeholder: "85" })}
-                    {FT({ k: "DESKTOP_CACHE_TTL", label: "Cache TTL", placeholder: "1.0" })}
-                    {FB({ k: "DESKTOP_FAILSAFE", label: "安全角保护", help: "鼠标移到屏幕角落时自动停止桌面操作，避免误点或误操作。" })}
-                  </div>
-                  {FB({ k: "DESKTOP_VISION_ENABLED", label: t("config.toolsVision"), help: t("config.toolsVisionHelp") })}
-                  <div className="grid3">
-                    {FT({ k: "DESKTOP_CLICK_DELAY", label: "Click Delay", placeholder: "0.1" })}
-                    {FT({ k: "DESKTOP_TYPE_INTERVAL", label: "Type Interval", placeholder: "0.03" })}
-                    {FT({ k: "DESKTOP_MOVE_DURATION", label: "Move Duration", placeholder: "0.15" })}
-                  </div>
-                </div>
-              </details>
-            </div>
-          </details>
-
-          {/* ── Model Downloads & Voice Recognition — hidden (not actively used) ── */}
-
-          {/* ── Tool Parallelism ── */}
-          <details className="group/net rounded-lg border border-border mt-2">
-            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <ChevronRight className="size-4 shrink-0 transition-transform group-open/net:rotate-90 text-muted-foreground" />
-              {t("config.toolsParallel")}
-            </summary>
-            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-              <div className="grid2">
-                {FT({ k: "TOOL_MAX_PARALLEL", label: t("config.toolsParallel"), placeholder: "1", help: t("config.toolsParallelHelp") })}
-              </div>
-            </div>
-          </details>
-
-          {/* ── Hallucination Guard ── */}
-          <details className="group/hguard rounded-lg border border-border mt-2">
-            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <ChevronRight className="size-4 shrink-0 transition-transform group-open/hguard:rotate-90 text-muted-foreground" />
-              {t("config.toolsHallucinationGuard")}
-            </summary>
-            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-              <p className="text-xs text-muted-foreground">{t("config.toolsHallucinationGuardHint")}</p>
-              <div className="grid2">
-                {FS({ k: "FORCE_TOOL_CALL_MAX_RETRIES", label: t("config.toolsForceRetry"), defaultValue: "2", options: [
-                  { value: "0", label: t("config.guardOff") },
-                  { value: "1", label: "1" },
-                  { value: "2", label: "2" },
-                  { value: "3", label: "3" },
-                ] })}
-                {FS({ k: "FORCE_TOOL_CALL_IM_FLOOR", label: t("config.toolsImFloor"), defaultValue: "2", options: [
-                  { value: "0", label: t("config.guardSameAsGlobal") },
-                  { value: "1", label: "1" },
-                  { value: "2", label: "2" },
-                ] })}
-              </div>
-              <div className="grid2">
-                {FS({ k: "CONFIRMATION_TEXT_MAX_RETRIES", label: t("config.toolsConfirmTextRetry"), defaultValue: "2", options: [
-                  { value: "0", label: t("config.guardOff") },
-                  { value: "1", label: "1" },
-                  { value: "2", label: "2" },
-                  { value: "3", label: "3" },
-                ] })}
-              </div>
-            </div>
-          </details>
-
-          {/* ── Web Search Provider (Bocha / Tavily / SearXNG / Jina / DuckDuckGo) ── */}
-          <details
-            ref={webSearchPanelRef}
-            data-panel-id="web-search"
-            className="group/wsearch rounded-lg border border-border mt-2"
-          >
-            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <ChevronRight className="size-4 shrink-0 transition-transform group-open/wsearch:rotate-90 text-muted-foreground" />
-              {t("toolsWebSearch.sectionTitle", "网页搜索源（Web Search Source）")}
-            </summary>
-            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-              <WebSearchProviderPanel
-                envDraft={envDraft}
-                onEnvChange={setEnvDraft}
-                onSaveEnv={async () => {
-                  await saveEnvKeys(WEB_SEARCH_ENV_KEYS);
-                }}
-                busy={busy}
-                apiBaseUrl={apiBaseUrl}
-              />
-            </div>
-          </details>
-
-          {/* ── Skills toggle (moved below, no longer here) ── */}
-
-        </div>
-      </>
+      <ToolsView
+        envDraft={envDraft}
+        setEnvDraft={setEnvDraft}
+        busy={busy}
+        disabledViews={disabledViews}
+        toggleViewDisabled={toggleViewDisabled}
+        shouldUseHttpApi={shouldUseHttpApi}
+        httpApiBase={httpApiBase}
+        apiBaseUrl={apiBaseUrl}
+        saveEnvKeys={saveEnvKeys}
+        setView={navigateToView}
+      />
     );
   }
 
@@ -4786,6 +4532,14 @@ function MainApp() {
         />
       );
     }
+    if (view === "skill_usage") {
+      return (
+        <SkillUsageView
+          serviceRunning={serviceStatus?.running ?? false}
+          apiBaseUrl={apiBaseUrl}
+        />
+      );
+    }
     if (view === "mcp") {
       return disabledViews.includes("mcp") ? (
         <div className="card" style={{ opacity: 0.65, textAlign: "center", padding: 28 }}>
@@ -5267,6 +5021,9 @@ function MainApp() {
               multiAgentEnabled={multiAgentEnabled}
               currentWorkspaceId={currentWorkspaceId}
               feedbackModalOpen={bugReportOpen}
+              envDraft={envDraft}
+              setEnvDraft={setEnvDraft}
+              saveEnvKeys={saveEnvKeys}
               onStartService={async () => {
                 const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
                 if (!effectiveWsId) {

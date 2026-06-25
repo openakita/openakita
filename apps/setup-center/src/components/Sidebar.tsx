@@ -7,7 +7,7 @@ import {
   IconZap, IconPlug, IconCalendar,
   IconBug, IconBrain, IconGitHub, IconGitee, IconUsers, IconBot,
   IconGear, IconBook, IconStorefront, IconPuzzle, IconFingerprint, IconLayoutGrid,
-  IconShield, IconRadar, IconBuilding,
+  IconShield, IconRadar, IconBuilding, IconBarChart,
 } from "../icons";
 import logoUrl from "../assets/logo.png";
 import { openExternalUrl } from "../platform";
@@ -185,7 +185,7 @@ export function Sidebar({
   }, [httpApiBase, serviceRunning]);
 
   const capViews: ViewId[] = ["skills", "mcp", "plugins", "memory", "scheduler"];
-  const monViews: ViewId[] = ["token_stats", "security", "pending_approvals"];
+  const monViews: ViewId[] = ["token_stats", "skill_usage", "security", "pending_approvals"];
   const maViews: ViewId[] = ["dashboard", "org_editor", "pixel_office", "agent_manager"];
   const stViews: ViewId[] = ["agent_store", "skill_store"];
 
@@ -309,6 +309,9 @@ export function Sidebar({
           <div className="navGroupItems">
             <div className={`navItem ${view === "token_stats" ? "navItemActive" : ""}`} onClick={() => onViewChange("token_stats")} role="button" tabIndex={0} title={t("sidebar.tokenStats")} style={disabledViews.includes("token_stats") ? { opacity: 0.4 } : undefined}>
               <IconZap size={16} /> {!collapsed && <span>{t("sidebar.tokenStats")}</span>}
+            </div>
+            <div className={`navItem ${view === "skill_usage" ? "navItemActive" : ""}`} onClick={() => onViewChange("skill_usage")} role="button" tabIndex={0} title={t("sidebar.skillUsage")}>
+              <IconBarChart size={16} /> {!collapsed && <span>{t("sidebar.skillUsage")}</span>}
             </div>
             <div className={`navItem ${view === "security" ? "navItemActive" : ""}`} onClick={() => onViewChange("security")} role="button" tabIndex={0} title={t("sidebar.security")}>
               <IconShield size={16} /> {!collapsed && <span>{t("sidebar.security")}</span>}

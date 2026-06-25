@@ -1143,6 +1143,13 @@ async def update_skill_content(skill_name: str, request: Request):
     except Exception as e:
         return {"error": f"Failed to write SKILL.md: {e}"}
 
+    try:
+        from openakita.skills.usage_events import get_skill_usage_log
+
+        get_skill_usage_log().record(skill_name, "edit")
+    except Exception:
+        logger.debug("skill usage edit event record failed", exc_info=True)
+
     reloaded = False
     if loader:
         try:
