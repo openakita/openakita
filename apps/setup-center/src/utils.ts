@@ -70,13 +70,31 @@ export function suggestEndpointName(providerSlug: string, modelId: string) {
 
 export function parseEnv(content: string): EnvMap {
   const out: EnvMap = {};
-  for (const raw of content.split(/\r?\n/)) {
+  if (content.startsWith("\ufeff")) {
+    content = content.slice(1);
+  }
+  for (const raw of content.split(/\r\n|\n|\r/)) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const idx = line.indexOf("=");
     if (idx <= 0) continue;
     const k = line.slice(0, idx).trim();
-    const v = line.slice(idx + 1);
+    let v = line.slice(idx + 1).trim();
+    if (v.length >= 2 && v[0] === v[v.length - 1] && (v[0] === "\"" || v[0] === "'")) {
+      let inner = v.slice(1, -1);
+      if (inner.includes("\\")) {
+        inner = inner.replace(/\\\\/g, "\0").replace(/\\"/g, "\"").replace(/\0/g, "\\");
+      }
+      v = inner;
+    } else {
+      for (const sep of [" #", "\t#"]) {
+        const commentIdx = v.indexOf(sep);
+        if (commentIdx !== -1) {
+          v = v.slice(0, commentIdx).trimEnd();
+          break;
+        }
+      }
+    }
     out[k] = v;
   }
   return out;
@@ -125,4 +143,3 @@ export function timeAgo(ts: number): string {
   const day = Math.floor(hr / 24);
   return `${day}d`;
 }
-
