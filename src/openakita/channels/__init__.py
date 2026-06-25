@@ -8,7 +8,7 @@
 - 媒体处理
 """
 
-from .base import ChannelAdapter
+from .base import ChannelAdapter, ChannelDeliveryUnavailable
 from .gateway import MessageGateway
 from .types import (
     MediaFile,
@@ -27,6 +27,7 @@ __all__ = [
     "OutgoingMessage",
     # 适配器
     "ChannelAdapter",
+    "ChannelDeliveryUnavailable",
     # 网关
     "MessageGateway",
 ]
