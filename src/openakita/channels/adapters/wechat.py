@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import quote
 
-from ..base import ChannelAdapter
+from ..base import ChannelAdapter, ChannelDeliveryUnavailable
 from ..types import (
     MediaFile,
     MediaStatus,
@@ -103,13 +103,17 @@ BACKOFF_DELAY_S = 30.0
 RETRY_DELAY_S = 2.0
 SESSION_PAUSE_DURATION_S = 3600  # 1 hour
 SESSION_EXPIRED_ERRCODE = -14
+CONTEXT_REJECTED_RETCODE = -2
+CONTEXT_TOKEN_STALE_S = int(os.environ.get("WECHAT_CONTEXT_TOKEN_STALE_S", "1800"))
 
 # Permanent / non-retryable iLink Bot return codes. Re-trying these
 # only buys ~75s of delay (4 attempts × exponential 5+10+20+40 backoff)
 # without any chance of success — the server has already rejected the
 # request for a non-transient reason (e.g. chat_id unreachable, no
 # friend relationship, no fresh context_token, malformed param).
-NON_RETRYABLE_RET_CODES: frozenset[int] = frozenset({-2, SESSION_EXPIRED_ERRCODE})
+NON_RETRYABLE_RET_CODES: frozenset[int] = frozenset(
+    {CONTEXT_REJECTED_RETCODE, SESSION_EXPIRED_ERRCODE}
+)
 
 UPLOAD_MAX_RETRIES = 3
 CONFIG_CACHE_TTL_S = 86400  # 24h
@@ -501,6 +505,18 @@ class _TicketEntry:
     ever_succeeded: bool = False
 
 
+@dataclass
+class _ContextTokenEntry:
+    token: str
+    captured_at: float = 0.0
+    invalidated_at: float = 0.0
+    invalid_reason: str = ""
+
+    @property
+    def invalidated(self) -> bool:
+        return self.invalidated_at > 0
+
+
 # ---------------------------------------------------------------------------
 # WeChatAdapter
 # ---------------------------------------------------------------------------
@@ -558,8 +574,8 @@ class WeChatAdapter(ChannelAdapter):
         self._get_updates_buf: str = ""
         self._sync_buf_dir = Path("data/wechat_sync")
 
-        # context_token 缓存 (user_id → token)
-        self._context_tokens: dict[str, str] = {}
+        # context_token 缓存 (user_id → token state)
+        self._context_tokens: dict[str, _ContextTokenEntry] = {}
 
         # Typing ticket 缓存
         self._ticket_cache: dict[str, _TicketEntry] = {}
@@ -674,10 +690,30 @@ class WeChatAdapter(ChannelAdapter):
             f"pausing all API calls for {remaining_min} min"
         )
 
+    def _delivery_unavailable(
+        self,
+        chat_id: str,
+        reason: str,
+        *,
+        retryable: bool = False,
+    ) -> ChannelDeliveryUnavailable:
+        return ChannelDeliveryUnavailable(
+            "微信通道暂时不可投递：会话或 context_token 已失效，请在微信中发送一条新消息刷新会话，或重新扫码登录。",
+            channel=self.channel_name,
+            chat_id=chat_id,
+            reason=reason,
+            retryable=retryable,
+            requires_user_action=True,
+        )
+
     async def _api_post(self, endpoint: str, body: dict, *, timeout_s: float | None = None) -> dict:
         if self._is_session_paused():
             remaining = int(self._session_paused_until - time.time())
-            raise RuntimeError(f"session paused, {remaining}s remaining")
+            raise self._delivery_unavailable(
+                "",
+                f"WeChat session paused, {remaining}s remaining",
+                retryable=True,
+            )
 
         body.setdefault("base_info", {"channel_version": OPENCLAW_COMPAT_VERSION})
 
@@ -719,9 +755,11 @@ class WeChatAdapter(ChannelAdapter):
 
         if code == SESSION_EXPIRED_ERRCODE:
             self._pause_session()
-            raise RuntimeError(
+            raise self._delivery_unavailable(
+                "",
                 f"WeChat {action} failed: session expired "
-                f"(ret={ret}, errcode={errcode}, errmsg={errmsg})"
+                f"(ret={ret}, errcode={errcode}, errmsg={errmsg})",
+                retryable=True,
             )
 
         raise RuntimeError(f"WeChat {action} failed: ret={ret}, errcode={errcode}, errmsg={errmsg}")
@@ -986,8 +1024,7 @@ class WeChatAdapter(ChannelAdapter):
 
         ctx_token = msg.get("context_token")
         if ctx_token:
-            self._context_tokens[from_user] = ctx_token
-            self._save_context_tokens()
+            self._store_context_token(from_user, ctx_token)
 
         item_list = msg.get("item_list") or []
         text_body = self._extract_text_body(item_list)
@@ -1130,7 +1167,7 @@ class WeChatAdapter(ChannelAdapter):
 
     async def send_message(self, message: OutgoingMessage) -> str:
         if self._is_session_paused():
-            raise RuntimeError("WeChat session paused")
+            raise self._delivery_unavailable(message.chat_id, "WeChat session paused")
 
         chat_id = message.chat_id
         ctx_token = self._resolve_context_token(chat_id, message.metadata)
@@ -1154,6 +1191,8 @@ class WeChatAdapter(ChannelAdapter):
                         caption=text,
                         ctx_token=ctx_token,
                     )
+                except ChannelDeliveryUnavailable:
+                    raise
                 except Exception as exc:
                     logger.exception(
                         f"{self.channel_name}: media send failed, falling back to text"
@@ -1185,12 +1224,62 @@ class WeChatAdapter(ChannelAdapter):
         优先级: 最新缓存（来自最近一次 getUpdates） > 消息 metadata 中的原始 token。
         长耗时任务中原始 token 可能已过期，缓存中的更可能有效。
         """
-        cached = self._context_tokens.get(chat_id, "")
+        cached = self._context_tokens.get(chat_id)
         meta_token = (metadata or {}).get("context_token", "")
 
         if cached:
-            return cached
+            if self._is_context_token_entry_usable(cached):
+                return cached.token
+            if not cached.invalidated:
+                self._invalidate_context_token(chat_id, "context_token stale")
+            return ""
         return meta_token
+
+    def _is_context_token_entry_usable(self, entry: _ContextTokenEntry) -> bool:
+        if not entry.token or entry.invalidated:
+            return False
+        if entry.captured_at <= 0:
+            return False
+        return (time.time() - entry.captured_at) <= CONTEXT_TOKEN_STALE_S
+
+    def _store_context_token(self, chat_id: str, token: str) -> None:
+        self._context_tokens[chat_id] = _ContextTokenEntry(token=token, captured_at=time.time())
+        self._save_context_tokens()
+
+    def _invalidate_context_token(self, chat_id: str, reason: str, token: str = "") -> None:
+        entry = self._context_tokens.get(chat_id)
+        if not entry and token:
+            entry = _ContextTokenEntry(token=token, captured_at=0.0)
+            self._context_tokens[chat_id] = entry
+        if entry:
+            entry.invalidated_at = time.time()
+            entry.invalid_reason = reason
+        logger.warning(
+            f"{self.channel_name}: context_token invalidated for {_redact_id(chat_id)}: {reason}"
+        )
+        self._save_context_tokens()
+
+    def _raise_context_delivery_unavailable(
+        self,
+        chat_id: str,
+        resp: dict,
+        exc: BaseException,
+        token: str = "",
+    ) -> None:
+        reason = (
+            f"WeChat sendmessage rejected context/session "
+            f"(ret={resp.get('ret')}, errcode={resp.get('errcode')}, "
+            f"errmsg={resp.get('errmsg', '')})"
+        )
+        self._invalidate_context_token(chat_id, reason, token=token)
+        raise self._delivery_unavailable(chat_id, reason) from exc
+
+    def _raise_session_delivery_unavailable(
+        self,
+        chat_id: str,
+        exc: ChannelDeliveryUnavailable,
+    ) -> None:
+        raise self._delivery_unavailable(chat_id, exc.reason, retryable=exc.retryable) from exc
 
     async def _send_text(self, to: str, text: str, ctx_token: str = "") -> str:
         client_id = f"openakita-wechat-{uuid.uuid4().hex[:12]}"
@@ -1208,12 +1297,19 @@ class WeChatAdapter(ChannelAdapter):
         token_hint = " (no context_token cached for this chat)" if not ctx_token else ""
         for attempt in range(1, SEND_RATE_LIMIT_RETRIES + 1):
             await self._rate_limit_wait(to)
-            resp = await self._api_post("ilink/bot/sendmessage", body)
+            try:
+                resp = await self._api_post("ilink/bot/sendmessage", body)
+            except ChannelDeliveryUnavailable as exc:
+                self._raise_session_delivery_unavailable(to, exc)
             try:
                 self._check_send_response(resp, action="sendmessage(text)")
                 break
+            except ChannelDeliveryUnavailable as exc:
+                self._raise_session_delivery_unavailable(to, exc)
             except RuntimeError as exc:
                 if resp.get("ret") in NON_RETRYABLE_RET_CODES:
+                    if resp.get("ret") == CONTEXT_REJECTED_RETCODE:
+                        self._raise_context_delivery_unavailable(to, resp, exc, token=ctx_token)
                     if token_hint and token_hint not in str(exc):
                         raise RuntimeError(str(exc) + token_hint) from exc
                     raise
@@ -1320,12 +1416,21 @@ class WeChatAdapter(ChannelAdapter):
         }
         for attempt in range(1, SEND_RATE_LIMIT_RETRIES + 1):
             await self._rate_limit_wait(chat_id)
-            resp = await self._api_post("ilink/bot/sendmessage", body)
+            try:
+                resp = await self._api_post("ilink/bot/sendmessage", body)
+            except ChannelDeliveryUnavailable as exc:
+                self._raise_session_delivery_unavailable(chat_id, exc)
             try:
                 self._check_send_response(resp, action="sendmessage(media)")
                 break
-            except RuntimeError:
+            except ChannelDeliveryUnavailable as exc:
+                self._raise_session_delivery_unavailable(chat_id, exc)
+            except RuntimeError as exc:
                 if resp.get("ret") in NON_RETRYABLE_RET_CODES:
+                    if resp.get("ret") == CONTEXT_REJECTED_RETCODE:
+                        self._raise_context_delivery_unavailable(
+                            chat_id, resp, exc, token=ctx_token
+                        )
                     raise
                 if attempt < SEND_RATE_LIMIT_RETRIES:
                     delay = SEND_RATE_LIMIT_BASE_DELAY_S * (2 ** (attempt - 1))
@@ -1489,7 +1594,7 @@ class WeChatAdapter(ChannelAdapter):
         if entry and now < entry.next_fetch_at:
             return entry.ticket
 
-        ctx_token = self._context_tokens.get(user_id, "")
+        ctx_token = self._resolve_context_token(user_id)
         try:
             resp = await self._api_post(
                 "ilink/bot/getconfig",
@@ -1581,8 +1686,18 @@ class WeChatAdapter(ChannelAdapter):
         }
         if context_token:
             upload_body["context_token"] = context_token
-        upload_resp = await self._api_post("ilink/bot/getuploadurl", upload_body)
-        self._check_send_response(upload_resp, action="getuploadurl")
+        upload_resp: dict = {}
+        try:
+            upload_resp = await self._api_post("ilink/bot/getuploadurl", upload_body)
+            self._check_send_response(upload_resp, action="getuploadurl")
+        except ChannelDeliveryUnavailable as exc:
+            self._raise_session_delivery_unavailable(to_user_id, exc)
+        except RuntimeError as exc:
+            if upload_resp.get("ret") == CONTEXT_REJECTED_RETCODE:
+                self._raise_context_delivery_unavailable(
+                    to_user_id, upload_resp, exc, token=context_token
+                )
+            raise
         upload_full_url = (upload_resp.get("upload_full_url") or "").strip()
         upload_param = upload_resp.get("upload_param")
         if not upload_full_url and not upload_param:
@@ -1715,8 +1830,18 @@ class WeChatAdapter(ChannelAdapter):
         if not self._context_tokens:
             return
         try:
+            payload = {
+                chat_id: {
+                    "token": entry.token,
+                    "captured_at": entry.captured_at,
+                    "invalidated_at": entry.invalidated_at,
+                    "invalid_reason": entry.invalid_reason,
+                }
+                for chat_id, entry in self._context_tokens.items()
+                if entry.token
+            }
             self._context_tokens_path().write_text(
-                json.dumps(self._context_tokens), encoding="utf-8"
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
             )
         except Exception:
             logger.debug(f"{self.channel_name}: failed to save context tokens")
@@ -1727,7 +1852,41 @@ class WeChatAdapter(ChannelAdapter):
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    self._context_tokens = data
-                    logger.info(f"{self.channel_name}: loaded {len(data)} context tokens from disk")
+                    loaded: dict[str, _ContextTokenEntry] = {}
+                    for chat_id, raw in data.items():
+                        if not isinstance(chat_id, str):
+                            continue
+                        if isinstance(raw, str):
+                            loaded[chat_id] = _ContextTokenEntry(
+                                token=raw,
+                                captured_at=0.0,
+                                invalidated_at=time.time(),
+                                invalid_reason="legacy token without capture timestamp",
+                            )
+                            continue
+                        if not isinstance(raw, dict):
+                            continue
+                        token = str(raw.get("token") or "")
+                        if not token:
+                            continue
+                        try:
+                            captured_at = float(raw.get("captured_at") or 0.0)
+                        except (TypeError, ValueError):
+                            captured_at = 0.0
+                        try:
+                            invalidated_at = float(raw.get("invalidated_at") or 0.0)
+                        except (TypeError, ValueError):
+                            invalidated_at = 0.0
+                        invalid_reason = str(raw.get("invalid_reason") or "")
+                        loaded[chat_id] = _ContextTokenEntry(
+                            token=token,
+                            captured_at=captured_at,
+                            invalidated_at=invalidated_at,
+                            invalid_reason=invalid_reason,
+                        )
+                    self._context_tokens = loaded
+                    logger.info(
+                        f"{self.channel_name}: loaded {len(loaded)} context tokens from disk"
+                    )
             except Exception:
                 logger.debug(f"{self.channel_name}: failed to load context tokens")

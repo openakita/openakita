@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import openakita.channels.gateway as gateway_module
+from openakita.channels.base import ChannelDeliveryUnavailable
 from openakita.channels.gateway import MessageGateway
 from openakita.channels.types import (
     MediaFile,
@@ -151,6 +152,45 @@ class TestMessageGatewayBroadcast:
 
         assert delivered is False
         session_manager.add_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_text_reliably_propagates_channel_unavailable(self):
+        session_manager = MagicMock()
+        session_manager.add_message = MagicMock()
+        gateway = MessageGateway(session_manager=session_manager)
+        adapter = MagicMock()
+        adapter.format_final_footer = MagicMock(return_value=None)
+        adapter.send_message = AsyncMock(
+            side_effect=ChannelDeliveryUnavailable(
+                "unavailable",
+                channel="wechat:test",
+                chat_id="chat-1",
+                reason="context rejected",
+            )
+        )
+        gateway._adapters["wechat:test"] = adapter
+
+        with pytest.raises(ChannelDeliveryUnavailable):
+            await gateway.send_text_reliably("wechat:test", "chat-1", "hello")
+
+        session_manager.add_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_propagates_channel_unavailable(self):
+        gateway = MessageGateway(session_manager=MagicMock())
+        adapter = MagicMock()
+        adapter.send_text = AsyncMock(
+            side_effect=ChannelDeliveryUnavailable(
+                "unavailable",
+                channel="wechat:test",
+                chat_id="chat-1",
+                reason="session expired",
+            )
+        )
+        gateway._adapters["wechat:test"] = adapter
+
+        with pytest.raises(ChannelDeliveryUnavailable):
+            await gateway.send("wechat:test", "chat-1", "hello")
 
     @pytest.mark.asyncio
     async def test_broadcast_rejects_non_text_payload_before_listing_sessions(self):
