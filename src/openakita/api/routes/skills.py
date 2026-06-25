@@ -43,14 +43,19 @@ registered at the bottom of this module."""
 
 _organize_cache: dict | None = None
 _organize_cache_hash: str | None = None
+_skills_list_task: asyncio.Task[dict] | None = None
+_skills_list_task_revision = 0
+_skills_reload_task: asyncio.Task[dict] | None = None
+_skills_cache_revision = 0
 
 
 def _invalidate_skills_cache() -> None:
     """Clear the cached skill list so the next GET /api/skills re-scans disk."""
-    global _skills_cache, _organize_cache, _organize_cache_hash
+    global _skills_cache, _organize_cache, _organize_cache_hash, _skills_cache_revision
     _skills_cache = None
     _organize_cache = None
     _organize_cache_hash = None
+    _skills_cache_revision += 1
 
 
 def _resolve_agent(request: Request):
@@ -131,6 +136,36 @@ async def _propagate(request: Request, action: str, *, rescan: bool = True) -> N
         logger.warning("propagate_skill_change(%s) failed: %s", action, e)
 
 
+async def _coalesce_task(name: str, task: asyncio.Task[dict]) -> dict:
+    """Await an in-flight task and log when this request joins existing work."""
+    logger.info("%s already in progress; joining existing task", name)
+    return await asyncio.shield(task)
+
+
+async def _reload_all_skills_response(request: Request, loader, registry) -> dict:
+    """Run the expensive full reload path and return the public API response."""
+    await _propagate(request, "reload", rescan=True)
+    total = len(registry.list_all())
+    issues = _skill_load_issues(loader)
+    result: dict = {
+        "status": "ok",
+        "reloaded": "all",
+        "total": total,
+    }
+    if issues:
+        result.update(
+            {
+                "partial": True,
+                "skipped_count": len(issues),
+                "skipped_skills": issues,
+                "warning": (
+                    f"已刷新可用技能，但有 {len(issues)} 个技能未加载。其他技能可正常使用。"
+                ),
+            }
+        )
+    return result
+
+
 def _skill_load_issues(loader, *, limit: int = 20) -> list[dict[str, str]]:
     """Return concise non-fatal skill load diagnostics from the active loader."""
     raw = getattr(loader, "last_load_issues", []) or []
@@ -183,21 +218,10 @@ async def _auto_translate_new_skills(request: Request, install_url: str) -> None
         logger.warning(f"Auto-translate after install failed: {e}")
 
 
-@router.get("/api/skills")
-async def list_skills(request: Request):
-    """List all available skills with their config schemas.
-
-    Returns ALL discovered skills (including disabled ones) with correct
-    ``enabled`` status derived from ``data/skills.json`` allowlist.
-
-    Uses a module-level cache to avoid re-scanning disk on every request.
-    The cache is invalidated by install/uninstall/reload/edit operations via
-    the cross-layer on-change callback.
-    """
+async def _build_skills_list_response(request: Request) -> dict:
+    """Build the complete skills list response and populate the module cache."""
     global _skills_cache
-    if _skills_cache is not None:
-        return _skills_cache
-
+    started_revision = _skills_cache_revision
     from openakita.skills.allowlist_io import read_allowlist
 
     skills_json_path, external_allowlist = read_allowlist()
@@ -299,8 +323,40 @@ async def list_skills(request: Request):
     skills.sort(key=_sort_key)
 
     result = {"skills": skills}
-    _skills_cache = result
+    if started_revision == _skills_cache_revision:
+        _skills_cache = result
     return result
+
+
+@router.get("/api/skills")
+async def list_skills(request: Request):
+    """List all available skills with their config schemas.
+
+    Returns ALL discovered skills (including disabled ones) with correct
+    ``enabled`` status derived from ``data/skills.json`` allowlist.
+
+    Uses a module-level cache to avoid re-scanning disk on every request.
+    The cache is invalidated by install/uninstall/reload/edit operations via
+    the cross-layer on-change callback.
+    """
+    global _skills_list_task, _skills_list_task_revision
+    if _skills_cache is not None:
+        return _skills_cache
+    if (
+        _skills_list_task is not None
+        and not _skills_list_task.done()
+        and _skills_list_task_revision == _skills_cache_revision
+    ):
+        return await _coalesce_task("skills list build", _skills_list_task)
+
+    task = asyncio.create_task(_build_skills_list_response(request))
+    _skills_list_task = task
+    _skills_list_task_revision = _skills_cache_revision
+    try:
+        return await asyncio.shield(task)
+    finally:
+        if _skills_list_task is task and task.done():
+            _skills_list_task = None
 
 
 _ORGANIZE_BATCH_SIZE = 50
@@ -953,6 +1009,7 @@ async def reload_skills(request: Request):
     POST body: { "skill_name": "optional-name" }
     如果 skill_name 为空或未提供，则重新扫描并加载所有技能。
     """
+    global _skills_reload_task
     agent = _resolve_agent(request)
     if agent is None:
         return {"error": "Agent not initialized"}
@@ -977,26 +1034,16 @@ async def reload_skills(request: Request):
             await _propagate(request, "reload", rescan=False)
             return {"status": "ok", "reloaded": [skill_name]}
 
-        await _propagate(request, "reload", rescan=True)
-        total = len(registry.list_all())
-        issues = _skill_load_issues(loader)
-        result = {
-            "status": "ok",
-            "reloaded": "all",
-            "total": total,
-        }
-        if issues:
-            result.update(
-                {
-                    "partial": True,
-                    "skipped_count": len(issues),
-                    "skipped_skills": issues,
-                    "warning": (
-                        f"已刷新可用技能，但有 {len(issues)} 个技能未加载。其他技能可正常使用。"
-                    ),
-                }
-            )
-        return result
+        if _skills_reload_task is not None and not _skills_reload_task.done():
+            return await _coalesce_task("skills reload", _skills_reload_task)
+
+        task = asyncio.create_task(_reload_all_skills_response(request, loader, registry))
+        _skills_reload_task = task
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if _skills_reload_task is task and task.done():
+                _skills_reload_task = None
     except Exception as e:
         logger.error(f"Skill reload failed: {e}")
         return {"error": str(e)}

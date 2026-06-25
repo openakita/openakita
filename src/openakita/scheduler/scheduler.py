@@ -37,6 +37,7 @@ from .task import ScheduledTask, TaskDurability, TaskExecution, TaskStatus, Trig
 from .triggers import Trigger
 
 logger = logging.getLogger(__name__)
+CHANNEL_UNAVAILABLE_MARKER = "[channel_unavailable]"
 
 # 执行器类型定义
 TaskExecutorFunc = Callable[[ScheduledTask], Awaitable[tuple[bool, str]]]
@@ -903,6 +904,9 @@ class TaskScheduler:
             _is_deferred = isinstance(_err_or_res, str) and _err_or_res.startswith(
                 "[awaiting_approval]"
             )
+            _is_channel_unavailable = isinstance(_err_or_res, str) and _err_or_res.startswith(
+                CHANNEL_UNAVAILABLE_MARKER
+            )
 
             if execution.status == "success":
                 # Fix: 使用"实际预定时间"而非 datetime.now() 作为基准。
@@ -939,6 +943,11 @@ class TaskScheduler:
                     task.id,
                     _err_or_res,
                 )
+            elif _is_channel_unavailable:
+                execution.error = (
+                    _err_or_res.removeprefix(CHANNEL_UNAVAILABLE_MARKER).strip() or _err_or_res
+                )
+                self._handle_channel_unavailable(task, _err_or_res)
             else:
                 self._handle_task_failure(task, execution.error or "Unknown error")
 
@@ -989,6 +998,27 @@ class TaskScheduler:
         # 检测是否刚被自动禁用（mark_failed 内部会在 fail_count>=5 时禁用）
         if was_enabled and not task.enabled and self.on_task_auto_disabled:
             asyncio.ensure_future(self._notify_auto_disabled(task))
+
+    def _handle_channel_unavailable(self, task: ScheduledTask, marker: str) -> None:
+        """Skip this run without counting it as task logic failure."""
+        if task.status != TaskStatus.RUNNING:
+            logger.warning(
+                "Task %s: channel-unavailable skip from %s, expected RUNNING",
+                task.id,
+                task.status.value,
+            )
+            return
+
+        message = marker.removeprefix(CHANNEL_UNAVAILABLE_MARKER).strip() or marker
+        task.last_run = datetime.now()
+        task.updated_at = task.last_run
+        if not task.metadata:
+            task.metadata = {}
+        task.metadata["last_channel_unavailable"] = message
+        task.metadata["last_channel_unavailable_at"] = task.last_run.isoformat()
+        task.status = TaskStatus.SCHEDULED
+        self._advance_next_run(task)
+        logger.warning("Task %s skipped because IM channel is unavailable: %s", task.id, message)
 
     async def _notify_auto_disabled(self, task: ScheduledTask) -> None:
         """安全调用 on_task_auto_disabled 回调"""

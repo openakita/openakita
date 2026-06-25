@@ -3,12 +3,12 @@ import pytest
 from openakita.core.reasoning_engine import ReasoningEngine
 from openakita.tools.handlers.web_search import WebSearchHandler
 from openakita.tools.tool_hints import ToolConfigError
+from openakita.tools.web_search import runtime as web_search_runtime
 from openakita.tools.web_search.base import (
     NetworkUnreachableError,
     SearchBundle,
     SearchResult,
 )
-from openakita.tools.web_search import runtime as web_search_runtime
 
 
 def test_web_search_hides_obviously_unsafe_results_but_keeps_safe_results():
@@ -34,6 +34,8 @@ def test_web_search_hides_obviously_unsafe_results_but_keeps_safe_results():
     assert "weather.com.cn" in formatted
     assert "noduown" not in formatted
     assert "网黄" not in formatted
+    assert "本次 web_search 已返回可用结果" in formatted
+    assert "不得概括为“所有搜索源不可用”" in formatted
     assert "已隐藏 1 条" in formatted
     assert "权威来源继续验证" in formatted
 

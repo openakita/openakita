@@ -1376,6 +1376,7 @@ export function SkillManager({
   // 已安装技能加载的请求时序守卫：并发的 loadSkills 中只有"最新"那次允许写入
   // 状态，避免较早发出的请求晚到后用旧/坏数据覆盖较新成功结果（last-write-wins 倒灌）。
   const skillsRequestId = useRef(0);
+  const refreshingRef = useRef(false);
   const detailRequestNameRef = useRef<string | null>(null);
   const { t } = useTranslation();
 
@@ -1492,7 +1493,7 @@ export function SkillManager({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(180_000),
       });
       let data: Record<string, unknown> | null = null;
       try {
@@ -1542,8 +1543,12 @@ export function SkillManager({
   // 否则静默 reload 技能与分类列表
   const enabledDirtyRef = useRef(enabledDirty);
   useEffect(() => { enabledDirtyRef.current = enabledDirty; }, [enabledDirty]);
+  useEffect(() => { refreshingRef.current = refreshing; }, [refreshing]);
   useEffect(() => {
     const onChange = () => {
+      if (refreshingRef.current) {
+        return;
+      }
       if (enabledDirtyRef.current) {
         toast.info(t("skills.realtimeDirtyHint"));
         return;
@@ -2479,7 +2484,7 @@ export function SkillManager({
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({}),
-                  signal: AbortSignal.timeout(15_000),
+                  signal: AbortSignal.timeout(180_000),
                 });
                 const data = await res.json();
                 if (data.error) { setError(friendlyError(data.error, t, "reload")); return; }

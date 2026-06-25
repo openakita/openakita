@@ -133,6 +133,10 @@ class TestWebSearchHandlerErrorMapping:
 
         monkeypatch.setattr(reg, "_PROVIDERS", {}, raising=False)
         monkeypatch.setattr(reg, "_LOADED", True, raising=False)
+        monkeypatch.setattr(
+            "openakita.tools.handlers.web_search.settings.web_search_provider",
+            "",
+        )
         yield
 
     async def _run_handler(self) -> tuple[str | None, ConfigHint | None]:
@@ -154,6 +158,22 @@ class TestWebSearchHandlerErrorMapping:
         labels = [a.get("label", "") for a in hint.actions]
         assert any("前往配置" in lb for lb in labels)
         assert any("博查" in lb for lb in labels)  # signup link present
+
+    async def test_explicit_unavailable_provider_maps_to_missing_credential_hint(self) -> None:
+        from openakita.tools.handlers.web_search import WebSearchHandler
+
+        register(_FakeProvider("bocha", available=False))
+
+        with pytest.raises(ToolConfigError) as excinfo:
+            await WebSearchHandler()._web_search(
+                {"query": "test", "provider": "bocha", "timeout_seconds": 1}
+            )
+
+        hint = excinfo.value.hint
+        assert hint.error_code == "missing_credential"
+        assert "bocha" in hint.message
+        assert "API Key" in hint.message
+        assert "自动尝试其他源" in hint.message
 
     async def test_auth_failed_maps_to_auth_failed(self) -> None:
         register(_FakeProvider("p1", raise_on_search=AuthFailedError("bad key")))
@@ -248,6 +268,17 @@ class TestRuntimeAutoDetect:
         register(_FakeProvider("p1", raise_on_search=NetworkUnreachableError("oops")))
         with pytest.raises(NetworkUnreachableError):
             await run_web_search("q", provider_id="p1", timeout_seconds=1)
+
+    async def test_explicit_unavailable_provider_message_names_configuration(self) -> None:
+        register(_FakeProvider("bocha", available=False))
+
+        with pytest.raises(MissingCredentialError) as excinfo:
+            await run_web_search("q", provider_id="bocha", timeout_seconds=1)
+
+        message = str(excinfo.value)
+        assert "Provider 'bocha' is registered but not available" in message
+        assert "Configure its API key" in message
+        assert "configured but unavailable" not in message
 
     async def test_news_skips_providers_returning_none(self) -> None:
         # p1 returns None (no news), p2 returns results

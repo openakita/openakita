@@ -56,35 +56,48 @@ _METADATA_IPS = frozenset(
     }
 )
 
+_PROXY_INTERCEPT_NET = ipaddress.ip_network("198.18.0.0/15")
 
-def _is_blocked_ip(ip_str: str) -> bool:
-    """Check if IP address belongs to a blocked range."""
+
+def _blocked_ip_reason(ip_str: str) -> str:
+    """Return the blocked-IP category, or an empty string when allowed."""
     try:
         addr = ipaddress.ip_address(ip_str)
     except ValueError:
-        return True
+        return "invalid IP address"
+
+    if isinstance(addr, ipaddress.IPv4Address) and addr in _PROXY_INTERCEPT_NET:
+        return (
+            "reserved benchmark range 198.18.0.0/15, often caused by proxy/TUN/DNS "
+            "interception"
+        )
 
     if addr.is_loopback:
-        return True
+        return "loopback address"
     if addr.is_private:
-        return True
+        return "private address"
     if addr.is_link_local:
-        return True
+        return "link-local address"
     if addr.is_reserved:
-        return True
+        return "reserved address"
     if addr.is_multicast:
-        return True
+        return "multicast address"
 
     if isinstance(addr, ipaddress.IPv4Address):
         first_octet = int(ip_str.split(".")[0])
         second_octet = int(ip_str.split(".")[1]) if "." in ip_str else 0
         if first_octet == 100 and 64 <= second_octet <= 127:
-            return True
+            return "CGNAT address"
 
     if ip_str in _METADATA_IPS:
-        return True
+        return "cloud metadata endpoint"
 
-    return False
+    return ""
+
+
+def _is_blocked_ip(ip_str: str) -> bool:
+    """Check if IP address belongs to a blocked range."""
+    return bool(_blocked_ip_reason(ip_str))
 
 
 def _resolve_and_check(hostname: str) -> tuple[bool, str]:
@@ -93,8 +106,9 @@ def _resolve_and_check(hostname: str) -> tuple[bool, str]:
         results = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         for _family, _, _, _, sockaddr in results:
             ip_str = sockaddr[0]
-            if _is_blocked_ip(ip_str):
-                return False, f"DNS resolved to blocked IP: {hostname} → {ip_str}"
+            reason = _blocked_ip_reason(ip_str)
+            if reason:
+                return False, f"DNS resolved to blocked IP: {hostname} → {ip_str} ({reason})"
     except socket.gaierror:
         return False, f"DNS resolution failed: {hostname}"
     return True, ""

@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..sessions import Session, SessionManager
 from ..utils.errors import format_user_friendly_error as format_user_friendly_error  # re-export
-from .base import ChannelAdapter
+from .base import ChannelAdapter, ChannelDeliveryUnavailable
 from .group_response import GroupResponseMode, SmartModeThrottle
 from .types import MediaStatus, MessageContent, OutgoingMessage, UnifiedMessage
 
@@ -5293,6 +5293,16 @@ class MessageGateway:
                     )
                     failed_at = i
                     break
+            except ChannelDeliveryUnavailable:
+                logger.warning(
+                    "Channel unavailable while sending response part %s/%s "
+                    "(channel=%s, chat_id=%s)",
+                    i + 1,
+                    len(messages),
+                    original.channel,
+                    original.chat_id,
+                )
+                raise
             except Exception as e:
                 logger.error(
                     f"Failed to send response part {i + 1}/{len(messages)} after retries: {e}"
@@ -5325,6 +5335,8 @@ class MessageGateway:
                 plain_result = await adapter.send_message(plain_out)
                 if not self._is_im_send_delivered(plain_result):
                     raise RuntimeError("adapter did not confirm immediate delivery")
+            except ChannelDeliveryUnavailable:
+                raise
             except Exception as e2:
                 logger.error(f"Plain-text fallback also failed for part {failed_at + j + 1}: {e2}")
                 _sent_count = failed_at + j
@@ -5675,6 +5687,8 @@ class MessageGateway:
                     logger.warning(f"Failed to record message to session: {e}")
 
             return result
+        except ChannelDeliveryUnavailable:
+            raise
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
             return None

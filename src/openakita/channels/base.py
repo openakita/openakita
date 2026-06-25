@@ -45,6 +45,27 @@ EventCallback = Callable[[str, dict], Awaitable[None]]
 FailureCallback = Callable[[str, str], None]  # (adapter_name, reason)
 
 
+class ChannelDeliveryUnavailable(RuntimeError):
+    """Raised when an IM channel is known to be unable to deliver messages."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        channel: str = "",
+        chat_id: str = "",
+        reason: str = "",
+        retryable: bool = False,
+        requires_user_action: bool = True,
+    ) -> None:
+        super().__init__(message)
+        self.channel = channel
+        self.chat_id = chat_id
+        self.reason = reason or message
+        self.retryable = retryable
+        self.requires_user_action = requires_user_action
+
+
 class ChannelAdapter(ABC):
     """
     IM 通道适配器基类

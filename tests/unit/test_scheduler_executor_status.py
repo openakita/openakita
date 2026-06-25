@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from openakita.channels.base import ChannelDeliveryUnavailable
 from openakita.scheduler.executor import TaskExecutor
 from openakita.scheduler.scheduler import TaskScheduler
 from openakita.scheduler.task import ScheduledTask
@@ -75,6 +76,43 @@ class _FallbackGateway:
         return pair == ("feishu:bot", "chat-2")
 
 
+class _UnavailableGateway:
+    async def send(self, **kwargs):
+        raise ChannelDeliveryUnavailable(
+            "unavailable",
+            channel=kwargs["channel"],
+            chat_id=kwargs["chat_id"],
+            reason="context rejected",
+        )
+
+    async def send_text_reliably(self, **kwargs):
+        raise ChannelDeliveryUnavailable(
+            "unavailable",
+            channel=kwargs["channel"],
+            chat_id=kwargs["chat_id"],
+            reason="context rejected",
+        )
+
+
+class _EndUnavailableGateway:
+    def __init__(self):
+        self.start_calls = 0
+        self.reliable_calls = 0
+
+    async def send(self, **kwargs):
+        self.start_calls += 1
+        return "start-msg"
+
+    async def send_text_reliably(self, **kwargs):
+        self.reliable_calls += 1
+        raise ChannelDeliveryUnavailable(
+            "unavailable",
+            channel=kwargs["channel"],
+            chat_id=kwargs["chat_id"],
+            reason="context rejected",
+        )
+
+
 async def _make_scheduler(tmp_path, executor) -> TaskScheduler:
     scheduler = TaskScheduler(
         storage_path=tmp_path,
@@ -129,6 +167,55 @@ async def test_result_delivery_failure_marks_scheduled_task_failed(tmp_path):
     stored = scheduler.get_task(task_id)
     assert stored is not None
     assert stored.fail_count == 1
+
+
+@pytest.mark.asyncio
+async def test_start_notification_channel_unavailable_skips_before_agent_creation(tmp_path):
+    factory_calls = 0
+
+    def factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        return _SuccessfulAgent()
+
+    executor = TaskExecutor(agent_factory=factory, gateway=_UnavailableGateway())
+    scheduler = await _make_scheduler(tmp_path, executor=executor.execute)
+    task = _make_task(channel_id="wechat:test", chat_id="chat-1")
+    task_id = await scheduler.add_task(task)
+
+    execution = await scheduler.trigger_now(task_id)
+
+    assert execution is not None
+    assert execution.status == "failed"
+    assert execution.error == "IM 通道不可投递：微信会话或 context_token 已失效，请在微信中发送一条新消息刷新会话，或重新扫码登录。"
+    assert factory_calls == 0
+    stored = scheduler.get_task(task_id)
+    assert stored is not None
+    assert stored.fail_count == 0
+    assert stored.metadata["last_channel_unavailable"] == execution.error
+
+
+@pytest.mark.asyncio
+async def test_successful_task_with_channel_unavailable_result_does_not_increment_fail_count(
+    tmp_path,
+):
+    gateway = _EndUnavailableGateway()
+    executor = TaskExecutor(agent_factory=lambda: _SuccessfulAgent(), gateway=gateway)
+    scheduler = await _make_scheduler(tmp_path, executor=executor.execute)
+    task = _make_task(channel_id="wechat:test", chat_id="chat-1")
+    task_id = await scheduler.add_task(task)
+
+    execution = await scheduler.trigger_now(task_id)
+
+    assert execution is not None
+    assert execution.status == "failed"
+    assert execution.error == "IM 通道不可投递：微信会话或 context_token 已失效，请在微信中发送一条新消息刷新会话，或重新扫码登录。"
+    assert gateway.start_calls == 1
+    assert gateway.reliable_calls == 1
+    stored = scheduler.get_task(task_id)
+    assert stored is not None
+    assert stored.fail_count == 0
+    assert stored.metadata["last_channel_unavailable"] == execution.error
 
 
 @pytest.mark.asyncio
