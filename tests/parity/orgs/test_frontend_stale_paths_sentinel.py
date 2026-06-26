@@ -83,7 +83,7 @@ TS_MODULE_IMPORTS: list[tuple[str, int, str]] = [
         43,
         '"../../api/orgs"',
     ),
-    ("apps/setup-center/src/views/OrgEditorView.tsx", 73, '"../api/orgs"'),
+    ("apps/setup-center/src/views/OrgEditorView.tsx", 66, '"../api/orgs"'),
 ]
 
 
