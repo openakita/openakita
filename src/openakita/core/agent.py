@@ -14,6 +14,30 @@ preserved. See ``docs/follow-ups/skipped-items-roadmap.md``.
 
 from __future__ import annotations
 
+from openakita.config import settings
 from openakita.core import Agent
 
-__all__ = ["Agent"]
+# Desktop/IM attachment + vision-gating helpers historically lived at module
+# scope in the monolithic ``core.agent``. Upstream unit tests import them via
+# ``from openakita.core.agent import _format_vision_unavailable_notice`` etc.,
+# so re-export the canonical aliases from ``_agent_legacy``.
+from openakita.core._agent_legacy import (  # noqa: E402
+    _allows_lightweight_fast_reply,
+    _format_desktop_attachment_reference,
+    _format_vision_unavailable_notice,
+    _has_pending_media_or_attachments,
+)
+
+# ``settings`` is re-exported because the monolithic ``core.agent`` historically
+# exposed the global Settings singleton at module scope. Upstream tests still do
+# ``monkeypatch.setattr(openakita.core.agent.settings, ...)``; since this is the
+# same ``openakita.config.settings`` singleton that ``_agent_legacy`` reads, the
+# patch is observed by ``Agent.execute_task`` and friends.
+__all__ = [
+    "Agent",
+    "settings",
+    "_allows_lightweight_fast_reply",
+    "_format_desktop_attachment_reference",
+    "_format_vision_unavailable_notice",
+    "_has_pending_media_or_attachments",
+]

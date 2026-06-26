@@ -214,7 +214,7 @@ def _resolve_force_tool_policy(intent: Any) -> tuple[int | None, bool]:
     if force_tool:
         return 2, False  # 允许 2 次 ForceToolCall 重试，但不要求 evidence
     if evidence_required:
-        return 1, True   # 1 次柔性提示，evidence_required 走阶段 0 disclaimer
+        return 1, True  # 1 次柔性提示，evidence_required 走阶段 0 disclaimer
     return 0, False
 
 
@@ -402,15 +402,18 @@ def _looks_like_previous_answer_replay_request(message: str, history_messages: l
     has_replay_marker = any(marker in normalized for marker in _REPLAY_REQUEST_MARKERS)
     has_context_marker = any(marker in normalized for marker in _REPLAY_CONTEXT_MARKERS)
     asks_to_show_again = (
-        ("重新展示" in normalized or "重新显示" in normalized or "再发" in normalized)
-        and has_context_marker
-    )
+        "重新展示" in normalized or "重新显示" in normalized or "再发" in normalized
+    ) and has_context_marker
     asks_to_continue_previous = (
         ("继续" in normalized or "接着" in normalized)
         and ("展示" in normalized or "显示" in normalized or "输出" in normalized)
         and has_context_marker
     )
-    return (has_replay_marker and has_context_marker) or asks_to_show_again or asks_to_continue_previous
+    return (
+        (has_replay_marker and has_context_marker)
+        or asks_to_show_again
+        or asks_to_continue_previous
+    )
 
 
 def _apply_previous_answer_replay_hint(message: str) -> str:
@@ -539,7 +542,16 @@ from ..runtime.desktop.attachments import (
     LOCAL_UPLOAD_RE as _LOCAL_UPLOAD_RE,
 )
 from ..runtime.desktop.attachments import (
+    allows_lightweight_fast_reply as _allows_lightweight_fast_reply,
+)
+from ..runtime.desktop.attachments import (
     format_desktop_attachment_reference as _format_desktop_attachment_reference,
+)
+from ..runtime.desktop.attachments import (
+    format_vision_unavailable_notice as _format_vision_unavailable_notice,
+)
+from ..runtime.desktop.attachments import (
+    has_pending_media_or_attachments as _has_pending_media_or_attachments,
 )
 from ..runtime.desktop.attachments import (
     maybe_inline_local_image as _maybe_inline_local_image,
@@ -604,6 +616,7 @@ class PromptStrategy:
     memory_scope: Any = None
     catalog_scope: list[str] = field(default_factory=list)
     include_project_guidelines: bool = False
+
 
 # Pre-LLM destructive-intent / risk-authorization gate -- helpers moved
 # to agent.safety.destructive_intent (P-RC-6 P6.2a). The legacy private
@@ -1026,9 +1039,7 @@ class Agent:
 
         self._tools.extend(AGENT_TOOLS)
         self._tools.extend(ORG_SETUP_TOOLS)
-        logger.info(
-            f"Multi-agent tools enabled ({len(AGENT_TOOLS) + len(ORG_SETUP_TOOLS)} tools)"
-        )
+        logger.info(f"Multi-agent tools enabled ({len(AGENT_TOOLS) + len(ORG_SETUP_TOOLS)} tools)")
 
         # Platform hub tools (Agent Hub + Skill Store, only when enabled)
         if settings.hub_enabled:
@@ -1200,7 +1211,9 @@ class Agent:
                     deps=self._runtime_env_dependencies,
                 )
             except Exception as exc:
-                logger.warning("Failed to resolve agent runtime env for %s: %s", self._agent_profile_id, exc)
+                logger.warning(
+                    "Failed to resolve agent runtime env for %s: %s", self._agent_profile_id, exc
+                )
 
         if hasattr(self.shell_tool, "execution_env_spec"):
             self.shell_tool.execution_env_spec = self._execution_env_spec
@@ -1278,9 +1291,7 @@ class Agent:
             tools = self._stable_main_chat_tool_set(tools)
             self._last_minimal_toolset = False
             if hasattr(self, "tool_catalog"):
-                deferred_names = {
-                    t.get("name", "") for t in tools if t.get("_deferred")
-                }
+                deferred_names = {t.get("name", "") for t in tools if t.get("_deferred")}
                 self.tool_catalog.set_deferred_tools(deferred_names)
             ctx = self._get_raw_context_window()
             if 0 < ctx < 8000:
@@ -1712,7 +1723,8 @@ class Agent:
                 # 中继交付都让 TaskVerify 看到真实的交付证据。
                 if (
                     capture_delivery_receipts
-                    and tool_name in (
+                    and tool_name
+                    in (
                         "deliver_artifacts",
                         "org_submit_deliverable",
                         "org_accept_deliverable",
@@ -1857,9 +1869,7 @@ class Agent:
             self._attach_shared_runtime(share_from)
             # 启动记忆会话（sub-agent 独享 session_id，但底层 store 通常
             # 仍是主 Agent 的，除非 factory 后续 apply 了 memory_isolation）。
-            session_id = (
-                datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
-            )
+            session_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
             self.memory_manager.start_session(session_id)
             self._current_session_id = session_id
             if hasattr(self, "_memory_handler"):
@@ -1913,9 +1923,7 @@ class Agent:
                     else None
                 ),
             )
-            logger.info(
-                "[PolicyV2] global engine rebuilt with skill/mcp/plugin lookups (C10)"
-            )
+            logger.info("[PolicyV2] global engine rebuilt with skill/mcp/plugin lookups (C10)")
         except Exception as exc:
             logger.warning(
                 "[PolicyV2] failed to inject skill/mcp/plugin lookups: %s — "
@@ -2139,7 +2147,9 @@ class Agent:
             pa._plugin_catalog = self.plugin_catalog
 
         if hasattr(self, "tool_executor") and self.tool_executor is not None:
-            self.tool_executor._plugin_hooks = self._plugin_manager.hook_registry if self._plugin_manager else None
+            self.tool_executor._plugin_hooks = (
+                self._plugin_manager.hook_registry if self._plugin_manager else None
+            )
             self.tool_executor._plugin_manager = self._plugin_manager
 
         if hasattr(self, "reasoning_engine") and self.reasoning_engine is not None:
@@ -2148,13 +2158,19 @@ class Agent:
             )
 
         # 让 memory_manager.retrieval_engine 也能走 plugin hook
-        if self.memory_manager and hasattr(self.memory_manager, "retrieval_engine") and self._plugin_manager:
+        if (
+            self.memory_manager
+            and hasattr(self.memory_manager, "retrieval_engine")
+            and self._plugin_manager
+        ):
             self.memory_manager.retrieval_engine._plugin_hooks = self._plugin_manager.hook_registry
 
         logger.info(
             "[share_from] sub-agent '%s' attached to parent '%s': "
             "+%d tool defs, plugins/skills/mcp shared by reference",
-            self.name, parent.name, added,
+            self.name,
+            parent.name,
+            added,
         )
 
     async def _load_plugins(self) -> None:
@@ -2812,9 +2828,7 @@ class Agent:
         if retrieval_sources is None or memory_backends is None:
             return
 
-        existing_sources = {
-            getattr(source, "source_name", "") for source in retrieval_sources
-        }
+        existing_sources = {getattr(source, "source_name", "") for source in retrieval_sources}
 
         for server in self.mcp_catalog.servers:
             provider_cfg = getattr(server, "memory_provider", None) or {}
@@ -3214,6 +3228,93 @@ class Agent:
         """构建系统提示词（统一使用编译管线 v2）。"""
         return self._build_system_prompt_compiled_sync(task_description, session_type=session_type)
 
+    def _prepare_prompt_identity_dir(self) -> Path:
+        """Return an identity dir whose files match the active Identity object.
+
+        Profile identities may inherit SOUL.md / AGENT.md from the global
+        identity while keeping USER.md / MEMORY.md inside the profile dir.
+        The prompt compiler accepts one directory, so materialize the resolved
+        source files into a private runtime input dir for custom identities.
+        """
+        identity = getattr(self, "identity", None)
+        soul_path = Path(getattr(identity, "soul_path", settings.soul_path))
+        agent_path = Path(getattr(identity, "agent_path", settings.agent_path))
+        user_path = Path(getattr(identity, "user_path", settings.user_path))
+        paths = {
+            "SOUL.md": soul_path,
+            "AGENT.md": agent_path,
+            "USER.md": user_path,
+        }
+
+        global_identity_dir = settings.identity_path.resolve()
+        source_dirs = {p.parent.resolve() for p in paths.values()}
+        if len(source_dirs) == 1:
+            return next(iter(source_dirs))
+
+        profile_id = getattr(self, "_agent_profile_id", None) or getattr(self, "name", "agent")
+        safe_profile_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(profile_id)).strip("._")
+        runtime_root = Path(
+            getattr(self, "_prompt_identity_runtime_root", None) or settings.openakita_home
+        )
+        resolved_dir = runtime_root / "runtime" / "profile_identity" / (safe_profile_id or "agent")
+        resolved_dir.mkdir(parents=True, exist_ok=True)
+
+        for filename, src in paths.items():
+            dst = resolved_dir / filename
+            try:
+                content = src.read_text(encoding="utf-8") if src.exists() else ""
+            except Exception as exc:
+                logger.warning("Failed to read resolved identity file %s: %s", src, exc)
+                content = ""
+            existing = ""
+            try:
+                existing = dst.read_text(encoding="utf-8") if dst.exists() else ""
+            except Exception:
+                existing = ""
+            if existing != content:
+                dst.write_text(content, encoding="utf-8")
+
+        source_meta = {
+            name: str(path)
+            for name, path in paths.items()
+            if path.parent.resolve() != global_identity_dir
+        }
+        meta_path = resolved_dir / "runtime" / "sources.json"
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            current_meta = meta_path.read_text(encoding="utf-8") if meta_path.exists() else ""
+        except Exception:
+            current_meta = ""
+        meta_text = json.dumps(source_meta, ensure_ascii=False, sort_keys=True, indent=2)
+        if current_meta != meta_text:
+            meta_path.write_text(meta_text, encoding="utf-8")
+
+        return resolved_dir
+
+    def _resolve_agent_voice(self) -> str:
+        """Return the display name that SOUL.md's ``{{agent_name}}`` should expand to.
+
+        Priority: profile's localized display name → profile.name → self.name →
+        ``settings.agent_name`` (legacy fallback). The string is what the LLM
+        will read as its own self-reference inside SOUL.md, so it should match
+        what the user sees in the chat header and the Agents list.
+        """
+        profile = getattr(self, "_agent_profile", None)
+        if profile is not None:
+            try:
+                display = profile.get_display_name("zh")
+            except Exception:
+                display = ""
+            if isinstance(display, str) and display.strip():
+                return display.strip()
+            primary = getattr(profile, "name", "")
+            if isinstance(primary, str) and primary.strip():
+                return primary.strip()
+        agent_name = getattr(self, "name", "")
+        if isinstance(agent_name, str) and agent_name.strip():
+            return agent_name.strip()
+        return getattr(settings, "agent_name", "") or ""
+
     def _build_system_prompt_compiled_sync(
         self, task_description: str = "", session_type: str = "cli"
     ) -> str:
@@ -3224,11 +3325,14 @@ class Agent:
                 return ctx.system
 
         ctx_window = self._get_raw_context_window()
+        identity_dir = self._prepare_prompt_identity_dir()
         prompt = self.prompt_assembler._build_compiled_sync(
             task_description,
             session_type=session_type,
             context_window=ctx_window,
             is_sub_agent=self._is_sub_agent_call,
+            agent_voice=self._resolve_agent_voice(),
+            identity_dir=identity_dir,
         )
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
@@ -3241,7 +3345,9 @@ class Agent:
         profile_id = getattr(self, "_agent_profile_id", "default") or "default"
         spec = getattr(self, "_execution_env_spec", None)
         if spec is None:
-            env_line = "当前 Agent 使用共享 `agent-venv` fallback；不要把长期任务依赖随意安装到共享环境。"
+            env_line = (
+                "当前 Agent 使用共享 `agent-venv` fallback；不要把长期任务依赖随意安装到共享环境。"
+            )
         else:
             env_line = (
                 f"当前 AgentProfile `{profile_id}` 使用独立 Python 环境 "
@@ -3444,7 +3550,9 @@ class Agent:
                     "channel": getattr(session, "channel", "unknown"),
                     "chat_type": getattr(session, "chat_type", "private"),
                     "message_count": len(session.context.messages) if session.context else 0,
-                    "working_facts": getattr(session.context, "working_facts", {}) if session.context else {},
+                    "working_facts": getattr(session.context, "working_facts", {})
+                    if session.context
+                    else {},
                     "effective_model": session.get_metadata("effective_model", {}),
                     "has_sub_agents": bool(sub_records),
                     "sub_agent_count": len(sub_records),
@@ -3506,6 +3614,8 @@ class Agent:
             )
         except Exception:
             _working_facts_cache_key = ""
+        _resolved_voice = self._resolve_agent_voice()
+        _identity_dir = self._prepare_prompt_identity_dir()
         _cache_key = (
             _conv_id,
             _effective_mode,
@@ -3524,12 +3634,11 @@ class Agent:
             tuple(sorted(_mem_keywords)) if _mem_keywords else (),
             _working_facts_cache_key,
             bool((session_context or {}).get("evidence_recommended", False)),
+            _resolved_voice,
+            str(_identity_dir),
         )
 
-        if (
-            not self._system_prompt_cache_dirty
-            and _cache_key in self._system_prompt_cache
-        ):
+        if not self._system_prompt_cache_dirty and _cache_key in self._system_prompt_cache:
             prompt = self._system_prompt_cache[_cache_key]
             logger.debug("[Agent] system prompt cache HIT (key=%s)", _cache_key[:3])
         else:
@@ -3553,6 +3662,8 @@ class Agent:
                 catalog_scope=_strategy.catalog_scope,
                 include_project_guidelines=_strategy.include_project_guidelines,
                 intent_tool_hints=_intent_tool_hints,
+                agent_voice=_resolved_voice,
+                identity_dir=_identity_dir,
             )
             self._system_prompt_cache[_cache_key] = prompt
             self._system_prompt_cache_dirty = False
@@ -3603,11 +3714,19 @@ class Agent:
         profile = self._resolve_prompt_profile(intent, session_type)
         prompt_mode = PromptMode.FULL
         skip_catalogs = False
-        memory_scope = getattr(intent, "memory_scope", MemoryScope.RELEVANT) if intent else MemoryScope.RELEVANT
+        memory_scope = (
+            getattr(intent, "memory_scope", MemoryScope.RELEVANT)
+            if intent
+            else MemoryScope.RELEVANT
+        )
         catalog_scope = list(getattr(intent, "catalog_scope", []) or [])
         include_project_guidelines = bool(getattr(intent, "requires_project_context", False))
 
-        prompt_depth = getattr(intent, "prompt_depth", PromptDepth.STANDARD) if intent else PromptDepth.STANDARD
+        prompt_depth = (
+            getattr(intent, "prompt_depth", PromptDepth.STANDARD)
+            if intent
+            else PromptDepth.STANDARD
+        )
         requires_tools = bool(getattr(intent, "requires_tools", False))
 
         if intent and intent.intent in (IntentType.CHAT, IntentType.QUERY):
@@ -3654,6 +3773,7 @@ class Agent:
             return ""
 
         from ..agents.presets import SYSTEM_PRESETS
+
         if self._is_sub_agent_call:
             return (
                 "\n\n---\n"
@@ -3668,7 +3788,7 @@ class Agent:
                 "（Windows 用 run_powershell，其他环境用 run_shell）执行 python，"
                 "或调用对应工具获得，不得凭经验估算。\n"
                 "- 任何没有工具输出佐证的数字、百分比、均值、标准差、概率一律视为违规。\n"
-                "- 无法获得真实数据时，明确返回：\"无法执行：<具体原因>，建议 <替代方案>\"，"
+                '- 无法获得真实数据时，明确返回："无法执行：<具体原因>，建议 <替代方案>"，'
                 "禁止编造数据占位。\n"
             )
 
@@ -4206,7 +4326,9 @@ class Agent:
 
         _tt = set_tracking_context(
             TokenTrackingContext(
-                session_id=getattr(self, "_current_conversation_id", "") or getattr(self, "_current_session_id", "") or "",
+                session_id=getattr(self, "_current_conversation_id", "")
+                or getattr(self, "_current_session_id", "")
+                or "",
                 operation_type="context_compress",
                 operation_detail=context_type,
             )
@@ -4373,7 +4495,9 @@ class Agent:
 
             _tt2 = set_tracking_context(
                 TokenTrackingContext(
-                    session_id=getattr(self, "_current_conversation_id", "") or getattr(self, "_current_session_id", "") or "",
+                    session_id=getattr(self, "_current_conversation_id", "")
+                    or getattr(self, "_current_session_id", "")
+                    or "",
                     operation_type="context_compress",
                     operation_detail=f"chunk_{i}",
                 )
@@ -4728,7 +4852,8 @@ class Agent:
             memory_workspace_id = self._resolve_memory_workspace_id(session)
             if (
                 getattr(self.memory_manager, "_current_session_id", None) != conversation_safe_id
-                or getattr(self.memory_manager, "_current_workspace_id", None) != memory_workspace_id
+                or getattr(self.memory_manager, "_current_workspace_id", None)
+                != memory_workspace_id
             ):
                 self.memory_manager.start_session(
                     conversation_safe_id,
@@ -4750,7 +4875,11 @@ class Agent:
                         from ..memory.types import Scratchpad as _SpClear
 
                         store.save_scratchpad(
-                            _SpClear(user_id=getattr(session, "user_id", "default") if session else "default")
+                            _SpClear(
+                                user_id=getattr(session, "user_id", "default")
+                                if session
+                                else "default"
+                            )
                         )
                         logger.debug(
                             f"[Session] Cleared scratchpad for new conversation {conversation_id}"
@@ -5146,9 +5275,8 @@ class Agent:
             f"{len(messages)} history msgs, has_history={_has_history}"
         )
 
-        if (
-            isinstance(compiled_message, str)
-            and _looks_like_previous_answer_replay_request(message, messages)
+        if isinstance(compiled_message, str) and _looks_like_previous_answer_replay_request(
+            message, messages
         ):
             compiled_message = _apply_previous_answer_replay_hint(compiled_message)
             logger.info(
@@ -5161,6 +5289,14 @@ class Agent:
         pending_videos = session.get_metadata("pending_videos") if session else None
         pending_audio = session.get_metadata("pending_audio") if session else None
         pending_files = session.get_metadata("pending_files") if session else None
+        turn_has_media = _has_pending_media_or_attachments(
+            pending_images=pending_images,
+            pending_videos=pending_videos,
+            pending_audio=pending_audio,
+            pending_files=pending_files,
+            attachments=attachments,
+        )
+        self._current_turn_has_media_attachments = turn_has_media
         from .current_turn import CurrentTurnInput, SessionObjectRegistry
 
         current_turn = CurrentTurnInput.from_inputs(
@@ -5328,6 +5464,8 @@ class Agent:
 
             content_blocks: list[dict] = []
             _degraded_notices: list[str] = []
+            _degraded_image_names: list[str] = []
+            _degraded_image_paths: list[str] = []
             if compiled_message:
                 content_blocks.append({"type": "text", "text": compiled_message})
             for att in attachments:
@@ -5349,8 +5487,8 @@ class Agent:
                     or (att_url or "").startswith("data:video/")
                 )
 
-                if is_image and att_url:
-                    if _desk_has_vision:
+                if is_image:
+                    if _desk_has_vision and att_url:
                         # 本地 /api/uploads/* URL 远端模型访问不到，先转 data URL
                         _inlined = _maybe_inline_local_image(att_url, att_mime)
                         _final_url = _inlined or att_url
@@ -5362,10 +5500,16 @@ class Agent:
                             content_blocks.append(
                                 {"type": "image_url", "image_url": {"url": _final_url}}
                             )
-                    else:
+                    elif _desk_has_vision:
                         _degraded_notices.append(
-                            f"[用户发送了图片 {att_name}，当前模型不支持图片输入]"
+                            f"[图片 {att_name} 缺少可发送给模型的 URL，已降级为文本，请重新上传后重试]"
                         )
+                    else:
+                        # 无 vision 端点：收集图片名/路径，循环后统一注入 no-vision 提示，
+                        # 避免模型当作没有图片直接 fast-reply。
+                        _degraded_image_names.append(att_name)
+                        if att_local_path:
+                            _degraded_image_paths.append(str(att_local_path))
                 elif is_video and att_url:
                     if _desk_has_video:
                         content_blocks.append({"type": "video_url", "video_url": {"url": att_url}})
@@ -5387,6 +5531,15 @@ class Agent:
                             ),
                         }
                     )
+
+            if _degraded_image_names:
+                _degraded_notices.append(
+                    _format_vision_unavailable_notice(
+                        count=len(_degraded_image_names),
+                        names=_degraded_image_names,
+                        paths=_degraded_image_paths,
+                    )
+                )
 
             if _degraded_notices:
                 content_blocks.append(
@@ -5453,13 +5606,14 @@ class Agent:
                 img_paths = [
                     img.get("local_path", "") for img in pending_images if img.get("local_path")
                 ]
-                notice = f"[用户发送了 {len(pending_images)} 张图片，当前模型不支持图片输入"
-                if img_paths:
-                    notice += (
-                        f"。文件路径: {'; '.join(img_paths)}"
-                        f"。如需查看图片内容，请使用 view_image 工具"
-                    )
-                notice += "]"
+                img_names = [
+                    img.get("filename", "") for img in pending_images if img.get("filename")
+                ]
+                notice = _format_vision_unavailable_notice(
+                    count=len(pending_images),
+                    names=img_names,
+                    paths=img_paths,
+                )
                 _text_for_llm = f"{_text_for_llm}\n\n{notice}" if _text_for_llm else notice
                 logger.info(
                     f"[Session:{session_id}] No vision endpoint, "
@@ -5791,6 +5945,7 @@ class Agent:
         self._current_task_definition = ""
         self._current_task_query = ""
         self._current_user_message = ""
+        self._current_turn_has_media_attachments = False
         self._current_session_type = "cli"
         if im_tokens is not None:
             with contextlib.suppress(Exception):
@@ -5908,7 +6063,9 @@ class Agent:
             endpoint_policy = (
                 endpoint_policy
                 if explicit_endpoint
-                else self._endpoint_policy if endpoint_override == self._preferred_endpoint else "prefer"
+                else self._endpoint_policy
+                if endpoint_override == self._preferred_endpoint
+                else "prefer"
             )
         else:
             endpoint_policy = "prefer"
@@ -5927,29 +6084,20 @@ class Agent:
         conversation_id = self._resolve_conversation_id(session, session_id)
         self._current_conversation_id = conversation_id
 
-        # 清理上一轮残留的任务状态（按 session 隔离）
-        _prev_task = None
-        _reset_key = session_id
-        if self.agent_state:
-            _prev_task = self.agent_state.get_task_for_session(session_id)
-        if not _prev_task and self.agent_state:
-            _prev_task = self.agent_state.current_task
-            if _prev_task:
-                _reset_key = _prev_task.session_id or _prev_task.task_id
-        if _prev_task:
-            if _prev_task.cancelled or not _prev_task.is_active:
-                logger.info(
-                    f"[Session:{session_id}] Resetting stale task "
-                    f"(cancelled={_prev_task.cancelled}, status={_prev_task.status.value}, "
-                    f"reset_key={_reset_key!r})"
-                )
-                self.agent_state.reset_task(session_id=_reset_key)
-            else:
-                _prev_task.clear_skip()
-                await _prev_task.drain_user_inserts()
-
-        # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
-        self._pending_cancels.pop(session_id, None) if session_id else None
+        # v1.28 conversation concurrency (S1.3 + S1.4)：把旧的「clear_skip +
+        # drain_user_inserts 让两个并发请求共享同一个 TaskState」反模式替换为显式
+        # preempt/queue 协议。详见 :meth:`_preempt_or_queue_prev_task`。
+        _preempt_decision = await self._preempt_or_queue_prev_task(
+            session_id=session_id,
+            session=session,
+            conversation_id=conversation_id,
+        )
+        logger.debug(
+            "[ChatSync] preempt decision for session=%s conv=%s: %s",
+            session_id,
+            conversation_id,
+            _preempt_decision,
+        )
 
         # 用户主动发新消息 → 无条件清除所有端点冷却期，不让上一轮的错误阻塞本轮
         llm_client = getattr(self.brain, "_llm_client", None)
@@ -6074,7 +6222,11 @@ class Agent:
             _intent = getattr(self, "_current_intent", None)
             _fast_usage = None
             _fast_handled = False
-            _allow_lightweight_fast_reply = not endpoint_override
+            _turn_has_media = bool(getattr(self, "_current_turn_has_media_attachments", False))
+            _allow_lightweight_fast_reply = _allows_lightweight_fast_reply(
+                endpoint_override=endpoint_override,
+                turn_has_media=_turn_has_media,
+            )
 
             _risk_intent = _classify_risk_intent(_intent, message) if _intent else None
             _risk_pre_authorized = _consume_risk_authorization(session, message)
@@ -6106,7 +6258,9 @@ class Agent:
                             _trust_mode_reason,
                             session_id,
                             getattr(_risk_intent.target_kind, "value", _risk_intent.target_kind),
-                            getattr(_risk_intent.operation_kind, "value", _risk_intent.operation_kind),
+                            getattr(
+                                _risk_intent.operation_kind, "value", _risk_intent.operation_kind
+                            ),
                             message[:200],
                         )
             if (
@@ -6150,7 +6304,11 @@ class Agent:
                     _identity_snippet = ""
                     if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
                         _identity_snippet = (
-                            self.identity.get_system_prompt(include_active_task=False) or ""
+                            self.identity.get_system_prompt(
+                                include_active_task=False,
+                                agent_voice=self._resolve_agent_voice(),
+                            )
+                            or ""
                         )[:500]
 
                     _fast_system = (
@@ -6194,7 +6352,11 @@ class Agent:
                     _identity_snippet = ""
                     if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
                         _identity_snippet = (
-                            self.identity.get_system_prompt(include_active_task=False) or ""
+                            self.identity.get_system_prompt(
+                                include_active_task=False,
+                                agent_voice=self._resolve_agent_voice(),
+                            )
+                            or ""
                         )[:500]
 
                     _fast_system = (
@@ -6341,7 +6503,9 @@ class Agent:
             endpoint_policy = (
                 endpoint_policy
                 if explicit_endpoint
-                else self._endpoint_policy if endpoint_override == self._preferred_endpoint else "prefer"
+                else self._endpoint_policy
+                if endpoint_override == self._preferred_endpoint
+                else "prefer"
             )
         else:
             endpoint_policy = "prefer"
@@ -6366,29 +6530,20 @@ class Agent:
         conversation_id = self._resolve_conversation_id(session, session_id)
         self._current_conversation_id = conversation_id
 
-        # 清理上一轮残留的任务状态（按 session 隔离）
-        _prev_task = None
-        _reset_key = session_id
-        if self.agent_state:
-            _prev_task = self.agent_state.get_task_for_session(session_id)
-        if not _prev_task and self.agent_state:
-            _prev_task = self.agent_state.current_task
-            if _prev_task:
-                _reset_key = _prev_task.session_id or _prev_task.task_id
-        if _prev_task:
-            if _prev_task.cancelled or not _prev_task.is_active:
-                logger.info(
-                    f"[Session:{session_id}] Resetting stale task "
-                    f"(cancelled={_prev_task.cancelled}, status={_prev_task.status.value}, "
-                    f"reset_key={_reset_key!r})"
-                )
-                self.agent_state.reset_task(session_id=_reset_key)
-            else:
-                _prev_task.clear_skip()
-                await _prev_task.drain_user_inserts()
-
-        # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
-        self._pending_cancels.pop(session_id, None) if session_id else None
+        # v1.28 conversation concurrency (S1.3 + S1.4)：与 chat_with_session 同源，
+        # 显式 preempt/queue 协议替换旧的隐式共享 TaskState。详见
+        # :meth:`_preempt_or_queue_prev_task`。
+        _preempt_decision = await self._preempt_or_queue_prev_task(
+            session_id=session_id,
+            session=session,
+            conversation_id=conversation_id,
+        )
+        logger.debug(
+            "[ChatStream] preempt decision for session=%s conv=%s: %s",
+            session_id,
+            conversation_id,
+            _preempt_decision,
+        )
 
         # 用户主动发新消息 → 无条件清除所有端点冷却期
         llm_client = getattr(self.brain, "_llm_client", None)
@@ -6591,7 +6746,9 @@ class Agent:
                             session_id,
                             conversation_id,
                             getattr(_risk_intent.target_kind, "value", _risk_intent.target_kind),
-                            getattr(_risk_intent.operation_kind, "value", _risk_intent.operation_kind),
+                            getattr(
+                                _risk_intent.operation_kind, "value", _risk_intent.operation_kind
+                            ),
                             message[:200],
                         )
             if (
@@ -6667,7 +6824,11 @@ class Agent:
             _fast_usage = None
             _request_id = request_id or f"{conversation_id}:stream"
             _turn_id = turn_id or f"{conversation_id}:{int(time.time() * 1000)}"
-            _allow_lightweight_fast_reply = not endpoint_override
+            _turn_has_media = bool(getattr(self, "_current_turn_has_media_attachments", False))
+            _allow_lightweight_fast_reply = _allows_lightweight_fast_reply(
+                endpoint_override=endpoint_override,
+                turn_has_media=_turn_has_media,
+            )
 
             # 决定 fast-path 是否启用思考链：
             # - thinking_mode == "on"：用户显式开启 → 同步开思维链
@@ -6766,7 +6927,11 @@ class Agent:
                 _identity_snippet = ""
                 if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
                     _identity_snippet = (
-                        self.identity.get_system_prompt(include_active_task=False) or ""
+                        self.identity.get_system_prompt(
+                            include_active_task=False,
+                            agent_voice=self._resolve_agent_voice(),
+                        )
+                        or ""
                     )[:500]
 
                 _fast_system = (
@@ -6827,7 +6992,11 @@ class Agent:
                 _identity_snippet = ""
                 if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
                     _identity_snippet = (
-                        self.identity.get_system_prompt(include_active_task=False) or ""
+                        self.identity.get_system_prompt(
+                            include_active_task=False,
+                            agent_voice=self._resolve_agent_voice(),
+                        )
+                        or ""
                     )[:500]
 
                 _fast_system = (
@@ -6904,9 +7073,7 @@ class Agent:
                     # ``_append_lifecycle_context``).
                     existing = last.get("content")
                     if isinstance(existing, list):
-                        last["content"] = existing + [
-                            {"type": "text", "text": soft_hint}
-                        ]
+                        last["content"] = existing + [{"type": "text", "text": soft_hint}]
                     else:
                         last["content"] = (existing or "") + soft_hint
                     messages[-1] = last
@@ -6932,6 +7099,7 @@ class Agent:
                 is_sub_agent=getattr(self, "_is_sub_agent_call", False),
                 request_id=_request_id,
                 turn_id=_turn_id,
+                agent_voice=self._resolve_agent_voice(),
             ):
                 # 收集回复文本（用于 session 保存 & memory）
                 if event.get("type") == "text_delta":
@@ -7090,9 +7258,7 @@ class Agent:
         total_out = sum(t.get("tokens", {}).get("output", 0) for t in trace)
         usage_estimated = any(bool(t.get("usage_estimated")) for t in trace)
         usage_sources = {
-            str(t.get("usage_source"))
-            for t in trace
-            if str(t.get("usage_source") or "").strip()
+            str(t.get("usage_source")) for t in trace if str(t.get("usage_source") or "").strip()
         }
         summary = {
             "input_tokens": total_in,
@@ -7106,7 +7272,9 @@ class Agent:
             summary["billable_output_tokens"] = total_out
             summary["billable_total_tokens"] = total_in + total_out
         if usage_sources:
-            summary["usage_source"] = "mixed" if len(usage_sources) > 1 else next(iter(usage_sources))
+            summary["usage_source"] = (
+                "mixed" if len(usage_sources) > 1 else next(iter(usage_sources))
+            )
         try:
             # Upstream 09f55110: unify the chat context-progress-bar data
             # through ``get_context_snapshot`` so non-streaming / fast paths
@@ -7975,6 +8143,7 @@ class Agent:
             tool_evidence_required=tool_evidence_required,
             is_sub_agent=getattr(self, "_is_sub_agent_call", False),
             mode=mode,
+            agent_voice=self._resolve_agent_voice(),
         )
 
     # ==================== 取消状态代理属性 ====================
@@ -8080,6 +8249,392 @@ class Agent:
         实时取消由 cancel_event 机制在 reason_stream/run 内部处理。
         """
         return bool(session_id and session_id in self._pending_cancels)
+
+    def _append_preempt_marker(
+        self,
+        *,
+        session: Any,
+        policy: str,
+        prev_task_id: str,
+        reason: str,
+        partial_text: str = "",
+        partial_thinking: str = "",
+        partial_truncated: bool = False,
+    ) -> None:
+        """向会话历史追加一条「任务被中断」的标记。
+
+        绕过 :meth:`Session.add_message` 去重，让连续多次抢占都各留一条可见记录；
+        前端可通过 ``marker_type`` 特殊渲染。
+
+        当 ``partial_text`` 非空时，在「[interrupted]」占位标记后再写一条
+        ``marker_type="aborted_partial"`` 标记，把用户在取消前已经看到的部分
+        助手文本/思考一并保留，避免时间线看上去「模型什么都没说」。
+
+        若 ``session`` 不暴露 ``append_marker``（CLI / 单测桩）则静默 no-op。
+        """
+        if session is None:
+            return
+        appender = getattr(session, "append_marker", None)
+        if appender is None:
+            return
+        try:
+            appender(
+                "assistant",
+                "[上一条任务被新请求中断]",
+                marker_type="preempted",
+                policy=policy,
+                preempted_task_id=prev_task_id,
+                reason=reason,
+                has_partial=bool(partial_text or partial_thinking),
+                partial_truncated=partial_truncated,
+            )
+            if partial_text:
+                appender(
+                    "assistant",
+                    partial_text,
+                    marker_type="aborted_partial",
+                    partial_channel="text",
+                    policy=policy,
+                    preempted_task_id=prev_task_id,
+                    reason=reason,
+                    truncated=partial_truncated,
+                )
+            if partial_thinking:
+                appender(
+                    "assistant",
+                    partial_thinking,
+                    marker_type="aborted_partial",
+                    partial_channel="thinking",
+                    policy=policy,
+                    preempted_task_id=prev_task_id,
+                    reason=reason,
+                    truncated=partial_truncated,
+                )
+        except Exception:
+            logger.debug(
+                "[Preempt] append_marker failed (prev_task=%s, policy=%s)",
+                prev_task_id[:8] if prev_task_id else "?",
+                policy,
+                exc_info=True,
+            )
+
+    async def _preempt_or_queue_prev_task(
+        self,
+        *,
+        session_id: str,
+        session: Any = None,
+        conversation_id: str | None = None,
+    ) -> str:
+        """在同一 session 上开始新 run 之前，先解决上一条 task 的生命周期。
+
+        取代旧的「clear_skip + drain_user_inserts」隐式共享单个 TaskState 的反模式
+        （issue #572：completed -> reasoning 崩溃、思考跨轮串台的根因），改为显式的
+        preempt / queue 协议。
+
+        Key 解析：reason_stream / run 用 ``conversation_id`` 注册 TaskState，先按它查；
+        IM / org 模式下 ``session_id`` 可能与之不同，故回退到 ``session_id``，再回退到
+        ``current_task``。
+
+        策略来自 :func:`openakita.api.routes.double_texting.resolve_policy`（按 channel；
+        INTERRUPT 在 ``settings.double_texting_allow_interrupt`` 关闭时降级为 QUEUE）。
+
+        返回值：
+
+        * ``"proceed"`` —— 旧 task 已结算 / 非活跃，调用方走正常 begin_task。
+        * ``"queued_then_proceed"`` —— 旧 task 在超时内结算（或超时被放弃）。
+        * ``"preempted"`` —— 旧 task 被主动 cancel 并等待（或超时标记 abandoned）。
+
+        REJECT 不在此处理：HTTP/IM 入口层已通过 busy-lock 409 拒绝；若 REJECT 仍到这里，
+        当作 proceed（reset 后让新流自己 begin_task）。
+        """
+        from ..api.routes.double_texting import DoubleTextingPolicy, resolve_policy
+        from ..config import settings
+        from .conversation_metrics import (
+            inc_abandon,
+            inc_preempt,
+            inc_queue,
+            inc_settled_timeout,
+        )
+
+        if not self.agent_state:
+            return "proceed"
+
+        _prev_task = None
+        _reset_key: str = ""
+        if conversation_id:
+            _prev_task = self.agent_state.get_task_for_session(conversation_id)
+            if _prev_task:
+                _reset_key = conversation_id
+        if not _prev_task and session_id and session_id != conversation_id:
+            _prev_task = self.agent_state.get_task_for_session(session_id)
+            if _prev_task:
+                _reset_key = session_id
+        if not _prev_task:
+            _prev_task = self.agent_state.current_task
+            if _prev_task:
+                _reset_key = _prev_task.session_id or _prev_task.task_id
+        if not _prev_task:
+            return "proceed"
+
+        # 旧 task 已止（cancelled 或非活跃）→ 清理 + proceed
+        if _prev_task.cancelled or not _prev_task.is_active:
+            logger.info(
+                "[Session:%s] Resetting stale task (cancelled=%s, status=%s, reset_key=%r)",
+                session_id,
+                _prev_task.cancelled,
+                _prev_task.status.value,
+                _reset_key,
+            )
+            self.agent_state.reset_task(session_id=_reset_key)
+            if session_id:
+                self._pending_cancels.pop(session_id, None)
+            return "proceed"
+
+        # 旧 task 仍在跑：按 policy 处理
+        channel = getattr(session, "channel", None) if session is not None else None
+        policy = resolve_policy(channel=channel)
+        timeout_s = max(0.5, settings.preempt_settle_timeout_ms / 1000.0)
+
+        if policy is DoubleTextingPolicy.REJECT:
+            logger.warning(
+                "[Session:%s] REJECT policy reached agent layer with active "
+                "task %s; HTTP layer should have blocked. Resetting to recover.",
+                session_id,
+                _prev_task.task_id[:8],
+            )
+            _prev_task.abandoned = True
+            self.agent_state.reset_task(session_id=_reset_key)
+            if session_id:
+                self._pending_cancels.pop(session_id, None)
+            return "proceed"
+
+        # v1.28 S4: INTERRUPT 降级判定。若旧 task 正在执行 block 类工具
+        # （write_file / run_shell / browser_click / mcp_call …），中途 cancel 会留下
+        # 半成品副作用，故降级为 QUEUE，等旧工具跑完再开新请求。
+        if policy is DoubleTextingPolicy.INTERRUPT:
+            in_flight = _prev_task.get_in_flight_tools()
+            if in_flight:
+                from .tool_interrupt_behavior import (
+                    has_any_block_in_flight,
+                    is_unknown_tool,
+                    parse_mcp_sub_tool,
+                    resolve_in_flight_behavior,
+                )
+
+                mcp_client = getattr(self, "mcp_client", None)
+                if has_any_block_in_flight(in_flight, mcp_client=mcp_client):
+                    block_tools: list[str] = []
+                    for n in in_flight:
+                        if resolve_in_flight_behavior(n, mcp_client=mcp_client) == "block":
+                            block_tools.append(n)
+
+                    def _is_drift(n: str) -> bool:
+                        if parse_mcp_sub_tool(n) is not None:
+                            return False
+                        return is_unknown_tool(n)
+
+                    only_unknown = all(_is_drift(n) for n in block_tools)
+                    downgrade_reason = "unknown_tool" if only_unknown else "block_in_flight"
+                    logger.info(
+                        "[Session:%s] Downgrading INTERRUPT -> QUEUE on task "
+                        "%s: %d block-class tool(s) in flight (reason=%s, sample=%s)",
+                        session_id,
+                        _prev_task.task_id[:8],
+                        len(block_tools),
+                        downgrade_reason,
+                        ",".join(block_tools[:5]) + ("…" if len(block_tools) > 5 else ""),
+                    )
+                    try:
+                        from .conversation_metrics import inc_interrupt_downgrade
+
+                        inc_interrupt_downgrade(channel=channel, reason=downgrade_reason)
+                    except Exception:
+                        pass
+                    policy = DoubleTextingPolicy.QUEUE
+
+        # STEER 通常在 HTTP 层短路（chat.py 注入消息并 202 返回，不进 agent run）。
+        # 若 STEER 仍到 agent 层，绝不能落入下面的 INTERRUPT 分支去 cancel 旧 task，
+        # 这里没有 steer 注入入口，安全做法是当作 QUEUE。
+        if policy is DoubleTextingPolicy.STEER:
+            logger.warning(
+                "[Session:%s] STEER policy reached agent layer with active "
+                "task %s (channel=%s); treating as QUEUE.",
+                session_id,
+                _prev_task.task_id[:8],
+                channel,
+            )
+            policy = DoubleTextingPolicy.QUEUE
+
+        if policy is DoubleTextingPolicy.QUEUE:
+            inc_queue(channel=channel)
+            # QUEUE 等待前一轮自然结束，用较宽松的 queue_wait_timeout_ms（默认 10 分钟），
+            # 而非 preempt_settle_timeout_ms（那是针对刚被 cancel 的 task）。
+            queue_timeout_s = max(
+                0.5,
+                getattr(settings, "queue_wait_timeout_ms", 600000) / 1000.0,
+            )
+            queue_timeout_ms = int(queue_timeout_s * 1000)
+            # S4-A: 第一次 timeout 后若仍有 block 工具在跑，再延长一次等待（不直接 cancel），
+            # 覆盖多数 long-write 场景。extension_ms=0 即关闭该机制。
+            extension_ms = getattr(settings, "preempt_block_tool_extension_ms", 0)
+            extension_s = max(0.0, extension_ms / 1000.0)
+            timed_out = False
+            extended_once = False
+            try:
+                await asyncio.wait_for(_prev_task.wait_until_settled(), timeout=queue_timeout_s)
+                logger.info(
+                    "[Session:%s] QUEUE: old task %s settled; proceeding",
+                    session_id,
+                    _prev_task.task_id[:8],
+                )
+            except asyncio.CancelledError:
+                try:
+                    inc_abandon(policy=policy.value, channel=channel)
+                except Exception:
+                    pass
+                raise
+            except TimeoutError:
+                in_flight_after_timeout = _prev_task.get_in_flight_tools()
+                if extension_s > 0 and in_flight_after_timeout:
+                    from .tool_interrupt_behavior import (
+                        has_any_block_in_flight,
+                        is_unknown_tool,
+                        parse_mcp_sub_tool,
+                    )
+
+                    mcp_client_for_ext = getattr(self, "mcp_client", None)
+                    if has_any_block_in_flight(
+                        in_flight_after_timeout,
+                        mcp_client=mcp_client_for_ext,
+                    ):
+                        only_unknown = all(
+                            parse_mcp_sub_tool(n) is None and is_unknown_tool(n)
+                            for n in in_flight_after_timeout
+                        )
+                        ext_reason = "unknown_tool" if only_unknown else "block_in_flight"
+                        logger.info(
+                            "[Session:%s] QUEUE wait timed out after %dms but "
+                            "block tool(s) still in flight (sample=%s, reason=%s); "
+                            "extending +%dms before cancel",
+                            session_id,
+                            queue_timeout_ms,
+                            ",".join(in_flight_after_timeout[:3])
+                            + ("…" if len(in_flight_after_timeout) > 3 else ""),
+                            ext_reason,
+                            extension_ms,
+                        )
+                        try:
+                            from .conversation_metrics import inc_queue_extended
+
+                            inc_queue_extended(channel=channel, reason=ext_reason)
+                        except Exception:
+                            pass
+                        extended_once = True
+                        try:
+                            await asyncio.wait_for(
+                                _prev_task.wait_until_settled(),
+                                timeout=extension_s,
+                            )
+                            logger.info(
+                                "[Session:%s] QUEUE: old task %s settled during "
+                                "extension window; proceeding",
+                                session_id,
+                                _prev_task.task_id[:8],
+                            )
+                        except asyncio.CancelledError:
+                            try:
+                                inc_abandon(policy=policy.value, channel=channel)
+                            except Exception:
+                                pass
+                            raise
+                        except TimeoutError:
+                            timed_out = True
+                if not extended_once:
+                    timed_out = True
+
+            if timed_out:
+                total_waited_ms = queue_timeout_ms + (extension_ms if extended_once else 0)
+                logger.warning(
+                    "[Session:%s] QUEUE wait timed out after %dms (extended=%s); "
+                    "cancelling+abandoning old task %s and proceeding",
+                    session_id,
+                    total_waited_ms,
+                    extended_once,
+                    _prev_task.task_id[:8],
+                )
+                inc_settled_timeout(policy=policy.value, channel=channel)
+                inc_abandon(policy=policy.value, channel=channel)
+                # 不只标 abandoned，还要 cancel() 触发 cancel_event —— 长 running tool 的
+                # handler 监听的是 cancel_event，而非 abandoned 标志。
+                _prev_task.cancel(f"QUEUE timeout after {total_waited_ms}ms")
+                _prev_task.abandoned = True
+                self._append_preempt_marker(
+                    session=session,
+                    policy=policy.value,
+                    prev_task_id=_prev_task.task_id,
+                    reason="queue_timeout_abandoned",
+                    partial_text=_prev_task.partial_text,
+                    partial_thinking=_prev_task.partial_thinking,
+                    partial_truncated=_prev_task.partial_truncated,
+                )
+            self.agent_state.reset_task(session_id=_reset_key)
+            if session_id:
+                self._pending_cancels.pop(session_id, None)
+            return "queued_then_proceed"
+
+        # INTERRUPT：cancel 旧 task，等 settled，超时则 abandon。
+        inc_preempt(policy=policy.value, channel=channel)
+        logger.info(
+            "[Session:%s] Preempting active task %s (status=%s, policy=%s)",
+            session_id,
+            _prev_task.task_id[:8],
+            _prev_task.status.value,
+            policy.value,
+        )
+        _prev_task.cancel(f"被新请求抢占 (policy={policy.value})")
+        self._append_preempt_marker(
+            session=session,
+            policy=policy.value,
+            prev_task_id=_prev_task.task_id,
+            reason="preempted_by_new_message",
+            partial_text=_prev_task.partial_text,
+            partial_thinking=_prev_task.partial_thinking,
+            partial_truncated=_prev_task.partial_truncated,
+        )
+        # preempt 已显式 cancel 旧 task，pending_cancel 失效，避免新 task 被几秒前的
+        # 过期 cancel 误杀。
+        if session_id:
+            popped = self._pending_cancels.pop(session_id, None)
+            if popped:
+                logger.debug(
+                    "[Preempt] Discarded pending_cancel for session=%s "
+                    "(preempt supersedes; reason=%r)",
+                    session_id,
+                    popped,
+                )
+        try:
+            await asyncio.wait_for(_prev_task.wait_until_settled(), timeout=timeout_s)
+        except asyncio.CancelledError:
+            _prev_task.abandoned = True
+            try:
+                inc_abandon(policy=policy.value, channel=channel)
+            except Exception:
+                pass
+            raise
+        except TimeoutError:
+            logger.warning(
+                "[Session:%s] Old task %s did not settle within %dms; "
+                "marking abandoned. Old coroutine will exit on its next "
+                "iteration check.",
+                session_id,
+                _prev_task.task_id[:8],
+                settings.preempt_settle_timeout_ms,
+            )
+            inc_settled_timeout(policy=policy.value, channel=channel)
+            inc_abandon(policy=policy.value, channel=channel)
+            _prev_task.abandoned = True
+        self.agent_state.reset_task(session_id=_reset_key)
+        return "preempted"
 
     def _consume_pending_cancel(self, session_id: str | None = None) -> str | None:
         """消费并返回挂起的取消原因，如果没有则返回 None。"""
@@ -8401,9 +8956,7 @@ class Agent:
                         f"task suspended. pending_approvals={_ids}"
                     ),
                     pending_id=_ids[0],
-                    unattended_strategy=_deferred[0].get(
-                        "_deferred_approval_strategy", ""
-                    ),
+                    unattended_strategy=_deferred[0].get("_deferred_approval_strategy", ""),
                     meta={"all_pending_ids": _ids},
                 )
 
@@ -8971,6 +9524,33 @@ class Agent:
                         )
                         continue  # 继续循环，让 LLM 调用工具
 
+                    # Steer done-drain: the model produced a final answer with
+                    # no tool calls, so process_post_tool_signals did NOT drain
+                    # inserts this round. If a message was steered in via
+                    # insert_user_message while this answer was being generated
+                    # (e.g. an IM user following up on a long task), address it
+                    # now instead of finishing and dropping it. Bounded by
+                    # max_tool_iterations inside the helper, so it can never run
+                    # away. No-op for scheduler/sub-agent tasks (no inserts).
+                    _steered = await self.reasoning_engine._drain_steer_before_finish(
+                        state=(self.agent_state.current_task if self.agent_state else None),
+                        working_messages=messages,
+                        final_text=final_response or cleaned_text or "",
+                        iteration=iteration - 1,  # loop here is 1-based
+                        max_iterations=max_tool_iterations,
+                    )
+                    if _steered:
+                        no_tool_call_count = 0
+                        logger.info(
+                            "[execute_task][DoneDrain] %d steered message(s) "
+                            "arrived during final-answer generation; folding "
+                            "answer into context and continuing (iter=%d/%d)",
+                            len(_steered),
+                            iteration,
+                            max_tool_iterations,
+                        )
+                        continue
+
                     # 追问次数用尽，任务完成
                     break
 
@@ -9065,9 +9645,7 @@ class Agent:
                             f"task suspended. pending_approvals={_ids}"
                         ),
                         pending_id=_ids[0],
-                        unattended_strategy=_deferred[0].get(
-                            "_deferred_approval_strategy", ""
-                        ),
+                        unattended_strategy=_deferred[0].get("_deferred_approval_strategy", ""),
                         meta={"all_pending_ids": _ids, "task_id": task.id},
                     )
 
@@ -9414,4 +9992,3 @@ class Agent:
     def get_memory_stats(self) -> dict:
         """获取记忆统计"""
         return self.memory_manager.get_stats()
-

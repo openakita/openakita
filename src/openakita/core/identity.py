@@ -15,16 +15,22 @@ Do not add new code here — only re-export symbols that already live in
 from __future__ import annotations
 
 from openakita.agent.identity import (
+    _AGENT_NAME_PLACEHOLDER,
     _HASH_FILE,
     Identity,
+    _apply_agent_name_placeholder,
     _file_hash,
     _load_hashes,
+    _resolve_bundled_identity_template,
     _save_hashes,
 )
 
 __all__ = [
     "Identity",
     "_HASH_FILE",
+    "_AGENT_NAME_PLACEHOLDER",
+    "_apply_agent_name_placeholder",
+    "_resolve_bundled_identity_template",
     "_file_hash",
     "_load_hashes",
     "_save_hashes",

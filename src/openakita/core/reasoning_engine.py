@@ -14,6 +14,24 @@ import order is preserved. See ``docs/follow-ups/skipped-items-roadmap.md``.
 
 from __future__ import annotations
 
+from openakita.config import settings
 from openakita.core import ReasoningEngine
 
-__all__ = ["ReasoningEngine"]
+# The cancel-resume helpers (Issue #608) read these module-scoped names off the
+# legacy ``core.reasoning_engine`` module; upstream tests reference them as
+# ``reasoning_engine.settings`` / ``.DEFAULT_TTL_SECONDS`` /
+# ``.RESUME_HINT_FRESHNESS_SECONDS``. ``settings`` is the same
+# ``openakita.config.settings`` singleton the engine reads, so monkeypatching it
+# here is observed by the engine; the TTL constants are re-exported from
+# ``cancel_cleanup`` (their canonical home).
+from openakita.core.cancel_cleanup import (  # noqa: E402
+    DEFAULT_TTL_SECONDS,
+    RESUME_HINT_FRESHNESS_SECONDS,
+)
+
+__all__ = [
+    "ReasoningEngine",
+    "settings",
+    "DEFAULT_TTL_SECONDS",
+    "RESUME_HINT_FRESHNESS_SECONDS",
+]

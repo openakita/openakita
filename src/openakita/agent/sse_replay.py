@@ -89,6 +89,7 @@ class SSESession:
     ttl_s: float = DEFAULT_TTL_SECONDS
     _events: deque[SSEEvent] = field(default_factory=deque, repr=False)
     _seq: int = 0
+    _replay_floor: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _last_activity: float = field(default_factory=time.time)
 
@@ -110,16 +111,35 @@ class SSESession:
             self._last_activity = evt.ts
             return evt
 
+    def begin_turn(self) -> int:
+        """Mark the start of a new logical turn; return the new replay floor.
+
+        A turn = one agent run streamed by one ``_stream_chat`` invocation
+        (a POST /api/chat). Steering a follow-up into a running turn does NOT
+        start a new turn, so this must be called exactly once per turn, before
+        the turn's first event. It advances :attr:`_replay_floor` to the
+        current max seq (monotonic — only ever moves forward), so a stale
+        Last-Event-ID / since_seq can never replay a previous, completed turn's
+        events into the current turn.
+        """
+        with self._lock:
+            if self._seq > self._replay_floor:
+                self._replay_floor = self._seq
+            return self._replay_floor
+
     def replay_from(self, last_seq: int | None) -> list[SSEEvent]:
-        """Return all buffered events with ``seq > last_seq``.
+        """Return buffered events with ``seq > max(last_seq, replay_floor)``.
 
         - ``last_seq=None`` or ``< 0`` → empty (no replay requested).
-        - ``last_seq == 0`` → every event still in the buffer (client has
-          seen nothing yet).
+        - ``last_seq == 0`` → every event still in the buffer for the current
+          turn (client has seen nothing yet this turn).
         - ``last_seq`` newer than ``_seq`` → empty (client claims a future
           seq; bug, but tolerate by not replaying anything).
         - ``last_seq`` older than the buffer's oldest seq → return whatever
-          we still have (gap will be visible to the user).
+          we still have for the current turn (gap will be visible to the user).
+        - ``last_seq`` predating the current turn (``< replay_floor``) → clamped
+          to the floor, so a stale Last-Event-ID / since_seq can never replay a
+          previous, completed turn's events.
 
         Caller still needs to send these in order **before** any new live
         events to preserve ordering guarantees.
@@ -127,9 +147,11 @@ class SSESession:
         if last_seq is None or last_seq < 0:
             return []
         with self._lock:
-            if last_seq >= self._seq:
+            # Clamp to the current turn's floor (see ``begin_turn``).
+            effective = last_seq if last_seq > self._replay_floor else self._replay_floor
+            if effective >= self._seq:
                 return []
-            return [e for e in self._events if e.seq > last_seq]
+            return [e for e in self._events if e.seq > effective]
 
     def is_idle(self, now: float | None = None) -> bool:
         """True if the session has had no activity within ``ttl_s``."""

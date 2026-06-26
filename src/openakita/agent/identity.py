@@ -35,7 +35,6 @@ Legacy strategy (v1 — full injection, deprecated but preserved):
 """
 
 import hashlib
-import json
 import logging
 import re
 from pathlib import Path
@@ -53,26 +52,73 @@ logger = logging.getLogger(__name__)
 
 _HASH_FILE = "runtime/.file_hashes.json"
 _TRACKED_FILES = ["SOUL.md", "AGENT.md", "USER.md"]
+_AGENT_NAME_PLACEHOLDER = "{{agent_name}}"
 
 
 def _load_hashes(identity_dir: Path) -> dict[str, str]:
+    from openakita.utils.atomic_io import read_json_safe
+
     hash_path = identity_dir / _HASH_FILE
-    if hash_path.exists():
-        try:
-            return json.loads(hash_path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
+    data = read_json_safe(hash_path)
+    return data if isinstance(data, dict) else {}
 
 
 def _save_hashes(identity_dir: Path, hashes: dict[str, str]) -> None:
+    from openakita.utils.atomic_io import atomic_json_write
+
     hash_path = identity_dir / _HASH_FILE
-    hash_path.parent.mkdir(parents=True, exist_ok=True)
-    hash_path.write_text(json.dumps(hashes, indent=2), encoding="utf-8")
+    atomic_json_write(hash_path, hashes)
 
 
 def _file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+
+
+def _apply_agent_name_placeholder(text: str, agent_voice: str | None = None) -> str:
+    if not text or _AGENT_NAME_PLACEHOLDER not in text:
+        return text
+    resolved = ""
+    if isinstance(agent_voice, str):
+        resolved = agent_voice.strip()
+    if not resolved:
+        resolved = getattr(settings, "agent_name", "") or "OpenAkita"
+    return text.replace(_AGENT_NAME_PLACEHOLDER, resolved)
+
+
+def _resolve_bundled_identity_template(rel_name: str) -> Path | None:
+    """Locate a packaged identity template (e.g. ``SOUL.md.example``).
+
+    Resolution strategies, in order:
+
+    1. Repo checkout: walk up from this file's directory looking for a sibling
+       ``identity/`` (next to ``pyproject.toml`` or ``src/openakita``). Used
+       during ``pip install -e .`` and ``python -m openakita`` from source.
+    2. Wheel / Tauri install: look inside the installed ``openakita`` package
+       directory itself, which is where ``pyproject.toml``'s ``force-include``
+       drops the templates.
+
+    Returns ``None`` when the template cannot be located so callers can
+    degrade gracefully (current behaviour: keep existing on-disk content).
+
+    Shared with ``setup.wizard._resolve_identity_template`` so wizard-time and
+    runtime template lookup stay in lockstep.
+    """
+    pkg_root = Path(__file__).resolve().parents[1]
+
+    cursor = pkg_root
+    for _ in range(10):
+        candidate = cursor / "identity" / rel_name
+        if candidate.exists():
+            return candidate
+        parent = cursor.parent
+        if parent == cursor:
+            break
+        cursor = parent
+
+    candidate = pkg_root / "identity" / rel_name
+    if candidate.exists():
+        return candidate
+    return None
 
 
 class Identity:
@@ -84,11 +130,13 @@ class Identity:
         agent_path: Path | None = None,
         user_path: Path | None = None,
         memory_path: Path | None = None,
+        sync_templates: bool = True,
     ):
         self.soul_path = soul_path or settings.soul_path
         self.agent_path = agent_path or settings.agent_path
         self.user_path = user_path or settings.user_path
         self.memory_path = memory_path or settings.memory_path
+        self.sync_templates = sync_templates
 
         self._soul: str | None = None
         self._agent: str | None = None
@@ -99,9 +147,14 @@ class Identity:
     def load(self) -> None:
         """加载所有核心文档，支持系统升级检测。"""
         self._pending_upgrades = []
-        self._soul = self._sync_identity_file(self.soul_path, "SOUL.md")
-        self._agent = self._sync_identity_file(self.agent_path, "AGENT.md")
-        self._user = self._sync_identity_file(self.user_path, "USER.md")
+        if self.sync_templates:
+            self._soul = self._sync_identity_file(self.soul_path, "SOUL.md")
+            self._agent = self._sync_identity_file(self.agent_path, "AGENT.md")
+            self._user = self._sync_identity_file(self.user_path, "USER.md")
+        else:
+            self._soul = self._load_file(self.soul_path, "SOUL.md")
+            self._agent = self._load_file(self.agent_path, "AGENT.md")
+            self._user = self._load_file(self.user_path, "USER.md")
         self._memory = self._load_file(self.memory_path, "MEMORY.md")
         logger.info("Identity loaded: SOUL.md, AGENT.md, USER.md, MEMORY.md")
 
@@ -173,7 +226,15 @@ class Identity:
             return ""
 
         if not example_path.exists():
-            return current_content
+            # Upgrade-install path: the user's identity/ rarely contains the
+            # *.example sibling (wizard only seeds SOUL.md from it once). Fall
+            # back to the template bundled inside the installed package so the
+            # decision matrix below (silent-upgrade vs preserve-user-edits vs
+            # queue-for-prompt) actually runs on subsequent app upgrades.
+            bundled = _resolve_bundled_identity_template(f"{path.name}.example")
+            if bundled is None:
+                return current_content
+            example_path = bundled
 
         try:
             current_hash = _file_hash(path)
@@ -262,7 +323,7 @@ class Identity:
             self.load()
         return self._memory or ""
 
-    def get_soul_summary(self) -> str:
+    def get_soul_summary(self, agent_voice: str | None = None) -> str:
         """
         获取 SOUL.md 完整内容
 
@@ -272,9 +333,10 @@ class Identity:
         if not soul:
             return ""
 
+        soul = _apply_agent_name_placeholder(soul, agent_voice)
         return f"## Soul (核心哲学)\n\n{soul}\n"
 
-    def get_agent_summary(self) -> str:
+    def get_agent_summary(self, agent_voice: str | None = None) -> str:
         """
         获取 AGENT.md 完整内容
 
@@ -284,9 +346,10 @@ class Identity:
         if not agent:
             return ""
 
+        agent = _apply_agent_name_placeholder(agent, agent_voice)
         return f"## Agent (行为规范)\n\n{agent}\n"
 
-    def get_user_summary(self) -> str:
+    def get_user_summary(self, agent_voice: str | None = None) -> str:
         """
         获取 USER.md 完整内容
 
@@ -296,9 +359,14 @@ class Identity:
         if not user:
             return "## User (用户偏好)\n\n(用户偏好将在交互中学习)\n"
 
+        user = _apply_agent_name_placeholder(user, agent_voice)
         return f"## User (用户偏好)\n\n{user}\n"
 
-    def get_memory_summary(self, include_active_task: bool = True) -> str:
+    def get_memory_summary(
+        self,
+        include_active_task: bool = True,
+        agent_voice: str | None = None,
+    ) -> str:
         """
         获取 MEMORY.md 完整内容
 
@@ -311,6 +379,7 @@ class Identity:
         if not memory:
             return ""
 
+        memory = _apply_agent_name_placeholder(memory, agent_voice)
         return f"## Memory (核心记忆)\n\n{memory}\n"
 
     @staticmethod
@@ -321,7 +390,11 @@ class Identity:
         except Exception:
             return "Asia/Shanghai"
 
-    def get_system_prompt(self, include_active_task: bool = True) -> str:
+    def get_system_prompt(
+        self,
+        include_active_task: bool = True,
+        agent_voice: str | None = None,
+    ) -> str:
         """
         生成系统提示词
 
@@ -343,11 +416,16 @@ class Identity:
         current_time = now.strftime("%Y-%m-%d %H:%M:%S")
         current_weekday = weekday_names[now.weekday()]
 
-        return f"""# OpenAkita System
+        return f"""# Agent System
 
-你是 OpenAkita，一个全能自进化AI助手。
+{self.get_soul_summary(agent_voice=agent_voice)}
 
 **当前时间: {current_time} {current_weekday}**
+
+## 运行平台说明
+
+OpenAkita 是运行平台或上游项目名称；当前 Agent 的自称以身份文件为准，\
+不要因为平台名称把自己介绍为 OpenAkita。
 
 ## ⚠️ 响应质量要求（最高优先级，严格执行）
 
@@ -434,22 +512,20 @@ class Identity:
 
 ---
 
-{self.get_agent_summary()}
+{self.get_agent_summary(agent_voice=agent_voice)}
 
-{self.get_user_summary()}
+{self.get_user_summary(agent_voice=agent_voice)}
 
-{self.get_memory_summary(include_active_task=include_active_task)}
-
-{self.get_soul_summary()}
+{self.get_memory_summary(include_active_task=include_active_task, agent_voice=agent_voice)}
 """
 
-    def get_session_system_prompt(self) -> str:
+    def get_session_system_prompt(self, agent_voice: str | None = None) -> str:
         """
         生成用于 IM Session 的系统提示词
 
         不包含全局 Active Task，避免与 Session 上下文冲突
         """
-        return self.get_system_prompt(include_active_task=False)
+        return self.get_system_prompt(include_active_task=False, agent_voice=agent_voice)
 
     def get_compiled_prompt(
         self,

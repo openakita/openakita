@@ -243,3 +243,68 @@ def format_desktop_attachment_reference(
             "如需读取、转写或分析，请直接使用文件/音频处理工具打开该本地路径。]"
         )
     return f"[{label}: {att_name} ({att_mime or att_type})] URL: {att_url}"
+
+
+def format_vision_unavailable_notice(
+    *,
+    count: int,
+    names: list[str] | None = None,
+    paths: list[str] | None = None,
+    source: str = "图片",
+) -> str:
+    """Build a prompt notice that must surface to the user when images are unseen.
+
+    Injected on image-bearing turns where no configured LLM endpoint has
+    vision capability. The notice tells the model to admit it cannot read
+    the image rather than fast-replying as if no image existed.
+    """
+    item_label = "张图片" if source == "图片" else source
+    details: list[str] = []
+    clean_names = [n for n in (names or []) if n]
+    clean_paths = [p for p in (paths or []) if p]
+    if clean_names:
+        details.append(f"文件名: {'; '.join(clean_names)}")
+    if clean_paths:
+        details.append(f"本地路径: {'; '.join(clean_paths)}")
+    detail_text = f"（{'；'.join(details)}）" if details else ""
+    return (
+        f"[系统提示：用户本轮发送了 {count} {item_label}{detail_text}，但当前所有可用 LLM "
+        "端点都没有 vision/图片理解能力，所以你无法查看、识别或描述图片内容。"
+        "必须在回复开头明确告知用户：我收到了图片，但当前没有配置支持图片识别的模型端点，"
+        "因此不能判断图片里是什么；不要猜测图片内容，不要回答成自我介绍或闲聊。"
+        "请提示用户在 OpenAkita 设置中心配置带 vision 能力的 LLM 端点"
+        "（例如支持图片输入的 OpenAI、Claude、Qwen-VL/GLM-4V 等模型），"
+        "或改用文字描述图片后再继续。]"
+    )
+
+
+def has_pending_media_or_attachments(
+    *,
+    pending_images: Any = None,
+    pending_videos: Any = None,
+    pending_audio: Any = None,
+    pending_files: Any = None,
+    attachments: Any = None,
+) -> bool:
+    """True when the current turn carries any media/file payload.
+
+    Used to disable the lightweight fast-reply path so the model never
+    answers before attachment context is considered.
+    """
+    return any(
+        bool(item)
+        for item in (pending_images, pending_videos, pending_audio, pending_files, attachments)
+    )
+
+
+def allows_lightweight_fast_reply(
+    *,
+    endpoint_override: str | None = None,
+    turn_has_media: bool = False,
+) -> bool:
+    """Whether the lightweight (no-thinking) fast-reply path may run.
+
+    Disabled when the user pinned an endpoint override or when the turn
+    carries media (image/video/audio/file) attachments.
+    """
+    return not endpoint_override and not turn_has_media
