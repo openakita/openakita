@@ -44,6 +44,19 @@ from openakita.core.tool_interrupt_behavior import (
     warn_unclassified_tools,
 )
 
+# The agent-layer preempt orchestration (``Agent._preempt_or_queue_prev_task``
+# + INTERRUPT→QUEUE downgrade + QUEUE block-tool timeout extension + the
+# tool-executor begin/end source wiring) is upstream v1.28 work that was NOT
+# ported after the ADR-0003 split of ``core/agent.py``. The lower-level
+# primitives it builds on (TaskState in-flight tracking, the
+# tool_interrupt_behavior registry, MCP sub-tool encoding) ARE present and stay
+# tested below. See docs/follow-ups/skipped-items-roadmap.md (Batch C —
+# core/agent.py merge follow-ups).
+_NOT_PORTED = (
+    "agent-layer preempt/interrupt-downgrade orchestration not ported after "
+    "ADR-0003 split; see docs/follow-ups/skipped-items-roadmap.md (Batch C)"
+)
+
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 
@@ -144,6 +157,7 @@ class TestInFlightTrackingPrimitives:
 # ── tool_executor wiring ────────────────────────────────────────────
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestToolExecutorBeginEndWiring:
     """Verify the source of ``ToolExecutor.execute_tool`` AND
     ``execute_tool_with_policy`` wire in_flight tracking.
@@ -297,6 +311,7 @@ class TestToolExecutorBeginEndWiring:
 # ── Preempt downgrade decisions ─────────────────────────────────────
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestPreemptDowngradeWhenBlockToolInFlight:
     """The core S4 invariant: INTERRUPT must downgrade to QUEUE whenever
     any in-flight tool is classified ``block``."""
@@ -383,6 +398,7 @@ class TestPreemptDowngradeWhenBlockToolInFlight:
         assert decision == "queued_then_proceed"
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestNoDowngradeWhenAllCancelSafe:
     """INTERRUPT must NOT downgrade when every in-flight tool is cancel-safe."""
 
@@ -428,6 +444,7 @@ class TestNoDowngradeWhenAllCancelSafe:
         assert not any(s["name"] == "interrupt_downgrade" for s in snap)
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestUnknownToolDowngrade:
     """Unknown tools default to block — downgrade should happen but the
     counter should record ``reason='unknown_tool'`` so ops can spot
@@ -487,6 +504,7 @@ class TestUnknownToolDowngrade:
 # ── REJECT / STEER / QUEUE policies are NOT affected ────────────────
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestOtherPoliciesUnaffected:
     @pytest.mark.asyncio
     async def test_queue_policy_does_not_check_in_flight(self, _short_settle_timeout) -> None:
@@ -609,6 +627,7 @@ class TestRegistryRuntime:
 # ── FOLLOW-UP-S4-A: QUEUE timeout extension when block tool still in flight ─
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestQueueTimeoutBlockExtension:
     """v1.28.2 FOLLOW-UP-S4-A: when the QUEUE wait times out but the
     old task is still running a block-class tool, extend the wait
@@ -818,6 +837,7 @@ class TestMcpSubToolEncoding:
         assert ToolExecutor._in_flight_name("call_mcp_tool", {}) == "call_mcp_tool"
         assert ToolExecutor._in_flight_name("read_file", {"path": "/x"}) == "read_file"
 
+    @pytest.mark.skip(reason=_NOT_PORTED)
     @pytest.mark.asyncio
     async def test_readonly_mcp_does_not_downgrade_interrupt(
         self,

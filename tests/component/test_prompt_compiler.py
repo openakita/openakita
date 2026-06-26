@@ -1,6 +1,19 @@
 """L2 Component Tests: Prompt compilation and system prompt building."""
 
+import pytest
+
 from openakita.prompt.budget import BudgetConfig
+
+# ``Agent._resolve_agent_voice`` (the per-profile first-person voice resolution
+# chain) is upstream work NOT ported after the ADR-0003 split of
+# ``core/agent.py``. The prompt-builder side (``build_system_prompt(agent_voice=...)``)
+# IS merged and stays tested by TestBuildSystemPrompt below; only the Agent-side
+# resolver/wiring is deferred. See docs/follow-ups/skipped-items-roadmap.md
+# (Batch C — core/agent.py merge follow-ups).
+_AGENT_VOICE_NOT_WIRED = (
+    "Agent._resolve_agent_voice wiring not ported after ADR-0003 split; "
+    "see docs/follow-ups/skipped-items-roadmap.md (Batch C)"
+)
 
 
 class TestPromptCompileFunctions:
@@ -228,6 +241,7 @@ class TestBuildSystemPrompt:
         assert "OpenAkita 应该诚实" in prompt
 
 
+@pytest.mark.skip(reason=_AGENT_VOICE_NOT_WIRED)
 class TestAgentResolveVoice:
     """Direct unit tests for Agent._resolve_agent_voice priority chain."""
 

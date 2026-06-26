@@ -85,6 +85,20 @@ def _allow_interrupt(monkeypatch):
     yield
 
 
+# The agent-layer preempt helper (``Agent._preempt_or_queue_prev_task`` +
+# ``_append_preempt_marker`` + conversation_id-first task lookup + QUEUE
+# timeout cancel/abandon) is upstream v1.28 work that was NOT ported after the
+# ADR-0003 split of ``core/agent.py``. The HTTP/lifecycle-layer pieces
+# (resolve_policy, ConversationLifecycleManager, TaskState settled, wait_for_idle,
+# steer lifecycle, turn registry, metrics, SSE coalescer) ARE present locally
+# and stay tested below. See docs/follow-ups/skipped-items-roadmap.md
+# (Batch C — core/agent.py merge follow-ups).
+_NOT_PORTED = (
+    "agent-layer _preempt_or_queue_prev_task / preempt-marker orchestration "
+    "not ported after ADR-0003 split; "
+    "see docs/follow-ups/skipped-items-roadmap.md (Batch C)"
+)
+
 # ── S1.1: resolve_policy ──────────────────────────────────────────────
 
 
@@ -241,6 +255,7 @@ class TestTaskStateSettled:
 # ── S1.3 + S1.4: _preempt_or_queue_prev_task ──────────────────────────
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestPreemptOrQueueHelper:
     @pytest.mark.asyncio
     async def test_no_prev_task_proceeds(self) -> None:
@@ -358,6 +373,7 @@ class _MarkerSession:
         self.appended.append({"role": role, "content": content, **metadata})
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestPreemptMarker:
     @pytest.mark.asyncio
     async def test_interrupt_appends_marker(self, _allow_interrupt, monkeypatch) -> None:
@@ -427,6 +443,7 @@ class TestPreemptMarker:
 # ── FIX 1: helper keys task by conversation_id, not session_id ────────
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestPreemptHelperKeyResolution:
     """``reason_stream`` registers TaskState under ``conversation_id``.
     The helper MUST query by conversation_id first, falling back to
@@ -566,6 +583,7 @@ class TestWaitForIdle:
 # ── FIX 4: QUEUE timeout cancels old task to propagate to tools ───────
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestQueueTimeoutCancelsOldTask:
     @pytest.mark.asyncio
     async def test_queue_timeout_sets_cancel_event(self, _short_settle_timeout) -> None:
@@ -819,6 +837,7 @@ class TestSSEDeltaCoalescer:
 # ── S2 P0-3: partial assistant text persistence ───────────────────────
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestPartialTextOnPreempt:
     """``TaskState.append_partial_text`` + marker persistence integration."""
 

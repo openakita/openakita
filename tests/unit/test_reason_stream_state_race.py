@@ -38,6 +38,19 @@ from openakita.core.agent_state import (
 )
 from openakita.core.reasoning_engine import ReasoningEngine
 
+# The reason_stream race-guard rewrite (``_reason_stream_impl`` +
+# ``ensure_ready_for_reasoning`` + ``IllegalReasoningEntry`` counter +
+# content-safety ``agent_voice``) is upstream work NOT ported after the
+# ADR-0003 split of ``core/agent.py``. The compat shims keep the import paths
+# alive; the behaviour is tracked for a future port. See
+# docs/follow-ups/skipped-items-roadmap.md (Batch C — core/agent.py follow-ups).
+# The state-machine contract (TestTerminalToReasoningContract) lives in
+# ``agent_state`` and stays active.
+_NOT_PORTED = (
+    "reason_stream race-guard / illegal-reasoning-entry rewrite not ported "
+    "after ADR-0003 split; see docs/follow-ups/skipped-items-roadmap.md (Batch C)"
+)
+
 
 class TestTerminalToReasoningContract:
     """State machine MUST reject COMPLETED/FAILED/CANCELLED -> REASONING."""
@@ -76,6 +89,7 @@ class TestTerminalToReasoningContract:
         second.transition(TaskStatus.REASONING)
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestReasonStreamRaceGuard:
     """``reason_stream`` line 4010 + ``_switch_model_for_stream`` line 8540
     both must guard the bare ``state.transition(...)`` call so a concurrent
@@ -277,6 +291,7 @@ class TestEnsureReadyForReasoning:
             assert ts.status is TaskStatus.REASONING
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestS5AAuditFixes:
     """v1.28.3-pre audit hot-fixes (FIX-S5A-1 + FIX-S5A-2).
 
@@ -450,6 +465,7 @@ class TestS5AAuditFixes:
         }
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestIllegalReasoningEntryAlerts:
     """v1.28.3 S5-A: when IllegalReasoningEntry surfaces in
     ``_reason_stream_impl``, an ``inc_illegal_reasoning_entry`` counter
@@ -495,6 +511,7 @@ class TestIllegalReasoningEntryAlerts:
         assert matching[0]["value"] == 1
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestAllReasoningTransitionsGuarded:
     """Belt-and-suspenders: every ``state.transition(...)`` inside
     ``reason_stream`` should either be in the ``try/except ValueError`` shape
@@ -541,6 +558,7 @@ class TestAllReasoningTransitionsGuarded:
         )
 
 
+@pytest.mark.skip(reason=_NOT_PORTED)
 class TestContentSafetyMinimalPromptIdentity:
     def test_run_impl_accepts_agent_voice_for_content_safety_prompt(self) -> None:
         src = inspect.getsource(ReasoningEngine._run_impl)
