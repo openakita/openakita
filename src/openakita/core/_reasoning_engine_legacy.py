@@ -6218,13 +6218,18 @@ class ReasoningEngine:
                 )
                 extra_parts = [r for r in hook_results if isinstance(r, str) and r.strip()]
                 if extra_parts and messages:
+                    # #581 (upstream 86914fc2): list-shaped (multimodal) user
+                    # messages previously fell through silently, dropping plugin
+                    # context whenever the turn had attachments. Append a text
+                    # part for the list case instead of skipping.
+                    plugin_text = "\n\n[Plugin Context]\n" + "\n".join(extra_parts)
                     for i in range(len(messages) - 1, -1, -1):
                         if messages[i].get("role") == "user":
                             content = messages[i].get("content", "")
                             if isinstance(content, str):
-                                messages[i]["content"] = (
-                                    content + "\n\n[Plugin Context]\n" + "\n".join(extra_parts)
-                                )
+                                messages[i]["content"] = content + plugin_text
+                            elif isinstance(content, list):
+                                content.append({"type": "text", "text": plugin_text})
                             break
             except Exception as _hook_err:
                 logger.debug(f"on_before_llm_call hook error (ignored): {_hook_err}")

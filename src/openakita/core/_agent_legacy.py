@@ -44,6 +44,12 @@ if TYPE_CHECKING:
 # triggers ``openakita.agent.__init__`` which immediately re-enters this very
 # module via ``agent.core -> openakita.core._agent_legacy``.
 
+# Import Identity from the canonical home (not the ``core.identity`` re-export
+# shim) so a cold ``import openakita.core.identity`` entry point cannot deadlock
+# on a partially-initialised shim (shim -> agent.identity -> agent.__init__ ->
+# agent.core -> _agent_legacy -> shim). See ADR-0003.
+from openakita.agent.identity import Identity
+
 from ..config import settings
 
 # 记忆系统
@@ -132,7 +138,6 @@ from .agent_state import AgentState
 from .context_utils import get_max_context_tokens as _shared_get_max_context_tokens
 from .context_utils import get_raw_context_window as _shared_get_raw_context_window
 from .errors import UserCancelledError
-from .identity import Identity
 from .prompt_assembler import PromptAssembler
 from .ralph import RalphLoop, Task, TaskResult
 from .response_handler import (
@@ -1076,6 +1081,11 @@ class Agent:
 
         # 状态
         self._initialized = False
+        # Serialize concurrent ``initialize()`` calls (upstream 4dcef3b9):
+        # the HTTP API now starts before agent init, so an early request can
+        # trigger a lazy ``initialize()`` while ``serve`` is still running its
+        # own. The lock + double-check makes initialization single-flight.
+        self._initialize_lock = asyncio.Lock()
         self._running = False
 
         self._last_finalized_trace: list[dict] = []
@@ -1800,6 +1810,27 @@ class Agent:
         if self._initialized:
             return
 
+        async with self._initialize_lock:
+            if self._initialized:
+                return
+            await self._initialize_unlocked(
+                start_scheduler=start_scheduler,
+                lightweight=lightweight,
+                share_from=share_from,
+            )
+
+    async def _initialize_unlocked(
+        self,
+        start_scheduler: bool = True,
+        lightweight: bool = False,
+        share_from: Agent | None = None,
+    ) -> None:
+        """Run the actual initialization body under ``_initialize_lock``.
+
+        Split out from :meth:`initialize` (upstream 4dcef3b9) so the public
+        entrypoint can do a fast-path check + single-flight lock while this
+        method holds the heavy, non-reentrant init work.
+        """
         if share_from is not None and not lightweight:
             # share_from 隐含 lightweight：full-init 路径会再次跑一遍
             # _load_plugins，等于白白浪费 share_from 的缓存。这里直接报错让
@@ -2546,19 +2577,37 @@ class Agent:
 
         clear_all_skill_caches()
 
-        if rescan:
-            try:
-                self.skill_loader.load_all(settings.project_root)
-            except Exception as e:
-                logger.warning("propagate_skill_change: load_all failed: %s", e)
-
+        # Upstream 78b5639b: read the external allowlist BEFORE rescanning so
+        # disabled external skills are skipped during the directory scan
+        # (build_preparse_allowlist_filter) instead of being parsed/registered
+        # and pruned immediately afterwards.
+        external_allowlist = None
+        effective = None
+        agent_skills: set[str] = set()
         try:
             from ..skills.allowlist_io import read_allowlist
             from ..skills.preset_utils import collect_preset_referenced_skills
 
             _, external_allowlist = read_allowlist()
-            effective = self.skill_loader.compute_effective_allowlist(external_allowlist)
             agent_skills = collect_preset_referenced_skills()
+            if external_allowlist is not None:
+                effective = self.skill_loader.compute_effective_allowlist(external_allowlist)
+        except Exception as e:
+            logger.warning("propagate_skill_change: allowlist pre-read failed: %s", e)
+
+        if rescan:
+            try:
+                load_filter = self.skill_loader.build_preparse_allowlist_filter(
+                    effective,
+                    agent_referenced_skills=agent_skills,
+                )
+                self.skill_loader.load_all(settings.project_root, load_filter=load_filter)
+            except Exception as e:
+                logger.warning("propagate_skill_change: load_all failed: %s", e)
+
+        try:
+            if effective is None:
+                effective = self.skill_loader.compute_effective_allowlist(external_allowlist)
             self.skill_loader.prune_external_by_allowlist(
                 effective, agent_referenced_skills=agent_skills
             )
@@ -6848,7 +6897,18 @@ class Agent:
                 if messages and isinstance(messages[-1], dict):
                     messages = list(messages)
                     last = dict(messages[-1])
-                    last["content"] = (last.get("content") or "") + soft_hint
+                    # #581 (upstream 86914fc2): multimodal / Responses-API
+                    # messages carry ``content`` as a list of parts, so the
+                    # plain ``str + soft_hint`` concat raised TypeError. Branch
+                    # on the existing shape (same pattern as
+                    # ``_append_lifecycle_context``).
+                    existing = last.get("content")
+                    if isinstance(existing, list):
+                        last["content"] = existing + [
+                            {"type": "text", "text": soft_hint}
+                        ]
+                    else:
+                        last["content"] = (existing or "") + soft_hint
                     messages[-1] = last
 
             async for event in self.reasoning_engine.reason_stream(
@@ -7048,18 +7108,15 @@ class Agent:
         if usage_sources:
             summary["usage_source"] = "mixed" if len(usage_sources) > 1 else next(iter(usage_sources))
         try:
-            re = self.reasoning_engine
-            ctx_mgr = getattr(self, "context_manager", None) or getattr(
-                re, "_context_manager", None
-            )
-            if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
-                msgs = getattr(re, "_last_working_messages", None) or []
-                ctx_tokens = ctx_mgr.estimate_messages_tokens(msgs) if msgs else 0
-                ctx_limit = ctx_mgr.get_max_context_tokens()
-                summary["context_tokens"] = ctx_tokens
-                summary["context_limit"] = ctx_limit
-                summary["history_context_tokens"] = ctx_tokens
-                summary["history_context_limit"] = ctx_limit
+            # Upstream 09f55110: unify the chat context-progress-bar data
+            # through ``get_context_snapshot`` so non-streaming / fast paths
+            # report the same context_tokens / context_limit / pressure the
+            # SSE path already does (chat.py merge_context_snapshot_into_usage).
+            from .context_stats import get_context_snapshot
+
+            snapshot = get_context_snapshot(self)
+            if snapshot is not None:
+                summary.update(snapshot.to_dict())
         except Exception:
             pass
         return summary

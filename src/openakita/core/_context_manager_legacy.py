@@ -16,7 +16,8 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
+
+from openakita.utils.url_safety import safe_urlparse
 
 from ..tracing.tracer import get_tracer
 from ._tool_executor_legacy import OVERFLOW_MARKER
@@ -1160,7 +1161,12 @@ class ContextManager:
                 if url in seen:
                     continue
                 seen.add(url)
-                parsed = urlparse(url)
+                # #581 (upstream 86914fc2): malformed IPv6-like URLs raise
+                # ValueError on urlparse (Python 3.11+); safe_urlparse returns
+                # an empty ParseResult instead of crashing fact extraction.
+                parsed = safe_urlparse(url)
+                if not parsed.scheme:
+                    continue
                 facts.append(
                     {
                         "message_index": str(index),
