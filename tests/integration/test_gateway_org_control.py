@@ -100,17 +100,20 @@ class TestOrgCancelCommand:
         msg = create_channel_message(text="/org cancel", chat_id="chat-org-1")
 
         fake_svc = MagicMock()
-        fake_svc.cancel = AsyncMock(return_value={
-            "ok": True,
-            "command_id": "cmd_xyz789",
-            "cancelled_roots": ["root_a"],
-        })
+        fake_svc.cancel = AsyncMock(
+            return_value={
+                "ok": True,
+                "command_id": "cmd_xyz789",
+                "cancelled_roots": ["root_a"],
+            }
+        )
         with patch.object(
             gateway_module,
             "MessageGateway",  # placeholder to ensure module imported
         ):
             pass
         from openakita.orgs import command_service as cs_module
+
         with patch.object(cs_module, "get_command_service", return_value=fake_svc):
             handled = await gateway._handle_org_control_command(msg, "/org cancel")
 
@@ -121,9 +124,7 @@ class TestOrgCancelCommand:
         assert "已发起取消" in reply
         assert "cmd_xyz789" in reply
 
-    async def test_cancel_with_no_running_command_replies_friendly(
-        self, gateway, session_manager
-    ):
+    async def test_cancel_with_no_running_command_replies_friendly(self, gateway, session_manager):
         session = create_test_session(chat_id="chat-empty", channel="telegram")
         session_manager.get_session = MagicMock(return_value=session)
         msg = create_channel_message(text="/org cancel", chat_id="chat-empty")
@@ -137,6 +138,7 @@ class TestOrgCancelCommand:
         fake_svc = MagicMock()
         fake_svc.cancel = AsyncMock(return_value={"ok": True, "already_done": True})
         from openakita.orgs import command_service as cs_module
+
         with patch.object(cs_module, "get_command_service", return_value=fake_svc):
             await gateway._handle_org_control_command(msg, "/org cancel")
         reply = gateway._send_response.await_args.args[1]
@@ -145,6 +147,7 @@ class TestOrgCancelCommand:
     async def test_cancel_when_service_unavailable(self, gateway, bound_session):
         msg = create_channel_message(text="/org cancel", chat_id="chat-org-1")
         from openakita.orgs import command_service as cs_module
+
         with patch.object(cs_module, "get_command_service", return_value=None):
             await gateway._handle_org_control_command(msg, "/org cancel")
         reply = gateway._send_response.await_args.args[1]
@@ -163,15 +166,18 @@ class TestOrgRunningCommand:
     async def test_running_shows_live_status(self, gateway, bound_session):
         msg = create_channel_message(text="/org running", chat_id="chat-org-1")
         fake_svc = MagicMock()
-        fake_svc.get_status = MagicMock(return_value={
-            "status": "running",
-            "phase": "dispatching",
-            "elapsed_s": 12.4,
-            "busy_nodes": ["node_writer", "node_designer"],
-            "blockers": [],
-            "warning": None,
-        })
+        fake_svc.get_status = MagicMock(
+            return_value={
+                "status": "running",
+                "phase": "dispatching",
+                "elapsed_s": 12.4,
+                "busy_nodes": ["node_writer", "node_designer"],
+                "blockers": [],
+                "warning": None,
+            }
+        )
         from openakita.orgs import command_service as cs_module
+
         with patch.object(cs_module, "get_command_service", return_value=fake_svc):
             await gateway._handle_org_control_command(msg, "/org running")
         reply = gateway._send_response.await_args.args[1]
@@ -196,6 +202,7 @@ class TestOrgRunningCommand:
         fake_svc = MagicMock()
         fake_svc.get_status = MagicMock(side_effect=RuntimeError("boom"))
         from openakita.orgs import command_service as cs_module
+
         with patch.object(cs_module, "get_command_service", return_value=fake_svc):
             await gateway._handle_org_control_command(msg, "/org running")
         reply = gateway._send_response.await_args.args[1]

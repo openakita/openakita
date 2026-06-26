@@ -31,9 +31,7 @@ RECALCULATE_MACRO = """<?xml version="1.0" encoding="UTF-8"?>
 
 def has_gtimeout():
     try:
-        subprocess.run(
-            ["gtimeout", "--version"], capture_output=True, timeout=1, check=False
-        )
+        subprocess.run(["gtimeout", "--version"], capture_output=True, timeout=1, check=False)
         return True
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -45,10 +43,7 @@ def setup_libreoffice_macro():
     )
     macro_file = os.path.join(macro_dir, MACRO_FILENAME)
 
-    if (
-        os.path.exists(macro_file)
-        and "RecalculateAndSave" in Path(macro_file).read_text()
-    ):
+    if os.path.exists(macro_file) and "RecalculateAndSave" in Path(macro_file).read_text():
         return True
 
     if not os.path.exists(macro_dir):
@@ -91,7 +86,7 @@ def recalc(filename, timeout=30):
 
     result = subprocess.run(cmd, capture_output=True, text=True, env=get_soffice_env())
 
-    if result.returncode != 0 and result.returncode != 124:  
+    if result.returncode != 0 and result.returncode != 124:
         error_msg = result.stderr or "Unknown error during recalculation"
         if "Module1" in error_msg or "RecalculateAndSave" not in error_msg:
             return {"error": "LibreOffice macro not configured properly"}
@@ -136,7 +131,7 @@ def recalc(filename, timeout=30):
             if locations:
                 result["error_summary"][err_type] = {
                     "count": len(locations),
-                    "locations": locations[:20],  
+                    "locations": locations[:20],
                 }
 
         wb_formulas = load_workbook(filename, data_only=False)
@@ -145,11 +140,7 @@ def recalc(filename, timeout=30):
             ws = wb_formulas[sheet_name]
             for row in ws.iter_rows():
                 for cell in row:
-                    if (
-                        cell.value
-                        and isinstance(cell.value, str)
-                        and cell.value.startswith("=")
-                    ):
+                    if cell.value and isinstance(cell.value, str) and cell.value.startswith("="):
                         formula_count += 1
         wb_formulas.close()
 
@@ -182,4 +173,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

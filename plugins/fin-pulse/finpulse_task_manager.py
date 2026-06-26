@@ -131,6 +131,7 @@ _ARTICLE_EVENT_TIME_SQL = (
 # LLM-provider-specific stays out: fin-pulse never manages LLM credentials
 # directly — we delegate to the host LLMClient via ``api.get_brain()``.
 
+
 def _seed_default_config() -> dict[str, str]:
     cfg: dict[str, str] = {
         # General
@@ -259,18 +260,11 @@ class FinpulseTaskManager:
     async def _migrate_v2(self) -> None:
         """Add columns introduced in the backend source refactor."""
         assert self._db is not None
-        cols = {
-            row[1]
-            for row in await self._db.execute_fetchall("PRAGMA table_info(articles)")
-        }
+        cols = {row[1] for row in await self._db.execute_fetchall("PRAGMA table_info(articles)")}
         if "is_stale" not in cols:
-            await self._db.execute(
-                "ALTER TABLE articles ADD COLUMN is_stale INTEGER DEFAULT 0"
-            )
+            await self._db.execute("ALTER TABLE articles ADD COLUMN is_stale INTEGER DEFAULT 0")
         if "extra_json" not in cols:
-            await self._db.execute(
-                "ALTER TABLE articles ADD COLUMN extra_json TEXT DEFAULT '{}'"
-            )
+            await self._db.execute("ALTER TABLE articles ADD COLUMN extra_json TEXT DEFAULT '{}'")
 
     async def close(self) -> None:
         if self._db is not None:
@@ -305,8 +299,7 @@ class FinpulseTaskManager:
             if not default_val:
                 continue
             await self._db.execute(
-                "UPDATE config SET value = ?, updated_at = ? "
-                "WHERE key = ? AND TRIM(value) = ''",
+                "UPDATE config SET value = ?, updated_at = ? WHERE key = ? AND TRIM(value) = ''",
                 (default_val, now, key),
             )
 
@@ -314,9 +307,7 @@ class FinpulseTaskManager:
 
     async def get_config(self, key: str) -> str:
         assert self._db is not None
-        rows = await self._db.execute_fetchall(
-            "SELECT value FROM config WHERE key = ?", (key,)
-        )
+        rows = await self._db.execute_fetchall("SELECT value FROM config WHERE key = ?", (key,))
         if rows:
             return rows[0][0]
         return DEFAULT_CONFIG.get(key, "")
@@ -382,9 +373,7 @@ class FinpulseTaskManager:
 
     async def get_task(self, task_id: str) -> dict[str, Any] | None:
         assert self._db is not None
-        rows = await self._db.execute_fetchall(
-            "SELECT * FROM tasks WHERE id = ?", (task_id,)
-        )
+        rows = await self._db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (task_id,))
         if not rows:
             return None
         return self._row_to_task(rows[0])
@@ -408,9 +397,7 @@ class FinpulseTaskManager:
             args.append(status)
         where_sql = (" WHERE " + " AND ".join(wheres)) if wheres else ""
 
-        count_rows = await self._db.execute_fetchall(
-            f"SELECT COUNT(*) FROM tasks{where_sql}", args
-        )
+        count_rows = await self._db.execute_fetchall(f"SELECT COUNT(*) FROM tasks{where_sql}", args)
         total = int(count_rows[0][0]) if count_rows else 0
 
         rows = await self._db.execute_fetchall(
@@ -444,9 +431,7 @@ class FinpulseTaskManager:
         sets.append("updated_at = ?")
         args.append(time.time())
         args.append(task_id)
-        result = await self._db.execute(
-            f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", args
-        )
+        result = await self._db.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", args)
         await self._db.commit()
         return (result.rowcount or 0) > 0
 
@@ -503,8 +488,7 @@ class FinpulseTaskManager:
         raw_json = json.dumps(raw or {}, ensure_ascii=False)
 
         rows = await self._db.execute_fetchall(
-            "SELECT id, published_at, raw_json, title, extra_json "
-            "FROM articles WHERE url_hash = ?",
+            "SELECT id, published_at, raw_json, title, extra_json FROM articles WHERE url_hash = ?",
             (url_hash,),
         )
         if rows:
@@ -526,11 +510,13 @@ class FinpulseTaskManager:
 
             if title and existing_title and title != existing_title:
                 history: list[dict[str, str]] = existing_extra.get("title_history", [])
-                history.append({
-                    "old": existing_title,
-                    "new": title,
-                    "at": fetched_at,
-                })
+                history.append(
+                    {
+                        "old": existing_title,
+                        "new": title,
+                        "at": fetched_at,
+                    }
+                )
                 existing_extra["title_history"] = history[-10:]
 
             newer_pub = (
@@ -602,9 +588,7 @@ class FinpulseTaskManager:
 
     async def get_article(self, article_id: str) -> dict[str, Any] | None:
         assert self._db is not None
-        rows = await self._db.execute_fetchall(
-            "SELECT * FROM articles WHERE id = ?", (article_id,)
-        )
+        rows = await self._db.execute_fetchall("SELECT * FROM articles WHERE id = ?", (article_id,))
         if not rows:
             return None
         return self._row_to_article(rows[0])
@@ -690,9 +674,7 @@ class FinpulseTaskManager:
         if not sets:
             return False
         args.append(article_id)
-        result = await self._db.execute(
-            f"UPDATE articles SET {', '.join(sets)} WHERE id = ?", args
-        )
+        result = await self._db.execute(f"UPDATE articles SET {', '.join(sets)} WHERE id = ?", args)
         await self._db.commit()
         return (result.rowcount or 0) > 0
 
@@ -755,9 +737,7 @@ class FinpulseTaskManager:
 
     async def get_digest(self, digest_id: str) -> dict[str, Any] | None:
         assert self._db is not None
-        rows = await self._db.execute_fetchall(
-            "SELECT * FROM digests WHERE id = ?", (digest_id,)
-        )
+        rows = await self._db.execute_fetchall("SELECT * FROM digests WHERE id = ?", (digest_id,))
         if not rows:
             return None
         return self._row_to_digest(rows[0])
@@ -793,8 +773,7 @@ class FinpulseTaskManager:
         )
         total = int(count_rows[0][0]) if count_rows else 0
         rows = await self._db.execute_fetchall(
-            f"SELECT * FROM digests{where_sql} "
-            f"ORDER BY generated_at DESC LIMIT ? OFFSET ?",
+            f"SELECT * FROM digests{where_sql} ORDER BY generated_at DESC LIMIT ? OFFSET ?",
             [*args, int(limit), int(offset)],
         )
         return [self._row_to_digest(r) for r in rows], total
@@ -812,9 +791,7 @@ class FinpulseTaskManager:
 
     async def list_assets_bus(self) -> list[dict[str, Any]]:
         assert self._db is not None
-        rows = await self._db.execute_fetchall(
-            "SELECT * FROM assets_bus ORDER BY created_at"
-        )
+        rows = await self._db.execute_fetchall("SELECT * FROM assets_bus ORDER BY created_at")
         return [dict(r) for r in rows]
 
     async def count_assets_bus(self) -> int:

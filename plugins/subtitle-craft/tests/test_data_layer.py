@@ -516,4 +516,3 @@ def test_create_task_serializes_params_as_json(db_path: Path):
             await tm.close()
 
     _run(go())
-

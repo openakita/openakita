@@ -98,4 +98,3 @@ LSP_TOOLS: list[dict] = [
         ],
     },
 ]
-

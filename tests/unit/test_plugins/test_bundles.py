@@ -20,9 +20,7 @@ def mapper():
 class TestDetectOpenClaw:
     def test_openclaw_manifest(self, tmp_path, mapper):
         manifest = tmp_path / "openclaw.plugin.json"
-        manifest.write_text(
-            json.dumps({"name": "test", "version": "1.0.0"}), encoding="utf-8"
-        )
+        manifest.write_text(json.dumps({"name": "test", "version": "1.0.0"}), encoding="utf-8")
         result = mapper.detect(tmp_path)
         assert result is not None
         assert result.ecosystem == "openclaw"
@@ -126,9 +124,7 @@ class TestDetectCodex:
     def test_codex_plugin_dir(self, tmp_path, mapper):
         plugin_dir = tmp_path / ".codex-plugin"
         plugin_dir.mkdir()
-        (plugin_dir / "plugin.json").write_text(
-            json.dumps({"name": "codex-ext"}), encoding="utf-8"
-        )
+        (plugin_dir / "plugin.json").write_text(json.dumps({"name": "codex-ext"}), encoding="utf-8")
         result = mapper.detect(tmp_path)
         assert result is not None
         assert result.ecosystem == "codex"
@@ -208,4 +204,3 @@ class TestSkillsRecursive:
         result = mapper.detect(tmp_path)
         assert result is not None
         assert any("sub2" in str(p) for p in result.skills)
-

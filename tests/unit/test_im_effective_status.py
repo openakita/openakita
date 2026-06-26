@@ -37,9 +37,7 @@ def test_effective_status_treats_im_bots_as_configured():
     status = collect_effective_im_status(settings)
 
     assert status["channels"] == ["feishu"]
-    feishu_bot = next(
-        detail for detail in status["details"] if detail["source"] == "im_bots"
-    )
+    feishu_bot = next(detail for detail in status["details"] if detail["source"] == "im_bots")
     assert feishu_bot["configured"] is True
     assert feishu_bot["missing"] == []
 

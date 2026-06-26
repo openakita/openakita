@@ -314,24 +314,132 @@ COSYVOICE_VOICES: tuple[VoiceSpec, ...] = (
 
 # Edge-TTS Chinese voices — free tier, no API key needed.
 EDGE_VOICES: tuple[VoiceSpec, ...] = (
-    VoiceSpec("zh-CN-XiaoxiaoNeural", "晓晓 (Xiaoxiao)", "Xiaoxiao", "female", "温柔活泼", "warm", engine="edge"),
-    VoiceSpec("zh-CN-YunxiNeural", "云希 (Yunxi)", "Yunxi", "male", "阳光少年", "bright", engine="edge"),
-    VoiceSpec("zh-CN-YunyangNeural", "云扬 (Yunyang)", "Yunyang", "male", "新闻播报", "news", engine="edge"),
-    VoiceSpec("zh-CN-XiaoyiNeural", "晓伊 (Xiaoyi)", "Xiaoyi", "female", "甜美", "sweet", engine="edge"),
-    VoiceSpec("zh-CN-YunjianNeural", "云健 (Yunjian)", "Yunjian", "male", "沉稳", "calm", engine="edge"),
-    VoiceSpec("zh-CN-YunxiaNeural", "云夏 (Yunxia)", "Yunxia", "male", "活力少年", "energetic", engine="edge"),
-    VoiceSpec("zh-CN-XiaochenNeural", "晓辰 (Xiaochen)", "Xiaochen", "female", "知性", "intellectual", engine="edge"),
-    VoiceSpec("zh-CN-XiaohanNeural", "晓涵 (Xiaohan)", "Xiaohan", "female", "沉静", "calm", engine="edge"),
-    VoiceSpec("zh-CN-XiaomoNeural", "晓墨 (Xiaomo)", "Xiaomo", "female", "柔美", "gentle", engine="edge"),
-    VoiceSpec("zh-CN-XiaoqiuNeural", "晓秋 (Xiaoqiu)", "Xiaoqiu", "female", "优雅", "elegant", engine="edge"),
-    VoiceSpec("zh-CN-XiaoruiNeural", "晓睿 (Xiaorui)", "Xiaorui", "female", "甜美", "sweet", engine="edge"),
-    VoiceSpec("zh-CN-XiaoshuangNeural", "晓双 (Xiaoshuang)", "Xiaoshuang", "female", "童声", "childlike", engine="edge"),
-    VoiceSpec("zh-CN-liaoning-XiaobeiNeural", "晓贝 (Xiaobei 辽宁)", "Xiaobei", "female", "辽宁口音", "regional", engine="edge"),
-    VoiceSpec("zh-CN-shaanxi-XiaoniNeural", "晓妮 (Xiaoni 陕西)", "Xiaoni", "female", "陕西口音", "regional", engine="edge"),
-    VoiceSpec("zh-HK-HiuMaanNeural", "曉曼 (粤语)", "HiuMaan", "female", "粤语温柔", "cantonese", engine="edge"),
-    VoiceSpec("zh-HK-WanLungNeural", "雲龍 (粤语)", "WanLung", "male", "粤语沉稳", "cantonese", engine="edge"),
-    VoiceSpec("zh-TW-HsiaoChenNeural", "曉臻 (台湾)", "HsiaoChen", "female", "台湾口音", "taiwanese", engine="edge"),
-    VoiceSpec("zh-TW-YunJheNeural", "雲哲 (台湾)", "YunJhe", "male", "台湾口音", "taiwanese", engine="edge"),
+    VoiceSpec(
+        "zh-CN-XiaoxiaoNeural",
+        "晓晓 (Xiaoxiao)",
+        "Xiaoxiao",
+        "female",
+        "温柔活泼",
+        "warm",
+        engine="edge",
+    ),
+    VoiceSpec(
+        "zh-CN-YunxiNeural", "云希 (Yunxi)", "Yunxi", "male", "阳光少年", "bright", engine="edge"
+    ),
+    VoiceSpec(
+        "zh-CN-YunyangNeural",
+        "云扬 (Yunyang)",
+        "Yunyang",
+        "male",
+        "新闻播报",
+        "news",
+        engine="edge",
+    ),
+    VoiceSpec(
+        "zh-CN-XiaoyiNeural", "晓伊 (Xiaoyi)", "Xiaoyi", "female", "甜美", "sweet", engine="edge"
+    ),
+    VoiceSpec(
+        "zh-CN-YunjianNeural", "云健 (Yunjian)", "Yunjian", "male", "沉稳", "calm", engine="edge"
+    ),
+    VoiceSpec(
+        "zh-CN-YunxiaNeural",
+        "云夏 (Yunxia)",
+        "Yunxia",
+        "male",
+        "活力少年",
+        "energetic",
+        engine="edge",
+    ),
+    VoiceSpec(
+        "zh-CN-XiaochenNeural",
+        "晓辰 (Xiaochen)",
+        "Xiaochen",
+        "female",
+        "知性",
+        "intellectual",
+        engine="edge",
+    ),
+    VoiceSpec(
+        "zh-CN-XiaohanNeural", "晓涵 (Xiaohan)", "Xiaohan", "female", "沉静", "calm", engine="edge"
+    ),
+    VoiceSpec(
+        "zh-CN-XiaomoNeural", "晓墨 (Xiaomo)", "Xiaomo", "female", "柔美", "gentle", engine="edge"
+    ),
+    VoiceSpec(
+        "zh-CN-XiaoqiuNeural",
+        "晓秋 (Xiaoqiu)",
+        "Xiaoqiu",
+        "female",
+        "优雅",
+        "elegant",
+        engine="edge",
+    ),
+    VoiceSpec(
+        "zh-CN-XiaoruiNeural", "晓睿 (Xiaorui)", "Xiaorui", "female", "甜美", "sweet", engine="edge"
+    ),
+    VoiceSpec(
+        "zh-CN-XiaoshuangNeural",
+        "晓双 (Xiaoshuang)",
+        "Xiaoshuang",
+        "female",
+        "童声",
+        "childlike",
+        engine="edge",
+    ),
+    VoiceSpec(
+        "zh-CN-liaoning-XiaobeiNeural",
+        "晓贝 (Xiaobei 辽宁)",
+        "Xiaobei",
+        "female",
+        "辽宁口音",
+        "regional",
+        engine="edge",
+    ),
+    VoiceSpec(
+        "zh-CN-shaanxi-XiaoniNeural",
+        "晓妮 (Xiaoni 陕西)",
+        "Xiaoni",
+        "female",
+        "陕西口音",
+        "regional",
+        engine="edge",
+    ),
+    VoiceSpec(
+        "zh-HK-HiuMaanNeural",
+        "曉曼 (粤语)",
+        "HiuMaan",
+        "female",
+        "粤语温柔",
+        "cantonese",
+        engine="edge",
+    ),
+    VoiceSpec(
+        "zh-HK-WanLungNeural",
+        "雲龍 (粤语)",
+        "WanLung",
+        "male",
+        "粤语沉稳",
+        "cantonese",
+        engine="edge",
+    ),
+    VoiceSpec(
+        "zh-TW-HsiaoChenNeural",
+        "曉臻 (台湾)",
+        "HsiaoChen",
+        "female",
+        "台湾口音",
+        "taiwanese",
+        engine="edge",
+    ),
+    VoiceSpec(
+        "zh-TW-YunJheNeural",
+        "雲哲 (台湾)",
+        "YunJhe",
+        "male",
+        "台湾口音",
+        "taiwanese",
+        engine="edge",
+    ),
 )
 
 SYSTEM_VOICES: tuple[VoiceSpec, ...] = COSYVOICE_VOICES + EDGE_VOICES
@@ -447,9 +555,7 @@ def _resolution_key(params: dict[str, object], default: str = "720P") -> str:
     return res if res in {"480P", "720P", "1080P"} else default
 
 
-def _duration_seconds(
-    params: dict[str, object], audio_duration_sec: float | None
-) -> float:
+def _duration_seconds(params: dict[str, object], audio_duration_sec: float | None) -> float:
     if audio_duration_sec and audio_duration_sec > 0:
         return float(audio_duration_sec)
     raw = params.get("duration") or params.get("video_duration_sec") or 5.0
@@ -557,9 +663,7 @@ def _item_animate(family: str, params: dict[str, object]) -> CostItem:
     sec = float(params.get("video_duration_sec") or 5.0)
     is_pro = bool(params.get("mode_pro"))
     table_key = f"wan2.2-animate-{family}"
-    per_sec = PRICE_TABLE[table_key][
-        "wan-pro_per_sec" if is_pro else "wan-std_per_sec"
-    ]
+    per_sec = PRICE_TABLE[table_key]["wan-pro_per_sec" if is_pro else "wan-std_per_sec"]
     return CostItem(
         name=f"wan2.2-animate-{family} ({'wan-pro' if is_pro else 'wan-std'})",
         units=sec,
@@ -854,7 +958,7 @@ ERROR_HINTS: dict[str, ErrorHint] = {
             "需要的包：oss2（必装）/ dashscope（CosyVoice TTS）/ edge-tts（免费 TTS）",
         ],
         "hints_en": [
-            "Click \"Install\" under Settings → Python dependencies",
+            'Click "Install" under Settings → Python dependencies',
             "Required: oss2 (must) / dashscope (CosyVoice TTS) / edge-tts (free TTS)",
         ],
     },

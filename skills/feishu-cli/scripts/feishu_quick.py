@@ -25,10 +25,18 @@ def run_cli(args: list[str]):
 
 def cmd_send_msg(args):
     ensure_cli()
-    run_cli(["im", "send-message",
-             "--receive-id", args.receive_id,
-             "--msg-type", "text",
-             "--content", args.content])
+    run_cli(
+        [
+            "im",
+            "send-message",
+            "--receive-id",
+            args.receive_id,
+            "--msg-type",
+            "text",
+            "--content",
+            args.content,
+        ]
+    )
 
 
 def cmd_list_chats(args):
@@ -75,11 +83,14 @@ def main():
     p_task.add_argument("--summary", required=True, help="任务摘要")
 
     args = parser.parse_args()
-    {"send-msg": cmd_send_msg, "list-chats": cmd_list_chats,
-     "create-doc": cmd_create_doc, "list-events": cmd_list_events,
-     "create-task": cmd_create_task}[args.command](args)
+    {
+        "send-msg": cmd_send_msg,
+        "list-chats": cmd_list_chats,
+        "create-doc": cmd_create_doc,
+        "list-events": cmd_list_events,
+        "create-task": cmd_create_task,
+    }[args.command](args)
 
 
 if __name__ == "__main__":
     main()
-

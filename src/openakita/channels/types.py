@@ -30,11 +30,13 @@ class MessageType(Enum):
     UNKNOWN = "unknown"  # 未知类型
 
 
-VOICE_STT_FAILURES = frozenset({
-    "[语音识别失败]",
-    "[语音处理超时]",
-    "[语音处理失败]",
-})
+VOICE_STT_FAILURES = frozenset(
+    {
+        "[语音识别失败]",
+        "[语音处理超时]",
+        "[语音处理失败]",
+    }
+)
 
 
 def is_voice_stt_failed(transcription: str | None) -> bool:

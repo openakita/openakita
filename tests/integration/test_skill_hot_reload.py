@@ -14,9 +14,6 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # 工具：生成合法的外部技能目录
 # ---------------------------------------------------------------------------
@@ -156,6 +153,51 @@ class TestScenarioEnableDisable:
         assert loader.get_skill("a") is None
         assert loader.get_skill("b") is None
 
+    def test_preparse_allowlist_filter_skips_disabled_external_before_yaml_parse(
+        self, tmp_path: Path
+    ):
+        """启动过滤应在解析 SKILL.md 前跳过未允许的外部技能。"""
+        from openakita.skills.loader import SkillLoader
+
+        skills_root = tmp_path / "skills"
+        _write_skill(skills_root / "keep-me", "keep-me", "Allowed")
+
+        bad_dir = skills_root / "bad-disabled"
+        bad_dir.mkdir(parents=True)
+        (bad_dir / "SKILL.md").write_text(
+            "---\nname: Bad Disabled\ndescription: invalid name\n---\nBroken.",
+            encoding="utf-8",
+        )
+
+        loader = SkillLoader()
+        load_filter = loader.build_preparse_allowlist_filter({"keep-me"})
+
+        assert loader.load_from_directory(skills_root, load_filter=load_filter) == 1
+        assert loader.get_skill("keep-me") is not None
+        assert loader.get_skill("bad-disabled") is None
+        assert loader.last_load_issues == []
+
+    def test_preparse_allowlist_filter_keeps_preset_referenced_skills_disabled_later(
+        self, tmp_path: Path
+    ):
+        """预设引用的外部技能仍需加载，后续 prune 才能标记 disabled。"""
+        from openakita.skills.loader import SkillLoader
+
+        skills_root = tmp_path / "skills"
+        _write_skill(skills_root / "agent-only", "agent-only", "Used by preset")
+
+        loader = SkillLoader()
+        load_filter = loader.build_preparse_allowlist_filter(
+            set(),
+            agent_referenced_skills={"agent-only"},
+        )
+
+        assert loader.load_from_directory(skills_root, load_filter=load_filter) == 1
+        loader.prune_external_by_allowlist(set(), agent_referenced_skills={"agent-only"})
+        entry = loader.registry.get("agent-only")
+        assert entry is not None
+        assert entry.disabled is True
+
     def test_allowlist_io_round_trip(self, tmp_path: Path, monkeypatch):
         """综合：通过 allowlist_io 写入 → read_allowlist 读出 → 用于 prune。"""
         from openakita.config import settings as real_settings
@@ -230,7 +272,7 @@ class TestScenarioContentHotReload:
         assert first.metadata.description == "v1"
 
         _write_skill(skills_root / "cached", "cached", "v2", body="B2")
-        second = parser.parse_directory(skills_root / "cached")
+        parser.parse_directory(skills_root / "cached")
 
         # 若内部有缓存，second 可能仍是 v1——但这里我们只需断言 clear 之后能拿到 v2。
         from openakita.skills.watcher import clear_all_skill_caches
@@ -281,9 +323,7 @@ class TestFullReloadChain:
         loader2 = SkillLoader()
         loader2.load_from_directory(skills_root)
         _, al2 = allowlist_io.read_allowlist()
-        loader2.prune_external_by_allowlist(
-            loader2.compute_effective_allowlist(al2)
-        )
+        loader2.prune_external_by_allowlist(loader2.compute_effective_allowlist(al2))
         assert loader2.get_skill("alpha") is None, "重启后禁用状态应持久"
         assert loader2.get_skill("beta") is not None
 
@@ -291,8 +331,6 @@ class TestFullReloadChain:
         allowlist_io.overwrite_allowlist({"alpha", "beta"})
         _, al3 = allowlist_io.read_allowlist()
         loader2.load_from_directory(skills_root)  # 重新扫盘
-        loader2.prune_external_by_allowlist(
-            loader2.compute_effective_allowlist(al3)
-        )
+        loader2.prune_external_by_allowlist(loader2.compute_effective_allowlist(al3))
         assert loader2.get_skill("alpha") is not None
         assert loader2.get_skill("beta") is not None

@@ -115,7 +115,10 @@ class MockPluginAPI(PluginAPI):
         self.broadcast_events.append({"type": event_type, "data": data})
 
     def register_ui_event_handler(
-        self, event_type: str, handler: Callable, **kwargs: Any,
+        self,
+        event_type: str,
+        handler: Callable,
+        **kwargs: Any,
     ) -> None:
         self.registered_ui_event_handlers.setdefault(event_type, []).append(handler)
 

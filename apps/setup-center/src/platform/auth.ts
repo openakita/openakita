@@ -214,6 +214,47 @@ export async function login(
   }
 }
 
+/**
+ * First-run setup. Calls POST /api/auth/setup, which is the only endpoint that
+ * is allowed to mint tokens for a fresh install. The refresh token comes back
+ * as an httpOnly cookie (same as ``login()``); the access token is returned in
+ * the body and stored via :func:`setAccessToken`.
+ *
+ * The shape of the response is the same as ``login()`` so the caller can use
+ * the result the same way (``{ success, error? }``).
+ */
+export async function setupInitialPassword(
+  newPassword: string,
+  apiBase = "",
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const fetchOpts: RequestInit = {
+      method: "POST",
+      signal: AbortSignal.timeout(IS_CAPACITOR ? 8_000 : 15_000),
+    };
+    if (isCrossOriginMode()) {
+      fetchOpts.headers = { "Content-Type": "application/x-www-form-urlencoded" };
+      fetchOpts.body = new URLSearchParams({ new_password: newPassword }).toString();
+    } else {
+      fetchOpts.headers = { "Content-Type": "application/json" };
+      fetchOpts.body = JSON.stringify({ new_password: newPassword });
+      fetchOpts.credentials = "include";
+    }
+    const res = await fetch(`${apiBase}/api/auth/setup`, fetchOpts);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({ detail: "Setup failed" }));
+      return { success: false, error: data.detail || `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    if (data.access_token) {
+      setAccessToken(data.access_token);
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
 export async function logout(apiBase = ""): Promise<void> {
   try {
     const opts: RequestInit = {

@@ -120,12 +120,8 @@ def test_cosyvoice_aliases_bill_at_cosyvoice_v2_rate(engine_alias):
     assert tts_items, f"engine={engine_alias!r}: no TTS line found"
     tts = tts_items[0]
     assert tts["name"] == "cosyvoice-v2 TTS"
-    assert tts["unit_price"] == pytest.approx(
-        PRICE_TABLE["cosyvoice-v2"]["per_10k_chars"]
-    )
-    assert tts["subtotal"] > 0, (
-        f"engine={engine_alias!r}: cosyvoice was billed as free"
-    )
+    assert tts["unit_price"] == pytest.approx(PRICE_TABLE["cosyvoice-v2"]["per_10k_chars"])
+    assert tts["subtotal"] > 0, f"engine={engine_alias!r}: cosyvoice was billed as free"
 
 
 @pytest.mark.parametrize("engine_alias", ["edge", "edge-tts", "EDGE"])

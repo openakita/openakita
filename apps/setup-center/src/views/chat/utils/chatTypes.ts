@@ -5,6 +5,7 @@ import type {
   ChatMessage,
   ChatToolCall,
   ChatTodo,
+  ChatProgressEvent,
   ChatTodoStep,
   ChatAskUser,
   ChatAskQuestion,
@@ -13,6 +14,7 @@ import type {
   ChatSource,
   ChatMcpCall,
   ChatErrorInfo,
+  MessagePart,
   OrgTimelineEntry,
   ChatConversation,
   ChatDisplayMode,
@@ -23,12 +25,14 @@ import type {
   ChainToolCall,
   ChainEntry,
   ChainSummaryItem,
+  ChainTimelineGroup,
 } from "../../../types";
 
 export type {
   ChatMessage,
   ChatToolCall,
   ChatTodo,
+  ChatProgressEvent,
   ChatTodoStep,
   ChatAskUser,
   ChatAskQuestion,
@@ -37,6 +41,7 @@ export type {
   ChatSource,
   ChatMcpCall,
   ChatErrorInfo,
+  MessagePart,
   OrgTimelineEntry,
   ChatConversation,
   ChatDisplayMode,
@@ -47,6 +52,7 @@ export type {
   ChainToolCall,
   ChainEntry,
   ChainSummaryItem,
+  ChainTimelineGroup,
 };
 
 /** Lazy-loaded markdown rendering modules */
@@ -62,6 +68,14 @@ export type QueuedMessage = {
   text: string;
   timestamp: number;
   convId: string;
+  /**
+   * Attachments captured at queue time. A queued message is replayed as a
+   * brand-new turn (not a steer/insert), so it must carry its own attachments
+   * instead of picking up whatever happens to be in the composer at drain time.
+   */
+  attachments?: ChatAttachment[];
+  /** Composer mode captured at queue time, so the replay honours the user's intent. */
+  mode?: "agent" | "plan" | "ask";
 };
 
 /** SSE stream event union — synced with Python openakita.events / src/streamEvents.ts */
@@ -116,7 +130,7 @@ export type StreamEvent =
   | { type: "source_used"; tool_name?: string; tool_use_id?: string; requested_url: string; final_url: string; hostname?: string; redirected?: boolean; from_cache?: boolean; status?: string; hint?: string; protocol_version?: number }
   | { type: "mcp_call"; tool_use_id?: string; server: string; tool: string; status?: "ok" | "error" | string; auto_connected?: boolean; reconnected?: boolean; error?: string; protocol_version?: number }
   | { type: "todo_created"; plan: ChatTodo; restored?: boolean }
-  | { type: "todo_step_updated"; stepId?: string; step_id?: string; stepIdx?: number; status: string; protocol_version?: number }
+  | { type: "todo_step_updated"; stepId?: string; step_id?: string; stepIdx?: number; status: string; result?: string | null; protocol_version?: number }
   | { type: "todo_completed" }
   | { type: "todo_cancelled" }
   | { type: "plan_ready_for_approval"; data: { conversation_id: string; summary: string; plan_id: string; plan_file: string }; conversation_id?: string; plan_id?: string; plan_file?: string; protocol_version?: number }
@@ -219,6 +233,13 @@ export type StreamContext = {
   isDelegating: boolean;
   pollingTimer: ReturnType<typeof setInterval> | null;
   _hadError: boolean;
+  /**
+   * The composer mode (agent/plan/ask) this turn was started with. Used to
+   * decide whether a new submission while this turn is streaming can be
+   * steered (same mode → inject) or must be queued as a fresh turn
+   * (mode changed → the user explicitly wants different behaviour).
+   */
+  mode?: "agent" | "plan" | "ask";
 };
 
 /** Agent profile for agent selector */

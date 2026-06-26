@@ -1,4 +1,5 @@
 """C6 — policy_v2.global_engine 单例 / 延迟加载 / reset 行为测试。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -135,10 +136,7 @@ class TestYAMLPathResolution:
         # 再造一个 cwd/identity/POLICIES.yaml → 应该返回该路径
         (tmp_path / "identity").mkdir()
         (tmp_path / "identity" / "POLICIES.yaml").write_text("# stub")
-        assert (
-            global_engine._resolve_yaml_path()
-            == Path("identity/POLICIES.yaml")
-        )
+        assert global_engine._resolve_yaml_path() == Path("identity/POLICIES.yaml")
 
 
 class TestThreadSafety:

@@ -19,4 +19,3 @@ def test_quality_baseline_and_fixed_scenarios_exist() -> None:
         "product_launch_pitch",
         "files_to_deck_briefing",
     } <= ids
-

@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from .abort_scope import AbortScope
+
 logger = logging.getLogger(__name__)
 
 
@@ -99,6 +101,29 @@ _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
 }
 
 
+class IllegalReasoningEntry(RuntimeError):
+    """v1.28.3 S5-A: raised by :meth:`TaskState.ensure_ready_for_reasoning`
+    when called on a terminal state (COMPLETED / FAILED / CANCELLED).
+
+    Post-S1+S3+S4 contract: this should NEVER happen in production.
+    The preempt protocol in :meth:`Agent._preempt_or_queue_prev_task`
+    is the only legitimate way to start reasoning on a session that
+    previously had an active task, and it always calls
+    :meth:`AgentState.begin_task` (returning a fresh IDLE TaskState)
+    before any reasoning entry.  If you see this exception in the
+    wild, S1's preempt protocol was bypassed somewhere — alarm and
+    fix the bypass, do **not** silently force-write ``state.status``
+    as the pre-v1.28.3 code did (that is the root cause of the
+    "completed -> reasoning" crash in issue #572).
+
+    The exception is converted to an SSE ``error`` event with code
+    ``illegal_state`` by ``ReasoningEngine.reason_stream``'s outer
+    ``try/except`` and accompanied by an
+    ``inc_illegal_reasoning_entry`` counter increment so ops can
+    pager-alert on it.
+    """
+
+
 @dataclass
 class TaskState:
     """
@@ -113,6 +138,13 @@ class TaskState:
     conversation_id: str = ""
     status: TaskStatus = TaskStatus.IDLE
 
+    # Issue #608: whether this task belongs to a delegated sub-agent.  Set by
+    # the reasoning engine right after the TaskState is resolved.  The cancel
+    # funnel reads it to decide whether to persist a resumable working_messages
+    # snapshot — sub-agents share the parent conversation_id, so persisting on
+    # a sub-agent cancel would clobber the parent turn's resume state.
+    is_sub_agent: bool = False
+
     # 任务定义（来自 Prompt Compiler）
     task_definition: str = ""
     task_query: str = ""
@@ -120,11 +152,60 @@ class TaskState:
     # 取消机制
     cancelled: bool = False
     cancel_reason: str = ""
-    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # v1.28 S3 plan: cancel signal moved into a hierarchical AbortScope tree so
+    # tool workers and sub-agents propagate cancel automatically (see
+    # ``core/abort_scope.py``).  ``cancel_event`` is kept as a property below
+    # delegating to ``abort_root.event`` — preserves the 11+ existing read
+    # call sites (``task.cancel_event.wait() / .is_set()``) zero-change.
+    abort_root: AbortScope = field(default_factory=lambda: AbortScope(name="root"))
+
+    # Settle 机制（v1.27.14, plan: conversation concurrency v1.28, S1.5）
+    # ``settled_event`` 由 reasoning_engine 在任意出口路径（正常完成 / cancel /
+    # max_iter / exception）的 finally 中调用 :meth:`mark_settled` 设置，
+    # 用于 S1.4 抢占协议的 "wait until old task is finished" 语义。
+    # ``abandoned`` 由抢占方在 ``preempt_settle_timeout_ms`` 超时后置 True，
+    # reason_stream / run() 在每轮迭代头部检查到 True 时立即返回，避免老协程
+    # 继续写入共享 state（这是 issue #572 类崩溃的另一条来源）。
+    settled_event: asyncio.Event = field(default_factory=asyncio.Event)
+    abandoned: bool = False
+
+    # Partial assistant text accumulator (v1.27.15, plan v1.28 S2 P0-3).
+    # ``reason_stream`` outer wrapper appends every ``text_delta.content``
+    # here while a turn is streaming; ``_preempt_or_queue_prev_task``
+    # reads it on cancel/preempt to persist a ``marker_type="aborted_partial"``
+    # message into session history — so a user who got cut off mid-answer
+    # still sees the 500 chars they already received, instead of an opaque
+    # "task was interrupted" placeholder.
+    #
+    # Capped at ``_PARTIAL_TEXT_CAP`` chars to prevent runaway memory on
+    # very long answers (we only need enough to make the UI honest, not
+    # the full transcript — that flows through ``Session.add_message`` on
+    # the normal completion path).  Older content is dropped silently
+    # once the cap is exceeded; ``partial_truncated`` flips True so the
+    # marker can render an "…(truncated)" hint.
+    partial_text: str = ""
+    partial_thinking: str = ""
+    partial_truncated: bool = False
 
     # 单步跳过机制
     skip_event: asyncio.Event = field(default_factory=asyncio.Event)
     skip_reason: str = ""
+
+    # v1.28 S4: in-flight tool tracking for INTERRUPT-policy downgrade.
+    # ``_preempt_or_queue_prev_task`` reads ``get_in_flight_tools()`` snapshot
+    # when an INTERRUPT request arrives.  If any in-flight tool has
+    # ``interrupt_behavior == "block"`` (write_file, run_shell, browser_click,
+    # …) the policy is auto-downgraded to QUEUE — we wait for the unsafe
+    # tools to finish instead of yanking the rug out from under them.
+    # See ``core/tool_interrupt_behavior.py`` for the classification table.
+    #
+    # No lock needed: ``tool_executor.execute_tool`` runs on a single
+    # asyncio event loop per Agent; even parallel batch execution
+    # (``execute_batch`` with max_parallel>1) serializes through ``await``
+    # points, so ``list.append`` / ``list.remove`` calls from begin/end
+    # are sequential.  Snapshot via ``list(...)`` for the reader so a
+    # concurrent end_tool can't mutate the returned slice.
+    in_flight_tools: list[str] = field(default_factory=list)
 
     # 用户消息插入队列（任务执行期间用户发送的非指令消息）
     pending_user_inserts: list[str] = field(default_factory=list)
@@ -158,14 +239,32 @@ class TaskState:
     original_user_messages: list[dict] = field(default_factory=list)
 
     def transition(self, new_status: TaskStatus) -> None:
-        """
-        执行状态转换，带合法性验证。
+        """执行状态转换，带合法性验证。
 
         Args:
             new_status: 目标状态
 
         Raises:
             ValueError: 非法状态转换
+
+        CONTRACT (post-v1.28.3 S5):
+
+        * ``ValueError`` 表示非法转换，**fatal**——调用方 MUST NOT 静默吞。
+          v1.28.3 之前 reasoning_engine 里有 20 处 ``except ValueError: pass``
+          或 ``except ValueError: self.status = X`` 静默吞 / 强写，是
+          issue #572 "completed -> reasoning" 崩溃链的根因；那些路径在
+          v1.28.3 灰度后会被逐步删除。
+        * 唯一合法的 ``except ValueError: pass`` 在 :meth:`cancel` 里——
+          cancel 是 idempotent（cancel after cancel 等价 no-op），所以
+          强写 ``CANCELLED`` 是安全降级。
+        * 如果你需要"开新轮 reasoning"语义，**不要** force-write
+          ``state.status = REASONING``——改调
+          :meth:`AgentState.begin_task` （返回全新 IDLE TaskState）或
+          :meth:`ensure_ready_for_reasoning` （从 IDLE 转 REASONING，
+          已是 REASONING 时 idempotent，terminal 时抛
+          :class:`IllegalReasoningEntry`）。
+        * 任何 future contributor 重新加 ``except ValueError: state.status = X``
+          会被 ``test_no_force_write_state_transitions`` test 拦下。
         """
         valid_targets = _VALID_TRANSITIONS.get(self.status, set())
         if new_status not in valid_targets:
@@ -177,16 +276,94 @@ class TaskState:
         self.status = new_status
         logger.debug(f"[State] {old_status.value} -> {new_status.value} (task={self.task_id[:8]})")
 
+    def ensure_ready_for_reasoning(self) -> None:
+        """v1.28.3 S5-A: idempotent entry guard for reasoning loops.
+
+        Semantics:
+
+        * Already ``REASONING`` → no-op (idempotent for retry loops).
+        * Terminal (``COMPLETED`` / ``FAILED`` / ``CANCELLED``) → raise
+          :class:`IllegalReasoningEntry`.  The S1 preempt protocol
+          guarantees a fresh IDLE TaskState before any reasoning entry;
+          a terminal state here means the protocol was bypassed.
+        * Anything else (IDLE / OBSERVING / etc.) → transition to
+          REASONING through the validated state-machine path; any
+          illegal transition still raises ``ValueError`` (also fatal —
+          see :meth:`transition` contract).
+
+        Use this whenever ``reason_stream`` or ``run`` re-enters the
+        REASONING phase on the same TaskState (continuation, retry,
+        post-tool-loop).  Don't use ``self.status = REASONING`` for the
+        same purpose — it bypasses the state machine and is exactly
+        what S5 is removing.
+        """
+        if self.status is TaskStatus.REASONING:
+            return
+        if self.is_terminal:
+            raise IllegalReasoningEntry(
+                f"ensure_ready_for_reasoning on {self.status.value} state "
+                f"(task_id={self.task_id[:8]}); caller must call "
+                f"AgentState.begin_task() first to obtain a fresh TaskState"
+            )
+        self.transition(TaskStatus.REASONING)
+
+    # v1.28 S3: ``cancel_event`` is now a thin alias for ``abort_root.event``.
+    # All existing readers (``task.cancel_event.wait()``, ``.is_set()``) and
+    # the four ``state.cancel_event = asyncio.Event()`` reset points in
+    # ``reasoning_engine`` keep working through the setter.
+    @property
+    def cancel_event(self) -> asyncio.Event:
+        return self.abort_root.event
+
+    @cancel_event.setter
+    def cancel_event(self, ev: asyncio.Event) -> None:
+        # Reset path used by ``reasoning_engine`` LLM retry: swap the underlying
+        # event so the next iteration starts fresh.  Children scopes (tool
+        # scopes spawned during the previous attempt) keep their own event
+        # references, so they are not affected — which is the intended behaviour
+        # for a retry: don't un-cancel an in-flight tool.
+        self.abort_root.event = ev
+        self.abort_root._aborted_by = None
+        if not ev.is_set():
+            self.abort_root.reason = ""
+
     def cancel(self, reason: str = "用户请求停止") -> None:
-        """取消任务，同时触发 cancel_event 通知所有等待方（跨循环安全）"""
+        """Cancel this task and fan out to every tool / sub-agent scope below.
+
+        Fan-out is handled by :meth:`AbortScope.abort` walking the children
+        tree (registered at tool dispatch / sub-agent delegation time).
+        ``_safe_event_set`` is still used on the root event so callers on a
+        different event loop (e.g. signal handler, IM gateway thread) can
+        invoke ``cancel()`` without raising "no current event loop".
+        """
         prev_status = self.status.value if hasattr(self.status, "value") else str(self.status)
         self.cancelled = True
         self.cancel_reason = reason
-        _safe_event_set(self.cancel_event)
+
+        # Synchronous fan-out: walk the AbortScope tree and set each event.
+        # ``_safe_event_set`` on the root handles cross-loop dispatch; children
+        # are walked synchronously here because they live in the same
+        # ``TaskState`` object and asyncio.Event.set() itself is loop-safe to
+        # call from any thread per CPython source (it's a state flip + waiter
+        # wake; the wake is the loop-sensitive part and is deferred via
+        # ``loop.call_soon_threadsafe`` inside the Event impl).
+        _safe_event_set(self.abort_root.event)
+        # Propagate reason/_aborted_by to children too. We don't go through
+        # ``abort_root.abort()`` directly because we already set the root event
+        # via the cross-loop helper above.
+        self.abort_root.reason = reason
+        for _child in list(self.abort_root.children):
+            _child.abort(reason, _from=self.abort_root.name)
+
         if self.status != TaskStatus.CANCELLED:
             try:
                 self.transition(TaskStatus.CANCELLED)
-            except ValueError:
+            except ValueError:  # cancel-idempotent-force-write
+                # cancel() MUST be idempotent and reachable from any prior
+                # state — even terminal states should re-affirm CANCELLED
+                # rather than raise.  This is architecturally permanent
+                # (not S5-B backlog); the syntax-guard test recognises
+                # this token specifically.
                 logger.warning(
                     f"[State] cancel() transition from {prev_status} not allowed, forcing CANCELLED"
                 )
@@ -195,8 +372,116 @@ class TaskState:
             f"[State] Task {self.task_id[:8]} cancel(): "
             f"prev_status={prev_status}, new_status={self.status.value}, "
             f"cancel_event.is_set={self.cancel_event.is_set()}, "
+            f"abort_scope_children={len(self.abort_root.children)}, "
             f"reason={reason!r}"
         )
+
+    # v1.27.15 (S2 P0-3) — cap chosen large enough to keep a typical
+    # answer intact (≈3-4 typical paragraphs) but small enough not to
+    # bloat per-task memory if a long generation is being abandoned.
+    _PARTIAL_TEXT_CAP: int = 16_000
+
+    def append_partial_text(self, content: str) -> None:
+        """Accumulate streamed assistant text for later abort-marker use.
+
+        Called by the ``reason_stream`` outer wrapper.  No-op when the
+        cap has already been hit (just flips ``partial_truncated``).
+        Cheap string concatenation — Python interns short repeated
+        substrings, and our growth is bounded by the cap.
+        """
+        if not content:
+            return
+        if len(self.partial_text) >= self._PARTIAL_TEXT_CAP:
+            self.partial_truncated = True
+            return
+        room = self._PARTIAL_TEXT_CAP - len(self.partial_text)
+        if len(content) <= room:
+            self.partial_text += content
+        else:
+            self.partial_text += content[:room]
+            self.partial_truncated = True
+
+    def append_partial_thinking(self, content: str) -> None:
+        """Accumulate streamed thinking text. Same cap as ``append_partial_text``."""
+        if not content:
+            return
+        if len(self.partial_thinking) >= self._PARTIAL_TEXT_CAP:
+            self.partial_truncated = True
+            return
+        room = self._PARTIAL_TEXT_CAP - len(self.partial_thinking)
+        if len(content) <= room:
+            self.partial_thinking += content
+        else:
+            self.partial_thinking += content[:room]
+            self.partial_truncated = True
+
+    # v1.28 S4: in-flight tool tracking ───────────────────────────────
+    def begin_tool(self, tool_name: str) -> None:
+        """Register a tool that just started executing.
+
+        Called by ``tool_executor.execute_tool`` at dispatch.  Idempotent
+        on repeated names (parallel batches can run multiple instances of
+        the same tool concurrently — each one ``end_tool``s separately).
+        """
+        if not tool_name:
+            return
+        self.in_flight_tools.append(tool_name)
+
+    def end_tool(self, tool_name: str) -> None:
+        """Unregister a tool whose execution just finished.
+
+        Removes ONE instance of ``tool_name`` from the list — handles the
+        parallel-batch case where the same tool appears multiple times.
+        Silent no-op when the tool isn't registered (defensive: a
+        misordered finally shouldn't crash the agent).
+        """
+        if not tool_name:
+            return
+        try:
+            self.in_flight_tools.remove(tool_name)
+        except ValueError:
+            logger.debug(
+                "[State] end_tool(%r) called but tool not in_flight (task=%s, "
+                "current_list=%s) — likely double-finally or begin missed",
+                tool_name,
+                self.task_id[:8] if self.task_id else "?",
+                self.in_flight_tools,
+            )
+
+    def get_in_flight_tools(self) -> list[str]:
+        """Return a snapshot (shallow copy) of the in-flight tool list.
+
+        Always returns a new list so the caller can iterate safely while
+        another coroutine ``begin/end_tool``s concurrently — important for
+        ``_preempt_or_queue_prev_task`` which evaluates this from a
+        different chat-handler coroutine than the one running the tools.
+        """
+        return list(self.in_flight_tools)
+
+    def mark_settled(self) -> None:
+        """标记本任务已"settle"（推理循环所有清理已完成，可安全替换）。
+
+        Reasoning engine 在 ``reason_stream`` / ``run`` 的最外层 finally 中
+        无条件调用本方法；多次调用是幂等的。
+
+        v1.27.14 (plan S1.5): 用于 S1.4 ``_preempt_or_queue`` 协议的
+        "wait until old task is finished" 语义——抢占方通过
+        :meth:`wait_until_settled` 等待这个 event，避免与未清理完的老协程
+        共享 state。
+        """
+        _safe_event_set(self.settled_event)
+
+    async def wait_until_settled(self) -> None:
+        """异步等待本任务 settled。
+
+        Caller 负责包裹 :func:`asyncio.wait_for`/timeout；本方法本身是
+        无超时阻塞等待。
+
+        如果调用方在等待超时后想"放弃"老任务（不再让它写入共享 state），
+        应该设置 ``self.abandoned = True``；reason_stream / run 在每轮
+        迭代头部检测到 abandoned=True 后会立即退出。
+        """
+        await self.settled_event.wait()
 
     def request_skip(self, reason: str = "用户请求跳过当前步骤") -> None:
         """请求跳过当前正在执行的工具/步骤（不终止整个任务，跨循环安全）"""
@@ -221,6 +506,25 @@ class TaskState:
             msgs = list(self.pending_user_inserts)
             self.pending_user_inserts.clear()
             return msgs
+
+    @staticmethod
+    def build_user_insert_message(text: str) -> dict:
+        """把一条用户插入消息包装成可追加进 working_messages 的 user 消息。
+
+        单一来源：post-tool drain（:meth:`process_post_tool_signals`）和
+        final-answer done-drain（reasoning_engine 在循环终止前的二次 drain）
+        都用这同一段措辞，避免两处文案漂移。
+        """
+        return {
+            "role": "user",
+            "content": (
+                f"[用户插入消息] {text}\n"
+                "[系统提示] 以上是用户在任务执行期间插入的消息。"
+                "请判断: 1) 这是对当前任务的补充（融入决策继续）"
+                "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
+                "如不确定，使用 ask_user 工具向用户确认。"
+            ),
+        }
 
     async def process_post_tool_signals(self, working_messages: list[dict]) -> None:
         """工具执行后的统一信号处理：skip 反思提示 + 用户插入消息注入。
@@ -250,18 +554,7 @@ class TaskState:
         # 2) 检查用户插入消息
         _inserts = await self.drain_user_inserts()
         for _ins_text in _inserts:
-            working_messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        f"[用户插入消息] {_ins_text}\n"
-                        "[系统提示] 以上是用户在任务执行期间插入的消息。"
-                        "请判断: 1) 这是对当前任务的补充（融入决策继续）"
-                        "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
-                        "如不确定，使用 ask_user 工具向用户确认。"
-                    ),
-                }
-            )
+            working_messages.append(self.build_user_insert_message(_ins_text))
             logger.info(f"[UserInsert] Injected user insert into context: {_ins_text[:60]}")
 
     def reset_for_model_switch(self) -> None:

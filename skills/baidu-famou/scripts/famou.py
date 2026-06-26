@@ -12,13 +12,11 @@ import json
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '_shared'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_shared"))
 from baidu_appbuilder import parse_common_args, run_skill_query
 
 
-def build_experiment_query(
-    description: str, model_type: str = "", dataset: str = ""
-) -> str:
+def build_experiment_query(description: str, model_type: str = "", dataset: str = "") -> str:
     query = f"请创建一个算法实验：{description}"
     if model_type:
         query += f"，模型类型：{model_type}"
@@ -28,9 +26,7 @@ def build_experiment_query(
     return query
 
 
-def build_optimize_query(
-    task: str, search_space: str = "", method: str = ""
-) -> str:
+def build_optimize_query(task: str, search_space: str = "", method: str = "") -> str:
     query = f"请对以下任务进行参数优化：{task}"
     if search_space:
         query += f"，搜索空间：{search_space}"
@@ -46,17 +42,23 @@ def main() -> None:
 
     p_exp = sub.add_parser("experiment", help="创建算法实验")
     p_exp.add_argument("description", help="实验描述")
-    p_exp.add_argument("--model-type", default="",
-                       choices=["classification", "detection", "segmentation", "nlp", ""],
-                       help="模型类型")
+    p_exp.add_argument(
+        "--model-type",
+        default="",
+        choices=["classification", "detection", "segmentation", "nlp", ""],
+        help="模型类型",
+    )
     p_exp.add_argument("--dataset", default="", help="数据集名称")
 
     p_opt = sub.add_parser("optimize", help="参数优化")
     p_opt.add_argument("task", help="优化任务描述")
     p_opt.add_argument("--search-space", default="", help="搜索空间定义（JSON 字符串）")
-    p_opt.add_argument("--method", default="",
-                       choices=["grid", "random", "bayesian", "hyperband", ""],
-                       help="优化方法")
+    p_opt.add_argument(
+        "--method",
+        default="",
+        choices=["grid", "random", "bayesian", "hyperband", ""],
+        help="优化方法",
+    )
 
     args = parser.parse_args()
 
@@ -70,4 +72,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

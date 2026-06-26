@@ -136,7 +136,9 @@ async def fetch_feed_text(
 
     current = validate_feed_url(url)
     headers = {"User-Agent": user_agent, "Accept": "application/rss+xml, application/atom+xml, */*"}
-    async with httpx.AsyncClient(timeout=timeout_sec, follow_redirects=False, headers=headers) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout_sec, follow_redirects=False, headers=headers
+    ) as client:
         for _ in range(_MAX_REDIRECTS + 1):
             response = await client.get(current)
             if response.status_code not in {301, 302, 303, 307, 308}:
@@ -180,7 +182,9 @@ def _parse_feedparser(source_id: str, body: str) -> list[FeedItem]:
         url = (entry.get("link") or "").strip()
         if not title or not url:
             continue
-        tags = [t.get("term") for t in entry.get("tags", []) if isinstance(t, dict) and t.get("term")]
+        tags = [
+            t.get("term") for t in entry.get("tags", []) if isinstance(t, dict) and t.get("term")
+        ]
         published_at = _best_published_at(
             entry.get("published_parsed"),
             entry.get("updated_parsed"),

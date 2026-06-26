@@ -485,7 +485,13 @@ PLUGIN_TEMPLATES: dict[str, dict[str, Any]] = {
         },
     },
     "ui": {
-        "permissions": ["tools.register", "config.read", "config.write", "data.own", "api_routes.register"],
+        "permissions": [
+            "tools.register",
+            "config.read",
+            "config.write",
+            "data.own",
+            "api_routes.register",
+        ],
         "provides": {"routes": True},
         "category": "app",
         "ui_config": {
@@ -518,7 +524,7 @@ PLUGIN_TEMPLATES: dict[str, dict[str, Any]] = {
                 def on_unload(self) -> None:
                     pass
         '''),
-        "html": textwrap.dedent('''\
+        "html": textwrap.dedent("""\
             <!DOCTYPE html>
             <html lang="en">
             <head>
@@ -556,7 +562,7 @@ PLUGIN_TEMPLATES: dict[str, dict[str, Any]] = {
               </script>
             </body>
             </html>
-        '''),
+        """),
     },
 }
 
@@ -665,7 +671,8 @@ def main() -> None:
     parser.add_argument("--id", required=True, help="Plugin ID (e.g. my-plugin)")
     parser.add_argument("--name", help="Plugin display name")
     parser.add_argument(
-        "--type", default="tool",
+        "--type",
+        default="tool",
         choices=sorted(PLUGIN_TEMPLATES),
         help="Plugin type template",
     )

@@ -53,4 +53,3 @@ def test_unsupported_source_returns_error(tmp_path: Path) -> None:
 
     assert result.ok is False
     assert "Unsupported" in result.error
-

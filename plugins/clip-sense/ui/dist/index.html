@@ -9,9 +9,9 @@
   <script src="_assets/icons.js"></script>
   <script src="_assets/markdown-mini.js"></script>
   <script src="_assets/i18n.js"></script>
-  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react@18/umd/react.production.min.js" />
-  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" />
-  <link rel="preload" as="script" href="https://unpkg.com/@babel/standalone/babel.min.js" />
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react@18.3.1/umd/react.production.min.js" />
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" />
+  <link rel="preload" as="script" href="https://unpkg.com/@babel/standalone@7.29.7/babel.min.js" />
   <style>
     :root {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
@@ -418,11 +418,11 @@ function showToast(body, type) {
 }
 </script>
 
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
         onerror="document.getElementById('root').innerHTML='<div style=padding:24px;color:#ef4444>[CDN Error] React failed to load. Check network.</div>'"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
         onerror="document.getElementById('root').innerHTML='<div style=padding:24px;color:#ef4444>[CDN Error] ReactDOM failed to load. Check network.</div>'"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"
+<script src="https://unpkg.com/@babel/standalone@7.29.7/babel.min.js"
         onerror="document.getElementById('root').innerHTML='<div style=padding:24px;color:#ef4444>[CDN Error] Babel failed to load. Check network.</div>'"></script>
 <script>
 console.log("[clip-sense] CDN loaded: React=" + typeof React + ", ReactDOM=" + typeof ReactDOM + ", Babel=" + (typeof Babel !== "undefined"));

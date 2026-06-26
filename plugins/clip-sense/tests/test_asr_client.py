@@ -22,12 +22,19 @@ def run(coro):
 class TestFlattenSentences:
     def test_basic(self):
         payload = {
-            "transcripts": [{
-                "sentences": [
-                    {"begin_time": 1000, "end_time": 3500, "text": "Hello world", "confidence": 0.95},
-                    {"begin_time": 4000, "end_time": 6000, "text": "Test", "confidence": 0.88},
-                ]
-            }]
+            "transcripts": [
+                {
+                    "sentences": [
+                        {
+                            "begin_time": 1000,
+                            "end_time": 3500,
+                            "text": "Hello world",
+                            "confidence": 0.95,
+                        },
+                        {"begin_time": 4000, "end_time": 6000, "text": "Test", "confidence": 0.88},
+                    ]
+                }
+            ]
         }
         result = _flatten_sentences(payload)
         assert len(result) == 2
@@ -37,9 +44,11 @@ class TestFlattenSentences:
         assert result[0].confidence == 0.95
 
     def test_millisecond_to_second_conversion(self):
-        payload = {"transcripts": [{"sentences": [
-            {"begin_time": 500, "end_time": 1500, "text": "half sec"}
-        ]}]}
+        payload = {
+            "transcripts": [
+                {"sentences": [{"begin_time": 500, "end_time": 1500, "text": "half sec"}]}
+            ]
+        }
         result = _flatten_sentences(payload)
         assert result[0].start == 0.5
         assert result[0].end == 1.5
@@ -50,10 +59,16 @@ class TestFlattenSentences:
         assert _flatten_sentences({"transcripts": [{"sentences": []}]}) == []
 
     def test_malformed_sentence_skipped(self):
-        payload = {"transcripts": [{"sentences": [
-            {"begin_time": "not_a_number", "end_time": 1000, "text": "bad"},
-            {"begin_time": 2000, "end_time": 3000, "text": "good"},
-        ]}]}
+        payload = {
+            "transcripts": [
+                {
+                    "sentences": [
+                        {"begin_time": "not_a_number", "end_time": 1000, "text": "bad"},
+                        {"begin_time": 2000, "end_time": 3000, "text": "good"},
+                    ]
+                }
+            ]
+        }
         result = _flatten_sentences(payload)
         assert len(result) == 1
         assert result[0].text == "good"
@@ -139,9 +154,7 @@ class TestQwenAnalysis:
         fenced = f"```json\n{json.dumps(topics)}\n```"
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": fenced}}]
-        }
+        mock_resp.json.return_value = {"choices": [{"message": {"content": fenced}}]}
         mock_client.post.return_value = mock_resp
 
         c = ClipAsrClient(
@@ -161,16 +174,12 @@ class TestQwenAnalysis:
 
         bad_resp = MagicMock()
         bad_resp.status_code = 200
-        bad_resp.json.return_value = {
-            "choices": [{"message": {"content": "not json at all"}}]
-        }
+        bad_resp.json.return_value = {"choices": [{"message": {"content": "not json at all"}}]}
 
         good_data = [{"start_sec": 1, "end_sec": 2, "type": "filler", "content": "um"}]
         good_resp = MagicMock()
         good_resp.status_code = 200
-        good_resp.json.return_value = {
-            "choices": [{"message": {"content": json.dumps(good_data)}}]
-        }
+        good_resp.json.return_value = {"choices": [{"message": {"content": json.dumps(good_data)}}]}
 
         mock_client.post.side_effect = [bad_resp, good_resp]
 
@@ -191,9 +200,7 @@ class TestQwenAnalysis:
 
         bad_resp = MagicMock()
         bad_resp.status_code = 200
-        bad_resp.json.return_value = {
-            "choices": [{"message": {"content": "not json"}}]
-        }
+        bad_resp.json.return_value = {"choices": [{"message": {"content": "not json"}}]}
         mock_client.post.return_value = bad_resp
 
         c = ClipAsrClient(

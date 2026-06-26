@@ -88,4 +88,3 @@ class ModeHandler:
 def create_handler(agent: "Agent"):
     handler = ModeHandler(agent)
     return handler.handle
-

@@ -141,7 +141,9 @@ async def test_set_configs_bulk(tm: TaskManager) -> None:
 @pytest.mark.asyncio
 async def test_create_task_returns_full_record(tm: TaskManager) -> None:
     task = await tm.create_task(
-        prompt="A red apple", model="wan27-pro", mode="text2img",
+        prompt="A red apple",
+        model="wan27-pro",
+        mode="text2img",
         params={"size": "1024*1024"},
     )
     assert task is not None
@@ -200,8 +202,10 @@ async def test_update_task_multiple_fields(tm: TaskManager) -> None:
     task = await tm.create_task(prompt="X")
     await tm.update_task(
         task["id"],
-        status="running", api_task_id="api-123",
-        error_message="", model="qwen-pro",
+        status="running",
+        api_task_id="api-123",
+        error_message="",
+        model="qwen-pro",
     )
     updated = await tm.get_task(task["id"])
     assert updated["status"] == "running"
@@ -277,9 +281,18 @@ async def test_whitelist_keys_are_stable() -> None:
     """Sanity guard against accidental whitelist shrinking — UI / worker
     callers depend on these caller-facing keys."""
     expected = {
-        "status", "error_message", "api_task_id",
-        "prompt", "negative_prompt", "model", "mode",
-        "params", "image_urls", "local_image_paths", "usage", "asset_ids",
+        "status",
+        "error_message",
+        "api_task_id",
+        "prompt",
+        "negative_prompt",
+        "model",
+        "mode",
+        "params",
+        "image_urls",
+        "local_image_paths",
+        "usage",
+        "asset_ids",
     }
     assert set(TaskManager._UPDATABLE_COLUMNS) == expected
     # JSON-encoded keys must be a subset of whitelisted keys.
@@ -433,7 +446,8 @@ async def test_full_lifecycle_round_trip(tm: TaskManager) -> None:
     """A representative end-to-end story so a regression that breaks
     one stage is loud rather than subtly off-by-one."""
     task = await tm.create_task(
-        prompt="cat in space", model="wan27-pro",
+        prompt="cat in space",
+        model="wan27-pro",
         params={"size": "1024*1024", "n": 2},
     )
     await tm.update_task(task["id"], status="running", api_task_id="dash-001")
@@ -468,12 +482,14 @@ def test_no_residual_physical_column_names_leak_into_dict() -> None:
     # Build a fake aiosqlite.Row-shaped dict; _row_to_dict accepts any
     # mapping because it only uses dict() and pop().
     fake_row = {
-        "id": "abc", "status": "ok",
+        "id": "abc",
+        "status": "ok",
         "params_json": json.dumps({"size": "2K"}),
         "image_urls": json.dumps(["http://a"]),
         "local_image_paths": json.dumps([]),
         "usage_json": json.dumps({"n": 1}),
-        "created_at": _now_iso(), "updated_at": _now_iso(),
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
     }
     out = TaskManager._row_to_dict(fake_row)  # type: ignore[arg-type]
     assert "params_json" not in out

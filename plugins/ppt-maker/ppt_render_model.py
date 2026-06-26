@@ -109,7 +109,9 @@ def build_slide_specs(slides_ir: dict[str, Any]) -> list[SlideSpec]:
         layout_id = catalog.pick_layout(
             slide_type=slide_type,
             has_image=bool(content.get("image_query")),
-            has_data=bool(content.get("categories") or content.get("series") or content.get("headers")),
+            has_data=bool(
+                content.get("categories") or content.get("series") or content.get("headers")
+            ),
         )
         specs.append(
             SlideSpec(
@@ -169,7 +171,9 @@ def build_render_model(
             )
         )
     safe_output_mode = output_mode if output_mode in {"editable", "creative_image"} else "editable"
-    safe_exporter = exporter if exporter in {"pptxgenjs", "python-pptx", "creative-image"} else "python-pptx"
+    safe_exporter = (
+        exporter if exporter in {"pptxgenjs", "python-pptx", "creative-image"} else "python-pptx"
+    )
     return RenderModel(
         title=title,
         output_mode=safe_output_mode,  # type: ignore[arg-type]
@@ -203,14 +207,18 @@ def save_generation_artifacts(
         source_context=str(outline.get("__brain_context__") or ""),
     )
     story_plan = build_story_plan(outline, style=brief.style, prompt=brief.prompt)
-    design_system = build_design_system(spec_lock, style=brief.style, quality_mode=brief.quality_mode)
+    design_system = build_design_system(
+        spec_lock, style=brief.style, quality_mode=brief.quality_mode
+    )
     slide_specs = build_slide_specs(slides_ir)
     render_model = build_render_model(
         title=brief.title,
         design_system=design_system,
         slide_specs=slide_specs,
         output_mode=brief.output_mode,
-        exporter="creative-image" if brief.output_mode == "creative_image" else settings.get("exporter", "python-pptx"),
+        exporter="creative-image"
+        if brief.output_mode == "creative_image"
+        else settings.get("exporter", "python-pptx"),
     )
 
     payloads = {
@@ -298,8 +306,9 @@ def _asset_slots(content: dict[str, Any]) -> list[dict[str, Any]]:
     if icon_query:
         slots.append({"kind": "icon", "query": str(icon_query), "required": False})
     if content.get("categories") or content.get("series"):
-        slots.append({"kind": "chart", "query": str(content.get("chart_title") or ""), "required": True})
+        slots.append(
+            {"kind": "chart", "query": str(content.get("chart_title") or ""), "required": True}
+        )
     if content.get("headers") or content.get("rows"):
         slots.append({"kind": "table", "query": str(content.get("title") or ""), "required": True})
     return slots
-

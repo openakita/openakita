@@ -681,9 +681,7 @@ async def test_e2e_workflow_backend_routes_through_comfy(workflow_app_client) ->
     assert len(fakes["wanxiang"].submit_calls) == 0, (
         "wanxiang must NOT be called when backend=runninghub"
     )
-    assert len(fakes["ark"].i2v_calls) == 0, (
-        "ark.i2v must NOT be called when backend=runninghub"
-    )
+    assert len(fakes["ark"].i2v_calls) == 0, "ark.i2v must NOT be called when backend=runninghub"
 
     # P0-2 cross-check: the final video URL was persisted by the
     # pipeline using the URL builder we threaded through the fixture.

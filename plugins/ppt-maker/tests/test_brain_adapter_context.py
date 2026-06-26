@@ -113,9 +113,7 @@ async def test_compose_respects_source_ids_priority(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_compose_appends_dataset_and_template_blocks(tmp_path) -> None:
     insights_path = tmp_path / "insights.json"
-    insights_path.write_text(
-        json.dumps({"key_findings": ["Adoption up 18%"]}), encoding="utf-8"
-    )
+    insights_path.write_text(json.dumps({"key_findings": ["Adoption up 18%"]}), encoding="utf-8")
     brand_path = tmp_path / "brand.json"
     brand_path.write_text(json.dumps({"primary_color": "#0EA5E9"}), encoding="utf-8")
 

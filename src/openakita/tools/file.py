@@ -2,9 +2,13 @@
 File 工具 - 文件操作
 """
 
+import heapq
 import logging
 import re
 import shutil
+import threading
+import time
+from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -70,6 +74,23 @@ GREP_HARD_FORBIDDEN_PATH_FRAGMENTS = (
 
 GREP_DEFAULT_MAX_FILES = 5000
 GREP_DEFAULT_MAX_TOTAL_BYTES = 50 * 1024 * 1024  # 50 MiB
+
+GLOB_DEFAULT_MAX_DIRS = 3000
+GLOB_DEFAULT_MAX_FILES = 20000
+GLOB_DEFAULT_MAX_RESULTS = 200
+GLOB_DEFAULT_TIMEOUT_SEC = 30
+
+
+@dataclass(slots=True)
+class GlobScanResult:
+    """Bounded result returned by the synchronous glob scanner."""
+
+    matches: list[tuple[str, float]]
+    total_matches: int
+    dirs_scanned: int
+    files_scanned: int
+    skipped: int
+    capped_reason: str | None = None
 
 
 class FileTool:
@@ -337,8 +358,10 @@ class FileTool:
         try:
             from ..core.feature_flags import is_enabled as _ff_enabled
         except Exception:
+
             def _ff_enabled(_name: str) -> bool:
                 return True
+
         if _ff_enabled("grep_safety_v1"):
             forbidden_reason = self._grep_path_forbidden(dir_path)
             if forbidden_reason:
@@ -442,6 +465,16 @@ class FileTool:
     @staticmethod
     def _grep_path_forbidden(dir_path: Path) -> str | None:
         """Return a human-readable rejection reason or ``None`` if path is safe."""
+        return FileTool._search_path_forbidden(dir_path, tool_name="grep")
+
+    @staticmethod
+    def _glob_path_forbidden(dir_path: Path) -> str | None:
+        """Return a human-readable rejection reason or ``None`` if path is safe."""
+        return FileTool._search_path_forbidden(dir_path, tool_name="glob")
+
+    @staticmethod
+    def _search_path_forbidden(dir_path: Path, *, tool_name: str) -> str | None:
+        """Return a human-readable rejection reason or ``None`` if path is safe."""
         try:
             resolved = dir_path.resolve()
         except OSError:
@@ -458,13 +491,13 @@ class FileTool:
                 )
 
         if resolved.parent == resolved:
-            return f"path '{path_str}' is a filesystem root; too broad for grep."
+            return f"path '{path_str}' is a filesystem root; too broad for {tool_name}."
         try:
             home = Path.home().resolve()
         except OSError:
             home = None
         if home is not None and resolved == home:
-            return f"path '{path_str}' is the user home directory; too broad for grep."
+            return f"path '{path_str}' is the user home directory; too broad for {tool_name}."
 
         return None
 
@@ -510,6 +543,17 @@ class FileTool:
                     yield from walk(child)
 
         yield from walk(dir_path)
+
+    @staticmethod
+    def _search_dir_name_blocked(name: str) -> bool:
+        return name in GREP_EXTRA_BLOCKED_DIR_NAMES
+
+    @staticmethod
+    def _search_path_fragment_blocked(path_norm: str) -> bool:
+        forbidden_norm = tuple(
+            f.replace("\\", "/").lower() for f in GREP_HARD_FORBIDDEN_PATH_FRAGMENTS
+        )
+        return any(frag in path_norm for frag in forbidden_norm)
 
     async def delete(self, path: str) -> bool:
         """删除单个文件或空目录。非空目录一律拒绝。"""
@@ -567,7 +611,9 @@ class FileTool:
         if recursive:
             return [
                 str(p.relative_to(dir_path))
-                for p in self._iter_matching_paths(dir_path, pattern, recursive=True, files_only=False)
+                for p in self._iter_matching_paths(
+                    dir_path, pattern, recursive=True, files_only=False
+                )
             ]
 
         self.last_traversal_skipped = 0
@@ -612,6 +658,151 @@ class FileTool:
                     matches.append(str(file_path.relative_to(dir_path)))
 
         return matches
+
+    def glob_scan(
+        self,
+        pattern: str,
+        path: str = ".",
+        *,
+        max_dirs: int | None = None,
+        max_files: int | None = None,
+        max_results: int | None = None,
+        max_seconds: float | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> GlobScanResult:
+        """Synchronous bounded glob scanner.
+
+        This runs in a worker thread from the async handler. The traversal
+        checks a deadline and cancel flag internally because cancelling
+        ``asyncio.to_thread`` does not stop the underlying thread immediately.
+        """
+        dir_path = self._resolve_path(path)
+        if not dir_path.is_dir():
+            raise FileNotFoundError(f"Directory not found: {dir_path}")
+
+        forbidden_reason = self._glob_path_forbidden(dir_path)
+        if forbidden_reason:
+            raise ValueError(f"glob refused: {forbidden_reason}")
+
+        dir_cap = max_dirs if isinstance(max_dirs, int) and max_dirs > 0 else GLOB_DEFAULT_MAX_DIRS
+        file_cap = (
+            max_files if isinstance(max_files, int) and max_files > 0 else GLOB_DEFAULT_MAX_FILES
+        )
+        result_cap = (
+            max_results
+            if isinstance(max_results, int) and max_results > 0
+            else GLOB_DEFAULT_MAX_RESULTS
+        )
+        duration_cap = (
+            float(max_seconds)
+            if isinstance(max_seconds, (int, float)) and max_seconds > 0
+            else float(GLOB_DEFAULT_TIMEOUT_SEC)
+        )
+        deadline = time.monotonic() + duration_cap
+
+        self.last_traversal_skipped = 0
+        skipped = 0
+        dirs_scanned = 0
+        files_scanned = 0
+        total_matches = 0
+        capped_reason: str | None = None
+        top_matches: list[tuple[float, str]] = []
+        stack = [dir_path]
+
+        def should_stop(*, include_dir_cap: bool) -> bool:
+            nonlocal capped_reason
+            if cancel_event is not None and cancel_event.is_set():
+                capped_reason = "cancelled by caller"
+                return True
+            if time.monotonic() >= deadline:
+                capped_reason = f"reached time cap ({duration_cap:.0f}s)"
+                return True
+            if include_dir_cap and dirs_scanned >= dir_cap:
+                capped_reason = f"reached directory cap ({dir_cap})"
+                return True
+            if files_scanned >= file_cap:
+                capped_reason = f"reached file cap ({file_cap})"
+                return True
+            return False
+
+        while stack:
+            if should_stop(include_dir_cap=True):
+                break
+
+            root = stack.pop()
+            try:
+                root_norm = str(root.resolve()).replace("\\", "/").lower()
+            except OSError:
+                root_norm = str(root).replace("\\", "/").lower()
+            if root != dir_path and self._search_path_fragment_blocked(root_norm):
+                skipped += 1
+                continue
+
+            dirs_scanned += 1
+
+            try:
+                for child in root.iterdir():
+                    if should_stop(include_dir_cap=False):
+                        break
+
+                    try:
+                        child_norm = str(child.resolve()).replace("\\", "/").lower()
+                    except OSError:
+                        child_norm = str(child).replace("\\", "/").lower()
+                    if self._search_path_fragment_blocked(child_norm):
+                        skipped += 1
+                        continue
+
+                    try:
+                        is_dir = child.is_dir()
+                        is_file = child.is_file()
+                    except OSError:
+                        skipped += 1
+                        continue
+
+                    if is_dir and self._search_dir_name_blocked(child.name):
+                        skipped += 1
+                        continue
+
+                    if self._should_skip_relative_path(child, dir_path):
+                        continue
+
+                    if is_file:
+                        if files_scanned >= file_cap:
+                            capped_reason = f"reached file cap ({file_cap})"
+                            break
+                        files_scanned += 1
+                        if self._matches_pattern(child, dir_path, pattern):
+                            total_matches += 1
+                            try:
+                                mtime = child.stat().st_mtime
+                            except OSError:
+                                mtime = 0
+                            rel = str(child.relative_to(dir_path))
+                            if len(top_matches) < result_cap:
+                                heapq.heappush(top_matches, (mtime, rel))
+                            elif top_matches and mtime > top_matches[0][0]:
+                                heapq.heapreplace(top_matches, (mtime, rel))
+
+                    if is_dir:
+                        stack.append(child)
+            except OSError:
+                skipped += 1
+
+        self.last_traversal_skipped = skipped
+        matches = sorted(
+            ((rel, mtime) for mtime, rel in top_matches),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        return GlobScanResult(
+            matches=matches,
+            total_matches=total_matches,
+            dirs_scanned=dirs_scanned,
+            files_scanned=files_scanned,
+            skipped=skipped,
+            capped_reason=capped_reason,
+        )
 
     def _iter_matching_paths(
         self,
@@ -676,7 +867,9 @@ class FileTool:
             return False
         rel_posix = rel.as_posix()
         pattern_posix = pattern.replace("\\", "/")
-        return rel.match(pattern) or fnmatch(rel_posix, pattern_posix) or fnmatch(path.name, pattern)
+        return (
+            rel.match(pattern) or fnmatch(rel_posix, pattern_posix) or fnmatch(path.name, pattern)
+        )
 
     @staticmethod
     def _should_skip_relative_path(path: Path, root: Path) -> bool:

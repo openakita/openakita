@@ -34,8 +34,7 @@ def test_profile_csv_identifies_metrics_dimensions_and_warnings(tmp_path) -> Non
 def test_analyze_to_files_writes_profile_insights_and_chart_specs(tmp_path) -> None:
     csv_path = tmp_path / "wide.csv"
     csv_path.write_text(
-        "a,b,c,d,e,f,g,h,i\n"
-        "x,1,2,3,4,5,6,7,8\n",
+        "a,b,c,d,e,f,g,h,i\nx,1,2,3,4,5,6,7,8\n",
         encoding="utf-8",
     )
 
@@ -59,4 +58,3 @@ def test_table_without_numeric_columns_falls_back_to_table(tmp_path) -> None:
     assert result["chart_specs"][0]["type"] == "table"
     assert result["chart_specs"][0]["headers"] == ["name", "category"]
     assert "未识别到稳定数值列" in result["profile"]["quality_warnings"][0]
-

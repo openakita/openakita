@@ -75,17 +75,23 @@ async def test_write_env_persists_persona_to_runtime_state_and_refreshes_agents(
     env_path.write_text("PERSONA_NAME=default\nOPENAI_API_KEY=old\n", encoding="utf-8")
     agent = _DummyAgent()
     pool = _DummyPool()
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(agent=agent, agent_pool=pool)))
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(agent=agent, agent_pool=pool))
+    )
 
     response = await write_env(
-        EnvUpdateRequest(entries={"PERSONA_NAME": "jarvis", "OPENAI_API_KEY": "new"}, delete_keys=[]),
+        EnvUpdateRequest(
+            entries={"PERSONA_NAME": "jarvis", "OPENAI_API_KEY": "new"}, delete_keys=[]
+        ),
         request,
     )
 
     assert response["status"] == "ok"
     assert "PERSONA_NAME" in response["updated_keys"]
     assert settings.persona_name == "jarvis"
-    assert json.loads(runtime_state.state_file.read_text(encoding="utf-8"))["persona_name"] == "jarvis"
+    assert (
+        json.loads(runtime_state.state_file.read_text(encoding="utf-8"))["persona_name"] == "jarvis"
+    )
 
     env_text = env_path.read_text(encoding="utf-8")
     assert "PERSONA_NAME=" not in env_text
@@ -104,7 +110,9 @@ async def test_write_env_invalid_runtime_value_does_not_partially_update(
     from openakita.api.routes.config import EnvUpdateRequest, write_env
     from openakita.config import settings
 
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(agent=None, agent_pool=None)))
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(agent=None, agent_pool=None))
+    )
 
     with pytest.raises(HTTPException):
         await write_env(

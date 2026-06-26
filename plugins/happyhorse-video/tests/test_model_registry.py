@@ -99,8 +99,7 @@ def test_happyhorse_r2v_uses_media_array_r2v_protocol():
     entry = by_model_id("happyhorse-1.0-r2v")
     assert entry is not None
     assert entry.input_protocol == "media_array_r2v", (
-        f"happyhorse-1.0-r2v must use media_array_r2v; "
-        f"got {entry.input_protocol}"
+        f"happyhorse-1.0-r2v must use media_array_r2v; got {entry.input_protocol}"
     )
 
 

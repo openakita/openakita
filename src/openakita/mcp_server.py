@@ -218,9 +218,7 @@ class MCPServer:
             if not registry:
                 return "Skill system not available"
             skills = registry.list_all()
-            return "\n".join(
-                f"- {s.name}: {s.description}" for s in skills
-            )
+            return "\n".join(f"- {s.name}: {s.description}" for s in skills)
 
         return f"Unknown tool: {tool_name}"
 
@@ -230,9 +228,7 @@ class MCPServer:
 
         reader = asyncio.StreamReader()
         protocol = asyncio.StreamReaderProtocol(reader)
-        await asyncio.get_event_loop().connect_read_pipe(
-            lambda: protocol, sys.stdin.buffer
-        )
+        await asyncio.get_event_loop().connect_read_pipe(lambda: protocol, sys.stdin.buffer)
 
         writer_transport, writer_protocol = await asyncio.get_event_loop().connect_write_pipe(
             asyncio.streams.FlowControlMixin, sys.stdout.buffer

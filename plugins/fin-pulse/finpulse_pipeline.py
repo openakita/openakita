@@ -166,11 +166,7 @@ async def _fetch_one(
         via_raw = getattr(fetcher, "_last_via", None)
         via = via_raw if isinstance(via_raw, str) and via_raw else "direct"
         via_reason_raw = getattr(fetcher, "_last_via_reason", None)
-        via_reason = (
-            via_reason_raw
-            if isinstance(via_reason_raw, str) and via_reason_raw
-            else None
-        )
+        via_reason = via_reason_raw if isinstance(via_reason_raw, str) and via_reason_raw else None
         return FetchReport(
             source_id=source_id,
             items=list(items or []),
@@ -190,9 +186,7 @@ async def _fetch_one(
         )
 
 
-async def _persist_items(
-    tm: FinpulseTaskManager, items: list[NormalizedItem]
-) -> tuple[int, int]:
+async def _persist_items(tm: FinpulseTaskManager, items: list[NormalizedItem]) -> tuple[int, int]:
     """Insert-or-update every item; return ``(inserted, updated)`` counts."""
     inserted = 0
     updated = 0
@@ -266,7 +260,8 @@ async def ingest(
     # and URL are set. This does NOT persist to config.
     explicit_sources = sources is not None
     explicit_newsnow_sources = [
-        sid for sid in (sources or [])
+        sid
+        for sid in (sources or [])
         if sid != "newsnow" and SOURCE_DEFS.get(sid, {}).get("kind") == "newsnow"
     ]
     if explicit_newsnow_sources:
@@ -286,9 +281,7 @@ async def ingest(
     since: datetime | None = None
     if since_hours:
         now = datetime.now(timezone.utc).replace(microsecond=0)
-        since = datetime.fromtimestamp(
-            now.timestamp() - int(since_hours) * 3600, tz=timezone.utc
-        )
+        since = datetime.fromtimestamp(now.timestamp() - int(since_hours) * 3600, tz=timezone.utc)
 
     timeout_sec = float(cfg.get("fetch_timeout_sec", "15") or "15")
     try:
@@ -508,9 +501,9 @@ async def run_daily_brief(
     top_k = max(1, min(int(top_k), 60))
     since_hours = max(1, min(int(since_hours), 72))
     now = datetime.now(timezone.utc)
-    since = datetime.fromtimestamp(
-        now.timestamp() - since_hours * 3600, tz=timezone.utc
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    since = datetime.fromtimestamp(now.timestamp() - since_hours * 3600, tz=timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
 
     rows, total = await tm.list_articles(
         since=since,
@@ -596,9 +589,9 @@ async def evaluate_radar(
     since_hours = max(1, min(int(since_hours), 168))
     limit = max(1, min(int(limit), 500))
     now = datetime.now(timezone.utc)
-    since = datetime.fromtimestamp(
-        now.timestamp() - since_hours * 3600, tz=timezone.utc
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    since = datetime.fromtimestamp(now.timestamp() - since_hours * 3600, tz=timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
 
     rows, _total = await tm.list_articles(
         since=since,
@@ -618,13 +611,12 @@ async def evaluate_radar(
         summary = row.get("summary") or ""
         src_def = SOURCE_DEFS.get(str(row.get("source_id") or ""), {})
         source_name = str(
-            src_def.get("display_zh")
-            or src_def.get("display_en")
-            or row.get("source_id")
-            or ""
+            src_def.get("display_zh") or src_def.get("display_en") or row.get("source_id") or ""
         )
         source_id = str(row.get("source_id") or "")
-        match_text = "\n".join([title, summary, source_name, source_id, _radar_source_terms(source_id)])
+        match_text = "\n".join(
+            [title, summary, source_name, source_id, _radar_source_terms(source_id)]
+        )
         if not matcher.match(match_text):
             continue
         terms = matcher.matched_terms(match_text)
@@ -658,9 +650,7 @@ async def evaluate_radar(
     }
 
 
-def _radar_markdown(
-    *, header: str | None, hits: list[dict[str, Any]], limit: int = 20
-) -> str:
+def _radar_markdown(*, header: str | None, hits: list[dict[str, Any]], limit: int = 20) -> str:
     """Render radar hits as the compact markdown the dispatcher will
     push over IM. Truncates above ``limit`` so a runaway rule doesn't
     silently spam a 200-line payload — the iframe in the UI still
@@ -677,11 +667,7 @@ def _radar_markdown(
         src = (hit.get("source_id") or "").strip()
         score = hit.get("ai_score")
         terms = hit.get("matched_terms") or []
-        score_suffix = (
-            f" · score {float(score):.1f}"
-            if isinstance(score, (int, float))
-            else ""
-        )
+        score_suffix = f" · score {float(score):.1f}" if isinstance(score, (int, float)) else ""
         term_suffix = f" · {' '.join(f'[{t}]' for t in terms[:4])}" if terms else ""
         if url:
             lines.append(f"{i}. [{title}]({url}) · {src}{score_suffix}{term_suffix}")
@@ -701,8 +687,7 @@ def _radar_html(*, header: str | None, hits: list[dict[str, Any]], limit: int = 
         url = html.escape(str(hit.get("url") or ""))
         src = html.escape(str(hit.get("source_id") or ""))
         terms = " ".join(
-            f"<span>{html.escape(str(t))}</span>"
-            for t in (hit.get("matched_terms") or [])[:6]
+            f"<span>{html.escape(str(t))}</span>" for t in (hit.get("matched_terms") or [])[:6]
         )
         link = f'<a href="{url}">{h_title}</a>' if url else h_title
         cards.append(
@@ -787,9 +772,7 @@ async def run_hot_radar(
         # firings dedupe but a fresh batch of hits gets through. The
         # key is suffixed with ``channel:chat_id`` in the loop below so
         # fanning to multiple targets never self-cancels.
-        key_basis = (header + "\n" + "|".join(str(h.get("id") or "") for h in hits)).encode(
-            "utf-8"
-        )
+        key_basis = (header + "\n" + "|".join(str(h.get("id") or "") for h in hits)).encode("utf-8")
         base_key = "radar:" + hashlib.sha256(key_basis).hexdigest()[:8]
         for tgt in targets:
             channel = str(tgt.get("channel") or "").strip()
@@ -860,9 +843,7 @@ class FinpulsePipeline:
         since_hours: int | None = 24,
         task_id: str | None = None,
     ) -> dict[str, Any]:
-        return await ingest(
-            self._tm, sources=sources, since_hours=since_hours, task_id=task_id
-        )
+        return await ingest(self._tm, sources=sources, since_hours=since_hours, task_id=task_id)
 
     async def run_daily_brief(
         self,

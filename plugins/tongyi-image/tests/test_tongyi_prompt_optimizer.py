@@ -128,8 +128,13 @@ def test_guide_data_all_default_keys_present() -> None:
     """Stable contract for the UI fetch — adding keys is OK, removing is not."""
     out = get_prompt_guide_data()
     expected = {
-        "locale", "templates", "style_keywords", "lighting_keywords",
-        "composition_keywords", "negative_presets", "mode_formulas",
+        "locale",
+        "templates",
+        "style_keywords",
+        "lighting_keywords",
+        "composition_keywords",
+        "negative_presets",
+        "mode_formulas",
     }
     assert expected <= set(out)
 
@@ -182,6 +187,7 @@ def test_extract_text_from_dict_without_content() -> None:
 def test_extract_text_from_object_with_content_attr() -> None:
     class Resp:
         content = "from attr"
+
     assert _extract_text(Resp()) == "from attr"
 
 
@@ -189,6 +195,7 @@ def test_extract_text_from_object_without_content_falls_back_to_str() -> None:
     class Weird:
         def __str__(self) -> str:
             return "stringified"
+
     out = _extract_text(Weird())
     assert out == "stringified"
 
@@ -207,13 +214,11 @@ def test_ecommerce_prompts_default_returns_all_scenes() -> None:
     scene, lifestyle, detail, banner)."""
     out = generate_ecommerce_prompts(product_name="香水")
     scene_ids = [sid for sid, _ in out]
-    assert set(scene_ids) == {"hero", "bg_white", "bg_scene", "bg_lifestyle",
-                              "detail", "banner"}
+    assert set(scene_ids) == {"hero", "bg_white", "bg_scene", "bg_lifestyle", "detail", "banner"}
 
 
 def test_ecommerce_prompts_uses_base_prompt_when_provided() -> None:
-    out = generate_ecommerce_prompts(product_name="ignored",
-                                       base_prompt="精致的法式香水")
+    out = generate_ecommerce_prompts(product_name="ignored", base_prompt="精致的法式香水")
     # All emitted prompts must reference the base description, not the name.
     for _, prompt in out:
         assert "精致的法式香水" in prompt
@@ -294,8 +299,15 @@ def test_negative_presets_have_general() -> None:
 def test_mode_formulas_cover_known_modes() -> None:
     """Each plugin mode (text2img / img_edit / ...) must have a formula
     or the UI mode-switcher renders an empty panel."""
-    expected_modes = {"text2img", "img_edit", "style_repaint", "background",
-                      "outpaint", "sketch", "ecommerce"}
+    expected_modes = {
+        "text2img",
+        "img_edit",
+        "style_repaint",
+        "background",
+        "outpaint",
+        "sketch",
+        "ecommerce",
+    }
     assert expected_modes <= set(MODE_FORMULAS)
     for mode, formula in MODE_FORMULAS.items():
         assert "basic" in formula, f"mode {mode} missing 'basic'"

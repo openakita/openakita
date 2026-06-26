@@ -169,9 +169,7 @@ def api_client(monkeypatch: pytest.MonkeyPatch):
     global_engine.reset_engine_v2(clear_explicit_lookup=True)
     global_engine._clear_last_known_good()
 
-    cfg = PolicyConfigV2.model_validate(
-        {"confirmation": {"aggregation_window_seconds": 2}}
-    )
+    cfg = PolicyConfigV2.model_validate({"confirmation": {"aggregation_window_seconds": 2}})
     fake_engine = build_engine_from_config(cfg)
     global_engine.set_engine_v2(fake_engine, config=cfg)
 
@@ -206,9 +204,7 @@ class TestBatchEndpoint:
         assert body["resolved_count"] == 2
         assert sorted(body["resolved_ids"]) == ["c1", "c2"]
 
-    def test_endpoint_clamps_to_config_window(
-        self, api_client: TestClient
-    ) -> None:
+    def test_endpoint_clamps_to_config_window(self, api_client: TestClient) -> None:
         """Server config says window=2; even if client requests window=300,
         only confirms in the 2s window should resolve."""
         from openakita.core.ui_confirm_bus import get_ui_confirm_bus
@@ -248,9 +244,7 @@ class TestBatchEndpoint:
         )
         assert r.json()["decision"] == "allow_once"
 
-    def test_no_candidates_returns_zero_not_error(
-        self, api_client: TestClient
-    ) -> None:
+    def test_no_candidates_returns_zero_not_error(self, api_client: TestClient) -> None:
         r = api_client.post(
             "/api/chat/security-confirm/batch",
             json={"session_id": "empty-session", "decision": "deny"},

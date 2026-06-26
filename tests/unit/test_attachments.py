@@ -25,7 +25,6 @@ from openakita.memory.unified_store import UnifiedStore
 
 
 class TestAttachmentType:
-
     def test_create_default(self):
         att = Attachment()
         assert att.id
@@ -97,7 +96,6 @@ class TestAttachmentType:
 
 
 class TestAttachmentStorage:
-
     @pytest.fixture
     def storage(self, tmp_path):
         db = MemoryStorage(tmp_path / "test.db")
@@ -139,38 +137,62 @@ class TestAttachmentStorage:
         assert len(results) == 3
 
     def test_search_with_query(self, storage):
-        storage.save_attachment(Attachment(
-            id="att-cat", filename="cat.jpg",
-            description="一只橘猫趴在沙发上", mime_type="image/jpeg",
-        ).to_dict())
-        storage.save_attachment(Attachment(
-            id="att-dog", filename="dog.jpg",
-            description="一只金毛犬在草地上玩耍", mime_type="image/jpeg",
-        ).to_dict())
+        storage.save_attachment(
+            Attachment(
+                id="att-cat",
+                filename="cat.jpg",
+                description="一只橘猫趴在沙发上",
+                mime_type="image/jpeg",
+            ).to_dict()
+        )
+        storage.save_attachment(
+            Attachment(
+                id="att-dog",
+                filename="dog.jpg",
+                description="一只金毛犬在草地上玩耍",
+                mime_type="image/jpeg",
+            ).to_dict()
+        )
 
         results = storage.search_attachments(query="橘猫")
         found_ids = [r["id"] for r in results]
         assert "att-cat" in found_ids
 
     def test_search_filter_mime(self, storage):
-        storage.save_attachment(Attachment(
-            id="att-img", filename="photo.jpg", mime_type="image/jpeg",
-        ).to_dict())
-        storage.save_attachment(Attachment(
-            id="att-pdf", filename="doc.pdf", mime_type="application/pdf",
-        ).to_dict())
+        storage.save_attachment(
+            Attachment(
+                id="att-img",
+                filename="photo.jpg",
+                mime_type="image/jpeg",
+            ).to_dict()
+        )
+        storage.save_attachment(
+            Attachment(
+                id="att-pdf",
+                filename="doc.pdf",
+                mime_type="application/pdf",
+            ).to_dict()
+        )
 
         results = storage.search_attachments(mime_type="image/")
         assert len(results) == 1
         assert results[0]["id"] == "att-img"
 
     def test_search_filter_direction(self, storage):
-        storage.save_attachment(Attachment(
-            id="att-in", filename="in.jpg", direction=AttachmentDirection.INBOUND,
-        ).to_dict())
-        storage.save_attachment(Attachment(
-            id="att-out", filename="out.pdf", direction=AttachmentDirection.OUTBOUND,
-        ).to_dict())
+        storage.save_attachment(
+            Attachment(
+                id="att-in",
+                filename="in.jpg",
+                direction=AttachmentDirection.INBOUND,
+            ).to_dict()
+        )
+        storage.save_attachment(
+            Attachment(
+                id="att-out",
+                filename="out.pdf",
+                direction=AttachmentDirection.OUTBOUND,
+            ).to_dict()
+        )
 
         results = storage.search_attachments(direction="outbound")
         assert len(results) == 1
@@ -184,27 +206,47 @@ class TestAttachmentStorage:
         assert storage.get_attachment("att-del") is None
 
     def test_get_session_attachments(self, storage):
-        storage.save_attachment(Attachment(
-            id="att-s1-1", session_id="sess-A", filename="a1.txt",
-        ).to_dict())
-        storage.save_attachment(Attachment(
-            id="att-s1-2", session_id="sess-A", filename="a2.txt",
-        ).to_dict())
-        storage.save_attachment(Attachment(
-            id="att-s2-1", session_id="sess-B", filename="b1.txt",
-        ).to_dict())
+        storage.save_attachment(
+            Attachment(
+                id="att-s1-1",
+                session_id="sess-A",
+                filename="a1.txt",
+            ).to_dict()
+        )
+        storage.save_attachment(
+            Attachment(
+                id="att-s1-2",
+                session_id="sess-A",
+                filename="a2.txt",
+            ).to_dict()
+        )
+        storage.save_attachment(
+            Attachment(
+                id="att-s2-1",
+                session_id="sess-B",
+                filename="b1.txt",
+            ).to_dict()
+        )
 
         results = storage.get_session_attachments("sess-A")
         assert len(results) == 2
         assert all(r["session_id"] == "sess-A" for r in results)
 
     def test_upsert_same_id(self, storage):
-        storage.save_attachment(Attachment(
-            id="att-up", filename="v1.txt", description="version 1",
-        ).to_dict())
-        storage.save_attachment(Attachment(
-            id="att-up", filename="v2.txt", description="version 2",
-        ).to_dict())
+        storage.save_attachment(
+            Attachment(
+                id="att-up",
+                filename="v1.txt",
+                description="version 1",
+            ).to_dict()
+        )
+        storage.save_attachment(
+            Attachment(
+                id="att-up",
+                filename="v2.txt",
+                description="version 2",
+            ).to_dict()
+        )
 
         result = storage.get_attachment("att-up")
         assert result["filename"] == "v2.txt"
@@ -217,7 +259,6 @@ class TestAttachmentStorage:
 
 
 class TestUnifiedStoreAttachments:
-
     @pytest.fixture
     def store(self, tmp_path):
         s = UnifiedStore(tmp_path / "unified.db")
@@ -226,8 +267,10 @@ class TestUnifiedStoreAttachments:
 
     def test_save_and_get(self, store):
         att = Attachment(
-            filename="cat.jpg", mime_type="image/jpeg",
-            description="橘猫照片", direction=AttachmentDirection.INBOUND,
+            filename="cat.jpg",
+            mime_type="image/jpeg",
+            description="橘猫照片",
+            direction=AttachmentDirection.INBOUND,
         )
         aid = store.save_attachment(att)
         assert aid == att.id
@@ -238,12 +281,20 @@ class TestUnifiedStoreAttachments:
         assert loaded.description == "橘猫照片"
 
     def test_search(self, store):
-        store.save_attachment(Attachment(
-            filename="cat.jpg", description="一只橘猫", mime_type="image/jpeg",
-        ))
-        store.save_attachment(Attachment(
-            filename="dog.jpg", description="一只金毛", mime_type="image/jpeg",
-        ))
+        store.save_attachment(
+            Attachment(
+                filename="cat.jpg",
+                description="一只橘猫",
+                mime_type="image/jpeg",
+            )
+        )
+        store.save_attachment(
+            Attachment(
+                filename="dog.jpg",
+                description="一只金毛",
+                mime_type="image/jpeg",
+            )
+        )
 
         results = store.search_attachments(query="橘猫")
         assert any(a.description == "一只橘猫" for a in results)
@@ -257,14 +308,19 @@ class TestUnifiedStoreAttachments:
         assert store.get_attachment(att.id) is None
 
     def test_session_attachments(self, store):
-        store.save_attachment(Attachment(
-            session_id="s1", filename="a.txt",
-        ))
-        store.save_attachment(Attachment(
-            session_id="s2", filename="b.txt",
-        ))
+        store.save_attachment(
+            Attachment(
+                session_id="s1",
+                filename="a.txt",
+            )
+        )
+        store.save_attachment(
+            Attachment(
+                session_id="s2",
+                filename="b.txt",
+            )
+        )
 
         results = store.get_session_attachments("s1")
         assert len(results) == 1
         assert results[0].filename == "a.txt"
-

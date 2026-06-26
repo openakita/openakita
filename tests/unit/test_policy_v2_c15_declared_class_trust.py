@@ -98,7 +98,9 @@ def test_default_source_heuristic_stricter_than_declared():
 def test_compute_effective_class_rejects_non_enum_declared():
     with pytest.raises(TypeError):
         compute_effective_class(
-            "tool", "destructive", DeclaredClassTrust.DEFAULT  # type: ignore[arg-type]
+            "tool",
+            "destructive",
+            DeclaredClassTrust.DEFAULT,  # type: ignore[arg-type]
         )
 
 
@@ -126,46 +128,32 @@ def test_compute_effective_class_propagates_explicit_source():
 def test_skill_trust_inferred_trusted_for_vetted_sources(level):
     """Matches pre-existing ``SkillEntry.is_trusted`` semantics —
     these three are vetted."""
-    assert (
-        infer_skill_declared_trust(trust_level=level) is DeclaredClassTrust.TRUSTED
-    )
+    assert infer_skill_declared_trust(trust_level=level) is DeclaredClassTrust.TRUSTED
 
 
 def test_skill_trust_inferred_default_for_remote():
-    assert (
-        infer_skill_declared_trust(trust_level="remote")
-        is DeclaredClassTrust.DEFAULT
-    )
+    assert infer_skill_declared_trust(trust_level="remote") is DeclaredClassTrust.DEFAULT
 
 
 def test_skill_trust_inferred_default_for_unknown_value():
     """Unrecognized trust_level → DEFAULT (safer to be conservative
     than to allow a typo to silently elevate trust)."""
-    assert (
-        infer_skill_declared_trust(trust_level="bogus")
-        is DeclaredClassTrust.DEFAULT
-    )
+    assert infer_skill_declared_trust(trust_level="bogus") is DeclaredClassTrust.DEFAULT
 
 
 def test_skill_trust_inferred_default_for_none():
-    assert (
-        infer_skill_declared_trust(trust_level=None) is DeclaredClassTrust.DEFAULT
-    )
+    assert infer_skill_declared_trust(trust_level=None) is DeclaredClassTrust.DEFAULT
 
 
 def test_skill_trust_override_wins_over_inference():
     """Operator override (future setup-center UI) trumps source-based
     inference in either direction."""
     assert (
-        infer_skill_declared_trust(
-            trust_level="builtin", override=DeclaredClassTrust.DEFAULT
-        )
+        infer_skill_declared_trust(trust_level="builtin", override=DeclaredClassTrust.DEFAULT)
         is DeclaredClassTrust.DEFAULT
     )
     assert (
-        infer_skill_declared_trust(
-            trust_level="remote", override=DeclaredClassTrust.TRUSTED
-        )
+        infer_skill_declared_trust(trust_level="remote", override=DeclaredClassTrust.TRUSTED)
         is DeclaredClassTrust.TRUSTED
     )
 
@@ -176,10 +164,7 @@ def test_skill_trust_override_wins_over_inference():
 
 
 def test_mcp_trust_explicit_trusted_only():
-    assert (
-        infer_mcp_declared_trust(server_trust_level="trusted")
-        is DeclaredClassTrust.TRUSTED
-    )
+    assert infer_mcp_declared_trust(server_trust_level="trusted") is DeclaredClassTrust.TRUSTED
 
 
 @pytest.mark.parametrize(
@@ -190,17 +175,11 @@ def test_mcp_trust_defaults_for_non_trusted(level):
     """The only value that grants TRUSTED is the literal string
     "trusted" (case-insensitive); pre-C15 configs (None / missing
     field) automatically fall to DEFAULT."""
-    assert (
-        infer_mcp_declared_trust(server_trust_level=level)
-        is DeclaredClassTrust.DEFAULT
-    )
+    assert infer_mcp_declared_trust(server_trust_level=level) is DeclaredClassTrust.DEFAULT
 
 
 def test_mcp_trust_case_insensitive_trusted():
-    assert (
-        infer_mcp_declared_trust(server_trust_level="TRUSTED")
-        is DeclaredClassTrust.TRUSTED
-    )
+    assert infer_mcp_declared_trust(server_trust_level="TRUSTED") is DeclaredClassTrust.TRUSTED
 
 
 def test_mcp_trust_override_wins_over_config():
@@ -218,9 +197,7 @@ def test_mcp_trust_override_wins_over_config():
 # ---------------------------------------------------------------------------
 
 
-def _register_external_skill(
-    reg, *, skill_id: str, trust_level: str, approval_class: str
-):
+def _register_external_skill(reg, *, skill_id: str, trust_level: str, approval_class: str):
     from openakita.skills.registry import SkillEntry
 
     entry = SkillEntry(

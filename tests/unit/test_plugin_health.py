@@ -73,9 +73,7 @@ def test_mixed_one_timeout_seven_exceptions_triggers():
 def test_permission_denied_is_no_op():
     t = PluginErrorTracker()
     for _ in range(50):
-        triggered = t.record_error(
-            "p1", "perm", "denied", kind="permission_denied"
-        )
+        triggered = t.record_error("p1", "perm", "denied", kind="permission_denied")
         assert triggered is False
     assert not t.is_disabled("p1")
     snap = t.health_snapshot("p1")
@@ -139,8 +137,7 @@ def test_old_errors_outside_window_drop_off():
     # Manually inject 3 stale timeouts (> ERROR_WINDOW seconds ago)
     stale = time.time() - ERROR_WINDOW - 10
     t._errors["p1"] = [
-        {"time": stale, "context": "old", "error": "x",
-         "kind": "timeout", "weight": 3}
+        {"time": stale, "context": "old", "error": "x", "kind": "timeout", "weight": 3}
         for _ in range(3)
     ]
     # A fresh single timeout: stale entries get pruned during record_error,
@@ -157,10 +154,8 @@ def test_health_snapshot_only_counts_within_window():
     fresh = time.time()
     stale = fresh - ERROR_WINDOW - 10
     t._errors["p1"] = [
-        {"time": stale, "context": "old", "error": "x",
-         "kind": "exception", "weight": 1},
-        {"time": fresh, "context": "new", "error": "y",
-         "kind": "exception", "weight": 1},
+        {"time": stale, "context": "old", "error": "x", "kind": "exception", "weight": 1},
+        {"time": fresh, "context": "new", "error": "y", "kind": "exception", "weight": 1},
     ]
     snap = t.health_snapshot("p1")
     assert snap["weighted_errors"] == 1

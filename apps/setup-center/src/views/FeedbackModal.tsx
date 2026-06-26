@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { downloadFile, showInFolder, invoke, IS_TAURI } from "../platform";
+import { downloadFile, showInFolder, invoke, IS_TAURI, onDragDrop, readFileBase64 } from "../platform";
 import { IconX, IconInfo } from "../icons";
 import { safeFetch } from "../providers";
 import {
@@ -59,7 +59,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
   const [steps, setSteps] = useState("");
   const [uploadLogs, setUploadLogs] = useState(true);
   const [uploadDebug, setUploadDebug] = useState(true);
-  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  const [, setSystemInfo] = useState<SystemInfo | null>(null);
 
   const [contactEmail, setContactEmail] = useState("");
   const [contactWechat, setContactWechat] = useState("");
@@ -295,6 +295,54 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
       addImages(imgs);
     }
   }, [addImages]);
+
+  // Tauri-native drag-drop: the webview-level listener captures OS file drops
+  // that never reach HTML5 drag events. Register when the modal is open so
+  // images dragged from the desktop land in the feedback form, not the chat.
+  const [tauriDragOver, setTauriDragOver] = useState(false);
+  useEffect(() => {
+    if (!open || !IS_TAURI) return;
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
+    const MIME_MAP: Record<string, string> = {
+      png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+      gif: "image/gif", webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml",
+    };
+
+    onDragDrop({
+      onEnter: () => { if (!cancelled) setTauriDragOver(true); },
+      onOver: () => { if (!cancelled) setTauriDragOver(true); },
+      onLeave: () => { if (!cancelled) setTauriDragOver(false); },
+      onDrop: (paths) => {
+        if (cancelled) return;
+        setTauriDragOver(false);
+        for (const filePath of paths) {
+          const name = filePath.split(/[\\/]/).pop() || "image.png";
+          const ext = (name.split(".").pop() || "").toLowerCase();
+          if (!IMAGE_EXTS.has(ext)) continue;
+          readFileBase64(filePath)
+            .then((dataUrl) => {
+              if (cancelled) return;
+              const commaIdx = dataUrl.indexOf(",");
+              const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+              const bin = atob(b64);
+              const bytes = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+              addImages([new File([bytes], name, { type: MIME_MAP[ext] || "image/png" })]);
+            })
+            .catch(() => {});
+        }
+      },
+    }).then((unsub) => { unlisten = unsub; });
+
+    return () => {
+      cancelled = true;
+      setTauriDragOver(false);
+      unlisten?.();
+    };
+  }, [open, addImages]);
 
   const resetForm = useCallback(() => {
     setMode(initialMode);
@@ -685,7 +733,9 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
               onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-border rounded-md py-3 text-center cursor-pointer text-[13px] text-muted-foreground transition-colors hover:border-primary/40"
+              className={`border-2 border-dashed rounded-md py-3 text-center cursor-pointer text-[13px] text-muted-foreground transition-colors hover:border-primary/40 ${
+                tauriDragOver ? "border-primary bg-primary/5" : "border-border"
+              }`}
               onDragEnter={(e) => { e.currentTarget.classList.add("border-primary"); }}
               onDragLeave={(e) => { e.currentTarget.classList.remove("border-primary"); }}
             >

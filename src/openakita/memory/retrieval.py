@@ -142,7 +142,9 @@ class MemoryQueryPreprocessor:
         return cleaned
 
     @classmethod
-    def should_skip_retrieval(cls, query: str, recent_messages: list[dict] | None = None) -> tuple[bool, str]:
+    def should_skip_retrieval(
+        cls, query: str, recent_messages: list[dict] | None = None
+    ) -> tuple[bool, str]:
         text = (query or "").strip()
         if not text:
             return True, "empty"
@@ -151,7 +153,11 @@ class MemoryQueryPreprocessor:
             return True, "control_only"
         if len(text) <= 3 and not any(h in text for h in cls._KEEP_SHORT_HINTS):
             return True, "too_short"
-        if len(text) <= 12 and not recent_messages and not any(h in lowered for h in cls._KEEP_SHORT_HINTS):
+        if (
+            len(text) <= 12
+            and not recent_messages
+            and not any(h in lowered for h in cls._KEEP_SHORT_HINTS)
+        ):
             return True, "short_without_context"
         return False, ""
 
@@ -187,9 +193,7 @@ class RetrievalEngine:
         self._decompose_cache: dict[str, dict] = {}
         self._external_sources: list = []
         self._plugin_hooks = None
-        self._scope_pairs: list[tuple[str, str, str, str]] = [
-            ("user", "", "default", "default")
-        ]
+        self._scope_pairs: list[tuple[str, str, str, str]] = [("user", "", "default", "default")]
         self._focus_terms: list[str] = []
 
     def set_focus_terms(self, terms: list[str] | None) -> None:
@@ -422,7 +426,11 @@ class RetrievalEngine:
     def _search_episodes(self, query: str, limit: int = 5) -> list[RetrievalCandidate]:
         entities = self._extract_query_entities(query)
         episodes: list[Episode] = []
-        session_ids = [owner for scope, owner, _user, _workspace in self._scope_pairs if scope == "session" and owner]
+        session_ids = [
+            owner
+            for scope, owner, _user, _workspace in self._scope_pairs
+            if scope == "session" and owner
+        ]
 
         for entity in entities[:3]:
             if session_ids:
@@ -1004,11 +1012,7 @@ class RetrievalEngine:
         ranked = sorted(candidates, key=lambda c: c.score, reverse=True)
         # 冷启动豁免：刚写入 1 小时内的记忆（recency_score >= 0.99 ≈ 1 小时），
         # 即便综合分低于 MIN_RERANK_SCORE 也保留，避免新加事实被一刀切。
-        return [
-            c
-            for c in ranked
-            if c.score >= self.MIN_RERANK_SCORE or c.recency_score >= 0.99
-        ]
+        return [c for c in ranked if c.score >= self.MIN_RERANK_SCORE or c.recency_score >= 0.99]
 
     # ==================================================================
     # Scoring Helpers

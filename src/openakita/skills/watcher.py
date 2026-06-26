@@ -140,9 +140,10 @@ def clear_all_skill_caches() -> None:
 
     # F13: Clear parser memoization cache
     try:
-        from .parser import SkillParser
+        from .parser import SkillParser, invalidate_global_parse_cache
 
         if hasattr(SkillParser, "_parse_cache"):
             SkillParser._parse_cache.clear()
+        invalidate_global_parse_cache()
     except Exception:
         pass

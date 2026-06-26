@@ -31,12 +31,14 @@ def _sync_web(query: str, max_results: int, region: str, safesearch: str) -> lis
     from ddgs import DDGS
 
     with DDGS() as ddgs:
-        return list(ddgs.text(
-            query,
-            max_results=max_results,
-            region=region,
-            safesearch=safesearch,
-        ))
+        return list(
+            ddgs.text(
+                query,
+                max_results=max_results,
+                region=region,
+                safesearch=safesearch,
+            )
+        )
 
 
 def _sync_news(
@@ -45,13 +47,15 @@ def _sync_news(
     from ddgs import DDGS
 
     with DDGS() as ddgs:
-        return list(ddgs.news(
-            query,
-            max_results=max_results,
-            region=region,
-            safesearch=safesearch,
-            timelimit=timelimit,
-        ))
+        return list(
+            ddgs.news(
+                query,
+                max_results=max_results,
+                region=region,
+                safesearch=safesearch,
+                timelimit=timelimit,
+            )
+        )
 
 
 async def _run(coro_func, *, timeout_seconds: float, **kwargs) -> list[dict]:

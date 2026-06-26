@@ -128,8 +128,7 @@ async def test_llm_review_continues_after_consecutive_risky_batches(store, tmp_p
     assert report["deleted"] == 0
     assert report["updated"] == 1
     assert any(
-        (store.get_semantic(mem.id).content or "").startswith("reviewed ")
-        for mem in memories
+        (store.get_semantic(mem.id).content or "").startswith("reviewed ") for mem in memories
     )
 
 
@@ -146,7 +145,9 @@ async def test_llm_review_checkpoint_resumes_remaining_batches(store, tmp_path):
                 content=json.dumps([{"id": mem_id, "action": "keep"} for mem_id in ids])
             )
 
-    memories = [SemanticMemory(content=f"可保留记忆 {idx}", importance_score=0.8) for idx in range(31)]
+    memories = [
+        SemanticMemory(content=f"可保留记忆 {idx}", importance_score=0.8) for idx in range(31)
+    ]
     for mem in memories:
         store.save_semantic(mem, skip_dedup=True)
 

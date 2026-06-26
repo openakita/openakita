@@ -203,9 +203,7 @@ def is_stale(data: dict[str, Any], *, now: datetime | None = None) -> tuple[bool
     if not _pid_alive(pid):
         return True, "pid_dead"
 
-    hb_deadline = heartbeat + timedelta(
-        seconds=HEARTBEAT_INTERVAL_SECONDS * HEARTBEAT_STALE_FACTOR
-    )
+    hb_deadline = heartbeat + timedelta(seconds=HEARTBEAT_INTERVAL_SECONDS * HEARTBEAT_STALE_FACTOR)
     if hb_deadline < now:
         return True, "heartbeat_stalled"
 
@@ -404,9 +402,7 @@ def _read_lock_safely(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _unlink_stale(
-    path: Path, *, reason: str, prior: dict[str, Any] | None = None
-) -> None:
+def _unlink_stale(path: Path, *, reason: str, prior: dict[str, Any] | None = None) -> None:
     try:
         path.unlink()
         logger.warning(
@@ -460,9 +456,15 @@ def scan_orphaned_locks(lock_dir: Path) -> list[OrphanLock]:
                 reason=reason,
                 pid=data.get("pid") if isinstance(data.get("pid"), int) else None,
                 hostname=data.get("hostname") if isinstance(data.get("hostname"), str) else None,
-                acquired_at=data.get("acquired_at") if isinstance(data.get("acquired_at"), str) else None,
-                heartbeat_at=data.get("heartbeat_at") if isinstance(data.get("heartbeat_at"), str) else None,
-                lease_until=data.get("lease_until") if isinstance(data.get("lease_until"), str) else None,
+                acquired_at=data.get("acquired_at")
+                if isinstance(data.get("acquired_at"), str)
+                else None,
+                heartbeat_at=data.get("heartbeat_at")
+                if isinstance(data.get("heartbeat_at"), str)
+                else None,
+                lease_until=data.get("lease_until")
+                if isinstance(data.get("lease_until"), str)
+                else None,
             )
         )
     return out

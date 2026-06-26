@@ -100,9 +100,7 @@ class TestApplyResolutionMatrix:
         set_engine_v2(engine, cfg)
         try:
             bus = get_ui_confirm_bus()
-            bus.store_pending(
-                "c4", "run_shell", {"command": "npm install lodash"}, session_id="s1"
-            )
+            bus.store_pending("c4", "run_shell", {"command": "npm install lodash"}, session_id="s1")
             bus.prepare("c4")
             ok = apply_resolution("c4", "allow_always")
             assert ok is True
@@ -123,7 +121,9 @@ class TestApplyResolutionMatrix:
         bus.prepare("c5")
         ok = apply_resolution("c5", "deny")
         assert ok is True
-        assert get_session_allowlist_manager().is_allowed("run_shell", {"command": "rm -rf /"}) is None
+        assert (
+            get_session_allowlist_manager().is_allowed("run_shell", {"command": "rm -rf /"}) is None
+        )
 
     def test_unknown_decision_writes_nothing(self) -> None:
         bus = get_ui_confirm_bus()
@@ -163,7 +163,9 @@ class TestApplyResolutionWakesWaiter:
             await done_task
             assert decision == "allow_session"
             # Side effect also landed
-            assert get_session_allowlist_manager().is_allowed("write_file", {"path": "/x"}) is not None
+            assert (
+                get_session_allowlist_manager().is_allowed("write_file", {"path": "/x"}) is not None
+            )
 
         asyncio.run(_scenario())
 
@@ -244,6 +246,4 @@ class TestPolicyV1FacadeDeleted:
                 # 注释/docstring 中的字面量提及 OK；这里查"赋值/读用"语句模式
                 # （`[...]` 下标），只会匹配可执行代码。
                 rel = py.relative_to(src_root.parent.parent)
-                assert name not in text, (
-                    f"v1 field-style access '{name}' resurrected in {rel}"
-                )
+                assert name not in text, f"v1 field-style access '{name}' resurrected in {rel}"

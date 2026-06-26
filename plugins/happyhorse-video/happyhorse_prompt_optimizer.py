@@ -95,9 +95,7 @@ async def optimize_prompt(
     returning the original prompt, so the caller can surface the error
     in the UI.
     """
-    level_instruction = LEVEL_INSTRUCTIONS.get(
-        level, LEVEL_INSTRUCTIONS["professional"]
-    )
+    level_instruction = LEVEL_INSTRUCTIONS.get(level, LEVEL_INSTRUCTIONS["professional"])
     mode_formula = MODE_FORMULAS.get(mode, MODE_FORMULAS["t2v"])
 
     user_msg = OPTIMIZE_USER_TEMPLATE.format(
@@ -115,28 +113,20 @@ async def optimize_prompt(
 
     if hasattr(brain, "think_lightweight"):
         try:
-            result = await brain.think_lightweight(
-                prompt=user_msg, system=OPTIMIZE_SYSTEM_PROMPT
-            )
-            text = (
-                getattr(result, "content", "")
-                or (result.get("content", "") if isinstance(result, dict) else str(result))
+            result = await brain.think_lightweight(prompt=user_msg, system=OPTIMIZE_SYSTEM_PROMPT)
+            text = getattr(result, "content", "") or (
+                result.get("content", "") if isinstance(result, dict) else str(result)
             )
             if text and text.strip():
                 return text
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "think_lightweight failed, falling back to think: %s", e
-            )
+            logger.warning("think_lightweight failed, falling back to think: %s", e)
 
     try:
         if hasattr(brain, "think"):
-            result = await brain.think(
-                prompt=user_msg, system=OPTIMIZE_SYSTEM_PROMPT
-            )
-            text = (
-                getattr(result, "content", "")
-                or (result.get("content", "") if isinstance(result, dict) else str(result))
+            result = await brain.think(prompt=user_msg, system=OPTIMIZE_SYSTEM_PROMPT)
+            text = getattr(result, "content", "") or (
+                result.get("content", "") if isinstance(result, dict) else str(result)
             )
             if not text or not text.strip():
                 raise PromptOptimizeError("LLM 返回了空内容")

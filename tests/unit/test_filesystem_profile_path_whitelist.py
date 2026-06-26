@@ -98,9 +98,7 @@ class TestAllowedRootsWithWhitelist:
     """Profiles that read ``cfg.workspace.paths``."""
 
     @pytest.mark.parametrize("profile", ["protect", "strict", "custom"])
-    def test_workspace_paths_returned_for_active_profiles(
-        self, tmp_path, monkeypatch, profile
-    ):
+    def test_workspace_paths_returned_for_active_profiles(self, tmp_path, monkeypatch, profile):
         ws_dir = tmp_path / "ws"
         ws_dir.mkdir()
         cfg = _make_cfg(profile_current=profile, workspace_paths=[str(ws_dir)])

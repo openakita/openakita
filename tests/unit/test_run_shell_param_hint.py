@@ -17,9 +17,7 @@ class TestRunShellParamHint:
         assert "常见误传字段" in msg
 
     def test_alias_script_detected(self):
-        msg = FilesystemHandler._format_run_shell_missing_command(
-            {"script": "ls -la"}
-        )
+        msg = FilesystemHandler._format_run_shell_missing_command({"script": "ls -la"})
         assert "你传了 'script'" in msg
         assert "改名为 'command'" in msg
 
@@ -38,9 +36,7 @@ class TestRunShellParamHint:
         assert "常见误传字段" in msg
 
     def test_unknown_keys_listed(self):
-        msg = FilesystemHandler._format_run_shell_missing_command(
-            {"foo": "bar", "baz": "qux"}
-        )
+        msg = FilesystemHandler._format_run_shell_missing_command({"foo": "bar", "baz": "qux"})
         # Both keys should appear in the listing
         assert "foo" in msg
         assert "baz" in msg
@@ -49,4 +45,3 @@ class TestRunShellParamHint:
         # Defensive: should not raise on weird input
         msg = FilesystemHandler._format_run_shell_missing_command(None)  # type: ignore[arg-type]
         assert "❌ run_shell 缺少必要参数" in msg
-

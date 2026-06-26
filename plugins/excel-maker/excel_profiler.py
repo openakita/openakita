@@ -40,7 +40,9 @@ def infer_column_type(values: list[Any]) -> str:
         return "empty"
     numeric = sum(1 for value in non_empty if _is_number(value))
     dates = sum(1 for value in non_empty if _is_date(value))
-    bools = sum(1 for value in non_empty if str(value).strip().lower() in {"true", "false", "是", "否"})
+    bools = sum(
+        1 for value in non_empty if str(value).strip().lower() in {"true", "false", "是", "否"}
+    )
     total = len(non_empty)
     if numeric / total >= 0.8:
         return "number"
@@ -78,14 +80,19 @@ def _column_profile(name: str, values: list[Any]) -> dict[str, Any]:
 
 
 class WorkbookProfiler:
-    def profile_import(self, import_profile_path: str | Path, output_path: str | Path | None = None) -> dict[str, Any]:
+    def profile_import(
+        self, import_profile_path: str | Path, output_path: str | Path | None = None
+    ) -> dict[str, Any]:
         import_profile = json.loads(Path(import_profile_path).read_text(encoding="utf-8"))
         preview = import_profile.get("preview", {})
         sheet_profiles = []
         for sheet in import_profile.get("sheets", []):
             name = sheet.get("name", "")
             sample = preview.get(name, {})
-            headers = [str(header or f"Column_{idx + 1}") for idx, header in enumerate(sample.get("headers", []))]
+            headers = [
+                str(header or f"Column_{idx + 1}")
+                for idx, header in enumerate(sample.get("headers", []))
+            ]
             rows = sample.get("rows", [])
             max_cols = max([len(headers), *(len(row) for row in rows)])
             if len(headers) < max_cols:
@@ -95,7 +102,9 @@ class WorkbookProfiler:
                 values = [row[idx] if idx < len(row) else "" for row in rows]
                 columns.append(_column_profile(header, values))
             metrics = [col["name"] for col in columns if col["type"] == "number"]
-            dimensions = [col["name"] for col in columns if col["type"] in {"text", "date", "boolean"}]
+            dimensions = [
+                col["name"] for col in columns if col["type"] in {"text", "date", "boolean"}
+            ]
             sheet_profiles.append(
                 {
                     **sheet,
@@ -105,7 +114,9 @@ class WorkbookProfiler:
                     "quality_warnings": [
                         warning
                         for col in columns
-                        for warning in [f"{col['name']}: {item}" for item in col.get("warnings", [])]
+                        for warning in [
+                            f"{col['name']}: {item}" for item in col.get("warnings", [])
+                        ]
                     ],
                 }
             )
@@ -117,6 +128,7 @@ class WorkbookProfiler:
             "sampled": True,
         }
         if output_path:
-            Path(output_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            Path(output_path).write_text(
+                json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
         return result
-

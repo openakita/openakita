@@ -651,4 +651,3 @@ def build_catalog() -> CatalogPayload:
         animate_mix_modes=list(ANIMATE_MIX_MODES),
         cost_threshold=DEFAULT_COST_THRESHOLD_CNY,
     )
-

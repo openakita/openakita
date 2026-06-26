@@ -107,9 +107,7 @@ class TestYicaiFetcher:
         assert "yicai.com" in items[0].url
         assert items[0].title == "央行开展逆回购操作"
 
-    def test_parses_current_news_title_fields(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_parses_current_news_title_fields(self, monkeypatch: pytest.MonkeyPatch) -> None:
         payload = [
             {
                 "NewsTitle": "第一财经当前接口标题",
@@ -137,13 +135,13 @@ class TestYicaiFetcher:
 class TestNBDFetcher:
     def test_parses_html_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
         html = (
-            '<html><body>'
+            "<html><body>"
             '<a href="https://www.nbd.com.cn/articles/2026-04-24/001.html">'
-            'A股三大指数高开</a>'
-            '<span>2026-04-24 09:30:00</span>'
+            "A股三大指数高开</a>"
+            "<span>2026-04-24 09:30:00</span>"
             '<a href="https://www.nbd.com.cn/articles/2026-04-24/002.html">'
-            '上市公司公告</a>'
-            '</body></html>'
+            "上市公司公告</a>"
+            "</body></html>"
         )
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -162,11 +160,11 @@ class TestNBDFetcher:
 class TestSTCNFetcher:
     def test_parses_html_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
         html = (
-            '<html><body>'
+            "<html><body>"
             '<a href="https://www.stcn.com/article/detail/abc123.html">'
-            '证券市场要闻</a>'
-            '<span>2026-04-24 10:00</span>'
-            '</body></html>'
+            "证券市场要闻</a>"
+            "<span>2026-04-24 10:00</span>"
+            "</body></html>"
         )
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -178,15 +176,13 @@ class TestSTCNFetcher:
         assert len(items) >= 1
         assert items[0].title == "证券市场要闻"
 
-    def test_parses_current_relative_article_links(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_parses_current_relative_article_links(self, monkeypatch: pytest.MonkeyPatch) -> None:
         html = (
             '<html><body><li class="no-pr"><div class="tt">'
             '<a href="/article/detail/3897513.html" target="_blank">\n'
             "  4月300城宅地成交平均溢价率8.9%  "
             "</a></div>"
-            '<span>2026-05-07 10:30</span>'
+            "<span>2026-05-07 10:30</span>"
             "</li></body></html>"
         )
 
@@ -217,14 +213,14 @@ class TestEastMoneyFetcher:
         html = (
             "<html><body><ul class='newsList'>"
             "<li><p class='title'><a "
-            "href=\"//finance.eastmoney.com/a/202604240001.html\" "
-            "target=\"_blank\" title=\"A股三大指数低开高走\">"
+            'href="//finance.eastmoney.com/a/202604240001.html" '
+            'target="_blank" title="A股三大指数低开高走">'
             "A股三大指数低开高走</a></p>"
             "<span class='time'>2026-04-24 09:10</span></li>"
             "<li><p class='title'><a "
-            "href=\"https://finance.eastmoney.com/a/202604240002.html\" "
-            "title=\"上市公司公告速览\">上市公司公告速览</a></p></li>"
-            "<li><p class='title'><a href=\"\" title=\"\">drop me</a></p>"
+            'href="https://finance.eastmoney.com/a/202604240002.html" '
+            'title="上市公司公告速览">上市公司公告速览</a></p></li>'
+            '<li><p class=\'title\'><a href="" title="">drop me</a></p>'
             "</li>"
             "</ul></body></html>"
         )
@@ -243,9 +239,7 @@ class TestEastMoneyFetcher:
         url_lookup = {it.title: it.url for it in items}
         assert url_lookup["A股三大指数低开高走"].startswith("https://")
 
-    def test_uses_current_dynamic_json_api(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_uses_current_dynamic_json_api(self, monkeypatch: pytest.MonkeyPatch) -> None:
         payload = {
             "code": "1",
             "message": "success",
@@ -286,16 +280,23 @@ class TestNewsNowFetcher:
         items = _run(NewsNowFetcher(config=cfg).fetch())
         assert items == []
 
-    def test_public_mode_iterates_source_defs(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_public_mode_iterates_source_defs(self, monkeypatch: pytest.MonkeyPatch) -> None:
         called_pids: list[str] = []
 
-        async def fake_fetch(*, platform_id: str, source_id: str, config: Any, timeout_sec: float) -> list[NormalizedItem]:
+        async def fake_fetch(
+            *, platform_id: str, source_id: str, config: Any, timeout_sec: float
+        ) -> list[NormalizedItem]:
             called_pids.append(platform_id)
-            return [NormalizedItem(source_id=source_id, title=f"from {platform_id}", url=f"https://x.com/{platform_id}")]
+            return [
+                NormalizedItem(
+                    source_id=source_id,
+                    title=f"from {platform_id}",
+                    url=f"https://x.com/{platform_id}",
+                )
+            ]
 
         import finpulse_fetchers.newsnow as nn_mod
+
         monkeypatch.setattr(nn_mod, "fetch_from_newsnow", fake_fetch)
         monkeypatch.setattr(nn_mod, "jittered_sleep", lambda *a, **k: asyncio.sleep(0))
 
@@ -327,14 +328,10 @@ class TestFedFOMCCalendarGate:
             pytest.fail("fed_fomc must not hit the network on non-release days")
 
         _patch_transport(monkeypatch, handler)
-        items = _run(
-            FedFOMCFetcher(config={"fed_fomc.use_calendar_gate": "true"}).fetch()
-        )
+        items = _run(FedFOMCFetcher(config={"fed_fomc.use_calendar_gate": "true"}).fetch())
         assert items == []
 
-    def test_empty_calendar_allows_scrape(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_calendar_allows_scrape(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # An empty calendar means "gate disabled"; the fetcher proceeds.
         if not BS4_AVAILABLE:
             pytest.skip("bs4 not installed")
@@ -368,9 +365,7 @@ class TestGenericRSSFetcher:
         assert fetcher._last_via == "none"
         assert fetcher._last_via_reason == "rss:not_configured"
 
-    @pytest.mark.skipif(
-        not FEEDPARSER_AVAILABLE, reason="feedparser not installed"
-    )
+    @pytest.mark.skipif(not FEEDPARSER_AVAILABLE, reason="feedparser not installed")
     def test_multi_feed_aggregation(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def _make_body(feed_id: int) -> str:
             return (
@@ -388,11 +383,7 @@ class TestGenericRSSFetcher:
             return httpx.Response(200, text=_make_body(2))
 
         _patch_transport(monkeypatch, handler)
-        cfg = {
-            "rss_generic.feeds": (
-                "https://f1.example/rss\nhttps://f2.example/rss"
-            )
-        }
+        cfg = {"rss_generic.feeds": ("https://f1.example/rss\nhttps://f2.example/rss")}
         items = _run(GenericRSSFetcher(config=cfg).fetch())
         # Each feed's item has ``extra['feed_url']`` threaded through.
         urls = [item.url for item in items]
@@ -427,9 +418,7 @@ class TestParseFeedStdlibFallback:
     rows — the regression reported by the user with five failing cards.
     """
 
-    def test_rss_2_0_parses_without_feedparser(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_rss_2_0_parses_without_feedparser(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Force the fallback path regardless of whether feedparser is
         # actually installed in the dev env.
         import finpulse_fetchers.rss as rss_mod
@@ -460,9 +449,7 @@ class TestParseFeedStdlibFallback:
         assert items[0].summary and "bold" in items[0].summary
         assert items[0].published_at and "2024" in items[0].published_at
 
-    def test_atom_parses_without_feedparser(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_atom_parses_without_feedparser(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import finpulse_fetchers.rss as rss_mod
 
         monkeypatch.setattr(rss_mod, "FEEDPARSER_AVAILABLE", False)
@@ -506,15 +493,11 @@ class TestFetcherContract:
             ("finpulse_fetchers.stcn", "STCNFetcher"),
         ],
     )
-    def test_each_fetcher_defines_source_id(
-        self, module_name: str, class_name: str
-    ) -> None:
+    def test_each_fetcher_defines_source_id(self, module_name: str, class_name: str) -> None:
         mod = importlib.import_module(module_name)
         cls = getattr(mod, class_name)
         assert cls.source_id, f"{class_name} missing source_id"
-        assert callable(getattr(cls, "fetch", None)), (
-            f"{class_name} must define async fetch()"
-        )
+        assert callable(getattr(cls, "fetch", None)), f"{class_name} must define async fetch()"
 
 
 # ── NormalizedItem cross-source dedupe hash ─────────────────────────────

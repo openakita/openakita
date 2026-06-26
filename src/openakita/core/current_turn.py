@@ -12,7 +12,9 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlunparse
+
+from ..utils.url_safety import safe_urlparse
 
 _URL_RE = re.compile(r"https?://[^\s<>'\"`，。！？、；；）)\]}】]+", re.IGNORECASE)
 _HISTORY_REF_RE = re.compile(
@@ -74,7 +76,9 @@ class SessionObjectRegistry:
             return ()
         if turn.has_objects and not turn.allows_history_reference:
             return ()
-        if not turn.has_objects and not (turn.has_implicit_reference or turn.allows_history_reference):
+        if not turn.has_objects and not (
+            turn.has_implicit_reference or turn.allows_history_reference
+        ):
             return ()
 
         kinds = _requested_kinds(turn.text)
@@ -352,7 +356,7 @@ class CurrentTurnInput:
             return message
         latest_marker = "[最新消息]\n"
         if message.startswith(latest_marker):
-            return f"{latest_marker}{block}\n\n{message[len(latest_marker):]}"
+            return f"{latest_marker}{block}\n\n{message[len(latest_marker) :]}"
         return f"{block}\n\n{message}" if message else block
 
     def validate_tool_call(self, tool_name: str, tool_input: dict[str, Any]) -> str | None:
@@ -368,16 +372,15 @@ class CurrentTurnInput:
 
         if tool_name in _URL_TOOLS:
             requested_url = str(
-                tool_input.get("url")
-                or tool_input.get("href")
-                or tool_input.get("link")
-                or ""
+                tool_input.get("url") or tool_input.get("href") or tool_input.get("link") or ""
             ).strip()
             if requested_url:
                 return self._validate_url_tool(tool_name, requested_url, active_urls)
 
         if tool_name in _BROWSER_CURRENT_PAGE_TOOLS and active_urls:
-            if not self.urls_grounded and not self._matches_url(self.browser_current_url, active_urls):
+            if not self.urls_grounded and not self._matches_url(
+                self.browser_current_url, active_urls
+            ):
                 return (
                     "⚠️ 当前对话有明确引用 URL，但浏览器当前页尚未确认是该 URL。\n"
                     f"应使用的 URL: {self._url_list_text(active_urls)}\n"
@@ -415,10 +418,7 @@ class CurrentTurnInput:
             return
         if tool_name in _URL_TOOLS:
             url = str(
-                tool_input.get("url")
-                or tool_input.get("href")
-                or tool_input.get("link")
-                or ""
+                tool_input.get("url") or tool_input.get("href") or tool_input.get("link") or ""
             ).strip()
             if not url:
                 return
@@ -438,11 +438,15 @@ class CurrentTurnInput:
 
     def _append_object_lines(self, lines: list[str], *, prefix: str) -> None:
         if self.urls:
-            lines.append(f"- {prefix} URL: " + "; ".join(obj.label or obj.value for obj in self.urls))
+            lines.append(
+                f"- {prefix} URL: " + "; ".join(obj.label or obj.value for obj in self.urls)
+            )
         if self.images:
             lines.append(f"- {prefix}图片: " + "; ".join(_display_obj(obj) for obj in self.images))
         if self.files:
-            lines.append(f"- {prefix}文件/文档: " + "; ".join(_display_obj(obj) for obj in self.files))
+            lines.append(
+                f"- {prefix}文件/文档: " + "; ".join(_display_obj(obj) for obj in self.files)
+            )
         if self.videos:
             lines.append(f"- {prefix}视频: " + "; ".join(_display_obj(obj) for obj in self.videos))
         if self.audio:
@@ -560,7 +564,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 def _normalize_url(url: str) -> str:
     raw = (url or "").strip().rstrip(".,;:!?'\"`)）】")
-    parsed = urlparse(raw)
+    parsed = safe_urlparse(raw)
     if not parsed.scheme or not parsed.netloc:
         return raw
     path = parsed.path.rstrip("/") or "/"

@@ -32,7 +32,7 @@ from .types import normalize_tags
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 # Process-level singleton registry: same db_path → same MemoryStorage instance
 _instance_registry: dict[str, MemoryStorage] = {}
@@ -59,7 +59,9 @@ def checkpoint_and_close_all_storages(timeout_mode: bool = True) -> None:
         try:
             storage.checkpoint_and_close(truncate=timeout_mode)
         except Exception as e:
-            logger.warning("[MemoryStorage] Checkpoint/close failed for %s: %s", storage._db_path, e)
+            logger.warning(
+                "[MemoryStorage] Checkpoint/close failed for %s: %s", storage._db_path, e
+            )
 
 
 def _is_db_locked(e: Exception) -> bool:
@@ -105,21 +107,46 @@ class MemoryStorage:
     # ======================================================================
 
     def _init_db(self) -> None:
-        conn: sqlite3.Connection | None = None
-        try:
-            if self._is_sync_folder_path() and os.environ.get("OPENAKITA_ALLOW_SYNC_FOLDER_DB") != "1":
-                raise MemoryStorageUnavailable(
-                    "path_in_sync_folder",
-                    details=str(self._db_path),
-                )
-            conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-            conn.execute(f"PRAGMA busy_timeout={self._BUSY_TIMEOUT_MS}")
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA foreign_keys=ON")
-            self._conn = conn
+        # `path_in_sync_folder` is a domain concern for the memory subsystem
+        # (we surface it through MemoryStorageUnavailable so memory_repair
+        # can recognise it), so we keep the pre-check here even though
+        # safe_open_sync would also catch it.
+        if self._is_sync_folder_path() and os.environ.get("OPENAKITA_ALLOW_SYNC_FOLDER_DB") != "1":
+            raise MemoryStorageUnavailable(
+                "path_in_sync_folder",
+                details=str(self._db_path),
+            )
 
-            self.quick_check_or_raise()
+        # Delegate the actual open + PRAGMA + quick_check matrix to the
+        # shared safe_sqlite helper. This consolidates the connection-open
+        # path with token_tracking / asset_bus / feedback_store etc., so
+        # any future safety tweak (e.g. fsync, journal mode bump, retry
+        # heuristic) only has to land in one file.
+        from openakita.storage.safe_sqlite import SQLiteUnavailable, safe_open_sync
+
+        try:
+            conn = safe_open_sync(
+                self._db_path,
+                want_wal=True,
+                busy_ms=self._BUSY_TIMEOUT_MS,
+                run_quick_check=True,
+                foreign_keys=True,
+                check_same_thread=False,
+            )
+        except SQLiteUnavailable as e:
+            # Map safe_sqlite reasons to the historical MemoryStorageUnavailable
+            # reason vocabulary so callers (memory_repair UI, telemetry events,
+            # tests) keep working unchanged. "corrupted" → "schema_corrupt"
+            # is the only renaming; everything else passes through.
+            mapped_reason = "schema_corrupt" if e.reason == "corrupted" else e.reason
+            raise MemoryStorageUnavailable(
+                mapped_reason,
+                details=e.details or str(e),
+                extra=dict(e.extra),
+            ) from e
+
+        self._conn = conn
+        try:
             current_version = self._get_schema_version()
             if current_version > _SCHEMA_VERSION:
                 raise MemoryStorageUnavailable(
@@ -165,17 +192,30 @@ class MemoryStorage:
         self._conn = None
 
     def quick_check_or_raise(self) -> None:
+        """Run ``PRAGMA quick_check`` and translate failures to MemoryStorageUnavailable.
+
+        Implementation now delegates to the shared safe_sqlite helper so the
+        memory subsystem and every other SQLite caller share one
+        quick_check implementation. The thrown exception type stays
+        ``MemoryStorageUnavailable`` so existing memory_repair / telemetry
+        consumers don't need to change.
+        """
         if self._conn is None:
             raise MemoryStorageUnavailable("not_open", details="database connection is not open")
+        from openakita.storage.safe_sqlite import (
+            SQLiteUnavailable,
+            quick_check_or_raise_sync,
+        )
+
         try:
-            row = self._conn.execute("PRAGMA quick_check").fetchone()
-        except sqlite3.DatabaseError as e:
-            if _is_corruption_error(e):
-                raise MemoryStorageUnavailable("schema_corrupt", details=str(e)) from e
-            raise
-        result = str(row[0] if row else "").strip().lower()
-        if result != "ok":
-            raise MemoryStorageUnavailable("schema_corrupt", details=result or "quick_check failed")
+            quick_check_or_raise_sync(self._conn, path=self._db_path)
+        except SQLiteUnavailable as e:
+            mapped_reason = "schema_corrupt" if e.reason == "corrupted" else e.reason
+            raise MemoryStorageUnavailable(
+                mapped_reason,
+                details=e.details or str(e),
+                extra=dict(e.extra),
+            ) from e
 
     def _get_schema_version(self) -> int:
         try:
@@ -271,6 +311,8 @@ class MemoryStorage:
                 self._migrate_v2_to_v3(mig_conn, commit=False)
             if from_version < 4:
                 self._migrate_v3_to_v4(mig_conn, commit=False)
+            if from_version < 5:
+                self._migrate_v4_to_v5(mig_conn, commit=False)
 
             self._set_schema_version(_SCHEMA_VERSION, conn=mig_conn, commit=False)
             mig_conn.execute("COMMIT")
@@ -498,8 +540,7 @@ class MemoryStorage:
         #
         # 这一步只补 session_tenants，**不动** memories 表本身，零数据丢失风险。
         existing_sessions = {
-            row[0]
-            for row in c.execute("SELECT session_id FROM session_tenants").fetchall()
+            row[0] for row in c.execute("SELECT session_id FROM session_tenants").fetchall()
         }
         backfill_rows: list[tuple[str, str, str, str]] = []
         for (session_id,) in c.execute(
@@ -509,9 +550,11 @@ class MemoryStorage:
             if not session_id or session_id in existing_sessions:
                 continue
             parts = session_id.split("__")
-            if len(parts) >= 3 and parts[2] and parts[2] not in {
-                "default", "anonymous", "system", "legacy", ""
-            }:
+            if (
+                len(parts) >= 3
+                and parts[2]
+                and parts[2] not in {"default", "anonymous", "system", "legacy", ""}
+            ):
                 user_id = parts[2]
             else:
                 user_id = "default"
@@ -547,6 +590,42 @@ class MemoryStorage:
         except sqlite3.OperationalError:
             pass
 
+        if commit:
+            c.commit()
+
+    def _migrate_v4_to_v5(
+        self,
+        conn: sqlite3.Connection | None = None,
+        *,
+        commit: bool = True,
+    ) -> None:
+        """Add ``conversation_turns.metadata`` JSON column.
+
+        v1.27.15 (plan v1.28 S2 P1-6).  Old schemas had no place to record
+        per-turn metadata, so ``Session.append_marker`` could persist the
+        bare role/content of a ``marker_type="aborted_partial"`` /
+        ``"preempted"`` message but lost the marker_type itself — which
+        meant the memory extraction lifecycle could not distinguish a
+        real assistant turn from a "[task was interrupted]" placeholder
+        and would happily index the placeholder as a long-term memory.
+
+        Idempotent ALTER (only adds the column if not already present, in
+        case the table was just created at v5 in this same session).
+        """
+        c = conn or self._conn
+        # FIX-D (post-S2 audit): do NOT swallow ALTER TABLE failures.  If
+        # we silently continue and then ``_set_schema_version(5)`` bumps
+        # the schema marker, the database lands in a "claims v5 but has
+        # no metadata column" state, causing every subsequent
+        # ``save_turn`` INSERT (11 placeholders against a 10-column
+        # table) to fail with OperationalError.  Letting the exception
+        # propagate makes the migration transaction rollback so the
+        # next startup retries cleanly at v4.
+        cur = c.execute("PRAGMA table_info(conversation_turns)")
+        cols = {row[1] for row in cur.fetchall()}
+        if "metadata" not in cols:
+            c.execute("ALTER TABLE conversation_turns ADD COLUMN metadata TEXT")
+            logger.info("[MemoryStorage] v4→v5: added conversation_turns.metadata column")
         if commit:
             c.commit()
 
@@ -679,6 +758,7 @@ class MemoryStorage:
                 token_estimate INTEGER,
                 episode_id TEXT,
                 extracted BOOLEAN DEFAULT FALSE,
+                metadata TEXT,
                 UNIQUE(session_id, turn_index)
             )
         """)
@@ -1057,9 +1137,9 @@ class MemoryStorage:
             return False
         with self._lock:
             try:
-                self._conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+                cursor = self._conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
                 self._conn.commit()
-                return True
+                return cursor.rowcount > 0
             except Exception as e:
                 if _is_db_locked(e):
                     raise
@@ -1226,10 +1306,15 @@ class MemoryStorage:
         except Exception:
             return 0
 
-    SORTABLE_COLUMNS = frozenset({
-        "importance_score", "created_at", "updated_at",
-        "last_accessed_at", "access_count",
-    })
+    SORTABLE_COLUMNS = frozenset(
+        {
+            "importance_score",
+            "created_at",
+            "updated_at",
+            "last_accessed_at",
+            "access_count",
+        }
+    )
 
     def query_paged(
         self,
@@ -1284,17 +1369,13 @@ class MemoryStorage:
         where = " AND ".join(conditions) if conditions else "1=1"
 
         try:
-            count_cur = self._conn.execute(
-                f"SELECT COUNT(*) FROM memories WHERE {where}", params
-            )
+            count_cur = self._conn.execute(f"SELECT COUNT(*) FROM memories WHERE {where}", params)
             total = count_cur.fetchone()[0]
 
             order = sort_order.upper()
             page_params = params + [limit, offset]
             cursor = self._conn.execute(
-                f"SELECT * FROM memories WHERE {where} "
-                f"ORDER BY {sort_by} {order} "
-                f"LIMIT ? OFFSET ?",
+                f"SELECT * FROM memories WHERE {where} ORDER BY {sort_by} {order} LIMIT ? OFFSET ?",
                 page_params,
             )
             rows = self._rows_to_dicts(cursor)
@@ -1509,8 +1590,7 @@ class MemoryStorage:
         table_expr = "episodes"
         if use_tenant_filter:
             table_expr = (
-                "episodes INNER JOIN session_tenants st "
-                "ON episodes.session_id = st.session_id"
+                "episodes INNER JOIN session_tenants st ON episodes.session_id = st.session_id"
             )
             if user_id is not None:
                 conditions.append("st.user_id = ?")
@@ -1737,8 +1817,7 @@ class MemoryStorage:
                 )
             else:
                 cur = self._conn.execute(
-                    "SELECT session_id FROM session_tenants "
-                    "WHERE user_id = ? AND workspace_id = ?",
+                    "SELECT session_id FROM session_tenants WHERE user_id = ? AND workspace_id = ?",
                     (user_id, workspace_id),
                 )
             return [row[0] for row in cur.fetchall() if row[0]]
@@ -1788,7 +1867,8 @@ class MemoryStorage:
         if not self._conn:
             return 0
         if (
-            not from_workspace_id or not to_workspace_id
+            not from_workspace_id
+            or not to_workspace_id
             or from_workspace_id == to_workspace_id
             or not user_id
         ):
@@ -1825,7 +1905,11 @@ class MemoryStorage:
                     logger.info(
                         "[MemoryStorage] workspace migrate: %d rows scope=%s user_id=%s "
                         "from %s → %s",
-                        moved, scope, user_id, from_workspace_id, to_workspace_id,
+                        moved,
+                        scope,
+                        user_id,
+                        from_workspace_id,
+                        to_workspace_id,
                     )
                 return moved
             except Exception as e:
@@ -1888,19 +1972,41 @@ class MemoryStorage:
         tool_results: list[dict] | None = None,
         timestamp: str | None = None,
         token_estimate: int | None = None,
+        metadata: dict | None = None,
     ) -> None:
+        """Persist a single turn.
+
+        v1.27.15 (P1-6): added ``metadata`` JSON column persistence.
+        Lifecycle extraction reads ``metadata.marker_type`` to skip
+        ``preempted`` / ``aborted_partial`` markers (they should NOT
+        become long-term memories).
+        """
         if not self._conn:
             return
         ts = timestamp or datetime.now().isoformat()
         has_tools = bool(tool_calls)
+        # Only persist non-empty metadata; saves a few bytes per row
+        # and keeps queries that filter ``metadata IS NULL`` meaningful.
+        meta_json: str | None = None
+        if metadata:
+            try:
+                meta_json = json.dumps(metadata, ensure_ascii=False, default=str)
+            except Exception:
+                meta_json = None
+        # Auto-mark marker turns as "extracted" so the lifecycle background
+        # loop never picks them up.  This is the second line of defense
+        # alongside the lifecycle-side filter — even if a future code path
+        # forgets to filter, the marker still won't pollute memory.
+        marker_type = (metadata or {}).get("marker_type")
+        is_marker = marker_type in ("preempted", "aborted_partial")
         with self._lock:
             try:
                 self._conn.execute(
                     """
                     INSERT OR REPLACE INTO conversation_turns
                     (session_id, turn_index, role, content, tool_calls, tool_results,
-                     has_tool_calls, timestamp, token_estimate, extracted)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)
+                     has_tool_calls, timestamp, token_estimate, extracted, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -1912,6 +2018,8 @@ class MemoryStorage:
                         has_tools,
                         ts,
                         token_estimate,
+                        bool(is_marker),
+                        meta_json,
                     ),
                 )
                 self._conn.commit()
@@ -1930,7 +2038,12 @@ class MemoryStorage:
                     "ORDER BY timestamp ASC LIMIT ?",
                     (limit,),
                 )
-                return self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
+                # v1.27.15: also parse ``metadata`` JSON so callers can
+                # short-circuit on ``marker_type``.
+                return self._rows_to_dicts(
+                    cur,
+                    json_fields=["tool_calls", "tool_results", "metadata"],
+                )
             except Exception as e:
                 logger.error(f"Failed to get unextracted turns: {e}")
                 return []
@@ -2147,9 +2260,7 @@ class MemoryStorage:
             conditions.append("st.workspace_id = ?")
             params.append(workspace_id)
         if session_id:
-            conditions.append(
-                "ct.session_id = ?" if use_tenant_filter else "session_id = ?"
-            )
+            conditions.append("ct.session_id = ?" if use_tenant_filter else "session_id = ?")
             params.append(session_id)
         conditions.append(("ct." if use_tenant_filter else "") + "timestamp >= ?")
         params.append(cutoff)
@@ -2166,8 +2277,7 @@ class MemoryStorage:
         ordering = "ct.timestamp DESC" if use_tenant_filter else "timestamp DESC"
         try:
             cur = self._conn.execute(
-                f"SELECT {select_cols} FROM {table_expr} WHERE {where} "
-                f"ORDER BY {ordering} LIMIT ?",
+                f"SELECT {select_cols} FROM {table_expr} WHERE {where} ORDER BY {ordering} LIMIT ?",
                 params,
             )
             return self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
@@ -2540,6 +2650,16 @@ class MemoryStorage:
             if _instance_registry.get(key) is self:
                 del _instance_registry[key]
 
+    async def quiesce(self) -> None:
+        """Close the underlying sqlite handle for quarantine to rename files.
+
+        Async signature for consistency with the rest of the quiesce protocol;
+        internally just delegates to :meth:`close`. Idempotent.
+        """
+        import asyncio as _asyncio
+
+        await _asyncio.to_thread(self.close)
+
     def checkpoint_and_close(self, *, truncate: bool = True) -> None:
         with self._lock:
             conn = self._conn
@@ -2565,7 +2685,9 @@ class MemoryStorage:
         if self._conn is None or not self._db_path.exists():
             return None
         if self._is_sync_folder_path() and os.environ.get("OPENAKITA_FORCE_SNAPSHOT") != "1":
-            logger.warning("[MemoryStorage] Snapshot skipped for sync folder path: %s", self._db_path)
+            logger.warning(
+                "[MemoryStorage] Snapshot skipped for sync folder path: %s", self._db_path
+            )
             return None
         size = self._db_path.stat().st_size
         if size > max_size_bytes:
@@ -2590,7 +2712,9 @@ class MemoryStorage:
                     row = check_conn.execute("PRAGMA quick_check").fetchone()
                     if str(row[0] if row else "").lower() != "ok":
                         snapshot.unlink(missing_ok=True)
-                        raise MemoryStorageUnavailable("schema_corrupt", "snapshot quick_check failed")
+                        raise MemoryStorageUnavailable(
+                            "schema_corrupt", "snapshot quick_check failed"
+                        )
                 finally:
                     check_conn.close()
                 self._prune_backups(pattern=f"{self._db_path.name}.snapshot.*", keep=keep)

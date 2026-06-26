@@ -36,9 +36,7 @@ def test_emit_writes_to_session_context():
     assert ev["iteration"] == 3
     assert ev["exit_reason"] == "completed"
     assert ev["messages_offset"] == 5
-    assert sess.context.task_checkpoints == [
-        {k: v for k, v in ev.items() if k != "type"}
-    ]
+    assert sess.context.task_checkpoints == [{k: v for k, v in ev.items() if k != "type"}]
 
 
 def test_emit_handles_none_session():
@@ -166,7 +164,7 @@ def test_emit_user_cancelled_alias_round_trip():
         iteration=4,
         exit_reason="user_cancelled",
         summary="用户主动停止",
-        next_step_hint="如需重启，发送新的指令或回复\"继续\"",
+        next_step_hint='如需重启，发送新的指令或回复"继续"',
     )
     assert ev["exit_reason"] == "user_cancelled"
     assert "用户主动停止" in ev["summary"]

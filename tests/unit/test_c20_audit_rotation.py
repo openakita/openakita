@@ -69,9 +69,7 @@ def install_audit_config(monkeypatch: pytest.MonkeyPatch):
     from openakita.core.policy_v2 import global_engine as ge
 
     def _install(audit_kwargs: dict) -> None:
-        cfg = PolicyConfigV2.model_validate(
-            {"audit": audit_kwargs}, strict=False
-        )
+        cfg = PolicyConfigV2.model_validate({"audit": audit_kwargs}, strict=False)
         monkeypatch.setattr(ge, "_config", cfg)
 
     return _install
@@ -121,9 +119,7 @@ class TestSchema:
 
 
 class TestRotationDefaultOff:
-    def test_no_rotation_when_mode_is_none(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
+    def test_no_rotation_when_mode_is_none(self, tmp_path: Path, install_audit_config) -> None:
         install_audit_config({"rotation_mode": "none"})
         log = tmp_path / "audit.jsonl"
         writer = get_writer(log)
@@ -163,9 +159,7 @@ class TestRotationDefaultOff:
 
 
 class TestDailyRotation:
-    def test_yesterday_mtime_triggers_rotation(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
+    def test_yesterday_mtime_triggers_rotation(self, tmp_path: Path, install_audit_config) -> None:
         install_audit_config({"rotation_mode": "daily"})
         log = tmp_path / "audit.jsonl"
 
@@ -181,9 +175,7 @@ class TestDailyRotation:
         writer.append({"event": "fresh", "ts": time.time()})
 
         # Expect an archive named after yesterday.
-        yesterday = datetime.fromtimestamp(old_ts, tz=UTC).date().strftime(
-            "%Y-%m-%d"
-        )
+        yesterday = datetime.fromtimestamp(old_ts, tz=UTC).date().strftime("%Y-%m-%d")
         archive = tmp_path / f"audit.{yesterday}.jsonl"
         assert archive.exists(), (
             f"daily rotation should produce {archive}; "
@@ -198,9 +190,7 @@ class TestDailyRotation:
         assert len(arch_rows) == 1
         assert json.loads(arch_rows[0])["event"] == "old"
 
-    def test_same_day_mtime_no_rotation(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
+    def test_same_day_mtime_no_rotation(self, tmp_path: Path, install_audit_config) -> None:
         install_audit_config({"rotation_mode": "daily"})
         log = tmp_path / "audit.jsonl"
         writer = get_writer(log)
@@ -212,8 +202,7 @@ class TestDailyRotation:
         rows = log.read_text(encoding="utf-8").strip().splitlines()
         assert len(rows) == 2
         archives = [
-            p for p in tmp_path.iterdir() if p.name != log.name
-            and p.name.endswith(".jsonl")
+            p for p in tmp_path.iterdir() if p.name != log.name and p.name.endswith(".jsonl")
         ]
         assert archives == []
 
@@ -224,14 +213,14 @@ class TestDailyRotation:
 
 
 class TestSizeRotation:
-    def test_size_threshold_triggers_rotation(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
+    def test_size_threshold_triggers_rotation(self, tmp_path: Path, install_audit_config) -> None:
         # 1 MiB threshold; one big record is enough to cross it.
-        install_audit_config({
-            "rotation_mode": "size",
-            "rotation_size_mb": 1,
-        })
+        install_audit_config(
+            {
+                "rotation_mode": "size",
+                "rotation_size_mb": 1,
+            }
+        )
         log = tmp_path / "audit.jsonl"
         writer = get_writer(log)
 
@@ -243,8 +232,7 @@ class TestSizeRotation:
         writer.append({"event": "c", "blob": "small"})
 
         archives = sorted(
-            p for p in tmp_path.iterdir()
-            if p.name != log.name and p.name.endswith(".jsonl")
+            p for p in tmp_path.iterdir() if p.name != log.name and p.name.endswith(".jsonl")
         )
         assert len(archives) == 1, (
             f"expected exactly 1 archive after size threshold breach; "
@@ -257,21 +245,20 @@ class TestSizeRotation:
             and archives[0].name.endswith(".jsonl")
         )
 
-    def test_no_rotation_below_threshold(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
-        install_audit_config({
-            "rotation_mode": "size",
-            "rotation_size_mb": 100,  # 100 MiB — way above test traffic
-        })
+    def test_no_rotation_below_threshold(self, tmp_path: Path, install_audit_config) -> None:
+        install_audit_config(
+            {
+                "rotation_mode": "size",
+                "rotation_size_mb": 100,  # 100 MiB — way above test traffic
+            }
+        )
         log = tmp_path / "audit.jsonl"
         writer = get_writer(log)
         for i in range(20):
             writer.append({"event": f"e{i}", "ts": time.time()})
 
         archives = [
-            p for p in tmp_path.iterdir()
-            if p.name != log.name and p.name.endswith(".jsonl")
+            p for p in tmp_path.iterdir() if p.name != log.name and p.name.endswith(".jsonl")
         ]
         assert archives == []
 
@@ -310,8 +297,7 @@ class TestChainHeadCarryOver:
 
         # Find archive.
         archives = [
-            p for p in tmp_path.iterdir()
-            if p.name != log.name and p.name.endswith(".jsonl")
+            p for p in tmp_path.iterdir() if p.name != log.name and p.name.endswith(".jsonl")
         ]
         assert len(archives) == 1
         archive = archives[0]
@@ -319,14 +305,10 @@ class TestChainHeadCarryOver:
         # Verify archive's last row's row_hash equals new file's first
         # row's prev_hash.
         arch_rows = [
-            json.loads(line)
-            for line in archive.read_text(encoding="utf-8").splitlines()
-            if line
+            json.loads(line) for line in archive.read_text(encoding="utf-8").splitlines() if line
         ]
         active_rows = [
-            json.loads(line)
-            for line in log.read_text(encoding="utf-8").splitlines()
-            if line
+            json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line
         ]
         assert len(arch_rows) == 2
         assert len(active_rows) == 1
@@ -345,10 +327,12 @@ class TestChainHeadCarryOver:
     ) -> None:
         """Three rotations in a row: each archive's tail equals the next
         file's head's prev_hash."""
-        install_audit_config({
-            "rotation_mode": "size",
-            "rotation_size_mb": 1,
-        })
+        install_audit_config(
+            {
+                "rotation_mode": "size",
+                "rotation_size_mb": 1,
+            }
+        )
         log = tmp_path / "audit.jsonl"
         writer = get_writer(log)
 
@@ -361,8 +345,7 @@ class TestChainHeadCarryOver:
             writer.append({"epoch": epoch, "n": 2, "blob": "small"})
 
         archives = sorted(
-            (p for p in tmp_path.iterdir()
-             if p.name != log.name and p.name.endswith(".jsonl")),
+            (p for p in tmp_path.iterdir() if p.name != log.name and p.name.endswith(".jsonl")),
             key=lambda p: p.stat().st_mtime,
         )
         # Expect at least 2 archives (size mode produces an archive each
@@ -386,9 +369,7 @@ class TestChainHeadCarryOver:
             )
             expected_prev = row["row_hash"]
 
-    def test_each_file_individually_verifies(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
+    def test_each_file_individually_verifies(self, tmp_path: Path, install_audit_config) -> None:
         """``verify_chain(single_file)`` should still report ``ok=True``
         for both the archive and the active file when looked at
         independently — each file is self-consistent (chains internally
@@ -407,8 +388,7 @@ class TestChainHeadCarryOver:
         writer.append({"event": "fresh-2"})
 
         archives = [
-            p for p in tmp_path.iterdir()
-            if p.name != log.name and p.name.endswith(".jsonl")
+            p for p in tmp_path.iterdir() if p.name != log.name and p.name.endswith(".jsonl")
         ]
         assert len(archives) == 1
         # Archive: internally consistent (chains from GENESIS).
@@ -429,14 +409,14 @@ class TestChainHeadCarryOver:
 
 
 class TestPrune:
-    def test_keep_count_removes_oldest_archives(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
-        install_audit_config({
-            "rotation_mode": "size",
-            "rotation_size_mb": 1,
-            "rotation_keep_count": 2,
-        })
+    def test_keep_count_removes_oldest_archives(self, tmp_path: Path, install_audit_config) -> None:
+        install_audit_config(
+            {
+                "rotation_mode": "size",
+                "rotation_size_mb": 1,
+                "rotation_keep_count": 2,
+            }
+        )
         log = tmp_path / "audit.jsonl"
         writer = get_writer(log)
 
@@ -452,24 +432,22 @@ class TestPrune:
             time.sleep(0.05)
 
         archives = sorted(
-            (p for p in tmp_path.iterdir()
-             if p.name != log.name and p.name.endswith(".jsonl")),
+            (p for p in tmp_path.iterdir() if p.name != log.name and p.name.endswith(".jsonl")),
             key=lambda p: p.stat().st_mtime,
         )
         # keep_count=2 means at most 2 archives may remain.
         assert len(archives) <= 2, (
-            f"keep_count=2 should cap archives; got {len(archives)}: "
-            f"{[p.name for p in archives]}"
+            f"keep_count=2 should cap archives; got {len(archives)}: {[p.name for p in archives]}"
         )
 
-    def test_keep_count_zero_keeps_all(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
-        install_audit_config({
-            "rotation_mode": "size",
-            "rotation_size_mb": 1,
-            "rotation_keep_count": 0,
-        })
+    def test_keep_count_zero_keeps_all(self, tmp_path: Path, install_audit_config) -> None:
+        install_audit_config(
+            {
+                "rotation_mode": "size",
+                "rotation_size_mb": 1,
+                "rotation_keep_count": 0,
+            }
+        )
         log = tmp_path / "audit.jsonl"
         writer = get_writer(log)
 
@@ -481,8 +459,7 @@ class TestPrune:
             time.sleep(0.05)
 
         archives = [
-            p for p in tmp_path.iterdir()
-            if p.name != log.name and p.name.endswith(".jsonl")
+            p for p in tmp_path.iterdir() if p.name != log.name and p.name.endswith(".jsonl")
         ]
         # 3 epochs each crossing threshold → at least 2 archives kept.
         assert len(archives) >= 2
@@ -509,13 +486,9 @@ class TestIdempotency:
 
         old_ts = time.time() - 25 * 3600
         os.utime(log, (old_ts, old_ts))
-        yesterday = datetime.fromtimestamp(old_ts, tz=UTC).date().strftime(
-            "%Y-%m-%d"
-        )
+        yesterday = datetime.fromtimestamp(old_ts, tz=UTC).date().strftime("%Y-%m-%d")
         archive_path = tmp_path / f"audit.{yesterday}.jsonl"
-        archive_path.write_text(
-            '{"preexisting":true}\n', encoding="utf-8"
-        )
+        archive_path.write_text('{"preexisting":true}\n', encoding="utf-8")
 
         # Next write would try to rotate to archive_path — but it
         # exists, so rotation is skipped (logged as warning).
@@ -526,9 +499,7 @@ class TestIdempotency:
         assert "preexisting" in content
         assert "original" not in content
 
-    def test_empty_file_no_rotation(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
+    def test_empty_file_no_rotation(self, tmp_path: Path, install_audit_config) -> None:
         """An empty / non-existent active file never rotates — nothing
         to archive."""
         install_audit_config({"rotation_mode": "daily"})
@@ -549,8 +520,7 @@ class TestIdempotency:
         writer2.append({"event": "after-empty"})
         # No archive because empty file isn't worth rotating.
         archives = [
-            p for p in tmp_path.iterdir()
-            if p.name != log.name and p.name.endswith(".jsonl")
+            p for p in tmp_path.iterdir() if p.name != log.name and p.name.endswith(".jsonl")
         ]
         assert archives == []
 
@@ -571,9 +541,7 @@ class TestDeadlockImmune:
         import inspect
         import textwrap
 
-        src = textwrap.dedent(
-            inspect.getsource(ChainedJsonlWriter._get_rotation_config)
-        )
+        src = textwrap.dedent(inspect.getsource(ChainedJsonlWriter._get_rotation_config))
         tree = ast.parse(src)
         called_names: set[str] = set()
         for node in ast.walk(tree):
@@ -666,9 +634,7 @@ class TestVerifyChainWithRotation:
         assert r1.legacy_prefix_lines == r2.legacy_prefix_lines
         assert r1.first_bad_line == r2.first_bad_line
 
-    def test_walks_archives_then_active_file(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
+    def test_walks_archives_then_active_file(self, tmp_path: Path, install_audit_config) -> None:
         """The whole point of Phase B: a chain split across one
         archive + active file verifies end-to-end."""
         install_audit_config({"rotation_mode": "daily"})
@@ -695,9 +661,7 @@ class TestVerifyChainWithRotation:
         assert result.total == 5
         assert result.legacy_prefix_lines == 0
 
-    def test_chain_break_in_archive_detected(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
+    def test_chain_break_in_archive_detected(self, tmp_path: Path, install_audit_config) -> None:
         """Tamper detection across rotation boundary: if someone edits
         the archive's last row's row_hash, the verifier must flag it
         and identify the offending file."""
@@ -716,8 +680,7 @@ class TestVerifyChainWithRotation:
         # to that hash, so the chain will fail at the active file's
         # first row (prev_hash mismatch).
         archives = [
-            p for p in tmp_path.iterdir()
-            if p.name != log.name and p.name.endswith(".jsonl")
+            p for p in tmp_path.iterdir() if p.name != log.name and p.name.endswith(".jsonl")
         ]
         assert len(archives) == 1
         arch = archives[0]
@@ -736,10 +699,7 @@ class TestVerifyChainWithRotation:
         # reason naming the offending file.
         assert result.reason is not None
         # The reason should name one of the files.
-        assert (
-            arch.name in result.reason
-            or log.name in result.reason
-        )
+        assert arch.name in result.reason or log.name in result.reason
 
     def test_chain_break_in_active_file_detected(
         self, tmp_path: Path, install_audit_config
@@ -779,16 +739,16 @@ class TestVerifyChainWithRotation:
         assert result.ok
         assert result.total == 3
 
-    def test_archives_listed_in_mtime_order(
-        self, tmp_path: Path, install_audit_config
-    ) -> None:
+    def test_archives_listed_in_mtime_order(self, tmp_path: Path, install_audit_config) -> None:
         """_list_rotation_archives sorts by mtime ascending. Critical
         for chain walking — wrong order = false-positive tamper."""
-        install_audit_config({
-            "rotation_mode": "size",
-            "rotation_size_mb": 1,
-            "rotation_keep_count": 0,
-        })
+        install_audit_config(
+            {
+                "rotation_mode": "size",
+                "rotation_size_mb": 1,
+                "rotation_keep_count": 0,
+            }
+        )
         log = tmp_path / "audit.jsonl"
         writer = get_writer(log)
         big = "x" * (600 * 1024)

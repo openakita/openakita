@@ -20,7 +20,9 @@ def test_manifest_has_self_contained_ui_assets() -> None:
     assert (ROOT / "icon.svg").exists()
     assert (ROOT / "ui" / "dist" / "icon.svg").exists()
     assert "m2.859 2.878l12.57-1.796" in (ROOT / "icon.svg").read_text(encoding="utf-8")
-    assert "m2.859 2.878l12.57-1.796" in (ROOT / "ui" / "dist" / "icon.svg").read_text(encoding="utf-8")
+    assert "m2.859 2.878l12.57-1.796" in (ROOT / "ui" / "dist" / "icon.svg").read_text(
+        encoding="utf-8"
+    )
     for name in ["bootstrap.js", "styles.css", "icons.js", "i18n.js", "markdown-mini.js"]:
         assert (ROOT / "ui" / "dist" / "_assets" / name).exists()
 
@@ -43,7 +45,7 @@ def test_inline_helpers_import() -> None:
     from ppt_maker_inline.python_deps import list_optional_groups
 
     assert safe_name("a/b c.pptx") == "b_c.pptx"
-    assert parse_llm_json_object("```json\n{\"ok\": true}\n```") == {"ok": True}
+    assert parse_llm_json_object('```json\n{"ok": true}\n```') == {"ok": True}
     assert "table_processing" in list_optional_groups()
 
 
@@ -83,4 +85,3 @@ def _block_python_pptx(monkeypatch) -> None:
         return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-

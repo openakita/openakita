@@ -101,10 +101,12 @@ class TestResponseConsistency:
     async def test_same_input_consistent(self, qa_brain):
         """Same question should produce similar responses (deterministic mock)."""
         brain, client = qa_brain
-        client.preset_sequence([
-            MockResponse(content="The answer is 42."),
-            MockResponse(content="The answer is 42."),
-        ])
+        client.preset_sequence(
+            [
+                MockResponse(content="The answer is 42."),
+                MockResponse(content="The answer is 42."),
+            ]
+        )
 
         r1 = await brain.messages_create_async(
             messages=[{"role": "user", "content": "What is the answer?"}],
@@ -124,4 +126,3 @@ class TestJudgeIntegration:
     async def test_judge_fails_correctly(self, judge):
         result = await judge.evaluate("Java is great", "contains:Python")
         assert result.passed is False
-

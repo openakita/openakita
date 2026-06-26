@@ -69,9 +69,7 @@ class StreamingInternalTraceScrubber:
     # 预编译"换行边界 + marker"正则，支持任意数量 leading \n + 可选缩进。
     _BOUNDARY_MARKER_RE = re.compile(
         r"\n+[ \t]*(?:"
-        + "|".join(
-            re.escape(m) for m in (*INTERNAL_TRACE_MARKERS, EXTERNAL_CONTENT_BEGIN_PREFIX)
-        )
+        + "|".join(re.escape(m) for m in (*INTERNAL_TRACE_MARKERS, EXTERNAL_CONTENT_BEGIN_PREFIX))
         + r")"
     )
 
@@ -102,9 +100,7 @@ class StreamingInternalTraceScrubber:
             if self._in_section:
                 external_end = self._find_external_content_end(buf)
                 term_idx = self._find_earliest_terminator(buf)
-                if external_end is not None and (
-                    term_idx == -1 or external_end[0] <= term_idx
-                ):
+                if external_end is not None and (term_idx == -1 or external_end[0] <= term_idx):
                     # External-content wrappers have an explicit END tag.
                     # Consume the END tag itself and resume normal output after it.
                     buf = buf[external_end[1] :]

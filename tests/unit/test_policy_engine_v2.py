@@ -140,9 +140,7 @@ class TestMatrixDecision:
         # plan 模式禁所有 mutation
         assert decision.action == DecisionAction.DENY
 
-    def test_engine_decision_consistent_with_matrix_lookup(
-        self, tmp_path: Path
-    ) -> None:
+    def test_engine_decision_consistent_with_matrix_lookup(self, tmp_path: Path) -> None:
         """engine 输出与裸 lookup_matrix(role, mode, klass) 应一致（除 relax/safety_immune 等额外步骤）。"""
         engine = PolicyEngineV2()
         for role in [SessionRole.PLAN, SessionRole.ASK, SessionRole.AGENT]:
@@ -157,8 +155,7 @@ class TestMatrixDecision:
                 )
                 expected = lookup_matrix(role, mode, ApprovalClass.READONLY_GLOBAL)
                 assert decision.action == expected, (
-                    f"mismatch role={role} mode={mode}: "
-                    f"engine={decision.action} matrix={expected}"
+                    f"mismatch role={role} mode={mode}: engine={decision.action} matrix={expected}"
                 )
 
 
@@ -206,9 +203,7 @@ class TestChannelCompat:
         """ask_user 在 IM 走 IM 适配器交互，不应被 channel_compat DENY。"""
         clf = ApprovalClassifier(
             explicit_lookup=lambda t: (
-                (ApprovalClass.INTERACTIVE, _src_explicit())
-                if t == "ask_user"
-                else None
+                (ApprovalClass.INTERACTIVE, _src_explicit()) if t == "ask_user" else None
             )
         )
         engine = PolicyEngineV2(classifier=clf)
@@ -244,9 +239,7 @@ class TestChannelCompat:
         """非 desktop_*/browser_* 前缀的 INTERACTIVE 工具在 IM 也应允许。"""
         clf = ApprovalClassifier(
             explicit_lookup=lambda t: (
-                (ApprovalClass.INTERACTIVE, _src_explicit())
-                if t == "prompt_choice"
-                else None
+                (ApprovalClass.INTERACTIVE, _src_explicit()) if t == "prompt_choice" else None
             )
         )
         engine = PolicyEngineV2(classifier=clf)
@@ -268,9 +261,7 @@ class TestSafetyImmune:
         engine = PolicyEngineV2()
         # MUTATING_SCOPED 在 trust 模式下默认 ALLOW，但命中 immune 应升级到 CONFIRM
         decision = engine.evaluate_tool_call(
-            ToolCallEvent(
-                tool="write_file", params={"path": str(tmp_path / "secret.env")}
-            ),
+            ToolCallEvent(tool="write_file", params={"path": str(tmp_path / "secret.env")}),
             _ctx(
                 tmp_path,
                 mode=ConfirmationMode.TRUST,
@@ -379,9 +370,7 @@ class TestUnattended:
         assert decision.action == DecisionAction.DENY  # write_file 非只读
         assert decision.is_unattended_path is True
 
-    def test_unattended_does_not_trigger_when_matrix_allows(
-        self, tmp_path: Path
-    ) -> None:
+    def test_unattended_does_not_trigger_when_matrix_allows(self, tmp_path: Path) -> None:
         """matrix ALLOW → 不进 unattended 分支（直接放行）。"""
         engine = PolicyEngineV2()
         decision = engine.evaluate_tool_call(
@@ -485,6 +474,7 @@ class TestFailSafe:
 
     def test_intent_engine_crash_returns_deny(self, tmp_path: Path) -> None:
         engine = PolicyEngineV2()
+
         # 故意构造让 _evaluate_message_intent_impl 抛错
         # SessionRole 异常值 → _coerce 不会触发；改用 mock-ish 构造
         # 简单：传一个会让 ConfirmationMode 比较出错的 ctx — 实际上很难自然触发
@@ -527,9 +517,7 @@ class TestAudit:
         engine = PolicyEngineV2()
         engine.evaluate_tool_call(ToolCallEvent(tool="read_file"), _ctx(tmp_path))
         engine.evaluate_tool_call(ToolCallEvent(tool="read_file"), _ctx(tmp_path))
-        engine.evaluate_message_intent(
-            MessageIntentEvent(message="x"), _ctx(tmp_path)
-        )
+        engine.evaluate_message_intent(MessageIntentEvent(message="x"), _ctx(tmp_path))
         stats = engine.stats()
         assert stats["evaluate_tool_call"] == 2
         assert stats["evaluate_message_intent"] == 1
@@ -559,9 +547,7 @@ class TestPathRefineThroughEngine:
         assert decision.action == DecisionAction.ALLOW
         assert decision.needs_checkpoint is True
 
-    def test_write_outside_workspace_default_mode_confirms(
-        self, tmp_path: Path
-    ) -> None:
+    def test_write_outside_workspace_default_mode_confirms(self, tmp_path: Path) -> None:
         """default 模式跨盘写 → CONFIRM（合理保护）。"""
         engine = PolicyEngineV2()
         outside = tmp_path.parent / "_outside_99" / "x.txt"
@@ -654,9 +640,7 @@ class TestSafetyImmunePathBoundary:
         engine = PolicyEngineV2()
         ctx = _ctx(tmp_path, safety_immune_paths=("/Users/Me/identity",))
         d = engine.evaluate_tool_call(
-            ToolCallEvent(
-                tool="write_file", params={"path": "/users/me/identity/SOUL.md"}
-            ),
+            ToolCallEvent(tool="write_file", params={"path": "/users/me/identity/SOUL.md"}),
             ctx,
         )
         assert d.safety_immune_match is not None
@@ -865,9 +849,7 @@ class TestAuditIntentHook:
             audit_intent_hook=lambda d, e, c: intent_calls.append(e.message),  # noqa: ARG005
         )
         engine.evaluate_tool_call(ToolCallEvent(tool="read_file"), _ctx(tmp_path))
-        engine.evaluate_message_intent(
-            MessageIntentEvent(message="hi"), _ctx(tmp_path)
-        )
+        engine.evaluate_message_intent(MessageIntentEvent(message="hi"), _ctx(tmp_path))
         assert tool_calls == ["read_file"]
         assert intent_calls == ["hi"]
 

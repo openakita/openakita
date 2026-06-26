@@ -24,8 +24,11 @@ driver for a fake page object so we never hit a real chromium runtime.
 from __future__ import annotations
 
 import asyncio
+import ast
 import contextlib
+import html as html_lib
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -33,19 +36,55 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlsplit
 
+import httpx
 from idea_models import TrendItem
-from idea_research_inline.vendor_client import VendorAuthError, VendorError
+from idea_research_inline.vendor_client import (
+    VendorAuthError,
+    VendorError,
+    VendorFormatError,
+    VendorNetworkError,
+    VendorTimeoutError,
+)
 
 _CRAWLER_BLOCK_KEYWORDS = (
     "captcha",
-    "verify",
-    "请输入验证",
+    "verify code",
+    "verification code",
+    "slider verify",
+    "security verification",
+    "请输入验证码",
     "访问异常",
     "需要登录",
-    "sign in",
+    "安全验证",
     "robot check",
 )
+PLATFORM_COOKIES_REQUIRED: dict[str, tuple[str, ...]] = {
+    "douyin": ("sessionid_ss", "s_v_web_id", "ttwid"),
+    "xhs": ("web_session", "xsecappid", "a1"),
+    "ks": (),
+    "bilibili": ("SESSDATA", "bili_jct", "DedeUserID"),
+    "weibo": ("SUB", "SUBP"),
+}
+
+_COOKIE_METADATA_KEYS = {
+    "domain",
+    "expirationDate",
+    "expires",
+    "hostOnly",
+    "httpOnly",
+    "name",
+    "path",
+    "sameSite",
+    "secure",
+    "session",
+    "storeId",
+    "url",
+    "value",
+}
+_INVALID_COOKIE_NAME_RE = re.compile(r"[\x00-\x20\x7f()<>@,;:\\\"/\[\]?={}]")
+_INVALID_COOKIE_VALUE_RE = re.compile(r"[\x00-\x08\x0a-\x1f\x7f;]")
 
 
 def _now() -> int:
@@ -54,6 +93,29 @@ def _now() -> int:
 
 def _new_item_id() -> str:
     return str(uuid.uuid4())
+
+
+def _coerce_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_playwright_timeout(exc: BaseException) -> bool:
+    return type(exc).__name__ == "TimeoutError"
+
+
+def _time_window_seconds(value: str) -> int | None:
+    clean = str(value or "").strip().lower()
+    mapping = {
+        "24h": 24 * 3600,
+        "7d": 7 * 24 * 3600,
+        "30d": 30 * 24 * 3600,
+    }
+    return mapping.get(clean)
 
 
 # --------------------------------------------------------------------------- #
@@ -67,6 +129,183 @@ class CookiesEntry:
     cookies: dict[str, str]
     expires_at: int | None = None
     updated_at: int = 0
+
+
+def missing_cookies_keys(platform: str, cookies: dict[str, str]) -> list[str]:
+    """Return required cookie names that are absent or empty for *platform*."""
+
+    required = PLATFORM_COOKIES_REQUIRED.get(platform, ())
+    return [k for k in required if not str(cookies.get(k) or "").strip()]
+
+
+def _normalize_cookie_map(cookies: Any) -> dict[str, str]:
+    out: dict[str, str] = {}
+
+    def add(raw_name: Any, raw_value: Any) -> None:
+        name = _clean_cookie_name(raw_name)
+        value = _clean_cookie_value(raw_value)
+        if not name or value is None:
+            return
+        out[name] = value
+
+    if isinstance(cookies, str):
+        parsed = _parse_cookie_export_string(cookies)
+        if parsed is not None:
+            return _normalize_cookie_map(parsed)
+        for part in cookies.split(";"):
+            if "=" not in part:
+                continue
+            raw_name, raw_value = part.split("=", 1)
+            add(raw_name, raw_value)
+        return out
+
+    if isinstance(cookies, list):
+        for item in cookies:
+            if not isinstance(item, dict):
+                continue
+            if "name" in item and "value" in item:
+                add(item.get("name"), item.get("value"))
+        return out
+
+    if not isinstance(cookies, dict):
+        return out
+
+    nested = cookies.get("cookies")
+    if isinstance(nested, (list, dict, str)):
+        return _normalize_cookie_map(nested)
+
+    if "name" in cookies and "value" in cookies:
+        add(cookies.get("name"), cookies.get("value"))
+        return out
+
+    for raw_name, raw_value in cookies.items():
+        if isinstance(raw_value, dict) and "value" in raw_value:
+            add(raw_value.get("name") or raw_name, raw_value.get("value"))
+            continue
+        if isinstance(raw_value, str) and raw_value.strip().startswith(("{", "[")):
+            parsed_value = _parse_cookie_export_string(raw_value)
+            if parsed_value is not None:
+                out.update(_normalize_cookie_map(parsed_value))
+                continue
+        if isinstance(raw_value, (list, dict)):
+            continue
+        if str(raw_name) in _COOKIE_METADATA_KEYS:
+            continue
+        add(raw_name, raw_value)
+    return out
+
+
+def _parse_cookie_export_string(value: str) -> Any | None:
+    stripped = value.strip()
+    if not stripped.startswith(("[", "{")):
+        return None
+    with contextlib.suppress(Exception):
+        return json.loads(stripped)
+    with contextlib.suppress(Exception):
+        return ast.literal_eval(stripped)
+    return None
+
+
+def _strip_cookie_paste(text: str) -> str:
+    """Remove markdown code fences and outer whitespace from pasted cookies."""
+
+    s = str(text or "").strip()
+    if not s.startswith("```"):
+        return s
+    lines = s.splitlines()
+    if lines and lines[0].lstrip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def parse_cookies_upload_text(text: str) -> Any:
+    """Parse cookies pasted in Settings (JSON, Cookie-Editor array, or header string)."""
+
+    raw = _strip_cookie_paste(text)
+    if not raw:
+        raise ValueError(
+            "cookies 内容为空；请粘贴 Cookie-Editor 导出的 JSON，或 name=value 格式的 Cookie 字符串"
+        )
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        parsed = _parse_cookie_export_string(raw)
+        if parsed is not None:
+            return parsed
+        if "=" in raw:
+            return raw
+        raise ValueError(
+            "无法识别 cookies 格式。请粘贴 Cookie-Editor 导出的 JSON（对象或数组），"
+            "或含 name=value 的 Cookie 字符串（如 document.cookie 或 F12 Application 复制项）。"
+        ) from exc
+
+
+def _clean_cookie_name(raw_name: Any) -> str:
+    name = str(raw_name or "").strip()
+    if not name or _INVALID_COOKIE_NAME_RE.search(name):
+        return ""
+    return name
+
+
+def _clean_cookie_value(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        value = raw_value
+    elif isinstance(raw_value, bool):
+        value = "true" if raw_value else "false"
+    elif isinstance(raw_value, (dict, list)):
+        return None
+    else:
+        value = str(raw_value)
+    value = value.strip()
+    if not value or _INVALID_COOKIE_VALUE_RE.search(value):
+        return None
+    return value
+
+
+def _playwright_cookie_list(cookies: dict[str, str], domain: str) -> list[dict[str, Any]]:
+    clean = _normalize_cookie_map(cookies)
+    return [
+        {
+            "name": name,
+            "value": value,
+            "domain": domain,
+            "path": "/",
+        }
+        for name, value in clean.items()
+    ]
+
+
+def _visible_html_text(html: str) -> str:
+    text = re.sub(r"(?is)<(script|style|noscript)\b[^>]*>.*?</\1>", " ", html or "")
+    text = re.sub(r"(?is)<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _extract_embedded_json_payloads(html: str) -> list[dict[str, Any]]:
+    if not html:
+        return []
+    payloads: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    patterns = (
+        r'(?is)<script[^>]+id="__NEXT_DATA__"[^>]*>\s*(\{.*?\})\s*</script>',
+        r'(?is)<script[^>]+type="application/json"[^>]*>\s*(\{.*?\})\s*</script>',
+        r"(?is)window\.__[A-Z0-9_]+__\s*=\s*(\{.*?\})\s*;",
+    )
+    for pattern in patterns:
+        for raw in re.findall(pattern, html):
+            text = html_lib.unescape(raw).strip()
+            if not text or text in seen:
+                continue
+            with contextlib.suppress(Exception):
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    seen.add(text)
+                    payloads.append(parsed)
+    return payloads
 
 
 class CookiesVault:
@@ -206,18 +445,21 @@ class CookiesVault:
     # ---- public API --------------------------------------------------------
 
     async def save(
-        self, platform: str, cookies: dict[str, str], *, expires_at: int | None = None
+        self, platform: str, cookies: Any, *, expires_at: int | None = None
     ) -> bool:
         return await self._run(self._save_sync, platform, cookies, expires_at)
 
     def _save_sync(
         self,
         platform: str,
-        cookies: dict[str, str],
+        cookies: Any,
         expires_at: int | None,
     ) -> bool:
         encrypted_flag = 1 if self.encryption_ready else 0
-        payload_json = json.dumps(cookies, ensure_ascii=False).encode("utf-8")
+        payload_json = json.dumps(
+            _normalize_cookie_map(cookies),
+            ensure_ascii=False,
+        ).encode("utf-8")
         if encrypted_flag and self._fernet is not None:
             payload = self._fernet.encrypt(payload_json)
         else:
@@ -263,6 +505,7 @@ class CookiesVault:
             raise VendorError(
                 f"cookies payload 损坏：{exc}", payload={"platform": platform}
             ) from exc
+        cookies = _normalize_cookie_map(cookies)
         return CookiesEntry(
             platform=platform,
             cookies=cookies,
@@ -290,14 +533,24 @@ class CookiesVault:
         out: list[dict[str, Any]] = []
         now = _now()
         for r in rows:
+            platform = str(r["platform"])
             exp = r["expires_at"]
+            expired = bool(exp and exp <= now)
+            entry = self._load_sync(platform)
+            cookies = entry.cookies if entry else {}
+            missing = missing_cookies_keys(platform, cookies)
+            configured = bool(cookies)
             out.append(
                 {
-                    "platform": r["platform"],
+                    "platform": platform,
                     "encrypted": bool(r["encrypted"]),
                     "expires_at": exp,
                     "updated_at": int(r["updated_at"]),
-                    "expired": bool(exp and exp <= now),
+                    "expired": expired,
+                    "configured": configured,
+                    "missing_keys": missing,
+                    "required_keys": list(PLATFORM_COOKIES_REQUIRED.get(platform, ())),
+                    "ok": configured and not missing and not expired,
                 }
             )
         return out
@@ -424,17 +677,16 @@ class PlaywrightDriver:
         browser = await self._ensure_browser()
         context = await browser.new_context()
         if cookies and domain:
-            await context.add_cookies(
-                [
-                    {
-                        "name": k,
-                        "value": v,
-                        "domain": domain,
-                        "path": "/",
-                    }
-                    for k, v in cookies.items()
-                ]
-            )
+            cookie_list = _playwright_cookie_list(cookies, domain)
+            if cookie_list:
+                try:
+                    await self._add_cookies_best_effort(context, cookie_list, source_url=url)
+                except Exception as exc:
+                    with contextlib.suppress(Exception):
+                        await context.close()
+                    raise VendorAuthError(
+                        "browser rejected cookies; re-export this platform's cookies"
+                    ) from exc
         if extra_headers:
             await context.set_extra_http_headers(extra_headers)
         page = await context.new_page()
@@ -444,8 +696,15 @@ class PlaywrightDriver:
 
             async def _on_response(response: Any) -> None:
                 try:
-                    network_log.append({"url": response.url, "status": response.status})
-                    if "json" in (response.headers.get("content-type", "") or ""):
+                    content_type = response.headers.get("content-type", "") or ""
+                    network_log.append(
+                        {
+                            "url": response.url,
+                            "status": response.status,
+                            "content_type": content_type,
+                        }
+                    )
+                    if "json" in content_type:
                         json_payloads.append(await response.json())
                 except Exception:
                     return
@@ -454,8 +713,11 @@ class PlaywrightDriver:
         status = 0
         html = ""
         try:
-            resp = await page.goto(url, timeout=timeout_ms, wait_until="networkidle")
+            resp = await page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
             status = int(resp.status if resp else 0)
+            if capture_xhr:
+                with contextlib.suppress(Exception):
+                    await page.wait_for_timeout(1200)
             if wait_selector:
                 await page.wait_for_selector(wait_selector, timeout=timeout_ms)
             if wait_for_url:
@@ -464,6 +726,13 @@ class PlaywrightDriver:
                 await page.mouse.wheel(0, 1500)
                 await asyncio.sleep(0.8)
             html = await page.content()
+        except Exception as exc:
+            if _is_playwright_timeout(exc):
+                raise VendorTimeoutError(
+                    f"browser timeout fetching {url}: {exc}",
+                    payload={"url": url, "timeout_ms": timeout_ms},
+                ) from exc
+            raise
         finally:
             with contextlib.suppress(Exception):
                 await context.close()
@@ -474,6 +743,45 @@ class PlaywrightDriver:
             json_payloads=json_payloads,
             network_log=network_log,
         )
+
+    async def _add_cookies_best_effort(
+        self,
+        context: Any,
+        cookie_list: list[dict[str, Any]],
+        *,
+        source_url: str,
+    ) -> None:
+        try:
+            await context.add_cookies(cookie_list)
+            return
+        except Exception as batch_exc:
+            accepted = 0
+            last_exc: Exception = batch_exc
+            parsed = urlsplit(source_url)
+            origin_url = f"{parsed.scheme}://{parsed.netloc}/" if parsed.scheme and parsed.netloc else ""
+            for cookie in cookie_list:
+                try:
+                    await context.add_cookies([cookie])
+                    accepted += 1
+                    continue
+                except Exception as exc:
+                    last_exc = exc
+                if origin_url:
+                    url_cookie = {
+                        "name": cookie.get("name"),
+                        "value": cookie.get("value"),
+                        "url": origin_url,
+                    }
+                    try:
+                        await context.add_cookies([url_cookie])
+                        accepted += 1
+                        continue
+                    except Exception as exc:
+                        last_exc = exc
+                        continue
+            if accepted > 0:
+                return
+            raise last_exc
 
 
 # --------------------------------------------------------------------------- #
@@ -495,10 +803,12 @@ class CrawlerBase:
         *,
         driver: PlaywrightDriver,
         vault: CookiesVault,
+        http_client: httpx.AsyncClient | None = None,
         risk_acknowledged: bool = False,
     ) -> None:
         self._driver = driver
         self._vault = vault
+        self._http = http_client
         self._risk_acknowledged = bool(risk_acknowledged)
 
     async def _load_cookies(self) -> dict[str, str]:
@@ -508,7 +818,7 @@ class CrawlerBase:
             raise err
         entry = await self._vault.load(self.platform)
         cookies = entry.cookies if entry else {}
-        missing = [k for k in self.cookies_required if not cookies.get(k)]
+        missing = missing_cookies_keys(self.platform, cookies)
         if missing:
             err = VendorError(f"{self.platform} cookies 缺少必备字段: {missing}")
             err.error_kind = "cookies_expired"
@@ -520,14 +830,20 @@ class CrawlerBase:
         return cookies
 
     def _maybe_blocked(self, page: PageResponse) -> None:
-        body = (page.html or "").lower()
-        if any(token in body for token in _CRAWLER_BLOCK_KEYWORDS):
-            err = VendorError(f"{self.platform} 触发风控/验证码 (status={page.status})")
-            err.error_kind = "crawler_blocked"
-            raise err
+        body = _visible_html_text(page.html or "")
         if page.status in (401, 403):
             err = VendorError(f"{self.platform} 登录失效 ({page.status})")
             err.error_kind = "cookies_expired"
+            raise err
+        matched = next((token for token in _CRAWLER_BLOCK_KEYWORDS if token in body), None)
+        if matched:
+            err = VendorError(f"{self.platform} 触发风控/验证码 (status={page.status})")
+            err.error_kind = "crawler_blocked"
+            err.payload = {
+                "url": page.url,
+                "status": page.status,
+                "matched_token": matched,
+            }
             raise err
 
     def _build_item(self, raw: dict[str, Any]) -> TrendItem:
@@ -660,9 +976,276 @@ class XhsCrawler(CrawlerBase):
 class KsCrawler(CrawlerBase):
     name = "ks_crawler"
     platform = "ks"
-    cookies_required = ("did", "kpf", "kpn", "clientid")
+    cookies_required = ()
     cookies_domain = ".kuaishou.com"
     listing_url = "https://www.kuaishou.com/brilliant"
+    search_url = "https://www.kuaishou.com/search/video?searchKey="
+    graphql_url = "https://www.kuaishou.com/graphql"
+    graphql_search_query = (
+        "fragment photoContent on PhotoEntity {\n"
+        "  id\n"
+        "  caption\n"
+        "  coverUrl\n"
+        "  duration\n"
+        "  likeCount\n"
+        "  viewCount\n"
+        "  commentCount\n"
+        "  timestamp\n"
+        "  expTag\n"
+        "  llsid\n"
+        "}\n"
+        "query visionSearchPhoto($keyword: String, $pcursor: String, $searchSessionId: String, $page: String, $webPageArea: String) {\n"
+        "  visionSearchPhoto(keyword: $keyword, pcursor: $pcursor, searchSessionId: $searchSessionId, page: $page, webPageArea: $webPageArea) {\n"
+        "    result\n"
+        "    llsid\n"
+        "    webPageArea\n"
+        "    feeds {\n"
+        "      type\n"
+        "      author {\n"
+        "        id\n"
+        "        name\n"
+        "        fansCount\n"
+        "        headerUrl\n"
+        "      }\n"
+        "      photo {\n"
+        "        ...photoContent\n"
+        "      }\n"
+        "    }\n"
+        "    pcursor\n"
+        "    searchSessionId\n"
+        "  }\n"
+        "}\n"
+    )
+    _http_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Referer": "https://www.kuaishou.com/",
+        "Origin": "https://www.kuaishou.com",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._comment_cache: dict[str, list[dict[str, Any]]] = {}
+
+    async def _load_ks_cookies(self) -> dict[str, str]:
+        cookies = await self._load_cookies()
+        if not cookies:
+            err = VendorError("ks cookies 为空；请先在 Settings -> Data Sources 保存快手 cookies")
+            err.error_kind = "cookies_expired"
+            raise err
+        return cookies
+
+    async def _fetch_ks_page(
+        self,
+        url: str,
+        *,
+        scroll_steps: int,
+        timeout_ms: int,
+    ) -> PageResponse:
+        cookies = await self._load_ks_cookies()
+        page = await self._driver.fetch(
+            url,
+            cookies=cookies,
+            domain=self.cookies_domain,
+            capture_xhr=True,
+            scroll_steps=scroll_steps,
+            timeout_ms=timeout_ms,
+            extra_headers={
+                "Referer": "https://www.kuaishou.com/",
+                "Origin": "https://www.kuaishou.com",
+            },
+        )
+        self._maybe_blocked(page)
+        return page
+
+    def _ks_headers(
+        self,
+        cookies: dict[str, str],
+        *,
+        json_body: bool = False,
+    ) -> dict[str, str]:
+        headers = dict(self._http_headers)
+        headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+        if json_body:
+            headers["Content-Type"] = "application/json"
+        return headers
+
+    async def _fetch_ks_http_page(self, url: str, *, timeout_s: float = 12.0) -> PageResponse:
+        if self._http is None:
+            err = VendorError("ks http client 未注入")
+            err.error_kind = "dependency"
+            raise err
+        cookies = await self._load_ks_cookies()
+        try:
+            resp = await self._http.get(
+                url,
+                headers=self._ks_headers(cookies),
+                timeout=timeout_s,
+                follow_redirects=True,
+            )
+        except httpx.TimeoutException as exc:
+            raise VendorTimeoutError(
+                f"ks http timeout fetching {url}",
+                payload={"url": url, "timeout_s": timeout_s},
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise VendorNetworkError(
+                f"ks http error fetching {url}: {exc}",
+                payload={"url": url, "error_type": type(exc).__name__},
+            ) from exc
+        page = PageResponse(
+            url=str(resp.url),
+            status=int(resp.status_code),
+            html=resp.text,
+            json_payloads=_extract_embedded_json_payloads(resp.text),
+        )
+        self._maybe_blocked(page)
+        if resp.status_code in (401, 403):
+            raise VendorAuthError(f"ks auth failed ({resp.status_code}) fetching {url}")
+        if resp.status_code >= 400:
+            raise VendorNetworkError(
+                f"ks unexpected {resp.status_code} fetching {url}",
+                status_code=resp.status_code,
+            )
+        return page
+
+    async def _search_ks_via_http(
+        self,
+        keyword: str,
+        *,
+        timeout_s: float = 12.0,
+    ) -> list[dict[str, Any]]:
+        if self._http is None:
+            return []
+        cookies = await self._load_ks_cookies()
+        body = {
+            "operationName": "visionSearchPhoto",
+            "query": self.graphql_search_query,
+            "variables": {
+                "keyword": keyword,
+                "pcursor": "",
+                "searchSessionId": "",
+                "page": "search",
+                "webPageArea": "searchResult",
+            },
+        }
+        try:
+            resp = await self._http.post(
+                self.graphql_url,
+                headers=self._ks_headers(cookies, json_body=True),
+                json=body,
+                timeout=timeout_s,
+            )
+        except httpx.TimeoutException as exc:
+            raise VendorTimeoutError(
+                f"ks graphql timeout fetching {self.graphql_url}",
+                payload={"url": self.graphql_url, "timeout_s": timeout_s},
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise VendorNetworkError(
+                f"ks graphql error fetching {self.graphql_url}: {exc}",
+                payload={"url": self.graphql_url, "error_type": type(exc).__name__},
+            ) from exc
+        if resp.status_code in (401, 403):
+            raise VendorAuthError(f"ks auth failed ({resp.status_code}) fetching {self.graphql_url}")
+        if resp.status_code >= 400:
+            raise VendorNetworkError(
+                f"ks unexpected {resp.status_code} fetching {self.graphql_url}",
+                status_code=resp.status_code,
+            )
+        payload = resp.json()
+        raws = _flatten_video_payloads([payload], key_candidates=("photoId", "photo_id", "photo", "id"))
+        return raws
+
+    def _trim_recent(self, items: list[TrendItem], time_window: str) -> list[TrendItem]:
+        window_s = _time_window_seconds(time_window)
+        if not window_s:
+            return items
+        cutoff = _now() - window_s
+        filtered = [it for it in items if not it.publish_at or it.publish_at >= cutoff]
+        return filtered or items
+
+    @staticmethod
+    def _dedupe_items(items: list[TrendItem]) -> list[TrendItem]:
+        seen: set[tuple[str, str]] = set()
+        out: list[TrendItem] = []
+        for item in items:
+            key = (item.external_id or "", item.external_url or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+        return out
+
+    async def fetch_brilliant(self, *, time_window: str = "24h", limit: int = 20) -> list[TrendItem]:
+        http_exc: VendorError | None = None
+        if self._http is not None:
+            try:
+                page = await self._fetch_ks_http_page(self.listing_url)
+            except VendorError as exc:
+                http_exc = exc
+                page = await self._fetch_ks_page(self.listing_url, scroll_steps=3, timeout_ms=20_000)
+        else:
+            page = await self._fetch_ks_page(self.listing_url, scroll_steps=3, timeout_ms=20_000)
+        raws = _flatten_video_payloads(
+            page.json_payloads,
+            key_candidates=("photoId", "photo_id", "photo", "id"),
+        )
+        if not raws:
+            if http_exc is not None:
+                raise http_exc
+            _raise_empty_parse("ks", page, ("photoId", "photo_id", "photo", "id"))
+        items = self._dedupe_items([self._build_item(_normalize_ks(r)) for r in raws[: limit * 3]])
+        return self._trim_recent(items, time_window)[:limit]
+
+    async def search_by_keyword(
+        self,
+        keyword: str,
+        *,
+        time_window: str = "24h",
+        limit: int = 20,
+    ) -> list[TrendItem]:
+        query = str(keyword or "").strip()
+        if not query:
+            return []
+        if self._http is not None:
+            raws = await self._search_ks_via_http(query)
+            if not raws:
+                page = await self._fetch_ks_http_page(f"{self.search_url}{quote(query)}")
+                raws = _flatten_video_payloads(
+                    page.json_payloads,
+                    key_candidates=("photoId", "photo_id", "photo", "id"),
+                )
+            else:
+                page = PageResponse(
+                    url=f"{self.search_url}{quote(query)}",
+                    status=200,
+                    html="",
+                    json_payloads=[],
+                )
+        else:
+            page = await self._fetch_ks_page(
+                f"{self.search_url}{quote(query)}",
+                scroll_steps=2,
+                timeout_ms=20_000,
+            )
+            raws = _flatten_video_payloads(
+                page.json_payloads,
+                key_candidates=("photoId", "photo_id", "photo", "id"),
+            )
+        if not raws:
+            _raise_empty_parse("ks", page, ("photoId", "photo_id", "photo", "id"))
+        items = self._dedupe_items([self._build_item(_normalize_ks(r)) for r in raws[: limit * 3]])
+        items = self._trim_recent(items, time_window)
+        items = self._filter_keywords(items, [query])
+        for item in items:
+            if not item.keywords_matched:
+                item.keywords_matched = [query.lower()]
+        return items[:limit]
 
     async def fetch_trending(
         self,
@@ -670,35 +1253,59 @@ class KsCrawler(CrawlerBase):
         time_window: str = "24h",
         limit: int = 20,
     ) -> list[TrendItem]:
-        cookies = await self._load_cookies()
-        page = await self._driver.fetch(
-            self.listing_url,
-            cookies=cookies,
-            domain=self.cookies_domain,
-            capture_xhr=True,
-            scroll_steps=3,
-            timeout_ms=20_000,
-            extra_headers={"Referer": "https://www.kuaishou.com/"},
+        if keywords:
+            gathered: list[TrendItem] = []
+            for keyword in keywords:
+                with contextlib.suppress(VendorError):
+                    gathered.extend(
+                        await self.search_by_keyword(keyword, time_window=time_window, limit=limit)
+                    )
+            if not gathered:
+                fallback = await self.fetch_brilliant(time_window=time_window, limit=limit * 3)
+                gathered = self._filter_keywords(fallback, keywords)
+            unique: dict[str, TrendItem] = {}
+            for item in gathered:
+                if item.external_id and item.external_id not in unique:
+                    unique[item.external_id] = item
+            return list(unique.values())[:limit]
+        return await self.fetch_brilliant(time_window=time_window, limit=limit)
+
+    async def fetch_creator(self, url: str, max_videos: int = 20) -> dict[str, Any]:
+        page = await self._fetch_ks_page(url, scroll_steps=4, timeout_ms=25_000)
+        raws = _flatten_video_payloads(
+            page.json_payloads,
+            key_candidates=("photoId", "photo_id", "photo", "id"),
         )
-        self._maybe_blocked(page)
-        raws = _flatten_video_payloads(page.json_payloads, key_candidates=("photoId", "id"))
-        items = [self._build_item(_normalize_ks(r)) for r in raws[: limit * 3]]
-        items = self._filter_keywords(items, keywords)
-        return items[:limit]
+        if not raws:
+            _raise_empty_parse("ks", page, ("photoId", "photo_id", "photo", "id"))
+        creator = _extract_ks_creator(page.json_payloads, profile_url=url)
+        videos = [self._build_item(_normalize_ks(r)) for r in raws[:max_videos]]
+        return {"creator": creator, "videos": videos}
 
     async def fetch_user(self, url: str, max_videos: int = 20) -> list[TrendItem]:
-        cookies = await self._load_cookies()
-        page = await self._driver.fetch(
-            url,
-            cookies=cookies,
-            domain=self.cookies_domain,
-            capture_xhr=True,
-            scroll_steps=4,
-            timeout_ms=25_000,
-        )
-        self._maybe_blocked(page)
-        raws = _flatten_video_payloads(page.json_payloads, key_candidates=("photoId", "id"))
-        return [self._build_item(_normalize_ks(r)) for r in raws[:max_videos]]
+        creator = await self.fetch_creator(url, max_videos=max_videos)
+        return list(creator.get("videos") or [])
+
+    async def fetch_detail(self, url: str) -> TrendItem:
+        page = await self._fetch_ks_page(url, scroll_steps=1, timeout_ms=20_000)
+        raw = _extract_ks_detail(page.json_payloads)
+        if raw is None:
+            _raise_empty_parse("ks", page, ("photoId", "photo_id", "photo", "id"))
+        item = self._build_item(_normalize_ks(raw))
+        self._comment_cache[item.external_id] = _extract_ks_comments(page.json_payloads, limit=40)
+        return item
+
+    async def fetch_comments(self, item: TrendItem, *, limit: int = 40) -> list[dict[str, Any]]:
+        cached = list(self._comment_cache.get(item.external_id) or [])
+        if cached:
+            return cached[:limit]
+        try:
+            page = await self._fetch_ks_page(item.external_url, scroll_steps=1, timeout_ms=20_000)
+        except VendorError:
+            return []
+        comments = _extract_ks_comments(page.json_payloads, limit=limit)
+        self._comment_cache[item.external_id] = list(comments)
+        return comments[:limit]
 
 
 class BiliLoggedCrawler(CrawlerBase):
@@ -797,6 +1404,28 @@ def _flatten_video_payloads(
     """Flatten heterogeneous platform XHR JSON shapes into a flat list."""
 
     out: list[dict[str, Any]] = []
+    seen: set[int] = set()
+
+    def append_entry(entry: dict[str, Any]) -> None:
+        ident = id(entry)
+        if ident in seen:
+            return
+        seen.add(ident)
+        out.append(entry)
+
+    def scan(value: Any) -> None:
+        if isinstance(value, list):
+            for child in value:
+                scan(child)
+            return
+        if not isinstance(value, dict):
+            return
+        if _looks_like_video_entry(value, key_candidates):
+            append_entry(value)
+        for child in value.values():
+            if isinstance(child, (dict, list)):
+                scan(child)
+
     for payload in payloads:
         if not isinstance(payload, dict):
             continue
@@ -813,6 +1442,10 @@ def _flatten_video_payloads(
             ("statuses",),
             ("data", "cards"),
             ("data", "feed"),
+            ("data", "visionHotRank", "feeds"),
+            ("data", "visionProfilePhotoList", "feeds"),
+            ("data", "visionSearchPhoto", "feeds"),
+            ("data", "visionSearchPhoto", "photos"),
         ):
             cur: Any = payload
             ok = True
@@ -824,11 +1457,80 @@ def _flatten_video_payloads(
                     break
             if ok and isinstance(cur, list):
                 for entry in cur:
-                    if isinstance(entry, dict) and any(entry.get(k) for k in key_candidates):
-                        out.append(entry)
-        if not out and any(payload.get(k) for k in key_candidates):
-            out.append(payload)
+                    if isinstance(entry, dict) and _looks_like_video_entry(entry, key_candidates):
+                        append_entry(entry)
+        scan(payload)
     return out
+
+
+def _looks_like_video_entry(entry: dict[str, Any], key_candidates: tuple[str, ...]) -> bool:
+    non_id_candidates = [k for k in key_candidates if k != "id"]
+    if any(entry.get(k) for k in non_id_candidates):
+        return True
+    if not entry.get("id"):
+        return False
+    hint_keys = {
+        "aweme_id",
+        "video_id",
+        "note_id",
+        "bvid",
+        "photoId",
+        "photo_id",
+        "photo",
+        "video",
+        "caption",
+        "title",
+        "desc",
+        "cover",
+        "coverUrl",
+        "duration",
+        "timestamp",
+        "create_time",
+        "statistics",
+        "likeCount",
+        "commentCount",
+        "viewCount",
+    }
+    return any(k in entry for k in hint_keys)
+
+
+def _raise_empty_parse(
+    platform: str,
+    page: PageResponse,
+    key_candidates: tuple[str, ...],
+) -> None:
+    json_urls = [
+        row.get("url")
+        for row in (page.network_log or [])
+        if isinstance(row, dict)
+        and row.get("url")
+        and "json" in str(row.get("content_type") or "").lower()
+    ][:8]
+    if not json_urls:
+        json_urls = [
+            row.get("url")
+            for row in (page.network_log or [])
+            if isinstance(row, dict) and row.get("url")
+        ][:8]
+    payload_keys: list[list[str]] = []
+    for payload in (page.json_payloads or [])[:5]:
+        if isinstance(payload, dict):
+            payload_keys.append(sorted(str(k) for k in payload.keys())[:20])
+    err = VendorFormatError(
+        f"{platform} crawler parsed zero video payloads "
+        f"(status={page.status}, json_payloads={len(page.json_payloads)})",
+        payload={
+            "url": page.url,
+            "status": page.status,
+            "json_payload_count": len(page.json_payloads),
+            "network_count": len(page.network_log or []),
+            "network_urls": json_urls,
+            "payload_top_keys": payload_keys,
+            "key_candidates": list(key_candidates),
+            "visible_text_excerpt": _visible_html_text(page.html or "")[:240],
+        },
+    )
+    raise err
 
 
 def _normalize_douyin(raw: dict[str, Any]) -> dict[str, Any]:
@@ -890,23 +1592,147 @@ def _normalize_xhs(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_ks(raw: dict[str, Any]) -> dict[str, Any]:
-    photo_id = raw.get("photoId") or raw.get("id") or ""
-    user = raw.get("user") or raw.get("author") or {}
+    photo = raw.get("photo") if isinstance(raw.get("photo"), dict) else raw
+    user = (
+        raw.get("user")
+        or raw.get("author")
+        or raw.get("owner")
+        or photo.get("user")
+        or photo.get("author")
+        or {}
+    )
+    photo_id = (
+        raw.get("photoId")
+        or raw.get("photo_id")
+        or photo.get("photoId")
+        or photo.get("photo_id")
+        or photo.get("id")
+        or raw.get("id")
+        or ""
+    )
+    duration = _coerce_int(raw.get("duration") or photo.get("duration"))
+    if duration and duration > 1000:
+        duration = int(duration / 1000)
     return {
         "external_id": str(photo_id),
         "external_url": (f"https://www.kuaishou.com/short-video/{photo_id}" if photo_id else ""),
-        "title": raw.get("caption") or raw.get("title") or "",
-        "author": user.get("name") or user.get("user_name") or "",
+        "title": raw.get("caption") or photo.get("caption") or raw.get("title") or photo.get("title") or "",
+        "author": user.get("name") or user.get("user_name") or user.get("userName") or "",
         "author_url": (
             f"https://www.kuaishou.com/profile/{user['id']}" if user.get("id") else None
         ),
-        "cover_url": raw.get("coverUrl") or raw.get("cover_url"),
-        "duration_seconds": raw.get("duration") and int(raw.get("duration") / 1000),
-        "like_count": raw.get("likeCount"),
-        "comment_count": raw.get("commentCount"),
-        "view_count": raw.get("viewCount"),
-        "publish_at": raw.get("timestamp") or 0,
+        "cover_url": raw.get("coverUrl") or raw.get("cover_url") or photo.get("coverUrl") or photo.get("cover_url"),
+        "duration_seconds": duration,
+        "like_count": raw.get("likeCount") or photo.get("likeCount"),
+        "comment_count": raw.get("commentCount") or photo.get("commentCount"),
+        "view_count": raw.get("viewCount") or photo.get("viewCount"),
+        "publish_at": raw.get("timestamp") or photo.get("timestamp") or 0,
     }
+
+
+def _extract_ks_creator(payloads: list[Any], *, profile_url: str) -> dict[str, Any]:
+    creator: dict[str, Any] = {
+        "name": "",
+        "profile_url": profile_url,
+        "follower_count": None,
+        "bio": None,
+    }
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            continue
+        profile = data.get("visionProfile")
+        if not isinstance(profile, dict):
+            continue
+        user_profile = profile.get("userProfile") or {}
+        meta = user_profile.get("profile") or {}
+        name = (
+            meta.get("user_name")
+            or meta.get("name")
+            or meta.get("nickname")
+            or creator["name"]
+        )
+        creator["name"] = str(name or "")
+        creator["bio"] = meta.get("user_text") or meta.get("bio") or creator.get("bio")
+        creator["follower_count"] = _coerce_int(
+            user_profile.get("ownerCount")
+            or user_profile.get("fanCount")
+            or meta.get("follower_count")
+        )
+        profile_id = meta.get("user_id") or meta.get("id")
+        if profile_id:
+            creator["profile_url"] = f"https://www.kuaishou.com/profile/{profile_id}"
+        break
+    return creator
+
+
+def _extract_ks_detail(payloads: list[Any]) -> dict[str, Any] | None:
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            continue
+        detail = data.get("visionVideoDetail") or data.get("visionPhotoDetail")
+        if not isinstance(detail, dict):
+            continue
+        photo = detail.get("photo")
+        if isinstance(photo, dict):
+            author = detail.get("author") or detail.get("user") or {}
+            if isinstance(author, dict):
+                return {"photo": photo, "author": author}
+            return {"photo": photo}
+    return None
+
+
+def _extract_ks_comments(payloads: list[Any], *, limit: int = 40) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+
+    def append_comment(raw: dict[str, Any]) -> None:
+        if len(out) >= limit:
+            return
+        comment_id = raw.get("commentId") or raw.get("id") or raw.get("cid")
+        text = raw.get("content") or raw.get("text") or raw.get("comment")
+        if not comment_id or not text:
+            return
+        author = (
+            raw.get("authorName")
+            or ((raw.get("author") or {}).get("name") if isinstance(raw.get("author"), dict) else None)
+            or ((raw.get("user") or {}).get("name") if isinstance(raw.get("user"), dict) else None)
+            or ""
+        )
+        out.append(
+            {
+                "comment_id": str(comment_id),
+                "text": str(text),
+                "author": str(author or ""),
+                "like_count": _coerce_int(raw.get("likeCount") or raw.get("like_count")),
+                "publish_at": _coerce_int(raw.get("timestamp") or raw.get("createTime")) or 0,
+            }
+        )
+
+    def scan(value: Any) -> None:
+        if len(out) >= limit:
+            return
+        if isinstance(value, list):
+            for child in value:
+                scan(child)
+            return
+        if not isinstance(value, dict):
+            return
+        if value.get("commentId") or value.get("cid"):
+            append_comment(value)
+        for child in value.values():
+            if isinstance(child, (dict, list)):
+                scan(child)
+
+    for payload in payloads:
+        scan(payload)
+        if len(out) >= limit:
+            break
+    return out[:limit]
 
 
 def _normalize_bili_logged(raw: dict[str, Any]) -> dict[str, Any]:
@@ -969,8 +1795,11 @@ __all__ = [
     "DouyinCrawler",
     "KsCrawler",
     "PageResponse",
+    "PLATFORM_COOKIES_REQUIRED",
     "PlaywrightDriver",
     "PlaywrightUnavailable",
     "WeiboCrawler",
     "XhsCrawler",
+    "missing_cookies_keys",
+    "parse_cookies_upload_text",
 ]

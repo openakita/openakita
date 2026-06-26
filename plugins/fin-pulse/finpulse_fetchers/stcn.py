@@ -24,7 +24,7 @@ _ITEM_RE = re.compile(
 )
 
 _DATE_RE = re.compile(
-    r'(?P<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})',
+    r"(?P<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})",
 )
 
 
@@ -48,13 +48,17 @@ def _parse_html(html: str) -> list[NormalizedItem]:
             continue
 
         if not raw_url.startswith("http"):
-            raw_url = f"https://www.stcn.com{raw_url}" if raw_url.startswith("/") else f"https://{raw_url}"
+            raw_url = (
+                f"https://www.stcn.com{raw_url}"
+                if raw_url.startswith("/")
+                else f"https://{raw_url}"
+            )
         if raw_url in seen_urls:
             continue
         seen_urls.add(raw_url)
 
         pub = None
-        tail = html[m.end():m.end() + 300]
+        tail = html[m.end() : m.end() + 300]
         dm = _DATE_RE.search(tail)
         if dm:
             pub = dm.group("date").strip().replace(" ", "T") + ":00Z"

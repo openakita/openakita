@@ -31,10 +31,12 @@ class TestMockLLMClientBasic:
 
     async def test_preset_sequence(self):
         client = MockLLMClient()
-        client.preset_sequence([
-            MockResponse(content="First"),
-            MockResponse(content="Second"),
-        ])
+        client.preset_sequence(
+            [
+                MockResponse(content="First"),
+                MockResponse(content="Second"),
+            ]
+        )
         r1 = await client.chat([Message(role="user", content="q1")])
         r2 = await client.chat([Message(role="user", content="q2")])
         assert r1.content[0].text == "First"
@@ -152,4 +154,3 @@ class TestMockBrain:
         )
         call = mock_brain.llm_client.call_log[-1]
         assert "You are helpful." in call["system"]
-

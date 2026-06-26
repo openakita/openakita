@@ -24,9 +24,8 @@ def test_workflow_error_without_id() -> None:
     client = AvatarComfyClient(lambda: _fake_settings())
     with pytest.raises(WorkflowError, match="No workflow_id"):
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
-            client.submit_workflow("photo_speak", "", {})
-        )
+
+        asyncio.get_event_loop().run_until_complete(client.submit_workflow("photo_speak", "", {}))
 
 
 def test_config_hash_changes_trigger_rebuild() -> None:
@@ -52,6 +51,7 @@ def test_submit_workflow_checks_status(mock_kit: MagicMock) -> None:
     client = AvatarComfyClient(lambda: _fake_settings())
     with pytest.raises(WorkflowError, match="failed"):
         import asyncio
+
         asyncio.get_event_loop().run_until_complete(
             client.submit_workflow("photo_speak", "wf-123", {})
         )
@@ -70,6 +70,7 @@ def test_submit_workflow_success(mock_kit: MagicMock) -> None:
 
     client = AvatarComfyClient(lambda: _fake_settings())
     import asyncio
+
     out = asyncio.get_event_loop().run_until_complete(
         client.submit_workflow("photo_speak", "wf-123", {"image": "test.jpg"})
     )

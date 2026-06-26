@@ -463,9 +463,7 @@ class MediaTaskManager:
 
     async def list_packages(self) -> dict[str, Any]:
         db = self._require()
-        rows = await db.execute_fetchall(
-            "SELECT * FROM packages ORDER BY custom ASC, id ASC"
-        )
+        rows = await db.execute_fetchall("SELECT * FROM packages ORDER BY custom ASC, id ASC")
         out: dict[str, Any] = {}
         for row in rows:
             data = _row_to_dict(row) or {}
@@ -842,7 +840,9 @@ class MediaTaskManager:
         article_id, url_hash = article_id_for(str(item["source_id"]), str(item["url"]))
         topic_key = topic_key_for(str(item.get("title") or ""))
         fetched_at = item.get("fetched_at") or utcnow_iso()
-        row = await _fetchone(db, "SELECT duplicate_count FROM articles WHERE url_hash=?", (url_hash,))
+        row = await _fetchone(
+            db, "SELECT duplicate_count FROM articles WHERE url_hash=?", (url_hash,)
+        )
         inserted = row is None
         if inserted:
             await db.execute(

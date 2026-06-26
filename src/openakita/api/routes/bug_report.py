@@ -50,6 +50,8 @@ MAX_ZIP_SIZE = 30 * 1024 * 1024  # 30 MB
 RECENT_DAYS = 3  # how far back to collect dated files
 DIR_MAX_BYTES = 5 * 1024 * 1024  # default per-directory byte budget
 CRASHDUMP_MAX_BYTES = 12 * 1024 * 1024  # keep room under MAX_ZIP_SIZE
+WER_DUMP_MAX_BYTES = 8 * 1024 * 1024  # budget for WER-captured minidumps
+WEBVIEW2_CRASHPAD_MAX_BYTES = 6 * 1024 * 1024  # budget for EBWebView crashpad dumps
 
 
 def _get_bug_report_endpoint() -> str:
@@ -299,56 +301,158 @@ def _add_windows_crash_artifacts(zf: zipfile.ZipFile) -> None:
     if platform.system() != "Windows":
         return
 
-    _add_dir_recent(
-        zf,
-        _resolve_openakita_home_dir() / "crashdumps",
-        "crashdumps",
-        days=30,
-        patterns=("*.dmp",),
-        max_total_bytes=CRASHDUMP_MAX_BYTES,
-    )
+    # Ship both the binary minidump and its sibling *.events.txt trail. The
+    # crash handler writes <pid>-<tick>.events.txt next to every SEH dump with
+    # the last ~64 diagnostic events (what the user did right before the
+    # crash); without it every dump arrives as a bare faulting address with no
+    # context. They are a few KB each, so they never meaningfully compete with
+    # the .dmp files for the byte budget.
+    # Each collector is independently guarded: crash evidence is best-effort
+    # and one inaccessible source (ACL-protected WER dir, antivirus lock, a
+    # racing delete, …) must never abort the whole feedback bundle.
+    try:
+        _add_dir_recent(
+            zf,
+            _resolve_openakita_home_dir() / "crashdumps",
+            "crashdumps",
+            days=30,
+            patterns=("*.dmp", "*.events.txt"),
+            max_total_bytes=CRASHDUMP_MAX_BYTES,
+        )
+    except Exception:
+        pass
 
-    _add_wer_reports(zf)
-    event_log = _collect_windows_event_log()
-    if event_log:
-        try:
+    try:
+        _add_wer_reports(zf)
+    except Exception:
+        pass
+    try:
+        _add_webview2_crashpad(zf)
+    except Exception:
+        pass
+    try:
+        event_log = _collect_windows_event_log()
+        if event_log:
             zf.writestr("wer/event_log_recent.txt", event_log)
-        except Exception:
-            pass
+    except Exception:
+        pass
+
+
+def _wer_roots() -> list[Path]:
+    """Candidate Windows Error Reporting roots, per-user and machine-wide.
+
+    WER first stages a crash under ``ReportQueue`` and only moves it to
+    ``ReportArchive`` after the WER service finishes processing it. A report
+    submitted within minutes of a crash is therefore frequently still sitting
+    in ``ReportQueue`` — scanning ``ReportArchive`` alone misses fresh crashes
+    (the exact reason issue #606's fast-fail crash arrived with no WER data).
+    Fast-fail terminations (heap corruption ``0xC0000374``, ``__fastfail``)
+    bypass our in-process SEH filter entirely, so WER is the only place their
+    faulting-module evidence ever lands.
+    """
+    import os
+
+    roots: list[Path] = []
+    for base_env in ("LOCALAPPDATA", "ProgramData"):
+        base = os.environ.get(base_env, "").strip()
+        if not base:
+            continue
+        wer = Path(base) / "Microsoft" / "Windows" / "WER"
+        roots.append(wer / "ReportQueue")
+        roots.append(wer / "ReportArchive")
+    return roots
 
 
 def _add_wer_reports(zf: zipfile.ZipFile) -> None:
-    """Add recent WER Report.wer files that mention OpenAkita."""
+    """Add recent WER reports (and any captured minidumps) for OpenAkita.
+
+    Scans ``ReportQueue`` and ``ReportArchive`` under both the per-user and
+    machine-wide WER roots. For each matching report directory we always ship
+    the tiny ``Report.wer`` metadata (faulting module + version + offset +
+    exception code) and, within a bounded budget, any WER-captured minidumps
+    (``*.dmp`` / ``*.mdmp``). The full-heap ``*.hdmp`` is deliberately skipped
+    because it can be hundreds of MB.
+    """
+    seen: set[str] = set()
+    dump_budget = WER_DUMP_MAX_BYTES
+    for root in _wer_roots():
+        if not root.exists():
+            continue
+        try:
+            dirs = [p for p in root.iterdir() if p.is_dir()]
+            dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            candidates = dirs[:30]
+        except Exception:
+            continue
+
+        for report_dir in candidates:
+            # The whole per-report body is wrapped: the machine-wide root
+            # ``C:\ProgramData\Microsoft\Windows\WER\ReportArchive`` is not
+            # readable by a standard (non-elevated) user, and Python's
+            # ``Path.is_file()`` / ``Path.exists()`` *re-raise* PermissionError
+            # (WinError 5) instead of returning False the way they do for a
+            # missing path. An unguarded probe there would abort the entire
+            # feedback bundle, so a report we cannot touch is simply skipped.
+            try:
+                report_wer = report_dir / "Report.wer"
+                if not report_wer.is_file():
+                    continue
+                matched = "openakita" in report_dir.name.lower()
+                if not matched:
+                    try:
+                        sample = report_wer.read_bytes()[: 64 * 1024]
+                        matched = "openakita" in sample.decode("utf-8", "ignore").lower()
+                    except Exception:
+                        matched = False
+                if not matched:
+                    continue
+                # A queued report is moved to the archive later, so the same
+                # directory name can appear under both roots; de-dup by name.
+                if report_dir.name in seen:
+                    continue
+                seen.add(report_dir.name)
+                label = f"{root.name}-{report_dir.name}"
+                _add_file(zf, report_wer, f"wer/{label}-Report.wer")
+                for dump in list(report_dir.glob("*.dmp")) + list(report_dir.glob("*.mdmp")):
+                    try:
+                        sz = dump.stat().st_size
+                    except OSError:
+                        continue
+                    if sz > dump_budget:
+                        continue
+                    _add_file(zf, dump, f"wer/{label}-{dump.name}")
+                    dump_budget -= sz
+            except Exception:
+                # PermissionError on a machine-wide report, a racing delete by
+                # the WER service, etc. — skip this report, never the bundle.
+                continue
+
+
+def _add_webview2_crashpad(zf: zipfile.ZipFile) -> None:
+    """Add recent WebView2 (Edge/Chromium) Crashpad dumps.
+
+    A crash *inside the WebView2 process* never reaches our in-process SEH
+    filter (it lives in a separate ``msedgewebview2.exe`` process) and is not
+    reported to WER under our exe name. Edge captures it itself via Crashpad
+    under the app's WebView2 user-data folder, which Tauri 2 defaults to
+    ``%LOCALAPPDATA%\\<bundle-identifier>\\EBWebView``.
+    """
     import os
 
     local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
     if not local_appdata:
         return
-    wer_archive = Path(local_appdata) / "Microsoft" / "Windows" / "WER" / "ReportArchive"
-    if not wer_archive.exists():
-        return
-
-    candidates: list[Path] = []
-    try:
-        dirs = [p for p in wer_archive.iterdir() if p.is_dir()]
-        dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        candidates = dirs[:30]
-    except Exception:
-        return
-
-    for report_dir in candidates:
-        report_wer = report_dir / "Report.wer"
-        if not report_wer.is_file():
-            continue
-        matched = "openakita" in report_dir.name.lower()
-        if not matched:
-            try:
-                sample = report_wer.read_bytes()[:64 * 1024]
-                matched = "openakita" in sample.decode("utf-8", "ignore").lower()
-            except Exception:
-                matched = False
-        if matched:
-            _add_file(zf, report_wer, f"wer/{report_dir.name}-Report.wer")
+    reports = (
+        Path(local_appdata) / "com.openakita.setupcenter" / "EBWebView" / "Crashpad" / "reports"
+    )
+    _add_dir_recent(
+        zf,
+        reports,
+        "webview2_crashpad",
+        days=30,
+        patterns=("*.dmp",),
+        max_total_bytes=WEBVIEW2_CRASHPAD_MAX_BYTES,
+    )
 
 
 def _collect_windows_event_log() -> bytes:
@@ -361,7 +465,7 @@ def _collect_windows_event_log() -> bytes:
         "TimeCreated[timediff(@SystemTime) <= 604800000]]]"
     )
     ps_cmd = (
-        f"$ev = Get-WinEvent -LogName Application -MaxEvents 200 -FilterXPath \"{xpath}\" "
+        f'$ev = Get-WinEvent -LogName Application -MaxEvents 200 -FilterXPath "{xpath}" '
         "-ErrorAction SilentlyContinue | "
         "Where-Object { $_.Message -match 'openakita' } | Select-Object -First 30; "
         "if ($ev) { $ev | ForEach-Object { "
@@ -445,12 +549,19 @@ def _add_dir_recent(
 
 
 def _add_file(zf: zipfile.ZipFile, path: Path, zip_name: str) -> None:
-    """Add a single file to the zip if it exists."""
-    if path.exists() and path.is_file():
-        try:
+    """Add a single file to the zip if it exists.
+
+    The whole body — including the ``exists()`` / ``is_file()`` probes — is
+    guarded: on Windows those stat the path and *re-raise* PermissionError
+    (WinError 5) for ACL-protected locations (e.g. machine-wide WER reports),
+    rather than returning False as they do for a missing path. A file we
+    cannot read is silently skipped.
+    """
+    try:
+        if path.exists() and path.is_file():
             zf.write(path, zip_name)
-        except Exception:
-            pass
+    except Exception:
+        pass
 
 
 _SENSITIVE_KEY_RE = None
@@ -546,7 +657,9 @@ def _collect_endpoint_summary() -> dict:
                     "key_present": bool(env_var and env_values.get(env_var, "").strip()),
                     "context_window": ep.get("context_window"),
                     "timeout": ep.get("timeout"),
-                    "capabilities": ep.get("capabilities") if isinstance(ep.get("capabilities"), list) else [],
+                    "capabilities": ep.get("capabilities")
+                    if isinstance(ep.get("capabilities"), list)
+                    else [],
                 }
             )
         return out
@@ -675,24 +788,16 @@ async def _upload_to_worker(
             )
 
             if prepare_resp.status_code == 429:
-                raise HTTPException(
-                    status_code=429, detail="Rate limit reached, please try later"
-                )
+                raise HTTPException(status_code=429, detail="Rate limit reached, please try later")
             if prepare_resp.status_code == 403:
                 raise HTTPException(status_code=403, detail="Verification failed")
             if prepare_resp.status_code >= 400:
                 try:
-                    detail = prepare_resp.json().get(
-                        "error", prepare_resp.text[:200]
-                    )
+                    detail = prepare_resp.json().get("error", prepare_resp.text[:200])
                 except Exception:
                     detail = prepare_resp.text[:200]
-                logger.error(
-                    "Prepare failed: %s %s", prepare_resp.status_code, detail
-                )
-                raise HTTPException(
-                    status_code=502, detail=f"Cloud service error: {detail}"
-                )
+                logger.error("Prepare failed: %s %s", prepare_resp.status_code, detail)
+                raise HTTPException(status_code=502, detail=f"Cloud service error: {detail}")
 
             prepare_data = prepare_resp.json()
             upload_url = prepare_data["upload_url"]
@@ -713,10 +818,7 @@ async def _upload_to_worker(
                 )
                 raise HTTPException(
                     status_code=502,
-                    detail=(
-                        "Direct upload to storage failed"
-                        f" ({oss_resp.status_code})"
-                    ),
+                    detail=(f"Direct upload to storage failed ({oss_resp.status_code})"),
                 )
 
             complete_resp = await client.post(
@@ -934,27 +1036,23 @@ async def _build_bug_zip(
             err_data = _tail_file(error_log, LOG_TAIL_BYTES)
             if err_data:
                 zf.writestr("logs/error.log", err_data)
-            serve_data = _tail_file(
-                logs_dir / "openakita-serve.log", LOG_TAIL_BYTES
-            )
+            serve_data = _tail_file(logs_dir / "openakita-serve.log", LOG_TAIL_BYTES)
             if serve_data:
                 zf.writestr("logs/openakita-serve.log", serve_data)
 
             global_logs = _resolve_global_logs_dir()
-            fe_data = _tail_file(
-                global_logs / "frontend.log", FRONTEND_LOG_TAIL_BYTES
-            )
+            fe_data = _tail_file(global_logs / "frontend.log", FRONTEND_LOG_TAIL_BYTES)
             if fe_data:
                 zf.writestr("logs/frontend.log", fe_data)
-            crash_data = _tail_file(
-                global_logs / "crash.log", FRONTEND_LOG_TAIL_BYTES
-            )
+            crash_data = _tail_file(global_logs / "crash.log", FRONTEND_LOG_TAIL_BYTES)
             if crash_data:
                 zf.writestr("logs/crash.log", crash_data)
 
             data_dir = _resolve_data_dir()
             _add_dir_recent(
-                zf, data_dir / "delegation_logs", "delegation_logs",
+                zf,
+                data_dir / "delegation_logs",
+                "delegation_logs",
                 patterns=("*.jsonl",),
                 max_total_bytes=2 * 1024 * 1024,
             )
@@ -967,22 +1065,30 @@ async def _build_bug_zip(
                 except Exception:
                     pass
             _add_dir_recent(
-                zf, data_dir / "react_traces", "react_traces",
+                zf,
+                data_dir / "react_traces",
+                "react_traces",
                 patterns=("*.json",),
                 max_total_bytes=5 * 1024 * 1024,
             )
             _add_dir_recent(
-                zf, data_dir / "traces", "traces",
+                zf,
+                data_dir / "traces",
+                "traces",
                 patterns=("*.json",),
                 max_total_bytes=2 * 1024 * 1024,
             )
             _add_dir_recent(
-                zf, data_dir / "orgs", "orgs",
+                zf,
+                data_dir / "orgs",
+                "orgs",
                 patterns=("*.jsonl", "*.md"),
                 max_total_bytes=2 * 1024 * 1024,
             )
             _add_dir_recent(
-                zf, data_dir / "tool_overflow", "tool_overflow",
+                zf,
+                data_dir / "tool_overflow",
+                "tool_overflow",
                 patterns=("*.txt",),
                 max_total_bytes=2 * 1024 * 1024,
             )
@@ -993,24 +1099,30 @@ async def _build_bug_zip(
                 max_total_bytes=1 * 1024 * 1024,
             )
             _add_dir_recent(
-                zf, data_dir / "retrospects", "retrospects",
+                zf,
+                data_dir / "retrospects",
+                "retrospects",
                 patterns=("*.jsonl",),
                 max_total_bytes=1 * 1024 * 1024,
             )
             _add_file(
-                zf, data_dir / "runtime_state.json",
+                zf,
+                data_dir / "runtime_state.json",
                 "state/runtime_state.json",
             )
             _add_file(
-                zf, data_dir / "sub_agent_states.json",
+                zf,
+                data_dir / "sub_agent_states.json",
                 "state/sub_agent_states.json",
             )
             _add_file(
-                zf, data_dir / "backend.heartbeat",
+                zf,
+                data_dir / "backend.heartbeat",
                 "state/backend.heartbeat",
             )
             _add_file(
-                zf, data_dir / "sessions" / "sessions.json",
+                zf,
+                data_dir / "sessions" / "sessions.json",
                 "state/sessions.json",
             )
             _add_file(
@@ -1019,7 +1131,8 @@ async def _build_bug_zip(
                 "state/channel_registry.json",
             )
             _add_file(
-                zf, data_dir / "scheduler" / "tasks.json",
+                zf,
+                data_dir / "scheduler" / "tasks.json",
                 "state/scheduler_tasks.json",
             )
             _add_file(
@@ -1032,9 +1145,7 @@ async def _build_bug_zip(
                 if config_snapshot:
                     zf.writestr(
                         "state/sanitized_config.json",
-                        json.dumps(
-                            config_snapshot, ensure_ascii=False, indent=2
-                        ),
+                        json.dumps(config_snapshot, ensure_ascii=False, indent=2),
                     )
             except Exception:
                 pass
@@ -1121,7 +1232,10 @@ def _prepare_error_to_sse(result: dict) -> tuple[str, dict]:
     if code == "rate_limit":
         return ("error", {"detail": "rate_limit", "friendly": "feedback_rate_limit"})
     if code == "captcha_failed":
-        return ("error", {"detail": detail or "captcha_failed", "friendly": "feedback_captcha_failed"})
+        return (
+            "error",
+            {"detail": detail or "captcha_failed", "friendly": "feedback_captcha_failed"},
+        )
     if code == "network":
         return ("error", {"detail": detail, "friendly": "feedback_cloud_network_error"})
     return ("error", {"detail": detail or code, "friendly": "feedback_cloud_error"})
@@ -1151,22 +1265,25 @@ async def _upload_with_progress(
     endpoint = _get_bug_report_endpoint()
     if not endpoint:
         local_path = _save_zip_locally(report_id, zip_bytes)
-        yield ("complete", {
-            "status": "upload_failed",
-            "report_id": report_id,
-            "error": "Bug report endpoint not configured",
-            "local_path": str(local_path),
-            "download_url": f"/api/feedback-download/{report_id}",
-        })
+        yield (
+            "complete",
+            {
+                "status": "upload_failed",
+                "report_id": report_id,
+                "error": "Bug report endpoint not configured",
+                "local_path": str(local_path),
+                "download_url": f"/api/feedback-download/{report_id}",
+            },
+        )
         return
 
     if len(zip_bytes) > MAX_ZIP_SIZE:
-        yield ("error", {
-            "detail": (
-                f"Package too large: "
-                f"{len(zip_bytes) / 1024 / 1024:.1f} MB (max 30 MB)"
-            ),
-        })
+        yield (
+            "error",
+            {
+                "detail": (f"Package too large: {len(zip_bytes) / 1024 / 1024:.1f} MB (max 30 MB)"),
+            },
+        )
         return
 
     import httpx
@@ -1179,10 +1296,14 @@ async def _upload_with_progress(
                 upload_url = prepared["upload_url"]
                 report_date = prepared["report_date"]
             else:
-                yield ("progress", {
-                    "phase": "preparing", "percent": 33,
-                    "detail": "连接云端服务...",
-                })
+                yield (
+                    "progress",
+                    {
+                        "phase": "preparing",
+                        "percent": 33,
+                        "detail": "连接云端服务...",
+                    },
+                )
 
                 prepare_resp = await client.post(
                     f"{base}/prepare",
@@ -1207,18 +1328,25 @@ async def _upload_with_progress(
                         detail = prepare_resp.json().get("error", "")
                     except Exception:
                         detail = ""
-                    yield ("error", {"detail": detail or "captcha_failed", "friendly": "feedback_captcha_failed"})
+                    yield (
+                        "error",
+                        {
+                            "detail": detail or "captcha_failed",
+                            "friendly": "feedback_captcha_failed",
+                        },
+                    )
                     return
                 if prepare_resp.status_code >= 400:
                     try:
-                        detail = prepare_resp.json().get(
-                            "error", prepare_resp.text[:200]
-                        )
+                        detail = prepare_resp.json().get("error", prepare_resp.text[:200])
                     except Exception:
                         detail = prepare_resp.text[:200]
-                    yield ("error", {
-                        "detail": f"Cloud service error: {detail}",
-                    })
+                    yield (
+                        "error",
+                        {
+                            "detail": f"Cloud service error: {detail}",
+                        },
+                    )
                     return
 
                 prepare_data = prepare_resp.json()
@@ -1233,7 +1361,7 @@ async def _upload_with_progress(
             async def chunked_body():
                 nonlocal sent_bytes
                 for i in range(0, total, chunk_size):
-                    chunk = zip_bytes[i:i + chunk_size]
+                    chunk = zip_bytes[i : i + chunk_size]
                     yield chunk
                     sent_bytes = min(i + chunk_size, total)
 
@@ -1250,14 +1378,16 @@ async def _upload_with_progress(
                 while not upload_task.done():
                     await asyncio.sleep(0.3)
                     pct = 35 + int((sent_bytes / max(total, 1)) * 55)
-                    yield ("progress", {
-                        "phase": "uploading",
-                        "percent": min(pct, 89),
-                        "detail": (
-                            f"上传中（{sent_bytes / 1048576:.1f}"
-                            f" / {total / 1048576:.1f} MB）"
-                        ),
-                    })
+                    yield (
+                        "progress",
+                        {
+                            "phase": "uploading",
+                            "percent": min(pct, 89),
+                            "detail": (
+                                f"上传中（{sent_bytes / 1048576:.1f} / {total / 1048576:.1f} MB）"
+                            ),
+                        },
+                    )
             except GeneratorExit:
                 upload_task.cancel()
                 try:
@@ -1274,25 +1404,27 @@ async def _upload_with_progress(
                     oss_resp.status_code,
                 )
                 local_path = _save_zip_locally(report_id, zip_bytes)
-                yield ("complete", {
-                    "status": "upload_failed",
-                    "report_id": report_id,
-                    "error": (
-                        "Direct upload to storage failed"
-                        f" ({oss_resp.status_code})"
-                    ),
-                    "local_path": str(local_path),
-                    "download_url": (
-                        f"/api/feedback-download/{report_id}"
-                    ),
-                })
+                yield (
+                    "complete",
+                    {
+                        "status": "upload_failed",
+                        "report_id": report_id,
+                        "error": (f"Direct upload to storage failed ({oss_resp.status_code})"),
+                        "local_path": str(local_path),
+                        "download_url": (f"/api/feedback-download/{report_id}"),
+                    },
+                )
                 return
 
             # Phase 3: complete
-            yield ("progress", {
-                "phase": "completing", "percent": 92,
-                "detail": "创建反馈记录...",
-            })
+            yield (
+                "progress",
+                {
+                    "phase": "completing",
+                    "percent": 92,
+                    "detail": "创建反馈记录...",
+                },
+            )
 
             complete_resp = await client.post(
                 f"{base}/complete/{report_id}",
@@ -1312,27 +1444,31 @@ async def _upload_with_progress(
                     complete_resp.status_code,
                 )
 
-            yield ("complete", {
-                "status": "ok",
-                "report_id": report_id,
-                "size_bytes": total,
-                "issue_url": issue_url,
-                "feedback_token": feedback_token,
-            })
+            yield (
+                "complete",
+                {
+                    "status": "ok",
+                    "report_id": report_id,
+                    "size_bytes": total,
+                    "issue_url": issue_url,
+                    "feedback_token": feedback_token,
+                },
+            )
 
     except Exception as e:
         logger.error("Upload error: %s", e, exc_info=True)
         try:
             local_path = _save_zip_locally(report_id, zip_bytes)
-            yield ("complete", {
-                "status": "upload_failed",
-                "report_id": report_id,
-                "error": str(e),
-                "local_path": str(local_path),
-                "download_url": (
-                    f"/api/feedback-download/{report_id}"
-                ),
-            })
+            yield (
+                "complete",
+                {
+                    "status": "upload_failed",
+                    "report_id": report_id,
+                    "error": str(e),
+                    "local_path": str(local_path),
+                    "download_url": (f"/api/feedback-download/{report_id}"),
+                },
+            )
         except Exception:
             yield ("error", {"detail": str(e)})
 
@@ -1353,9 +1489,7 @@ async def submit_bug_report(
     """Submit a bug report with system info, logs, and LLM debug files
     (SSE stream)."""
     if len(title) < 2 or len(title) > 200:
-        raise HTTPException(
-            status_code=400, detail="标题需要 2-200 个字符"
-        )
+        raise HTTPException(status_code=400, detail="标题需要 2-200 个字符")
     if len(description) < 2:
         raise HTTPException(
             status_code=400,
@@ -1370,13 +1504,18 @@ async def submit_bug_report(
         try:
             # Phase 0: verify captcha + get pre-signed URL BEFORE any heavy work.
             # This ensures the captcha token is verified within seconds of generation.
-            yield _sse_event("progress", {
-                "phase": "verifying", "percent": 3,
-                "detail": "验证身份...",
-            })
+            yield _sse_event(
+                "progress",
+                {
+                    "phase": "verifying",
+                    "percent": 3,
+                    "detail": "验证身份...",
+                },
+            )
             oa_ver = "unknown"
             try:
                 from openakita import get_version_string
+
                 oa_ver = get_version_string()
             except Exception:
                 pass
@@ -1401,16 +1540,24 @@ async def submit_bug_report(
                 yield _sse_event(evt_type, evt_data)
                 return
 
-            yield _sse_event("progress", {
-                "phase": "collecting", "percent": 8,
-                "detail": "收集系统信息...",
-            })
+            yield _sse_event(
+                "progress",
+                {
+                    "phase": "collecting",
+                    "percent": 8,
+                    "detail": "收集系统信息...",
+                },
+            )
             sys_info = _collect_system_info()
 
-            yield _sse_event("progress", {
-                "phase": "building", "percent": 15,
-                "detail": "打包诊断数据...",
-            })
+            yield _sse_event(
+                "progress",
+                {
+                    "phase": "building",
+                    "percent": 15,
+                    "detail": "打包诊断数据...",
+                },
+            )
             zip_bytes = await _build_bug_zip(
                 report_id=report_id,
                 title=title,
@@ -1424,13 +1571,14 @@ async def submit_bug_report(
                 upload_debug=upload_debug,
             )
 
-            yield _sse_event("progress", {
-                "phase": "built", "percent": 30,
-                "detail": (
-                    f"打包完成（{len(zip_bytes) / 1048576:.1f} MB）"
-                    "，准备上传..."
-                ),
-            })
+            yield _sse_event(
+                "progress",
+                {
+                    "phase": "built",
+                    "percent": 30,
+                    "detail": (f"打包完成（{len(zip_bytes) / 1048576:.1f} MB），准备上传..."),
+                },
+            )
 
             sys_info_brief = (
                 f"OS: {sys_info.get('os', '?')} | "
@@ -1458,10 +1606,14 @@ async def submit_bug_report(
                 else:
                     yield _sse_event(evt_type, evt_data)
 
-            yield _sse_event("progress", {
-                "phase": "saving", "percent": 95,
-                "detail": "保存本地记录...",
-            })
+            yield _sse_event(
+                "progress",
+                {
+                    "phase": "saving",
+                    "percent": 95,
+                    "detail": "保存本地记录...",
+                },
+            )
             try:
                 await feedback_store.save_record(
                     report_id=report_id,
@@ -1471,17 +1623,13 @@ async def submit_bug_report(
                     contact_email=contact_email,
                 )
             except Exception as save_err:
-                logger.warning(
-                    "Local feedback save failed: %s", save_err
-                )
+                logger.warning("Local feedback save failed: %s", save_err)
 
             final_type = result_data.pop("_evt_type", "complete")
             yield _sse_event(final_type, result_data)
 
         except Exception as e:
-            logger.error(
-                "Bug report SSE error: %s", e, exc_info=True
-            )
+            logger.error("Bug report SSE error: %s", e, exc_info=True)
             yield _sse_event("error", {"detail": str(e)})
 
     return StreamingResponse(
@@ -1503,13 +1651,9 @@ async def submit_feature_request(
 ):
     """Submit a feature/requirement request (SSE stream)."""
     if len(title) < 2 or len(title) > 200:
-        raise HTTPException(
-            status_code=400, detail="需求名称需要 2-200 个字符"
-        )
+        raise HTTPException(status_code=400, detail="需求名称需要 2-200 个字符")
     if len(description) < 2:
-        raise HTTPException(
-            status_code=400, detail="请填写「需求描述」字段"
-        )
+        raise HTTPException(status_code=400, detail="请填写「需求描述」字段")
 
     report_id = uuid.uuid4().hex[:12]
 
@@ -1518,10 +1662,14 @@ async def submit_feature_request(
 
         try:
             # Phase 0: verify captcha before any packaging work
-            yield _sse_event("progress", {
-                "phase": "verifying", "percent": 3,
-                "detail": "验证身份...",
-            })
+            yield _sse_event(
+                "progress",
+                {
+                    "phase": "verifying",
+                    "percent": 3,
+                    "detail": "验证身份...",
+                },
+            )
             contact_brief = f"Email: {contact_email}" if contact_email else "(no contact)"
             prepared = await _prepare_cloud_upload(
                 report_id=report_id,
@@ -1538,10 +1686,14 @@ async def submit_feature_request(
                 yield _sse_event(evt_type, evt_data)
                 return
 
-            yield _sse_event("progress", {
-                "phase": "building", "percent": 10,
-                "detail": "打包需求数据...",
-            })
+            yield _sse_event(
+                "progress",
+                {
+                    "phase": "building",
+                    "percent": 10,
+                    "detail": "打包需求数据...",
+                },
+            )
 
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1554,35 +1706,35 @@ async def submit_feature_request(
                         "email": contact_email,
                         "wechat": contact_wechat,
                     },
-                    "created_at": time.strftime(
-                        "%Y-%m-%dT%H:%M:%SZ"
-                    ),
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 }
                 zf.writestr(
                     "metadata.json",
-                    json.dumps(
-                        metadata, ensure_ascii=False, indent=2
-                    ),
+                    json.dumps(metadata, ensure_ascii=False, indent=2),
                 )
                 await _pack_images(zf, images)
             zip_bytes = buf.getvalue()
 
-            yield _sse_event("progress", {
-                "phase": "built", "percent": 25,
-                "detail": (
-                    f"打包完成（{len(zip_bytes) / 1048576:.1f} MB）"
-                    "，准备上传..."
-                ),
-            })
+            yield _sse_event(
+                "progress",
+                {
+                    "phase": "built",
+                    "percent": 25,
+                    "detail": (f"打包完成（{len(zip_bytes) / 1048576:.1f} MB），准备上传..."),
+                },
+            )
 
-            contact_brief = " | ".join(
-                f for f in [
-                    f"Email: {contact_email}"
-                    if contact_email else "",
-                    f"WeChat: {contact_wechat}"
-                    if contact_wechat else "",
-                ] if f
-            ) or "(no contact)"
+            contact_brief = (
+                " | ".join(
+                    f
+                    for f in [
+                        f"Email: {contact_email}" if contact_email else "",
+                        f"WeChat: {contact_wechat}" if contact_wechat else "",
+                    ]
+                    if f
+                )
+                or "(no contact)"
+            )
 
             result_data: dict = {}
             async for evt_type, evt_data in _upload_with_progress(
@@ -1603,10 +1755,14 @@ async def submit_feature_request(
                 else:
                     yield _sse_event(evt_type, evt_data)
 
-            yield _sse_event("progress", {
-                "phase": "saving", "percent": 95,
-                "detail": "保存本地记录...",
-            })
+            yield _sse_event(
+                "progress",
+                {
+                    "phase": "saving",
+                    "percent": 95,
+                    "detail": "保存本地记录...",
+                },
+            )
             try:
                 await feedback_store.save_record(
                     report_id=report_id,
@@ -1616,17 +1772,13 @@ async def submit_feature_request(
                     contact_email=contact_email,
                 )
             except Exception as save_err:
-                logger.warning(
-                    "Local feedback save failed: %s", save_err
-                )
+                logger.warning("Local feedback save failed: %s", save_err)
 
             final_type = result_data.pop("_evt_type", "complete")
             yield _sse_event(final_type, result_data)
 
         except Exception as e:
-            logger.error(
-                "Feature request SSE error: %s", e, exc_info=True
-            )
+            logger.error("Feature request SSE error: %s", e, exc_info=True)
             yield _sse_event("error", {"detail": str(e)})
 
     return StreamingResponse(
@@ -1644,6 +1796,7 @@ async def get_feedback_history():
     """Return local feedback submission records for the
     My Feedback page."""
     from . import feedback_store
+
     return await feedback_store.get_all_records()
 
 
@@ -1652,6 +1805,7 @@ async def get_feedback_unread_count():
     """Return count of feedback items with unread developer
     replies."""
     from . import feedback_store
+
     return {"unread_count": await feedback_store.get_unread_count()}
 
 
@@ -1692,13 +1846,8 @@ async def get_feedback_status(report_id: str):
                 data = resp.json()
                 now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
                 replies = data.get("developer_replies", [])
-                external = [
-                    r for r in replies
-                    if r.get("source") != "user_reply"
-                ]
-                last_reply = (
-                    external[-1].get("created_at") if external else None
-                )
+                external = [r for r in replies if r.get("source") != "user_reply"]
+                last_reply = external[-1].get("created_at") if external else None
                 await feedback_store.update_status(
                     report_id,
                     cached_status=data.get("status", "pending"),
@@ -1710,20 +1859,17 @@ async def get_feedback_status(report_id: str):
             else:
                 logger.warning(
                     "FC status query returned %s for %s",
-                    resp.status_code, report_id,
+                    resp.status_code,
+                    report_id,
                 )
                 return {
-                    "status": record.get(
-                        "cached_status", "pending"
-                    ),
+                    "status": record.get("cached_status", "pending"),
                     "report_id": report_id,
                     "source": "cache",
                     "error": f"FC returned {resp.status_code}",
                 }
     except Exception as e:
-        logger.warning(
-            "FC status query failed for %s: %s", report_id, e
-        )
+        logger.warning("FC status query failed for %s: %s", report_id, e)
         return {
             "status": record.get("cached_status", "pending"),
             "report_id": report_id,
@@ -1779,32 +1925,19 @@ async def get_feedback_status_batch():
                 now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
                 for rid, info in results.items():
                     if isinstance(info, dict) and "error" not in info:
-                        replies = info.get(
-                            "developer_replies", []
-                        )
-                        external = [
-                            r for r in replies
-                            if r.get("source") != "user_reply"
-                        ]
-                        last_reply = (
-                            external[-1].get("created_at")
-                            if external
-                            else None
-                        )
+                        replies = info.get("developer_replies", [])
+                        external = [r for r in replies if r.get("source") != "user_reply"]
+                        last_reply = external[-1].get("created_at") if external else None
                         await feedback_store.update_status(
                             rid,
-                            cached_status=info.get(
-                                "status", "pending"
-                            ),
+                            cached_status=info.get("status", "pending"),
                             last_reply_at=last_reply,
                             last_checked_at=now,
                         )
                         info["source"] = "live"
                 return {"results": results}
             else:
-                logger.warning(
-                    "FC batch status returned %s", resp.status_code
-                )
+                logger.warning("FC batch status returned %s", resp.status_code)
     except Exception as e:
         logger.warning("FC batch status query failed: %s", e)
 
@@ -1852,7 +1985,8 @@ async def post_feedback_reply(report_id: str, body: dict):
             if resp.status_code == 200:
                 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 await feedback_store.update_status(
-                    report_id, last_checked_at=now,
+                    report_id,
+                    last_checked_at=now,
                 )
                 return resp.json()
             try:
@@ -2020,9 +2154,8 @@ async def delete_feedback_record(report_id: str):
     """Delete a local feedback record (does not affect cloud
     data)."""
     from . import feedback_store
+
     deleted = await feedback_store.delete_record(report_id)
     if not deleted:
-        raise HTTPException(
-            status_code=404, detail="Record not found"
-        )
+        raise HTTPException(status_code=404, detail="Record not found")
     return {"status": "ok"}

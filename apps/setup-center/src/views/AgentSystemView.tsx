@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FieldText, FieldBool, FieldSelect } from "../components/EnvFields";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -27,6 +27,21 @@ type AgentSystemViewProps = {
   toggleViewDisabled: (viewName: string) => void;
   serviceRunning?: boolean;
   apiBaseUrl?: string;
+};
+
+type ReviewResult = {
+  deleted: number;
+  updated: number;
+  merged: number;
+  kept: number;
+  errors?: number;
+};
+
+type ReviewProgress = {
+  status?: "idle" | "running" | "done" | "error" | "cancelled";
+  report?: Partial<ReviewResult>;
+  error?: string;
+  cancelled?: boolean;
 };
 
 // ─── Reusable: toggle pill (iOS-style switch in summary) ────────────────
@@ -68,6 +83,79 @@ export function AgentSystemView(props: AgentSystemViewProps) {
   const [reviewing, setReviewing] = useState(false);
   const [showReviewConfirm, setShowReviewConfirm] = useState(false);
   const [importing, setImporting] = useState(false);
+  const reviewPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopReviewPolling = useCallback(() => {
+    if (reviewPollRef.current) {
+      clearInterval(reviewPollRef.current);
+      reviewPollRef.current = null;
+    }
+  }, []);
+
+  const showReviewResult = useCallback((report?: Partial<ReviewResult>) => {
+    if (!report) {
+      toast.success("LLM 审查完成");
+      return;
+    }
+    const deleted = Number(report.deleted ?? 0);
+    const updated = Number(report.updated ?? 0);
+    const merged = Number(report.merged ?? 0);
+    const kept = Number(report.kept ?? 0);
+    const errors = Number(report.errors ?? 0);
+    toast.success(
+      `LLM 审查完成：删除 ${deleted}，更新 ${updated}，合并 ${merged}，保留 ${kept}` +
+      (errors > 0 ? `，错误 ${errors}` : "")
+    );
+  }, []);
+
+  const pollReviewStatus = useCallback(() => {
+    stopReviewPolling();
+    reviewPollRef.current = setInterval(async () => {
+      try {
+        const res = await safeFetch(`${apiBaseUrl}/api/memories/review/status`, {
+          signal: AbortSignal.timeout(5_000),
+        });
+        const data = await res.json();
+        const progress: ReviewProgress = data.progress ?? data;
+        const status = progress.status ?? data.status;
+
+        if (status === "done" || status === "error" || status === "cancelled") {
+          stopReviewPolling();
+          setReviewing(false);
+          if (status === "done") {
+            showReviewResult(progress.report);
+          } else if (status === "cancelled") {
+            toast.info("LLM 审查已取消");
+          } else {
+            toast.error(`审查出错：${progress.error || "unknown"}`);
+          }
+        }
+      } catch {
+        /* transient network error, keep polling */
+      }
+    }, 2_000);
+  }, [apiBaseUrl, showReviewResult, stopReviewPolling]);
+
+  useEffect(() => stopReviewPolling, [stopReviewPolling]);
+
+  useEffect(() => {
+    if (!serviceRunning) return;
+    (async () => {
+      try {
+        const res = await safeFetch(`${apiBaseUrl}/api/memories/review/status`, {
+          signal: AbortSignal.timeout(3_000),
+        });
+        const data = await res.json();
+        const progress: ReviewProgress = data.progress ?? data;
+        if ((progress.status ?? data.status) === "running") {
+          setReviewing(true);
+          pollReviewStatus();
+        }
+      } catch {
+        /* no running review */
+      }
+    })();
+  }, [apiBaseUrl, pollReviewStatus, serviceRunning]);
 
   const handleImportPersona = async () => {
     const input = document.createElement("input");
@@ -137,21 +225,19 @@ export function AgentSystemView(props: AgentSystemViewProps) {
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/memories/review`, {
         method: "POST",
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.timeout(10_000),
       });
       const data = await res.json();
-      const review = data?.review ?? data;
-      if (review && typeof review.deleted === "number") {
-        toast.success(
-          `LLM 审查完成：删除 ${review.deleted}，更新 ${review.updated}，合并 ${review.merged}，保留 ${review.kept}` +
-          (review.errors > 0 ? `，错误 ${review.errors}` : "")
-        );
+      if (data.status === "already_running") {
+        toast.info("LLM 审查已在运行");
+      } else if (data.status === "started") {
+        toast.info("LLM 审查已启动");
       } else {
-        toast.error("审查完成，但返回数据格式异常");
+        toast.info("LLM 审查已提交");
       }
+      pollReviewStatus();
     } catch (e: any) {
       toast.error(e.message || "审查请求失败");
-    } finally {
       setReviewing(false);
     }
   };
@@ -249,7 +335,6 @@ export function AgentSystemView(props: AgentSystemViewProps) {
         {/* ── 核心参数 ── */}
         <Section title={t("config.agentCore")} subtitle={t("config.agentCoreSub")} className="mt-2">
           <div className="grid3">
-            {FT({ k: "AGENT_NAME", label: t("config.agentName"), placeholder: "OpenAkita" })}
             {FT({ k: "MAX_ITERATIONS", label: t("config.agentMaxIter"), placeholder: "300", help: t("config.agentMaxIterHelp") })}
             {FS({ k: "THINKING_MODE", label: t("config.agentThinking"), options: [
               { value: "auto", label: t("config.agentThinkingAuto") },
@@ -371,4 +456,3 @@ export function AgentSystemView(props: AgentSystemViewProps) {
     </>
   );
 }
-

@@ -31,7 +31,7 @@ class TestReadPermissionModeLabel:
             (ConfirmationMode.DEFAULT, "smart"),
             (ConfirmationMode.STRICT, "cautious"),
             (ConfirmationMode.ACCEPT_EDITS, "smart"),  # v2-only → 归并到 smart
-            (ConfirmationMode.DONT_ASK, "yolo"),       # v2-only → 归并到 yolo
+            (ConfirmationMode.DONT_ASK, "yolo"),  # v2-only → 归并到 yolo
         ],
     )
     def test_5_mode_mapping(self, v2_mode: ConfirmationMode, v1_label: str) -> None:
@@ -60,9 +60,7 @@ class TestReadPermissionModeLabel:
         def _boom():
             raise RuntimeError("v2 not initialized")
 
-        monkeypatch.setattr(
-            "openakita.core.policy_v2.global_engine.get_config_v2", _boom
-        )
+        monkeypatch.setattr("openakita.core.policy_v2.global_engine.get_config_v2", _boom)
         # Re-import inside function so monkeypatch takes effect on the local import
         assert cm.read_permission_mode_label() == "yolo"
 
@@ -131,9 +129,7 @@ class TestPolicyEngineFieldsDeleted:
 
     def test_frontend_mode_field_assignment_gone(self) -> None:
         body = self._read_executable_v2_sources()
-        assert "self._frontend_mode" not in body, (
-            "self._frontend_mode 仍出现在可执行代码中"
-        )
+        assert "self._frontend_mode" not in body, "self._frontend_mode 仍出现在可执行代码中"
 
     def test_session_allow_count_field_gone(self) -> None:
         body = self._read_executable_v2_sources()

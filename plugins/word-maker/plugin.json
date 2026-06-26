@@ -39,6 +39,8 @@
       "word_upload_template",
       "word_extract_template_vars",
       "word_generate_outline",
+      "word_clarify_requirements",
+      "word_extract_fields",
       "word_confirm_outline",
       "word_fill_template",
       "word_rewrite_section",
@@ -56,9 +58,11 @@
     "word_upload_template": "mutating_scoped",
     "word_extract_template_vars": "readonly_scoped",
     "word_generate_outline": "network_out",
+    "word_clarify_requirements": "network_out",
+    "word_extract_fields": "network_out",
     "word_confirm_outline": "mutating_scoped",
     "word_fill_template": "mutating_scoped",
-    "word_rewrite_section": "mutating_scoped",
+    "word_rewrite_section": "network_out",
     "word_audit": "readonly_scoped",
     "word_export": "readonly_scoped",
     "word_list_projects": "readonly_scoped",
@@ -73,7 +77,7 @@
       "zh": "Word 文档助手"
     },
     "sidebar_group": "apps",
-    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard", "dialog"]
   },
   "load_timeout": 15
 }

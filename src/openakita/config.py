@@ -143,6 +143,12 @@ class Settings(BaseSettings):
         le=600,
         description="单次 grep（文件内容搜索）最大耗时（秒），超时返回提示以避免 worker 被大目录卡住。",
     )
+    glob_timeout_sec: int = Field(
+        default=30,
+        ge=5,
+        le=600,
+        description="单次 glob（文件名搜索）最大耗时（秒），超时返回提示以避免 worker 被大目录卡住。",
+    )
 
     # PR-R1: 系统 prompt / catalog header 的语言。
     # 取值 "zh"（中文，默认）/ "en"（英文）。tool_catalog header、AGENTS.md 段
@@ -216,6 +222,92 @@ class Settings(BaseSettings):
     hard_timeout_seconds: int = Field(
         default=0,
         description="硬超时上限（秒），0=禁用（默认）。仅作为最终兜底，避免无限任务",
+    )
+
+    # === Conversation Concurrency / Double-texting（v1.27.14, plan: conversation concurrency v1.28）===
+    # 同一 conversation_id 上短时间内重发的语义。每 channel 一个策略：
+    #   reject    — 旧任务在跑就 409 拒绝（不同 client 永远走这条）
+    #   queue     — 排在旧任务后面串行执行（最稳；等待上限是 queue_wait_timeout_ms，
+    #               默认 10 分钟，覆盖绝大多数长任务，不再是 6s 误杀）
+    #   interrupt — cancel 旧任务再开新流（需要 double_texting_allow_interrupt=True）
+    #   steer     — 把新消息注入到正在跑的 turn，不打断旧任务也不超时
+    #               （需要 double_texting_allow_steer=True，desktop 默认）
+    # desktop 默认 steer：长任务进行中用户追发消息时，注入到当前 turn 让
+    # Agent 在下一个工具边界自然读取，而不是排队等待（对齐 Claude Code
+    # 的 “边跑边追加指令” 体验）。STEER 由 HTTP 层（/api/chat）short-circuit 走
+    # insert_user_message 注入；不经 HTTP 的 channel（cli/IM）仍默认 reject/queue，
+    # 因为 agent 层没有 steer 注入入口（见 agent._preempt_or_queue_prev_task）。
+    double_texting_default: str = Field(
+        default="queue",
+        description="默认 double-texting 策略（reject/queue/interrupt/steer），未配 per-channel 时使用。",
+    )
+    double_texting_per_channel: dict = Field(
+        default_factory=lambda: {
+            "feishu": "reject",
+            "wework": "reject",
+            "wework_ws": "reject",
+            "telegram": "queue",
+            "dingtalk": "reject",
+            "qqbot": "queue",
+            "onebot": "queue",
+            "wechat": "reject",
+            "desktop": "steer",
+            "cli": "queue",
+        },
+        description="按 channel 名维度的 double-texting 策略覆盖；缺省回落到 double_texting_default。",
+    )
+    double_texting_allow_interrupt: bool = Field(
+        default=False,
+        description=(
+            "Feature flag：是否允许 INTERRUPT 策略真的 cancel 当前任务。"
+            "默认 False，任何 INTERRUPT 请求在 caller 层降级为 QUEUE。"
+            "S4（v1.28.2）完成工具 interrupt_behavior 标注后，可安全开启。"
+        ),
+    )
+    double_texting_allow_steer: bool = Field(
+        default=True,
+        description=(
+            "Feature flag：是否允许 STEER 策略把新消息注入到正在跑的 turn。"
+            "默认 True（desktop/cli 默认走 steer）。STEER 不打断旧任务、不超时，"
+            "新消息在下一个工具边界被 Agent 读取。设为 False 时任何 STEER 请求"
+            "在 caller 层降级为 QUEUE（回退到 6s 排队等待的旧行为），用作紧急开关。"
+        ),
+    )
+    preempt_settle_timeout_ms: int = Field(
+        default=6000,
+        ge=500,
+        le=120000,
+        description=(
+            "preempt/queue 等旧任务 settled 的超时（毫秒）。"
+            "超时后老协程标记 abandoned，新流继续。"
+            "建议 > 最长工具 soft-timeout。"
+        ),
+    )
+    preempt_block_tool_extension_ms: int = Field(
+        default=24000,
+        ge=0,
+        le=600000,
+        description=(
+            "QUEUE wait 第一次 timeout 时，若老 task 仍有 block 类工具在跑"
+            "（write_file / run_shell / browser_click 等会留下副作用的工具），"
+            "再延长这么多毫秒等一次。覆盖大多数长写场景；第二次 timeout 才"
+            "硬 cancel。设为 0 即关闭延长机制（保持 v1.28.2 之前的行为）。"
+            "v1.28.2 FOLLOW-UP-S4-A。"
+        ),
+    )
+    queue_wait_timeout_ms: int = Field(
+        default=600000,
+        ge=500,
+        le=3600000,
+        description=(
+            "QUEUE 策略下，新消息等待上一轮 turn 自然跑完的最长时间（毫秒），"
+            "默认 10 分钟。与 preempt_settle_timeout_ms 解耦：后者是「抢占/取消"
+            "旧任务后等它 settle」的短超时（默认 6s），本项是「排队等旧任务自然"
+            "结束」的长超时。二者语义不同——排队场景下旧任务通常是合法的长 Agent"
+            "任务，用 6s 误杀会让 CLI/默认 queue 通道一追发就报 queue_timeout。"
+            "等待期间 HTTP 层有 SSE keepalive ping，客户端断开会立即结束等待；"
+            "agent 层等待期间被外层 cancel 也会立即退出。"
+        ),
     )
 
     # === ForceToolCall（工具护栏）===
@@ -311,7 +403,7 @@ class Settings(BaseSettings):
     # 调度规则见 src/openakita/tools/web_search/runtime.py：
     #   - web_search_provider 留空 → 按 auto_detect_order 走可用源 fallback
     #   - 指定 id → 严格走该源，失败不 fallback
-    # 命名带 `_API_KEY` / `_BASE_URL` 自动被 _mask_value 遮蔽（见 api/routes/config.py）
+    # 命名带 `_API_KEY` / `_BASE_URL` 的敏感字段由前端 password input 自行保护显示
     web_search_provider: str = Field(
         default="",
         description=(
@@ -500,7 +592,13 @@ class Settings(BaseSettings):
         description="MCP 工具/资源/提示词调用超时时间（秒），0=不限制；连接超时单独由 mcp_connect_timeout 控制",
     )
     mcp_connect_timeout: int = Field(
-        default=30, description="MCP 服务器连接超时时间（秒），默认 30 秒"
+        default=60,
+        description=(
+            "MCP 服务器连接超时时间（秒），默认 60 秒。"
+            "stdio 服务器（如 chrome-devtools-mcp 通过 npx 启动）首次连接需要"
+            "下载 npm 包并完成 JSON-RPC initialize 握手，过短的超时会导致用户"
+            "在慢网络下看到误导性的连接失败。"
+        ),
     )
     mcp_auto_connect: bool = Field(default=False, description="启动时是否自动连接所有 MCP 服务器")
 
@@ -637,7 +735,9 @@ class Settings(BaseSettings):
 
     # === 会话配置 ===
     session_timeout_minutes: int = Field(default=30, description="会话超时时间（分钟）")
-    session_max_history: int = Field(default=2000, description="会话消息硬上限（日常由 metadata trim 控制体积）")
+    session_max_history: int = Field(
+        default=2000, description="会话消息硬上限（日常由 metadata trim 控制体积）"
+    )
     session_storage_path: str = Field(default="data/sessions", description="会话存储路径")
 
     # === 多 Agent 模式 (Beta) ===
@@ -765,6 +865,49 @@ class Settings(BaseSettings):
     captcha_prefix: str = Field(
         default="yiqg72",
         description="阿里云人机验证 2.0 prefix 身份标（公开标识，下发到前端）。",
+    )
+
+    # === Inbox / Update Push 配置 ===
+    inbox_enabled: bool = Field(
+        default=True,
+        description="是否启用站内信拉取与本地缓存。关闭后不拉取、不注册客户端 token、不上报交互。",
+    )
+    inbox_broadcast_url: str = Field(
+        default="https://dl-openakita.fzstack.com/inbox/broadcast.json",
+        description="站内信 L0 公开广播 JSON URL。",
+    )
+    inbox_api_url: str = Field(
+        default="https://openakita-admin-api.fzstack.com",
+        description="OpenAkita Platform L1 客户端 API base URL。",
+    )
+    inbox_poll_interval_sec: int = Field(
+        default=1800,
+        ge=60,
+        description="站内信后台拉取间隔（秒）。",
+    )
+    inbox_register_enabled: bool = Field(
+        default=True,
+        description="是否启用 L1 challenge/register/renew/poll/ack；关闭后只走 L0 广播。",
+    )
+    inbox_channel: str = Field(
+        default="release",
+        description="站内信与升级策略使用的客户端渠道。",
+    )
+    inbox_minisign_public_key: str = Field(
+        default="",
+        description="站内信 L0 broadcast.json minisign 公钥。留空表示跳过验签。",
+    )
+    inbox_minisign_executable: str = Field(
+        default="minisign",
+        description="用于验证站内信广播签名的 minisign 可执行文件。",
+    )
+    telemetry_enabled: bool = Field(
+        default=True,
+        description="是否允许匿名遥测/升级事件上报。当前站内信 ack 仍受 inbox_* 开关控制。",
+    )
+    updater_policy_endpoint: str = Field(
+        default="https://openakita-admin-api.fzstack.com/updater",
+        description="在线升级策略层 endpoint base URL，setup-center/updater 可按需使用。",
     )
 
     # === OpenAkita Platform (Agent Hub / Skill Store) ===
@@ -1127,7 +1270,9 @@ class Settings(BaseSettings):
         default=False,
         description="是否启用运行时监督器 (RuntimeSupervisor)，默认关闭。开启后会在工具抖动/编辑抖动/推理死循环等模式被检测到时主动干预",
     )
-    task_budget_tokens: int = Field(default=0, description="单次任务最大 token 消耗，0=不限（默认）")
+    task_budget_tokens: int = Field(
+        default=0, description="单次任务最大 token 消耗，0=不限（默认）"
+    )
     task_budget_cost: float = Field(default=0.0, description="单次任务最大成本 USD，0=不限（默认）")
     task_budget_duration: int = Field(
         default=0,
@@ -1519,14 +1664,14 @@ class RuntimeState:
 
     def save(self) -> None:
         """把当前 settings 中的可持久化字段写入 JSON 文件（原子写入 + 备份）。"""
-        from .utils.atomic_io import safe_json_write
+        from .utils.atomic_io import atomic_json_write
         from .utils.redaction import redact_value
 
         data: dict = {}
         for key in _PERSISTABLE_KEYS:
             data[key] = getattr(settings, key)
         try:
-            safe_json_write(self.state_file, data)
+            atomic_json_write(self.state_file, data)
             logger.info(f"[RuntimeState] Saved: {redact_value(data)}")
         except Exception as e:
             logger.error(f"[RuntimeState] Failed to save: {e}")
@@ -1548,9 +1693,7 @@ class RuntimeState:
                     new_val = data[key]
                     if old_val != new_val:
                         setattr(settings, key, new_val)
-                        applied.append(
-                            f"{key}: {redact_value(old_val)} -> {redact_value(new_val)}"
-                        )
+                        applied.append(f"{key}: {redact_value(old_val)} -> {redact_value(new_val)}")
             if applied:
                 logger.info(f"[RuntimeState] Restored: {'; '.join(applied)}")
             else:
@@ -1596,10 +1739,7 @@ def _create_settings_safe() -> Settings:
 
             try:
                 lines = env_path.read_text(encoding="utf-8", errors="replace").splitlines()
-                cleaned = [
-                    ln for ln in lines
-                    if not ln.strip().startswith(f"{bad_field}=")
-                ]
+                cleaned = [ln for ln in lines if not ln.strip().startswith(f"{bad_field}=")]
                 env_path.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
             except Exception as io_err:
                 logger.error(f"[Config] Failed to repair .env: {io_err}")

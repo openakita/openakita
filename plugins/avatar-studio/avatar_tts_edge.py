@@ -18,18 +18,18 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 EDGE_VOICES: list[dict[str, str]] = [
-    {"id": "zh-CN-YunxiNeural",      "label": "云希（男-阳光）",     "gender": "male"},
-    {"id": "zh-CN-YunjianNeural",    "label": "云健（男-沉稳）",     "gender": "male"},
-    {"id": "zh-CN-YunxiaNeural",     "label": "云夏（男-少年）",     "gender": "male"},
-    {"id": "zh-CN-YunyangNeural",    "label": "云扬（男-新闻）",     "gender": "male"},
-    {"id": "zh-CN-XiaoxiaoNeural",   "label": "晓晓（女-温柔）",     "gender": "female"},
-    {"id": "zh-CN-XiaoyiNeural",     "label": "晓伊（女-活泼）",     "gender": "female"},
-    {"id": "zh-CN-XiaochenNeural",   "label": "晓辰（女-知性）",     "gender": "female"},
-    {"id": "zh-CN-XiaohanNeural",    "label": "晓涵（女-沉静）",     "gender": "female"},
-    {"id": "zh-CN-XiaomoNeural",     "label": "晓墨（女-柔美）",     "gender": "female"},
-    {"id": "zh-CN-XiaoqiuNeural",    "label": "晓秋（女-优雅）",     "gender": "female"},
-    {"id": "zh-CN-XiaoruiNeural",    "label": "晓睿（女-甜美）",     "gender": "female"},
-    {"id": "zh-CN-XiaoshuangNeural", "label": "晓双（女-童声）",     "gender": "female"},
+    {"id": "zh-CN-YunxiNeural", "label": "云希（男-阳光）", "gender": "male"},
+    {"id": "zh-CN-YunjianNeural", "label": "云健（男-沉稳）", "gender": "male"},
+    {"id": "zh-CN-YunxiaNeural", "label": "云夏（男-少年）", "gender": "male"},
+    {"id": "zh-CN-YunyangNeural", "label": "云扬（男-新闻）", "gender": "male"},
+    {"id": "zh-CN-XiaoxiaoNeural", "label": "晓晓（女-温柔）", "gender": "female"},
+    {"id": "zh-CN-XiaoyiNeural", "label": "晓伊（女-活泼）", "gender": "female"},
+    {"id": "zh-CN-XiaochenNeural", "label": "晓辰（女-知性）", "gender": "female"},
+    {"id": "zh-CN-XiaohanNeural", "label": "晓涵（女-沉静）", "gender": "female"},
+    {"id": "zh-CN-XiaomoNeural", "label": "晓墨（女-柔美）", "gender": "female"},
+    {"id": "zh-CN-XiaoqiuNeural", "label": "晓秋（女-优雅）", "gender": "female"},
+    {"id": "zh-CN-XiaoruiNeural", "label": "晓睿（女-甜美）", "gender": "female"},
+    {"id": "zh-CN-XiaoshuangNeural", "label": "晓双（女-童声）", "gender": "female"},
 ]
 
 EDGE_VOICES_BY_ID: dict[str, dict[str, str]] = {v["id"]: v for v in EDGE_VOICES}
@@ -74,7 +74,9 @@ async def synth_voice(
                 exc_name = type(exc).__name__
                 if exc_name in ("WSServerHandshakeError", "NoAudioReceived"):
                     if attempt < retry_count - 1:
-                        logger.warning("edge-tts attempt %d failed: %s, retrying...", attempt + 1, exc)
+                        logger.warning(
+                            "edge-tts attempt %d failed: %s, retrying...", attempt + 1, exc
+                        )
                         await asyncio.sleep(2.0 * (attempt + 1))
                         continue
                 raise
@@ -91,12 +93,14 @@ def _get_duration(path: Path) -> float:
     """Get audio duration in seconds via mutagen."""
     try:
         from mutagen.mp3 import MP3  # type: ignore[import-untyped]
+
         audio = MP3(str(path))
         return float(audio.info.length)
     except Exception:
         pass
     try:
         import struct
+
         data = path.read_bytes()
         if data[:4] == b"RIFF" and len(data) > 44:
             byte_rate = struct.unpack_from("<I", data, 28)[0]

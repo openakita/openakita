@@ -332,9 +332,7 @@ class AgentToolHandler:
                     block = result[block_start:] if eol < 0 else result[block_start:eol]
                     all_receipt_blocks.append(block)
                     result = result[:idx] + (result[block_start + len(block) :] if eol >= 0 else "")
-                wrapped = wrap_external_content(
-                    result, source=f"parallel_sub_agent:{display_id}"
-                )
+                wrapped = wrap_external_content(result, source=f"parallel_sub_agent:{display_id}")
                 parts.append(f"## Agent: {display_id}\n{wrapped}")
         combined = "\n\n---\n\n".join(parts)
         # Re-append all receipt blocks as a single merged JSON array at the end
@@ -465,9 +463,7 @@ class AgentToolHandler:
         identity_mode = params.get("identity_mode") or "shared"
         # Phase 2b.2：优先接受新名 `memory_isolation`，回退到旧名 `memory_mode`。
         # 两个都给则以新名为准（与 AgentProfile.from_dict 行为一致）。
-        memory_mode = (
-            params.get("memory_isolation") or params.get("memory_mode") or "shared"
-        )
+        memory_mode = params.get("memory_isolation") or params.get("memory_mode") or "shared"
         memory_inherit_global = params.get("memory_inherit_global", True)
 
         if not name:
@@ -593,9 +589,7 @@ class AgentToolHandler:
                     "[AgentToolHandler] Orchestrator was None — lazily created as fallback"
                 )
             else:
-                logger.warning(
-                    "[AgentToolHandler] _orchestrator is None (multi_agent disabled)"
-                )
+                logger.warning("[AgentToolHandler] _orchestrator is None (multi_agent disabled)")
             return orch
         except (ImportError, AttributeError) as e:
             logger.warning(f"[AgentToolHandler] Cannot access _orchestrator: {e}")

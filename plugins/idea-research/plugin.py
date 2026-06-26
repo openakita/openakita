@@ -30,6 +30,7 @@ tests in ``tests/test_routes.py``.
 from __future__ import annotations
 
 import asyncio
+import csv
 import json
 import logging
 import os
@@ -39,6 +40,7 @@ import sys
 import time
 import uuid
 from contextlib import suppress
+from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -56,9 +58,8 @@ except Exception as exc:  # noqa: BLE001
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
-
 from openakita.plugins.api import PluginBase
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def _purge_idea_research_module_cache() -> int:
@@ -93,13 +94,22 @@ def _purge_idea_research_module_cache() -> int:
 _PURGED_MODULES_ON_IMPORT = _purge_idea_research_module_cache()
 
 from idea_collectors import CollectorRegistry, Normalizer, Ranker
-from idea_dashscope_client import DASHSCOPE_BASE, DashScopeClient
-from idea_engine_crawler import CookiesVault, PlaywrightDriver
+from idea_dashscope_client import DashScopeClient
+from idea_engine_crawler import (
+    PLATFORM_COOKIES_REQUIRED,
+    CookiesVault,
+    PlaywrightDriver,
+    _normalize_cookie_map,
+    missing_cookies_keys,
+    parse_cookies_upload_text,
+)
 from idea_models import (
     PLUGIN_ID,
     RANKER_WEIGHTS,
     estimate_cost,
+    format_script_remix_markdown,
     hint_for,
+    repair_script_remix_payload,
 )
 from idea_pipeline import (
     IdeaPipelineContext,
@@ -156,7 +166,7 @@ class SettingsUpdateBody(_StrictBase):
 
 
 class CookiesUploadBody(_StrictBase):
-    cookies_dict: dict[str, Any] | None = None
+    cookies_dict: Any | None = None
     json_text: str | None = None
     risk_acknowledged: bool = False
 
@@ -186,6 +196,10 @@ class OpenFolderBody(_StrictBase):
     path: str | None = None
 
 
+class ExportTaskBody(_StrictBase):
+    format: Literal["json", "markdown", "csv"] | None = None
+
+
 # --------------------------------------------------------------------------- #
 # Plugin                                                                       #
 # --------------------------------------------------------------------------- #
@@ -204,6 +218,7 @@ class Plugin(PluginBase):
         self._playwright_driver: PlaywrightDriver | None = None
         self._collectors: CollectorRegistry | None = None
         self._http: httpx.AsyncClient | None = None
+        self._dashscope_http: httpx.AsyncClient | None = None
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._running_tasks: set[str] = set()
         self._scheduler_stop = asyncio.Event()
@@ -212,6 +227,12 @@ class Plugin(PluginBase):
     # ------------------------------------------------------------------ #
     # Lifecycle                                                            #
     # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _new_dashscope_http() -> httpx.AsyncClient:
+        """DashScope is a domestic endpoint; never route it through http_proxy."""
+
+        return httpx.AsyncClient(timeout=60.0, trust_env=False)
 
     def on_load(self, api: PluginAPI) -> None:
         if _PURGED_MODULES_ON_IMPORT:
@@ -226,18 +247,30 @@ class Plugin(PluginBase):
 
         self._tm = IdeaTaskManager(db_path=data_dir / "idea.sqlite")
         self._mdrm = MdrmAdapter(api, plugin_id=PLUGIN_ID)
-        self._http = httpx.AsyncClient(timeout=60.0)
-        api_key, base_url = self._resolve_dashscope_endpoint(
-            self._read_setting("dashscope_api_key") or os.environ.get("DASHSCOPE_API_KEY") or "",
-            self._read_setting("dashscope_relay_endpoint") or "",
-            self._read_setting("dashscope_relay_fallback_policy") or "official",
+        from idea_engine_api import resolve_http_proxy, set_runtime_http_proxy
+
+        runtime_proxy = self._clean_setting_value(self._read_setting("http_proxy"))
+        set_runtime_http_proxy(runtime_proxy)
+        http_proxy = resolve_http_proxy()
+        self._http = httpx.AsyncClient(
+            timeout=60.0,
+            proxy=http_proxy,
+            trust_env=True,
         )
-        ds_kwargs: dict[str, Any] = {"client": self._http, "api_key": api_key}
-        if base_url:
-            ds_kwargs["base_url"] = base_url
-        self._dashscope = DashScopeClient(**ds_kwargs)
+        if http_proxy:
+            api.log(f"[{PLUGIN_ID}] httpx proxy enabled", "debug")
+        self._dashscope_http = self._new_dashscope_http()
+        self._dashscope = DashScopeClient(
+            client=self._dashscope_http,
+            api_key=self._read_setting("dashscope_api_key") or os.environ.get("DASHSCOPE_API_KEY"),
+        )
         self._cookies_vault = CookiesVault(db_path=data_dir / "idea.sqlite")
         self._playwright_driver = PlaywrightDriver(max_concurrent=2)
+        initial_youtube_key = self._clean_setting_value(
+            self._read_setting("youtube_api_key")
+            or os.environ.get("YOUTUBE_API_KEY")
+            or os.environ.get("YOUTUBE_DATA_API_KEY")
+        )
         self._collectors = CollectorRegistry(
             http_client=self._http,
             vault=self._cookies_vault,
@@ -247,6 +280,7 @@ class Plugin(PluginBase):
                 mdrm_search=self._mdrm.search_similar_hooks,
             ),
             normalizer=Normalizer(),
+            api_keys={"youtube": initial_youtube_key} if initial_youtube_key else None,
             engine_b_enabled=False,
         )
 
@@ -278,6 +312,9 @@ class Plugin(PluginBase):
         try:
             await self._tm.init()
             await self._tm.list_personas()  # seeds 12 personas on first run
+            await self._sync_dashscope_runtime_settings()
+            await self._sync_http_proxy_settings()
+            await self._sync_collector_runtime_settings()
             if not (self._dashscope and self._dashscope.api_key):
                 self._api.log(
                     f"[{PLUGIN_ID}] WARN DashScope key not configured; "
@@ -300,6 +337,8 @@ class Plugin(PluginBase):
                 await self._collectors.aclose()
         if self._http is not None:
             await self._http.aclose()
+        if self._dashscope_http is not None:
+            await self._dashscope_http.aclose()
         if self._tm is not None:
             await self._tm.close()
 
@@ -316,66 +355,80 @@ class Plugin(PluginBase):
             cfg = {}
         return cfg.get(key, default)
 
-    def _resolve_dashscope_endpoint(
-        self,
-        api_key: str,
-        relay_name: str,
-        relay_policy: str,
-    ) -> tuple[str, str]:
-        """Resolve DashScope (api_key, base_url) honouring optional relay.
-
-        Returns ``(api_key, "")`` when ``relay_name`` is empty so the
-        caller can fall back to ``DashScopeClient``'s built-in base URL
-        default. Strict policy + missing relay raises ``HTTPException``
-        so the Settings UI banner has actionable text.
-        """
-        relay_name = (relay_name or "").strip()
-        if not relay_name:
-            return api_key, ""
-        try:
-            from openakita.relay import (
-                SettingsRelayResolutionError,
-                apply_relay_override,
-            )
-
-            merged = apply_relay_override(
-                {
-                    "api_key": api_key,
-                    "base_url": "",
-                    "relay_endpoint": relay_name,
-                    "relay_fallback_policy": relay_policy or "official",
-                },
-                required_capability="chat",
-                plugin_name="idea-research",
-            )
-        except (ImportError, ModuleNotFoundError) as exc:
-            _LOG.info(
-                "[%s] openakita.relay not importable (%s); keeping per-plugin DashScope endpoint",
-                PLUGIN_ID,
-                exc,
-            )
-            return api_key, ""
-        except SettingsRelayResolutionError as exc:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail=exc.user_message) from exc
-        ref = merged.get("_relay_reference")
-        if ref is not None and hasattr(ref, "supports_model") and not ref.supports_model("qwen-max"):
-            policy = relay_policy or "official"
-            msg = f"中转站 {relay_name!r} 不支持 idea-research 默认文本模型: qwen-max"
-            if policy == "strict":
-                from fastapi import HTTPException
-                raise HTTPException(status_code=400, detail=msg)
-            _LOG.warning("[%s] %s; keeping per-plugin DashScope endpoint", PLUGIN_ID, msg)
-            return api_key, ""
-        return (
-            str(merged.get("api_key") or "").strip(),
-            str(merged.get("base_url") or "").strip(),
-        )
-
     async def _read_settings_async(self) -> dict[str, Any]:
         if self._tm is None:
             return {}
         return await self._tm.get_all_settings()
+
+    @staticmethod
+    def _clean_setting_value(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    async def _sync_dashscope_runtime_settings(self) -> None:
+        if self._dashscope is None:
+            return
+        db_settings = await self._read_settings_async()
+        dashscope_key = self._clean_setting_value(
+            self._read_setting("dashscope_api_key")
+            or db_settings.get("dashscope_api_key")
+            or os.environ.get("DASHSCOPE_API_KEY")
+        )
+        self._dashscope.api_key = dashscope_key
+
+    async def _sync_http_proxy_settings(self) -> None:
+        from idea_engine_api import resolve_http_proxy, set_runtime_http_proxy
+
+        db_settings = await self._read_settings_async()
+        runtime_proxy = self._clean_setting_value(
+            self._read_setting("http_proxy") or db_settings.get("http_proxy")
+        )
+        set_runtime_http_proxy(runtime_proxy)
+        proxy = resolve_http_proxy()
+        if self._http is not None:
+            await self._http.aclose()
+        self._http = httpx.AsyncClient(timeout=60.0, proxy=proxy, trust_env=True)
+        if self._collectors is not None:
+            self._collectors._client = self._http
+        if self._api is not None and proxy:
+            self._api.log(f"[{PLUGIN_ID}] httpx proxy enabled", "debug")
+
+    async def _sync_collector_runtime_settings(self) -> None:
+        if self._collectors is None:
+            return
+        db_settings = await self._read_settings_async()
+        youtube_key = self._clean_setting_value(
+            self._read_setting("youtube_api_key")
+            or db_settings.get("youtube_api_key")
+            or os.environ.get("YOUTUBE_API_KEY")
+            or os.environ.get("YOUTUBE_DATA_API_KEY")
+        )
+        rsshub_base = self._clean_setting_value(
+            self._read_setting("rsshub_base") or db_settings.get("rsshub_base")
+        )
+        engine_b_enabled = bool(
+            self._read_setting("engine_b_enabled", db_settings.get("engine_b_enabled", False))
+        )
+        risk_acknowledged = bool(
+            self._read_setting(
+                "engine_b_risk_acknowledged",
+                db_settings.get("engine_b_risk_acknowledged", False),
+            )
+        )
+        update_key = getattr(self._collectors, "update_api_key", None)
+        if callable(update_key):
+            update_key("youtube", youtube_key)
+        update_rsshub = getattr(self._collectors, "update_rsshub_base", None)
+        if callable(update_rsshub):
+            update_rsshub(rsshub_base)
+        update_engine_b = getattr(self._collectors, "update_engine_b_options", None)
+        if callable(update_engine_b):
+            update_engine_b(
+                engine_b_enabled=engine_b_enabled,
+                risk_acknowledged=risk_acknowledged,
+            )
 
     async def _storage_stats(self) -> dict[str, Any]:
         assert self._data_dir is not None
@@ -516,7 +569,7 @@ class Plugin(PluginBase):
             row = await plugin._tm.get_task(task_id)
             if row is None:
                 raise HTTPException(status_code=404, detail="task not found")
-            return row
+            return plugin._present_task_row(row)
 
         # 5 POST /tasks/{id}/cancel
         @r.post("/tasks/{task_id}/cancel")
@@ -564,27 +617,114 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=404, detail="breakdown not found")
             return json.loads(path.read_text(encoding="utf-8"))
 
+        @r.get("/tasks/{task_id}/files/{rel_path:path}")
+        async def get_task_file(task_id: str, rel_path: str):
+            wd = plugin._task_workdir(task_id).resolve()
+            target = (wd / rel_path).resolve()
+            try:
+                target.relative_to(wd)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="invalid task file path") from exc
+            if not target.is_file():
+                raise HTTPException(status_code=404, detail="task file not found")
+            create_file_response = getattr(plugin._api, "create_file_response", None)
+            if callable(create_file_response):
+                return create_file_response(target, as_download=False)
+            from fastapi.responses import FileResponse
+
+            return FileResponse(str(target))
+
+        @r.get("/tasks/{task_id}/export")
+        async def export_task(
+            task_id: str,
+            format: str = Query(default="json"),
+        ):
+            try:
+                path, media_type, filename = await plugin._build_task_export_file(
+                    task_id,
+                    fmt=format,
+                )
+            except ValueError as exc:
+                message = str(exc)
+                status = 404 if message == "task not found" else 400
+                raise HTTPException(status_code=status, detail=message) from exc
+            create_file_response = getattr(plugin._api, "create_file_response", None)
+            if callable(create_file_response):
+                return create_file_response(
+                    path,
+                    filename=filename,
+                    media_type=media_type,
+                    as_download=True,
+                )
+            from fastapi.responses import FileResponse
+
+            return FileResponse(str(path), media_type=media_type, filename=filename)
+
+        @r.post("/tasks/{task_id}/export")
+        async def export_task_save(
+            task_id: str,
+            body: ExportTaskBody = ExportTaskBody(),
+        ) -> dict[str, Any]:
+            """Write export file to the configured export dir and return its path."""
+
+            assert plugin._tm is not None
+            row = await plugin._tm.get_task(task_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="task not found")
+            fmt = body.format or plugin._default_export_format(str(row.get("mode") or ""))
+            try:
+                path, media_type, filename = await plugin._build_task_export_file(
+                    task_id,
+                    fmt=fmt,
+                    row=row,
+                )
+            except ValueError as exc:
+                message = str(exc)
+                status = 404 if message == "task not found" else 400
+                raise HTTPException(status_code=status, detail=message) from exc
+            resolved = path.resolve()
+            return {
+                "ok": True,
+                "path": str(resolved),
+                "dir": str(resolved.parent),
+                "filename": filename,
+                "format": fmt,
+                "media_type": media_type,
+            }
+
         # 9 GET /recommendations
         @r.get("/recommendations")
         async def list_recommendations(
             limit: int = Query(default=20, ge=1, le=200),
             platforms: str | None = Query(default=None),
+            keywords: str | None = Query(default=None),
             sort: str = Query(default="score"),
             mdrm_weighting: bool = Query(default=True),  # noqa: ARG001 — UI hint only
             only_saved: bool = Query(default=False),
         ) -> dict[str, Any]:
             assert plugin._tm is not None
             plats = [p.strip() for p in platforms.split(",") if p.strip()] if platforms else None
-            items = await plugin._tm.list_trend_items(
-                platforms=plats, limit=limit, sort=sort, only_saved=only_saved
+            kw_list = [k.strip() for k in keywords.split(",") if k.strip()] if keywords else []
+            rows = await plugin._tm.list_trend_items(
+                platforms=plats,
+                keywords=kw_list or None,
+                limit=limit,
+                sort=sort,
+                only_saved=only_saved,
             )
-            return {"items": items}
+            return {"items": rows}
 
-        # 10 POST /items/{id}/save
+        # 10 POST /items/{id}/save | unsave
         @r.post("/items/{item_id}/save")
         async def save_item(item_id: str) -> dict[str, Any]:
             assert plugin._tm is not None
             await plugin._tm.mark_item_saved(item_id, saved=True)
+            return {"ok": True}
+
+        @r.post("/items/{item_id}/unsave")
+        async def unsave_item(item_id: str) -> dict[str, Any]:
+            assert plugin._tm is not None
+            await plugin._tm.mark_item_saved(item_id, saved=False)
             return {"ok": True}
 
         # 11 GET /subscriptions
@@ -619,27 +759,29 @@ class Plugin(PluginBase):
         @r.put("/settings")
         async def update_settings(body: SettingsUpdateBody) -> dict[str, Any]:
             assert plugin._tm is not None and plugin._dashscope is not None
-            updates = body.updates or {}
-            for key, value in updates.items():
+            for key, value in (body.updates or {}).items():
                 await plugin._tm.set_setting(key, value)
-            endpoint_keys = {
-                "dashscope_api_key",
-                "dashscope_relay_endpoint",
-                "dashscope_relay_fallback_policy",
-            }
-            if endpoint_keys & updates.keys():
-                saved = await plugin._tm.get_all_settings()
-                api_key, base_url = plugin._resolve_dashscope_endpoint(
-                    str(saved.get("dashscope_api_key") or ""),
-                    str(saved.get("dashscope_relay_endpoint") or ""),
-                    str(saved.get("dashscope_relay_fallback_policy") or "official"),
-                )
-                # Live-swap the existing client. DashScopeClient sub-classes
-                # VendorClient which stores base_url on the instance —
-                # writing the attribute is enough; future requests pick up
-                # the new host via ``self.base_url``.
-                plugin._dashscope.api_key = api_key
-                plugin._dashscope.base_url = base_url or DASHSCOPE_BASE
+                if key == "dashscope_api_key":
+                    plugin._dashscope.api_key = plugin._clean_setting_value(value)
+                if key == "http_proxy":
+                    await plugin._sync_http_proxy_settings()
+                if key == "youtube_api_key" and plugin._collectors is not None:
+                    update_key = getattr(plugin._collectors, "update_api_key", None)
+                    if callable(update_key):
+                        update_key("youtube", plugin._clean_setting_value(value))
+                if key == "rsshub_base" and plugin._collectors is not None:
+                    update_rsshub = getattr(plugin._collectors, "update_rsshub_base", None)
+                    if callable(update_rsshub):
+                        update_rsshub(plugin._clean_setting_value(value))
+                if key in {"engine_b_enabled", "engine_b_risk_acknowledged"} and plugin._collectors is not None:
+                    update_engine_b = getattr(plugin._collectors, "update_engine_b_options", None)
+                    if callable(update_engine_b):
+                        update_engine_b(
+                            engine_b_enabled=bool(value) if key == "engine_b_enabled" else None,
+                            risk_acknowledged=(
+                                bool(value) if key == "engine_b_risk_acknowledged" else None
+                            ),
+                        )
             return await plugin._tm.get_all_settings()
 
         # 16 GET /sources
@@ -670,23 +812,49 @@ class Plugin(PluginBase):
                     detail="必须勾选 risk_acknowledged 才能保存 cookies",
                 )
             payload = body.cookies_dict
-            if payload is None and body.json_text:
+            if payload is None and body.json_text is not None:
                 try:
-                    payload = json.loads(body.json_text)
-                except json.JSONDecodeError as exc:
-                    raise HTTPException(status_code=422, detail=f"invalid json: {exc}") from exc
-            if not isinstance(payload, dict):
-                raise HTTPException(status_code=422, detail="cookies must be a dict")
+                    payload = parse_cookies_upload_text(body.json_text)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+            if not isinstance(payload, (dict, list, str)):
+                raise HTTPException(
+                    status_code=422,
+                    detail="cookies must be a dict, list, or cookie header string",
+                )
             await plugin._cookies_vault.save(platform, payload)
-            return {"ok": True}
+            await plugin._tm.set_setting("engine_b_risk_acknowledged", True)
+            if plugin._collectors is not None:
+                update_engine_b = getattr(plugin._collectors, "update_engine_b_options", None)
+                if callable(update_engine_b):
+                    update_engine_b(risk_acknowledged=True)
+            normalized = _normalize_cookie_map(payload)
+            missing = missing_cookies_keys(platform, normalized)
+            ready = bool(normalized) and not missing
+            return {
+                "ok": True,
+                "ready": ready,
+                "missing_keys": missing,
+                "required_keys": list(PLATFORM_COOKIES_REQUIRED.get(platform, ())),
+            }
 
         # 18 POST /sources/cookies/{platform}/test
         @r.post("/sources/cookies/{platform}/test")
         async def test_cookies(platform: str) -> dict[str, Any]:
             assert plugin._tm is not None and plugin._cookies_vault is not None
             entry = await plugin._cookies_vault.load(platform)
-            ok = bool(entry and entry.cookies)
-            message = "ok" if ok else "no cookies stored for this platform"
+            if not entry or not entry.cookies:
+                ok = False
+                message = "no cookies stored for this platform"
+                missing: list[str] = list(PLATFORM_COOKIES_REQUIRED.get(platform, ()))
+            else:
+                missing = missing_cookies_keys(platform, entry.cookies)
+                if missing:
+                    ok = False
+                    message = f"缺少必备字段: {missing}"
+                else:
+                    ok = True
+                    message = "ok"
             await plugin._tm.update_cookies_test(platform, ok=ok)
             plugin._broadcast(
                 "idea.cookies.test_done",
@@ -856,7 +1024,7 @@ class Plugin(PluginBase):
             },
             {
                 "name": "idea_breakdown_url",
-                "description": "拆解单条视频 URL：ASR + 关键帧 VLM + 结构化 + 评论摘要 + persona takeaways。",
+                "description": "拆解单条视频 URL：关键帧 VLM + 结构化 + 评论摘要 + persona takeaways。",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -998,6 +1166,209 @@ class Plugin(PluginBase):
             raise ValueError("trend_item_id not found")
         raise ValueError("must supply task_id or trend_item_id")
 
+    @staticmethod
+    def _decode_json_field(value: Any) -> Any:
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                return json.loads(text)
+            except (TypeError, ValueError):
+                return value
+        return value
+
+    @staticmethod
+    def _present_task_row(row: dict[str, Any]) -> dict[str, Any]:
+        if str(row.get("mode") or "") != "script_remix":
+            return row
+        payload = Plugin._decode_json_field(row.get("output_json"))
+        if not isinstance(payload, dict):
+            return row
+        repaired = repair_script_remix_payload(payload)
+        presented = dict(row)
+        presented["output_json"] = json.dumps(repaired, ensure_ascii=False)
+        return presented
+
+    @staticmethod
+    def _default_export_format(mode: str) -> str:
+        if mode in {"compare_accounts", "breakdown_url", "script_remix"}:
+            return "markdown"
+        return "json"
+
+    async def _build_task_export_file(
+        self,
+        task_id: str,
+        *,
+        fmt: str = "json",
+        row: dict[str, Any] | None = None,
+    ) -> tuple[Path, str, str]:
+        assert self._tm is not None and self._data_dir is not None
+        if row is None:
+            row = await self._tm.get_task(task_id)
+        if row is None:
+            raise ValueError("task not found")
+        row = self._present_task_row(row)
+        fmt = str(fmt or self._default_export_format(str(row.get("mode") or ""))).lower()
+        if fmt not in {"json", "markdown", "csv"}:
+            raise ValueError(f"unsupported export format: {fmt}")
+        mode = str(row.get("mode") or "")
+        if mode in {"compare_accounts", "breakdown_url", "script_remix"}:
+            status = str(row.get("status") or "")
+            if status != "done":
+                raise ValueError("任务尚未完成，请等待 AI 分析结束后再导出")
+            if mode == "compare_accounts":
+                payload = self._decode_json_field(row.get("output_json"))
+                if not isinstance(payload, dict) or not payload.get("analysis"):
+                    raise ValueError("对标分析结果尚未生成，无法导出报告")
+
+        settings = await self._read_settings_async()
+        export_dir = Path(settings.get("export_dir") or str(self._data_dir / "exports")).expanduser()
+        export_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"{row.get('mode') or 'task'}-{task_id[:8]}.{self._format_ext(fmt)}"
+        body, media_type = self._render_task_export(row, fmt=fmt)
+        path = export_dir / filename
+        await asyncio.to_thread(path.write_text, body, encoding="utf-8")
+        return path, media_type, filename
+
+    @staticmethod
+    def _format_ext(fmt: str) -> str:
+        return "md" if fmt == "markdown" else fmt
+
+    def _render_task_export(self, row: dict[str, Any], *, fmt: str) -> tuple[str, str]:
+        row = self._present_task_row(row)
+        task_id = str(row.get("id") or "")
+        mode = str(row.get("mode") or "task")
+        payload = self._decode_json_field(row.get("output_json"))
+        if payload is None:
+            payload = row
+
+        if fmt == "json":
+            return json.dumps(payload, ensure_ascii=False, indent=2), "application/json; charset=utf-8"
+        if fmt == "markdown":
+            return self._render_task_markdown(row, payload), "text/markdown; charset=utf-8"
+        return self._render_task_csv(row, payload), "text/csv; charset=utf-8"
+
+    def _render_task_markdown(self, row: dict[str, Any], payload: Any) -> str:
+        mode = str(row.get("mode") or "task")
+        task_id = str(row.get("id") or "")
+        if mode == "breakdown_url":
+            report_path = self._task_workdir(task_id) / "report.md"
+            if report_path.is_file():
+                try:
+                    return report_path.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+        if mode == "compare_accounts" and isinstance(payload, dict):
+            analysis = payload.get("analysis") or {}
+            accounts = payload.get("accounts") or []
+            lines = [
+                f"# 对标分析报告 · {task_id[:8]}",
+                "",
+                "> 由 AI 基于各账号近期视频列表生成，以下为结构化结论。",
+                "",
+                "## 账号概览",
+            ]
+            for account in accounts:
+                if not isinstance(account, dict):
+                    continue
+                url = account.get("url") or ""
+                platform = account.get("platform") or ""
+                videos = account.get("videos") or []
+                creator = account.get("creator") or {}
+                if account.get("error_kind"):
+                    lines.append(
+                        f"- {url} ({platform}) [{account.get('error_kind')}]: {account.get('message') or ''}"
+                    )
+                else:
+                    suffix = ""
+                    if isinstance(creator, dict) and creator.get("name"):
+                        suffix = (
+                            f"，博主={creator.get('name')}"
+                            f"，粉丝={creator.get('follower_count') or '-'}"
+                        )
+                    lines.append(f"- {url} ({platform})，近期视频 {len(videos)} 条{suffix}")
+                    for video in videos[:5]:
+                        if not isinstance(video, dict):
+                            continue
+                        title = video.get("title") or video.get("external_id") or ""
+                        views = video.get("view_count")
+                        likes = video.get("like_count")
+                        lines.append(f"  - {title}（播放 {views or '-'} · 赞 {likes or '-'}）")
+            def _append_section(title: str, items: Any) -> None:
+                lines.extend(["", f"## {title}"])
+                if isinstance(items, list) and items:
+                    for item in items:
+                        if isinstance(item, dict):
+                            if item.get("url") or item.get("edge"):
+                                lines.append(f"- {item.get('url') or ''}: {item.get('edge') or ''}")
+                            else:
+                                lines.append(f"- {json.dumps(item, ensure_ascii=False)}")
+                        else:
+                            lines.append(f"- {item}")
+                else:
+                    lines.append("- （无）")
+            _append_section("AI 分析 · 共性特征", analysis.get("common_traits"))
+            _append_section("AI 分析 · 差异化优势", analysis.get("differentiators"))
+            _append_section("AI 分析 · 内容空白", analysis.get("gaps"))
+            _append_section("AI 分析 · 行动建议", analysis.get("recommendations"))
+            return "\n".join(lines) + "\n"
+        if mode == "script_remix" and isinstance(payload, dict):
+            return format_script_remix_markdown(
+                repair_script_remix_payload(payload),
+                task_id=task_id,
+            )
+        return (
+            f"# {mode} {task_id[:8]}\n\n"
+            "```json\n"
+            f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n"
+            "```\n"
+        )
+
+    def _render_task_csv(self, row: dict[str, Any], payload: Any) -> tuple[str, str]:
+        mode = str(row.get("mode") or "task")
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        if mode == "compare_accounts" and isinstance(payload, dict):
+            writer.writerow(
+                [
+                    "url",
+                    "platform",
+                    "creator_name",
+                    "follower_count",
+                    "videos_count",
+                    "error_kind",
+                    "message",
+                ]
+            )
+            for account in payload.get("accounts") or []:
+                if not isinstance(account, dict):
+                    continue
+                creator = account.get("creator") or {}
+                writer.writerow(
+                    [
+                        account.get("url") or "",
+                        account.get("platform") or "",
+                        creator.get("name") if isinstance(creator, dict) else "",
+                        creator.get("follower_count") if isinstance(creator, dict) else "",
+                        len(account.get("videos") or []),
+                        account.get("error_kind") or "",
+                        account.get("message") or "",
+                    ]
+                )
+        else:
+            writer.writerow(["task_id", "mode", "status", "cost_cny"])
+            writer.writerow(
+                [
+                    row.get("id") or "",
+                    mode,
+                    row.get("status") or "",
+                    row.get("cost_cny") or 0,
+                ]
+            )
+        return buffer.getvalue(), "text/csv; charset=utf-8"
+
     # ------------------------------------------------------------------ #
     # Task spawning + pipeline runner                                      #
     # ------------------------------------------------------------------ #
@@ -1011,6 +1382,15 @@ class Plugin(PluginBase):
         handoff_target: str | None = None,
     ) -> dict[str, Any]:
         assert self._tm is not None
+        if mode in {"breakdown_url", "compare_accounts", "script_remix"}:
+            with suppress(Exception):
+                await self._sync_dashscope_runtime_settings()
+        if mode in {"breakdown_url", "radar_pull", "compare_accounts"}:
+            with suppress(Exception):
+                await self._sync_http_proxy_settings()
+        if mode in {"breakdown_url", "radar_pull"}:
+            with suppress(Exception):
+                await self._sync_collector_runtime_settings()
         task_id = await self._tm.insert_task(mode=mode, input_payload=inp)
         eta = self._eta_seconds_for(mode, inp)
         self._broadcast(
@@ -1042,6 +1422,9 @@ class Plugin(PluginBase):
             and self._collectors is not None
             and self._mdrm is not None
         )
+        if mode in {"breakdown_url", "compare_accounts", "script_remix"}:
+            with suppress(Exception):
+                await self._sync_dashscope_runtime_settings()
         ctx = IdeaPipelineContext(
             task_id=task_id,
             mode=mode,

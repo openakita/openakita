@@ -10,7 +10,12 @@ def test_precompact_snapshot_persists_to_session_context(tmp_path):
     manager.attach_session_context(session)
 
     snapshot = ContextManager._build_precompact_snapshot(
-        [{"role": "user", "content": "必须记住当前任务要修改 src/openakita/core/context_manager.py"}],
+        [
+            {
+                "role": "user",
+                "content": "必须记住当前任务要修改 src/openakita/core/context_manager.py",
+            }
+        ],
         manager,
     )
     manager.save_precompact_snapshot(snapshot)

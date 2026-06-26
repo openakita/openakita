@@ -246,4 +246,3 @@ class PromptTemplates:
             action_description=action_description,
             expected_result=expected_result,
         )
-

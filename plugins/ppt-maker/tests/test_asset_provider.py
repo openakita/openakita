@@ -158,9 +158,7 @@ async def test_resolve_image_pixabay_happy_path(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_image_dashscope_succeeds_after_polling(
-    tmp_path, monkeypatch
-) -> None:
+async def test_resolve_image_dashscope_succeeds_after_polling(tmp_path, monkeypatch) -> None:
     download_url = "https://dashscope-result.example/img.png"
     state = {"poll_count": 0}
 
@@ -190,9 +188,7 @@ async def test_resolve_image_dashscope_succeeds_after_polling(
 
     monkeypatch.setattr(asyncio, "sleep", fast_sleep)
     _patch_async_client(monkeypatch, handler)
-    provider = _provider(
-        tmp_path, image_provider="dashscope", dashscope_api_key="ds-key"
-    )
+    provider = _provider(tmp_path, image_provider="dashscope", dashscope_api_key="ds-key")
 
     path = await provider.resolve_image(query="cyberpunk city", project_id="p3")
 

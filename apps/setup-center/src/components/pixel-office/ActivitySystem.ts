@@ -21,16 +21,10 @@ export class ActivitySystem {
   private queue: QueuedActivity[] = [];
   private activeActivities = new Map<string, Activity>();
   private busyNodes = new Set<string>();
-  private rooms: RoomDef[] = [];
   private activityIdCounter = 0;
 
-  constructor(rooms: RoomDef[]) {
-    this.rooms = rooms;
+  constructor(_rooms: RoomDef[]) {
     this.setupListeners();
-  }
-
-  updateRooms(rooms: RoomDef[]) {
-    this.rooms = rooms;
   }
 
   private setupListeners() {

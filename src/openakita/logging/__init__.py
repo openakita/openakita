@@ -20,4 +20,3 @@ __all__ = [
     "SessionLogBuffer",
     "get_session_log_buffer",
 ]
-

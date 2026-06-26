@@ -6,10 +6,15 @@ import type {
   ChatAskQuestion,
   ChatErrorInfo,
   ChatArtifact,
+  ChatSource,
+  ChatMcpCall,
+  ChatTodo,
+  MessagePart,
   ChainGroup,
   ChainEntry,
   ChainToolCall,
   ChainSummaryItem,
+  ChainTimelineGroup,
 } from "./chatTypes";
 import { IS_TAURI } from "../../../platform";
 import { getAccessToken } from "../../../platform/auth";
@@ -119,7 +124,7 @@ export function exportConversation(msgs: ChatMessage[], title: string, format: "
   let mimeType: string;
   let ext: string;
   if (format === "json") {
-    content = JSON.stringify(msgs.map(({ streaming, streamStatus, ...rest }) => rest), null, 2);
+    content = JSON.stringify(msgs.map(({ streaming, streamStatus, streamFallback, ...rest }) => rest), null, 2);
     mimeType = "application/json";
     ext = "json";
   } else {
@@ -187,8 +192,21 @@ export function sanitizeStoredMessages(raw: unknown): ChatMessage[] {
     if (typeof m.timestamp !== "number") return false;
     return true;
   }).map((m) => {
+    // NOTE: streamFallback is intentionally preserved here (unlike streaming /
+    // streamStatus). It marks a finalized-but-provisional bubble whose text came
+    // from an interrupted stream; it must survive reload / window switch so the
+    // next backend reconciliation can replace the text and clear it. It is a
+    // tiny boolean and self-clears on the first successful patch.
     const cleaned = { ...m, streaming: undefined, streamStatus: undefined };
-    if (m.role === "assistant" && (!m.content || m.content.trim() === "") && !m.toolCalls?.length && !m.todo) {
+    if (
+      m.role === "assistant" &&
+      (!m.content || m.content.trim() === "") &&
+      !m.toolCalls?.length &&
+      !m.todo &&
+      !m.askUser &&
+      !m.artifacts?.length &&
+      !m.parts?.length
+    ) {
       return null;
     }
     return cleaned;
@@ -208,6 +226,8 @@ export function loadMessagesFromStorage(key: string): ChatMessage[] {
 
 export function saveMessagesToStorage(key: string, msgs: ChatMessage[], maxMessages = STORED_MESSAGE_WINDOW): boolean {
   const windowed = maxMessages > 0 && msgs.length > maxMessages ? msgs.slice(-maxMessages) : msgs;
+  // streamFallback is kept on purpose (see sanitizeStoredMessages) so an
+  // interrupted bubble stays flagged across reloads until reconciled.
   const base = windowed.map(({ streaming, streamStatus, ...rest }) => rest);
   try {
     localStorage.setItem(key, JSON.stringify(base));
@@ -239,6 +259,24 @@ function messageSignature(msg: ChatMessage | undefined): string {
   return `${msg.role}\n${msg.timestamp}\n${msg.content}`;
 }
 
+function firstUserContent(msgs: ChatMessage[]): string {
+  return msgs.find((msg) => msg.role === "user")?.content.trim() ?? "";
+}
+
+function removeAdjacentDuplicateUserMessages(msgs: ChatMessage[]): ChatMessage[] {
+  let changed = false;
+  const deduped: ChatMessage[] = [];
+  for (const msg of msgs) {
+    const prev = deduped[deduped.length - 1];
+    if (msg.role === "user" && prev?.role === "user" && prev.content === msg.content) {
+      changed = true;
+      continue;
+    }
+    deduped.push(msg);
+  }
+  return changed ? deduped : msgs;
+}
+
 /**
  * Choose which message history should hydrate the UI.
  *
@@ -248,23 +286,33 @@ function messageSignature(msg: ChatMessage | undefined): string {
  * placeholder cannot hide a complete answer already persisted by the backend.
  */
 export function chooseHydratedMessages(localMsgs: ChatMessage[], backendMsgs: ChatMessage[]): ChatMessage[] {
-  if (backendMsgs.length === 0) return localMsgs;
-  if (localMsgs.length === 0) return backendMsgs;
+  const cleanBackend = removeAdjacentDuplicateUserMessages(backendMsgs);
+  if (cleanBackend.length === 0) return removeAdjacentDuplicateUserMessages(localMsgs);
+  if (localMsgs.length === 0) return cleanBackend;
 
-  const patchedLocal = patchMessagesWithBackend(localMsgs, backendMsgs);
+  const localFirstUser = firstUserContent(localMsgs);
+  const backendFirstUser = firstUserContent(cleanBackend);
+  if (localFirstUser && backendFirstUser && localFirstUser !== backendFirstUser) {
+    return cleanBackend;
+  }
 
-  if (backendMsgs.length > localMsgs.length) return backendMsgs;
-  if (localMsgs.length > backendMsgs.length) return patchedLocal;
-  if (patchedLocal !== localMsgs) return patchedLocal;
+  const cleanLocal = removeAdjacentDuplicateUserMessages(localMsgs);
+  const patchedLocal = removeAdjacentDuplicateUserMessages(
+    patchMessagesWithBackend(cleanLocal, cleanBackend),
+  );
 
-  const localLatest = latestMessageTimestamp(localMsgs);
-  const backendLatest = latestMessageTimestamp(backendMsgs);
-  if (backendLatest > localLatest) return backendMsgs;
-  if (localLatest > backendLatest) return localMsgs;
+  if (cleanBackend.length > cleanLocal.length) return cleanBackend;
+  if (cleanLocal.length > cleanBackend.length) return patchedLocal;
+  if (patchedLocal !== cleanLocal) return patchedLocal;
 
-  const localLast = messageSignature(localMsgs[localMsgs.length - 1]);
-  const backendLast = messageSignature(backendMsgs[backendMsgs.length - 1]);
-  return backendLast && backendLast !== localLast ? backendMsgs : localMsgs;
+  const localLatest = latestMessageTimestamp(cleanLocal);
+  const backendLatest = latestMessageTimestamp(cleanBackend);
+  if (backendLatest > localLatest) return cleanBackend;
+  if (localLatest > backendLatest) return cleanLocal;
+
+  const localLast = messageSignature(cleanLocal[cleanLocal.length - 1]);
+  const backendLast = messageSignature(cleanBackend[cleanBackend.length - 1]);
+  return backendLast && backendLast !== localLast ? cleanBackend : cleanLocal;
 }
 
 // ── 思维链 ──
@@ -307,6 +355,136 @@ export function buildChainFromSummary(summary: ChainSummaryItem[]): ChainGroup[]
       })),
     };
   });
+}
+
+/**
+ * Restore the causal reasoning chain from the backend's persisted
+ * ``chain_timeline`` (the server mirror of the live ``ChainGroup.entries``
+ * assembly). Preferred over ``buildChainFromSummary`` because it preserves
+ * narration text, tool arguments, and the true text/tool ordering — the
+ * detail the lossy summary drops. Entries are coerced defensively since they
+ * arrive as untyped JSON.
+ */
+export function buildChainFromTimeline(timeline: ChainTimelineGroup[]): ChainGroup[] {
+  return timeline.map((g, gi) => {
+    const entries = coerceTimelineEntries((g as { entries?: unknown }).entries);
+    return {
+      iteration: typeof g.iteration === "number" ? g.iteration : gi,
+      entries,
+      ...(typeof g.durationMs === "number" ? { durationMs: g.durationMs } : {}),
+      hasThinking: entries.some((e) => e.kind === "thinking"),
+      collapsed: true,
+      toolCalls: toolCallsFromChainEntries(entries),
+    };
+  });
+}
+
+function coerceTimelineEntries(raw: unknown): ChainEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ChainEntry[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const kind = (item as { kind?: unknown }).kind;
+    const r = item as Record<string, unknown>;
+    switch (kind) {
+      case "thinking":
+        out.push({ kind: "thinking", content: String(r.content ?? "") });
+        break;
+      case "text":
+        out.push({ kind: "text", content: String(r.content ?? ""), ...(r.icon ? { icon: String(r.icon) } : {}) });
+        break;
+      case "tool_start":
+        out.push({
+          kind: "tool_start",
+          toolId: String(r.toolId ?? ""),
+          tool: String(r.tool ?? ""),
+          args: r.args && typeof r.args === "object" ? (r.args as Record<string, unknown>) : {},
+          description: String(r.description ?? ""),
+          status: r.status === "done" || r.status === "error" ? r.status : "running",
+        });
+        break;
+      case "tool_end":
+        out.push({
+          kind: "tool_end",
+          toolId: String(r.toolId ?? ""),
+          tool: String(r.tool ?? ""),
+          result: String(r.result ?? ""),
+          status: r.status === "error" ? "error" : "done",
+        });
+        break;
+      case "config_hint": {
+        const rawHint = r.hint && typeof r.hint === "object" ? r.hint as Record<string, unknown> : {};
+        const rawActions = rawHint.actions;
+        const actions = Array.isArray(rawActions)
+          ? rawActions
+              .filter((action): action is Record<string, unknown> => !!action && typeof action === "object")
+              .map((action) => ({ ...action }))
+          : undefined;
+        out.push({
+          kind: "config_hint",
+          toolId: String(r.toolId ?? ""),
+          hint: {
+            scope: String(rawHint.scope ?? ""),
+            error_code: (
+              rawHint.error_code === "missing_credential" ||
+              rawHint.error_code === "auth_failed" ||
+              rawHint.error_code === "rate_limited" ||
+              rawHint.error_code === "network_unreachable" ||
+              rawHint.error_code === "content_filter" ||
+              rawHint.error_code === "unknown"
+                ? rawHint.error_code
+                : "unknown"
+            ),
+            title: String(rawHint.title ?? ""),
+            ...(rawHint.message != null ? { message: String(rawHint.message) } : {}),
+            ...(actions ? { actions } : {}),
+          },
+        });
+        break;
+      }
+      case "compressed":
+        out.push({
+          kind: "compressed",
+          beforeTokens: Number(r.beforeTokens ?? 0),
+          afterTokens: Number(r.afterTokens ?? 0),
+        });
+        break;
+      default:
+        break;
+    }
+  }
+  return out;
+}
+
+/** Derive the backward-compat ChainToolCall[] (IM views etc.) from chain entries. */
+function toolCallsFromChainEntries(entries: ChainEntry[]): ChainToolCall[] {
+  const byId = new Map<string, ChainToolCall>();
+  const order: string[] = [];
+  for (const e of entries) {
+    if (e.kind === "tool_start") {
+      const key = e.toolId || `${e.tool}-${order.length}`;
+      if (!byId.has(key)) order.push(key);
+      byId.set(key, {
+        toolId: e.toolId,
+        tool: e.tool,
+        args: e.args,
+        status: e.status === "done" || e.status === "error" ? e.status : "running",
+        description: e.description,
+      });
+    } else if (e.kind === "tool_end") {
+      const key = e.toolId || order[order.length - 1];
+      const prev = key ? byId.get(key) : undefined;
+      if (prev) {
+        prev.result = e.result;
+        prev.status = e.status;
+      } else {
+        const k = e.toolId || `${e.tool}-${order.length}`;
+        order.push(k);
+        byId.set(k, { toolId: e.toolId, tool: e.tool, args: {}, result: e.result, status: e.status, description: "" });
+      }
+    }
+  }
+  return order.map((k) => byId.get(k)).filter((x): x is ChainToolCall => !!x);
 }
 
 export function basename(path: string): string {
@@ -403,8 +581,14 @@ type BackendHistoryMessage = {
   role: string;
   content: string;
   chain_summary?: ChainSummaryItem[];
+  chain_timeline?: ChainTimelineGroup[];
   artifacts?: ChatArtifact[] | null;
+  sources?: ChatSource[] | null;
+  mcp_calls?: ChatMcpCall[] | null;
   usage?: ChatMessage["usage"];
+  todo?: ChatTodo | null;
+  ask_user?: ChatAskUser | null;
+  parts?: MessagePart[] | null;
 };
 
 export type BackendPatchStats = {
@@ -484,13 +668,30 @@ export function patchMessagesWithBackendDetailed(
 
     const patches: Partial<ChatMessage> = {};
 
-    if (backend.content && !m.askUser && (!m.content || m.content.length < backend.content.length)) {
+    // Content replacement. Normally we only upgrade to the backend copy when it
+    // is *longer* (the local stream got cut off). But a message flagged
+    // `streamFallback` was finalized from an interrupted / recovering stream, so
+    // its text is untrustworthy — adopt the authoritative persisted answer even
+    // when the backend copy is shorter (e.g. trace markers stripped on save),
+    // then clear the flag so it isn't force-replaced again.
+    if (
+      backend.content &&
+      !m.askUser &&
+      (m.streamFallback || !m.content || m.content.length < backend.content.length)
+    ) {
       patches.content = backend.content;
+      if (m.streamFallback) patches.streamFallback = undefined;
     }
 
     const hasBrokenChain = m.thinkingChain?.some((g: ChainGroup) => !g.entries.length && !g.durationMs);
-    if (backend.chain_summary?.length && (!m.thinkingChain?.length || hasBrokenChain)) {
-      patches.thinkingChain = buildChainFromSummary(backend.chain_summary);
+    if (!m.thinkingChain?.length || hasBrokenChain) {
+      // Prefer the faithful timeline; fall back to the lossy summary for
+      // messages persisted before chain_timeline existed.
+      if (backend.chain_timeline?.length) {
+        patches.thinkingChain = buildChainFromTimeline(backend.chain_timeline);
+      } else if (backend.chain_summary?.length) {
+        patches.thinkingChain = buildChainFromSummary(backend.chain_summary);
+      }
     }
 
     if (m.thinkingChain && !patches.thinkingChain) {
@@ -504,8 +705,38 @@ export function patchMessagesWithBackendDetailed(
       patches.artifacts = backend.artifacts;
     }
 
+    if (!m.sources?.length && backend.sources?.length) {
+      patches.sources = backend.sources;
+    }
+
+    if (!m.mcpCalls?.length && backend.mcp_calls?.length) {
+      patches.mcpCalls = backend.mcp_calls;
+    }
+
     if (!m.usage && backend.usage) {
       patches.usage = backend.usage;
+    }
+
+    // Persisted plan snapshot — restore or refresh the plan card when the
+    // backend has a newer step state (e.g. after reconnecting to a running task).
+    if (
+      backend.todo?.steps?.length &&
+      (!m.todo?.steps?.length || JSON.stringify(m.todo) !== JSON.stringify(backend.todo))
+    ) {
+      patches.todo = backend.todo;
+    }
+
+    // Persisted answered ask_user — keep a resolved prompt resolved on reload
+    // instead of re-rendering it as freshly clickable.
+    if (backend.ask_user?.answered && !m.askUser?.answered) {
+      patches.askUser = m.askUser
+        ? { ...m.askUser, answered: true, answer: backend.ask_user.answer }
+        : backend.ask_user;
+    }
+
+    // Authoritative ordered parts projection from the backend.
+    if (!m.parts?.length && backend.parts?.length) {
+      patches.parts = backend.parts;
     }
 
     if (Object.keys(patches).length > 0) {

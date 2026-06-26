@@ -16,33 +16,39 @@ def store(tmp_path):
 
 class TestFindSimilar:
     def test_find_by_subject_and_predicate(self, store):
-        store.save_semantic(SemanticMemory(
-            content="用户喜欢深色主题",
-            type=MemoryType.PREFERENCE,
-            subject="用户",
-            predicate="主题偏好",
-        ))
+        store.save_semantic(
+            SemanticMemory(
+                content="用户喜欢深色主题",
+                type=MemoryType.PREFERENCE,
+                subject="用户",
+                predicate="主题偏好",
+            )
+        )
         result = store.find_similar("用户", "主题偏好")
         assert result is not None
         assert "深色主题" in result.content
 
     def test_find_no_match(self, store):
-        store.save_semantic(SemanticMemory(
-            content="项目使用 Python",
-            type=MemoryType.FACT,
-            subject="项目",
-            predicate="语言",
-        ))
+        store.save_semantic(
+            SemanticMemory(
+                content="项目使用 Python",
+                type=MemoryType.FACT,
+                subject="项目",
+                predicate="语言",
+            )
+        )
         result = store.find_similar("用户", "名字")
         assert result is None
 
     def test_find_case_insensitive_predicate(self, store):
-        store.save_semantic(SemanticMemory(
-            content="时区是 UTC+8",
-            type=MemoryType.FACT,
-            subject="用户",
-            predicate="TimeZone",
-        ))
+        store.save_semantic(
+            SemanticMemory(
+                content="时区是 UTC+8",
+                type=MemoryType.FACT,
+                subject="用户",
+                predicate="TimeZone",
+            )
+        )
         result = store.find_similar("用户", "timezone")
         assert result is not None
 
@@ -54,9 +60,12 @@ class TestFindSimilar:
 class TestLoadAllMemories:
     def test_load_all(self, store):
         for i in range(5):
-            store.save_semantic(SemanticMemory(
-                content=f"Fact number {i}", type=MemoryType.FACT,
-            ))
+            store.save_semantic(
+                SemanticMemory(
+                    content=f"Fact number {i}",
+                    type=MemoryType.FACT,
+                )
+            )
         all_mems = store.load_all_memories()
         assert len(all_mems) == 5
 
@@ -84,4 +93,3 @@ class TestGetStats:
         assert "search_available" in stats
         assert stats["search_backend"] == "fts5"
         assert stats["search_available"] is True
-

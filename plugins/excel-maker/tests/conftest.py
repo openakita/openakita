@@ -22,4 +22,3 @@ def isolate_plugin_imports() -> None:
     yield
     sys.modules.pop("plugin", None)
     sys.modules.pop("openakita.plugins.api", None)
-

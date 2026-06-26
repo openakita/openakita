@@ -16,7 +16,7 @@ from utils import get_os_name
 def load_config() -> Dict[str, Any]:
     """
     从SKILL目录下的config.json加载配置
-    
+
     Returns:
         dict: 配置内容
     """
@@ -52,13 +52,13 @@ def print_usage():
 def validate_json(params_str: str) -> Dict[str, Any]:
     """
     校验并解析JSON参数
-    
+
     Args:
         params_str: JSON格式字符串
-    
+
     Returns:
         dict: 解析后的字典
-    
+
     Raises:
         ValueError: JSON格式不正确时抛出
     """
@@ -74,43 +74,43 @@ def validate_json(params_str: str) -> Dict[str, Any]:
 def validate_and_fill_client_info(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     校验并填充_client_info字段
-    
+
     当method为tools/call时，如果params的arguments中存在_client_info字段，
     则使用系统真实的os名称替换os字段。
-    
+
     Args:
         params: 请求参数字典
-    
+
     Returns:
         dict: 处理后的参数字典
-    
+
     Raises:
         ValueError: _client_info字段格式错误时抛出
     """
     # 确保arguments字段存在
     if "arguments" not in params:
         return params
-    
+
     arguments = params["arguments"]
-    
+
     # 确保arguments是字典类型
     if not isinstance(arguments, dict):
         raise ValueError("arguments字段必须是JSON对象格式")
-    
+
     # _client_info字段为选填，不存在时直接返回
     if "_client_info" not in arguments:
         return params
-    
+
     client_info = arguments["_client_info"]
-    
+
     # 确保client_info是字典类型
     if not isinstance(client_info, dict):
         raise ValueError("_client_info字段必须是JSON对象格式")
-    
+
     # 获取系统真实的os名称并替换
     real_os_name = get_os_name()
     params["arguments"]["_client_info"]["os"] = real_os_name
-    
+
     return params
 
 
@@ -174,7 +174,7 @@ def main():
 
         proxy = McpProxy(user_token, base_url, skill_version)
         result = proxy.request(method, params)
-        
+
         # 打印结果
         # 当method为tools/call时，打印result结果content数组里面对应type=text的text字段
         if method == "tools/call" and "result" in result:
@@ -183,7 +183,7 @@ def main():
                     print(item.get("text", ""))
         else:
             print(json.dumps(result, ensure_ascii=False, indent=2))
-        
+
     except FileNotFoundError as e:
         print(f"[错误] 配置错误: {e}")
         sys.exit(1)
@@ -197,4 +197,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

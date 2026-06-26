@@ -63,9 +63,14 @@ def test_task_to_tool_payload_failed_sets_ok_false():
 def test_task_to_tool_payload_brief_truncates_prompt():
     long_prompt = "a" * 500
     task = {
-        "id": "tk", "status": "succeeded", "mode": "t2i",
-        "prompt": long_prompt, "created_at": "2025-01-01T00:00:00Z",
-        "image_urls": [], "local_image_paths": [], "asset_ids": [],
+        "id": "tk",
+        "status": "succeeded",
+        "mode": "t2i",
+        "prompt": long_prompt,
+        "created_at": "2025-01-01T00:00:00Z",
+        "image_urls": [],
+        "local_image_paths": [],
+        "asset_ids": [],
     }
     payload = TongyiImagePlugin._task_to_tool_payload(task, brief=True)
     assert payload["prompt"] == "a" * 200
@@ -74,8 +79,12 @@ def test_task_to_tool_payload_brief_truncates_prompt():
 
 def test_task_to_tool_payload_is_json_serialisable():
     task = {
-        "id": "tk", "status": "succeeded", "mode": "t2i",
-        "image_urls": ["x"], "local_image_paths": ["/tmp/x"], "asset_ids": ["a"],
+        "id": "tk",
+        "status": "succeeded",
+        "mode": "t2i",
+        "image_urls": ["x"],
+        "local_image_paths": ["/tmp/x"],
+        "asset_ids": ["a"],
     }
     payload = TongyiImagePlugin._task_to_tool_payload(task)
     # Must round-trip cleanly: ReAct executor stores the tool result as a

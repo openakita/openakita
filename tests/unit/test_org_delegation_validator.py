@@ -134,4 +134,3 @@ class TestDiagnosisCardDowngrade:
         summarize = _summarize_or_skip()
         diag = summarize(self._make_trace_with_accept(), exit_reason="max_iterations")
         assert diag["root_cause"] == "max_iterations"
-

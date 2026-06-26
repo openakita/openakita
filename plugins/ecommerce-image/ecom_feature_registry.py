@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class FeatureParam:
     """Declares one input control on the feature form."""

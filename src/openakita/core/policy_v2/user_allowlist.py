@@ -221,9 +221,7 @@ class UserAllowlistManager:
                 path = Path(settings.identity_path) / "POLICIES.yaml"
 
             if not path.exists():
-                logger.debug(
-                    "[PolicyV2 UserAllowlist] YAML not found, skip save: %s", path
-                )
+                logger.debug("[PolicyV2 UserAllowlist] YAML not found, skip save: %s", path)
                 return False
 
             with open(path, encoding="utf-8") as f:
@@ -239,9 +237,7 @@ class UserAllowlistManager:
                 yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
             return True
         except Exception as exc:
-            logger.warning(
-                "[PolicyV2 UserAllowlist] Failed to save user_allowlist: %s", exc
-            )
+            logger.warning("[PolicyV2 UserAllowlist] Failed to save user_allowlist: %s", exc)
             return False
 
     def replace_config(self, ua: UserAllowlistConfig) -> None:

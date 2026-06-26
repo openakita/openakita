@@ -131,7 +131,9 @@ class SourceLoader:
         reader = PdfReader(str(path))
         pages = [page.extract_text() or "" for page in reader.pages[:30]]
         text = "\n\n".join(page.strip() for page in pages if page.strip())
-        return ParsedSource(kind="pdf", title=path.stem, text=text, metadata={"pages": len(reader.pages)})
+        return ParsedSource(
+            kind="pdf", title=path.stem, text=text, metadata={"pages": len(reader.pages)}
+        )
 
     def parse_docx(self, path: Path) -> ParsedSource:
         try:
@@ -240,4 +242,3 @@ class SourceLoader:
         if not match:
             return None
         return html.unescape(re.sub(r"\s+", " ", match.group(1))).strip()
-

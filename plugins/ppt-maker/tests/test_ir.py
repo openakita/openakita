@@ -60,4 +60,3 @@ def test_ir_adds_quality_metadata_for_dense_slides() -> None:
     assert quality["density_score"] > 0
     assert quality["visual_role"] in {"text", "image", "diagram", "chart", "table"}
     assert "content_score" in quality
-

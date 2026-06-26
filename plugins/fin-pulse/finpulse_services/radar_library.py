@@ -108,9 +108,7 @@ async def save_preset(
     }
     kept.insert(0, entry)
     kept = kept[:MAX_PRESETS]
-    await store.set_configs(
-        {"radar_rules_library": json.dumps(kept, ensure_ascii=False)}
-    )
+    await store.set_configs({"radar_rules_library": json.dumps(kept, ensure_ascii=False)})
     return entry
 
 
@@ -124,9 +122,7 @@ async def delete_preset(store: _ConfigStore, name: str) -> bool:
     remaining = [it for it in existing if it.get("name") != target]
     if len(remaining) == len(existing):
         return False
-    await store.set_configs(
-        {"radar_rules_library": json.dumps(remaining, ensure_ascii=False)}
-    )
+    await store.set_configs({"radar_rules_library": json.dumps(remaining, ensure_ascii=False)})
     return True
 
 

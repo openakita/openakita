@@ -43,4 +43,3 @@ def test_csv_import_profile_build_and_audit(tmp_path) -> None:
     wb = openpyxl.load_workbook(output, data_only=False)
     summary = wb["Summary"]
     assert summary["C4"].value == "=SUM(Clean_Data!B2:B3)"
-

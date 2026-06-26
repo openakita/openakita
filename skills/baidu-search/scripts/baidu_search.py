@@ -25,11 +25,13 @@ SEARCH_URL = "https://aip.baidubce.com/rest/2.0/search/v1/resource/search"
 
 
 def get_access_token(ak: str, sk: str) -> str:
-    params = urllib.parse.urlencode({
-        "grant_type": "client_credentials",
-        "client_id": ak,
-        "client_secret": sk,
-    })
+    params = urllib.parse.urlencode(
+        {
+            "grant_type": "client_credentials",
+            "client_id": ak,
+            "client_secret": sk,
+        }
+    )
     url = f"{TOKEN_URL}?{params}"
     req = urllib.request.Request(url, method="POST", data=b"")
     with urllib.request.urlopen(req, timeout=15) as resp:
@@ -39,17 +41,21 @@ def get_access_token(ak: str, sk: str) -> str:
     return data["access_token"]
 
 
-def search(token: str, query: str, search_type: str = "web",
-           page_no: int = 1, page_size: int = 10) -> dict:
+def search(
+    token: str, query: str, search_type: str = "web", page_no: int = 1, page_size: int = 10
+) -> dict:
     url = f"{SEARCH_URL}?access_token={token}"
-    body = json.dumps({
-        "query": query,
-        "search_type": search_type,
-        "page_no": page_no,
-        "page_size": page_size,
-    }).encode()
+    body = json.dumps(
+        {
+            "query": query,
+            "search_type": search_type,
+            "page_no": page_no,
+            "page_size": page_size,
+        }
+    ).encode()
     req = urllib.request.Request(
-        url, data=body,
+        url,
+        data=body,
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -61,8 +67,8 @@ def main():
         description="百度搜索 API CLI — 支持网页搜索和图片搜索",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例:\n"
-               "  python3 baidu_search.py web \"Python 异步编程\"\n"
-               "  python3 baidu_search.py image \"风景壁纸\" --page-size 5",
+        '  python3 baidu_search.py web "Python 异步编程"\n'
+        '  python3 baidu_search.py image "风景壁纸" --page-size 5',
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -90,8 +96,10 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except urllib.error.HTTPError as e:
         body = e.read().decode() if e.fp else ""
-        print(json.dumps({"error": str(e), "detail": body}, ensure_ascii=False, indent=2),
-              file=sys.stderr)
+        print(
+            json.dumps({"error": str(e), "detail": body}, ensure_ascii=False, indent=2),
+            file=sys.stderr,
+        )
         sys.exit(1)
     except Exception as e:
         print(json.dumps({"error": str(e)}, ensure_ascii=False, indent=2), file=sys.stderr)
@@ -100,4 +108,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

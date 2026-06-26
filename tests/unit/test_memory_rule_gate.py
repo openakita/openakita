@@ -31,9 +31,11 @@ class FakeMemoryManager:
 
 
 def test_pinned_rules_do_not_inject_unrelated_global_rules():
-    memory = FakeMemoryManager([
-        FakeRule("蓝豆计划预警线 55 元，熔断线 50 元", tags=["蓝豆计划"]),
-    ])
+    memory = FakeMemoryManager(
+        [
+            FakeRule("蓝豆计划预警线 55 元，熔断线 50 元", tags=["蓝豆计划"]),
+        ]
+    )
 
     section = _build_pinned_rules_section(memory, task_description="总结 ClipSense 插件能力")
 
@@ -41,9 +43,11 @@ def test_pinned_rules_do_not_inject_unrelated_global_rules():
 
 
 def test_pinned_rules_keep_general_behavior_rules():
-    memory = FakeMemoryManager([
-        FakeRule("始终使用简体中文回复"),
-    ])
+    memory = FakeMemoryManager(
+        [
+            FakeRule("始终使用简体中文回复"),
+        ]
+    )
 
     section = _build_pinned_rules_section(memory, task_description="介绍项目")
 
@@ -52,9 +56,11 @@ def test_pinned_rules_keep_general_behavior_rules():
 
 
 def test_pinned_rules_do_not_inject_unrelated_business_must_rules():
-    memory = FakeMemoryManager([
-        FakeRule("报备时必须提供：客户姓名、电话、来源、主诉"),
-    ])
+    memory = FakeMemoryManager(
+        [
+            FakeRule("报备时必须提供：客户姓名、电话、来源、主诉"),
+        ]
+    )
 
     section = _build_pinned_rules_section(memory, task_description="介绍 Python 虚拟环境")
 

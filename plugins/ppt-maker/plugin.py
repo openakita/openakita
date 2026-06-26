@@ -182,7 +182,11 @@ class Plugin(PluginBase):
         @router.get("/settings")
         async def get_settings() -> dict[str, Any]:
             settings = _load_settings(data_dir, apply_relay=False)
-            return {"ok": True, "settings": settings, "resolved": _resolved_storage_paths(data_dir, settings)}
+            return {
+                "ok": True,
+                "settings": settings,
+                "resolved": _resolved_storage_paths(data_dir, settings),
+            }
 
         @router.put("/settings")
         async def update_settings(payload: SettingsUpdateRequest) -> dict[str, Any]:
@@ -202,6 +206,7 @@ class Plugin(PluginBase):
             if self._asset_provider is not None:
                 try:
                     from ppt_asset_provider import PptAssetProvider
+
                     self._asset_provider = PptAssetProvider(
                         settings=_load_settings(data_dir),
                         data_root=data_dir,
@@ -341,9 +346,7 @@ class Plugin(PluginBase):
                 limit_clamped = max(1, min(int(limit), 1000))
             except (TypeError, ValueError):
                 limit_clamped = 200
-            events = self._activity_logger.read(
-                project_id, since=since, limit=limit_clamped
-            )
+            events = self._activity_logger.read(project_id, since=since, limit=limit_clamped)
             return {
                 "ok": True,
                 "project_id": project_id,
@@ -382,7 +385,9 @@ class Plugin(PluginBase):
 
             settings = _load_settings(data_dir)
             filename = _format_upload_filename(str(upload.filename or "upload.bin"), settings)
-            target_dir = _upload_target_dir(data_dir, settings, filename, collection_name=collection_name)
+            target_dir = _upload_target_dir(
+                data_dir, settings, filename, collection_name=collection_name
+            )
             target = unique_child(target_dir, filename)
             content = await upload.read()
             target.write_bytes(content)
@@ -724,7 +729,9 @@ class Plugin(PluginBase):
             template_id: str,
             payload: TemplateBrandUpdateRequest,
         ) -> dict[str, Any]:
-            template_path = _analysis_dir(data_dir, _load_settings(data_dir), "templates", template_id)
+            template_path = _analysis_dir(
+                data_dir, _load_settings(data_dir), "templates", template_id
+            )
             brand_path = template_path / "brand_tokens.json"
             brand_path.write_text(
                 json.dumps(payload.brand_tokens, ensure_ascii=False, indent=2),
@@ -767,8 +774,12 @@ class Plugin(PluginBase):
                 project = await manager.get_project(project_id)
                 if project is None:
                     raise HTTPException(status_code=404, detail="Project not found")
-                dataset = await manager.get_dataset(project.dataset_id) if project.dataset_id else None
-                template = await manager.get_template(project.template_id) if project.template_id else None
+                dataset = (
+                    await manager.get_dataset(project.dataset_id) if project.dataset_id else None
+                )
+                template = (
+                    await manager.get_template(project.template_id) if project.template_id else None
+                )
                 table_insights = _read_json_if_exists(dataset.insights_path if dataset else None)
                 template_profile = _read_json_if_exists(template.profile_path if template else None)
                 outline = OutlineBuilder().build(
@@ -787,7 +798,9 @@ class Plugin(PluginBase):
 
         @router.put("/projects/{project_id}/outline")
         async def confirm_outline(project_id: str, payload: OutlineUpdateRequest) -> dict[str, Any]:
-            outline = OutlineBuilder().confirm(payload.outline) if payload.confirmed else payload.outline
+            outline = (
+                OutlineBuilder().confirm(payload.outline) if payload.confirmed else payload.outline
+            )
             OutlineBuilder().save(outline, project_dir(data_dir, project_id))
             async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
                 stored = await manager.create_outline(
@@ -810,7 +823,9 @@ class Plugin(PluginBase):
                 latest_outline = await manager.latest_outline(project_id)
                 if latest_outline is None:
                     raise HTTPException(status_code=409, detail="Generate outline first")
-                brand_tokens, layout_map = await _template_design_inputs(manager, project.template_id)
+                brand_tokens, layout_map = await _template_design_inputs(
+                    manager, project.template_id
+                )
                 design = DesignBuilder().build(
                     outline=latest_outline["outline"],
                     brand_tokens=brand_tokens,
@@ -828,7 +843,9 @@ class Plugin(PluginBase):
         @router.put("/projects/{project_id}/design/confirm")
         async def confirm_design(project_id: str, payload: DesignConfirmRequest) -> dict[str, Any]:
             async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
-                current = _normalize_design(payload.design or await manager.latest_design_spec(project_id))
+                current = _normalize_design(
+                    payload.design or await manager.latest_design_spec(project_id)
+                )
                 if current is None:
                     raise HTTPException(status_code=409, detail="Generate design first")
                 design = DesignBuilder().confirm(current) if payload.confirmed else current
@@ -855,10 +872,16 @@ class Plugin(PluginBase):
                 design = _normalize_design(await manager.latest_design_spec(project_id))
                 if outline is None or design is None:
                     raise HTTPException(status_code=409, detail="Confirm outline and design first")
-                dataset = await manager.get_dataset(project.dataset_id) if project.dataset_id else None
-                template = await manager.get_template(project.template_id) if project.template_id else None
+                dataset = (
+                    await manager.get_dataset(project.dataset_id) if project.dataset_id else None
+                )
+                template = (
+                    await manager.get_template(project.template_id) if project.template_id else None
+                )
                 table_insights = _read_json_if_exists(dataset.insights_path if dataset else None)
-                chart_specs = _read_json_if_exists(dataset.chart_specs_path if dataset else None) or []
+                chart_specs = (
+                    _read_json_if_exists(dataset.chart_specs_path if dataset else None) or []
+                )
                 layout_map = _read_json_if_exists(template.layout_map_path if template else None)
                 ir = SlideIrBuilder().build(
                     outline=outline["outline"],
@@ -960,7 +983,10 @@ class Plugin(PluginBase):
                 export = await manager.create_export(
                     project_id=project_id,
                     path=str(export_path),
-                    metadata={"audit_ok": audit["ok"], "slide_count": len(slides_ir.get("slides", []))},
+                    metadata={
+                        "audit_ok": audit["ok"],
+                        "slide_count": len(slides_ir.get("slides", [])),
+                    },
                 )
                 await manager.update_project_safe(project_id, status="ready")
             return {"ok": True, "export": export, "audit": audit}
@@ -1027,7 +1053,9 @@ class Plugin(PluginBase):
                 )
             if tool_name == "ppt_start_project":
                 project = await manager.create_project(ProjectCreate(**arguments))
-                return json.dumps({"ok": True, "project": project.model_dump(mode="json")}, ensure_ascii=False)
+                return json.dumps(
+                    {"ok": True, "project": project.model_dump(mode="json")}, ensure_ascii=False
+                )
             if tool_name == "ppt_ingest_sources":
                 created = []
                 for raw_path in arguments.get("paths", []):
@@ -1048,12 +1076,18 @@ class Plugin(PluginBase):
                     original_path=str(arguments["path"]),
                     metadata={"kind": SourceLoader().detect_kind(str(arguments["path"]))},
                 )
-                return json.dumps({"ok": True, "dataset": dataset.model_dump(mode="json")}, ensure_ascii=False)
+                return json.dumps(
+                    {"ok": True, "dataset": dataset.model_dump(mode="json")}, ensure_ascii=False
+                )
             if tool_name == "ppt_profile_table":
-                result = await _profile_dataset_for_tool(manager, data_dir, str(arguments["dataset_id"]))
+                result = await _profile_dataset_for_tool(
+                    manager, data_dir, str(arguments["dataset_id"])
+                )
                 return json.dumps({"ok": True, **result}, ensure_ascii=False)
             if tool_name == "ppt_generate_table_insights":
-                result = await _dataset_file_payload(manager, str(arguments["dataset_id"]), "insights")
+                result = await _dataset_file_payload(
+                    manager, str(arguments["dataset_id"]), "insights"
+                )
                 return json.dumps({"ok": True, **result}, ensure_ascii=False)
             if tool_name == "ppt_upload_template":
                 template = await manager.create_template(
@@ -1061,12 +1095,18 @@ class Plugin(PluginBase):
                     category=arguments.get("category"),
                     original_path=str(arguments["path"]),
                 )
-                return json.dumps({"ok": True, "template": template.model_dump(mode="json")}, ensure_ascii=False)
+                return json.dumps(
+                    {"ok": True, "template": template.model_dump(mode="json")}, ensure_ascii=False
+                )
             if tool_name == "ppt_diagnose_template":
-                result = await _diagnose_template_for_tool(manager, data_dir, str(arguments["template_id"]))
+                result = await _diagnose_template_for_tool(
+                    manager, data_dir, str(arguments["template_id"])
+                )
                 return json.dumps({"ok": True, **result}, ensure_ascii=False)
             if tool_name == "ppt_generate_outline":
-                result = await _generate_outline_for_tool(manager, data_dir, str(arguments["project_id"]))
+                result = await _generate_outline_for_tool(
+                    manager, data_dir, str(arguments["project_id"])
+                )
                 return json.dumps({"ok": True, **result}, ensure_ascii=False)
             if tool_name == "ppt_confirm_outline":
                 outline = OutlineBuilder().confirm(arguments["outline"])
@@ -1076,22 +1116,35 @@ class Plugin(PluginBase):
                     outline=outline,
                     confirmed=True,
                 )
-                await manager.update_project_safe(str(arguments["project_id"]), status=ProjectStatus.OUTLINE_CONFIRMED)
-                return json.dumps({"ok": True, "outline": outline, "record": record}, ensure_ascii=False)
+                await manager.update_project_safe(
+                    str(arguments["project_id"]), status=ProjectStatus.OUTLINE_CONFIRMED
+                )
+                return json.dumps(
+                    {"ok": True, "outline": outline, "record": record}, ensure_ascii=False
+                )
             if tool_name == "ppt_generate_design":
-                result = await _generate_design_for_tool(manager, data_dir, str(arguments["project_id"]))
+                result = await _generate_design_for_tool(
+                    manager, data_dir, str(arguments["project_id"])
+                )
                 return json.dumps({"ok": True, **result}, ensure_ascii=False)
             if tool_name == "ppt_confirm_design":
                 design = DesignBuilder().confirm(arguments["design"])
-                paths = DesignBuilder().save(design, project_dir(data_dir, str(arguments["project_id"])))
+                paths = DesignBuilder().save(
+                    design, project_dir(data_dir, str(arguments["project_id"]))
+                )
                 record = await manager.create_design_spec(
                     project_id=str(arguments["project_id"]),
                     design_markdown=design["design_spec_markdown"],
                     spec_lock=design["spec_lock"],
                     confirmed=True,
                 )
-                await manager.update_project_safe(str(arguments["project_id"]), status=ProjectStatus.DESIGN_CONFIRMED)
-                return json.dumps({"ok": True, "design": design, "paths": paths, "record": record}, ensure_ascii=False)
+                await manager.update_project_safe(
+                    str(arguments["project_id"]), status=ProjectStatus.DESIGN_CONFIRMED
+                )
+                return json.dumps(
+                    {"ok": True, "design": design, "paths": paths, "record": record},
+                    ensure_ascii=False,
+                )
             if tool_name == "ppt_revise_slide":
                 updated = await manager.update_slide_safe(
                     str(arguments["project_id"]),
@@ -1102,15 +1155,21 @@ class Plugin(PluginBase):
             if tool_name == "ppt_audit":
                 slides_ir = _project_json(data_dir, str(arguments["project_id"]), "slides_ir.json")
                 if slides_ir is None:
-                    return json.dumps({"ok": False, "error": "Generate slides first"}, ensure_ascii=False)
+                    return json.dumps(
+                        {"ok": False, "error": "Generate slides first"}, ensure_ascii=False
+                    )
                 report = PptAudit().run(slides_ir)
                 path = PptAudit().save(report, project_dir(data_dir, str(arguments["project_id"])))
-                return json.dumps({"ok": True, "audit": report, "path": str(path)}, ensure_ascii=False)
+                return json.dumps(
+                    {"ok": True, "audit": report, "path": str(path)}, ensure_ascii=False
+                )
             if tool_name == "ppt_repair":
                 project_id = str(arguments["project_id"])
                 slides_ir = _project_json(data_dir, project_id, "slides_ir.json")
                 if slides_ir is None:
-                    return json.dumps({"ok": False, "error": "Generate slides first"}, ensure_ascii=False)
+                    return json.dumps(
+                        {"ok": False, "error": "Generate slides first"}, ensure_ascii=False
+                    )
                 audit = PptAudit().run(slides_ir)
                 repaired, repair_plan = PptRepair().repair(slides_ir, audit)
                 repair_path = PptRepair().save(repair_plan, project_dir(data_dir, project_id))
@@ -1258,7 +1317,9 @@ def _is_relative_to(path: Path, root: Path) -> bool:
 def _remove_empty_storage_parents(start: Path, root_paths: list[Path]) -> None:
     current = _resolve_for_compare(start)
     root_set = {str(root) for root in root_paths}
-    while str(current) not in root_set and any(_is_relative_to(current, root) for root in root_paths):
+    while str(current) not in root_set and any(
+        _is_relative_to(current, root) for root in root_paths
+    ):
         try:
             current.rmdir()
         except OSError:
@@ -1524,6 +1585,7 @@ def _apply_relay_overrides(settings: dict[str, str]) -> dict[str, str]:
         msg = f"中转站 {relay_name!r} 不支持 ppt-maker 当前图片模型: {model}"
         if policy == "strict":
             from fastapi import HTTPException
+
             raise HTTPException(status_code=400, detail=msg)
         return settings
     base = str(merged.get("base_url") or "").strip()
@@ -1647,12 +1709,14 @@ def _list_dir_payload(path: str = "") -> dict[str, Any]:
         for sub in ("Desktop", "Documents", "Downloads", "Pictures", "Videos"):
             candidate = home / sub
             if candidate.is_dir():
-                anchors.append({
-                    "name": sub,
-                    "path": str(candidate),
-                    "is_dir": True,
-                    "kind": "shortcut",
-                })
+                anchors.append(
+                    {
+                        "name": sub,
+                        "path": str(candidate),
+                        "is_dir": True,
+                        "kind": "shortcut",
+                    }
+                )
         if sys.platform.startswith("win"):
             import string
 
@@ -1660,12 +1724,14 @@ def _list_dir_payload(path: str = "") -> dict[str, Any]:
                 drive = Path(f"{letter}:/")
                 try:
                     if drive.exists():
-                        anchors.append({
-                            "name": f"{letter}:",
-                            "path": str(drive),
-                            "is_dir": True,
-                            "kind": "drive",
-                        })
+                        anchors.append(
+                            {
+                                "name": f"{letter}:",
+                                "path": str(drive),
+                                "is_dir": True,
+                                "kind": "drive",
+                            }
+                        )
                 except OSError:
                     continue
         else:
@@ -1702,4 +1768,3 @@ def _open_folder(path: Path) -> None:
         subprocess.Popen(["open", str(path)])
         return
     subprocess.Popen(["xdg-open", str(path)])
-

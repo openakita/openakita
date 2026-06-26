@@ -78,16 +78,16 @@ class PolicyHotReloader:
         on_reload: Callable[[bool, str], None] | None = None,
     ) -> None:
         """Args:
-            path: POLICIES.yaml absolute path.
-            poll_interval_seconds: how often to ``stat`` the file.
-            debounce_seconds: after seeing mtime change, wait this long
-                before reading content (avoids reading a half-written file
-                during editor "truncate then write" cycles).
-            on_reload: optional ``(ok, reason)`` callback fired after each
-                reload attempt — used by tests + audit. ``ok=True`` means
-                a new engine was published; ``ok=False`` means we kept the
-                previous one (validation failed / reload skipped /
-                content unchanged).
+        path: POLICIES.yaml absolute path.
+        poll_interval_seconds: how often to ``stat`` the file.
+        debounce_seconds: after seeing mtime change, wait this long
+            before reading content (avoids reading a half-written file
+            during editor "truncate then write" cycles).
+        on_reload: optional ``(ok, reason)`` callback fired after each
+            reload attempt — used by tests + audit. ``ok=True`` means
+            a new engine was published; ``ok=False`` means we kept the
+            previous one (validation failed / reload skipped /
+            content unchanged).
         """
         self.path = Path(path)
         self.poll_interval = poll_interval_seconds
@@ -187,9 +187,7 @@ class PolicyHotReloader:
         if new_hash == self._last_hash:
             # Same content, just a metadata touch (git checkout same sha,
             # ``touch POLICIES.yaml``, etc.). Skip the rebuild entirely.
-            logger.debug(
-                "[PolicyHotReload] mtime bumped but content unchanged — skipping"
-            )
+            logger.debug("[PolicyHotReload] mtime bumped but content unchanged — skipping")
             self._fire("noop", "content unchanged")
             return
 
@@ -245,8 +243,7 @@ class PolicyHotReloader:
                 ok = False
                 reason = "validation failed; no last-known-good available"
                 logger.warning(
-                    "[PolicyHotReload] %s reload skipped (no LKG; engine "
-                    "fell back to defaults)",
+                    "[PolicyHotReload] %s reload skipped (no LKG; engine fell back to defaults)",
                     self.path,
                 )
             elif before_lkg is not None and after_lkg is before_lkg:
@@ -350,9 +347,7 @@ def start_hot_reloader(
 
         path = _resolve_path(yaml_path)
         if path is None:
-            logger.info(
-                "[PolicyHotReload] POLICIES.yaml not found — hot-reload disabled"
-            )
+            logger.info("[PolicyHotReload] POLICIES.yaml not found — hot-reload disabled")
             return None
 
         if not force:

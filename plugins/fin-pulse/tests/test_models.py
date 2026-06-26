@@ -72,9 +72,20 @@ def test_source_registry_covers_all_kinds() -> None:
     assert "rss" in kinds_seen
 
     expected_enabled_by_default = {
-        "wallstreetcn", "cls", "jin10", "gelonghui", "xueqiu-hotstock",
-        "eastmoney", "pbc_omo", "yicai", "nbd", "stcn",
-        "nbs", "fed_fomc", "sec_edgar", "rss_generic",
+        "wallstreetcn",
+        "cls",
+        "jin10",
+        "gelonghui",
+        "xueqiu-hotstock",
+        "eastmoney",
+        "pbc_omo",
+        "yicai",
+        "nbd",
+        "stcn",
+        "nbs",
+        "fed_fomc",
+        "sec_edgar",
+        "rss_generic",
     }
     for source_id in expected_enabled_by_default:
         assert SOURCE_DEFS[source_id]["default_enabled"] is True, source_id

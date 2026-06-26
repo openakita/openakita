@@ -1,0 +1,66 @@
+---
+description: Keep Cursor's automatic Co-authored-by trailer out of commit messages, in line with project preference
+alwaysApply: true
+---
+
+# No Cursor Co-Authored-By Trailer
+
+This project prefers a git history without AI-tool-injected commit trailers (`Co-authored-by: Cursor <cursoragent@cursor.com>`, `Made-with: Cursor`, and similar). The canonical attribution is the `author` / `committer` set by the contributor's `git config` — that's the human (or human-led team) who reviewed and shipped the change. AI assistance is part of the workflow, not part of the authorship metadata.
+
+This rule lives under `.cursor/rules/` (Cursor-specific) rather than `AGENTS.md` (cross-tool) because the trailer in question is injected by Cursor's tooling specifically. Other AI coding tools either don't have this behavior, or have their own opt-out paths that are not relevant here.
+
+## What Cursor injects
+
+When an agent (IDE Agent, Cursor CLI, or Cursor Cloud Agent) runs `git commit -m "..."` inside Cursor's Shell tool, Cursor's wrapper appends `--trailer "Co-authored-by: Cursor <cursoragent@cursor.com>"` to the command **after** the agent emits the tool call. The model never sees the trailer in its own tool input, so prompt-level instructions alone do not stop it.
+
+## The correct fix (do this first, do not skip)
+
+The repository owner must turn the injection **off at the source** on each machine:
+
+1. **Cursor Desktop / IDE**: `Cursor Settings → Agents → Attribution` → toggle off both `Commit Attribution` and `PR Attribution`. **Fully restart Cursor** (terminal restart alone is not enough).
+2. **Cursor CLI (`%USERPROFILE%\.cursor\cli-config.json` on Windows, `~/.cursor/cli-config.json` elsewhere)**: ensure the file contains
+   ```json
+   {
+     "version": 1,
+     "attribution": {
+       "attributeCommitsToAgent": false,
+       "attributePRsToAgent": false
+     }
+   }
+   ```
+   or run `cursor /update-cli-config` after toggling the IDE setting.
+3. **Enterprise override**: if your team is on an Enterprise plan and `Disable attribution` is unchecked in the admin dashboard, the local config is silently overridden. Ask the admin to disable team-wide attribution.
+
+When all three are clean, plain `git commit` works as expected and no further workaround is needed.
+
+## Fallback when injection cannot be disabled at source
+
+There are three situations where the agent **cannot** prevent the trailer through settings:
+
+- **Cursor Cloud Agent** (browser-based) — Cursor injects the trailer through the server-side `commit-msg.cursor.co-author` hook with no opt-out as of the current Cursor release.
+- **Enterprise admin force-on** — local config is overridden.
+- **Stale Cursor build** — IDE setting toggled but Cursor not yet restarted.
+
+In those cases, the agent should still match the project preference. Use one of these techniques, in order:
+
+1. **Project-shipped `prepare-commit-msg` hook** (safest, opt-in per clone): if the contributor has run `git config core.hooksPath .githooks`, the hook at `.githooks/prepare-commit-msg` automatically strips Cursor's trailer after the wrapper has assembled the commit message but before the commit object is written. This covers IDE, CLI, and cloud-agent paths in one place. If the hook is not yet enabled, suggest enabling it once.
+
+2. **Plumbing rewrite** (only when 1 is not available): assemble the commit manually:
+   ```
+   git add <files>
+   tree=$(git write-tree)
+   parent=$(git rev-parse HEAD)
+   new=$(git commit-tree "$tree" -p "$parent" -F path/to/message.txt)
+   git update-ref refs/heads/$(git symbolic-ref --short HEAD) "$new"
+   ```
+   This bypasses Cursor's `git commit` wrapper entirely. **Important trade-off**: `git commit-tree` does not fire `pre-commit`, `commit-msg`, `prepare-commit-msg`, or `post-commit` hooks. If the project ever adopts pre-commit linting, this path will silently skip checks. The agent must run any project-mandated checks manually (e.g. `ruff check`, `pytest`) before falling back to plumbing.
+
+3. **Amend after the fact** (least preferred): `git commit` normally, then immediately `git commit --amend` with a clean message. Cursor's wrapper may re-inject on the amend, in which case loop back to (1) or (2).
+
+After any of the three, the agent should verify with `git log -1 --format=%B` that no `Co-authored-by:` line remains, and report the residual line to the user if found.
+
+## What the agent must NOT do
+
+- Do **not** add `Co-authored-by: Cursor <...>`, `Made-with: Cursor`, `Co-authored-by: Claude <...>`, or any similar AI-attribution trailer to a commit message on the agent's own initiative.
+- Do **not** treat the wrapper-injected trailer as authoritative attribution. The sole `author`/`committer` field set by the user's `git config user.name` / `user.email` is the canonical attribution.
+- Do **not** commit personal bypass scripts (e.g. ad-hoc `clean_commit.py`, `amend_commit.py`) into the repository's `scripts/` directory. Those are Cursor-user-private workarounds; keep them under the user's home directory or under `.cursor/` if they need to be shared with this project.

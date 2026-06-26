@@ -55,8 +55,6 @@ _DEFAULTS: dict[str, bool] = {
     "intent_tool_slim_v1": True,
     # P1-2
     "text_replace_on_restart_v1": True,
-    # P1-5
-    "llm_view_min_endpoints_v1": True,
 }
 
 

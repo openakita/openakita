@@ -25,6 +25,8 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from openakita.agents.identity_files import PROFILE_IDENTITY_FILENAMES
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -61,6 +63,70 @@ def _get_stores():
 
     skills_dir = Path(settings.skills_path)
     return profile_store, skills_dir, root
+
+
+def _read_profile_identity_files(profile_store, profile_id: str) -> dict[str, str]:
+    profile_dir = profile_store.get_profile_dir(profile_id)
+    identity_dir = profile_dir / "identity"
+    result: dict[str, str] = {}
+    for filename in sorted(PROFILE_IDENTITY_FILENAMES):
+        path = identity_dir / filename
+        if not path.is_file():
+            continue
+        try:
+            result[filename] = path.read_text(encoding="utf-8")
+        except Exception as exc:
+            logger.warning(
+                "[AgentPackage] Failed to read identity file %s for %s: %s",
+                filename,
+                profile_id,
+                exc,
+            )
+    return result
+
+
+def _write_profile_identity_files(
+    profile_store,
+    profile_id: str,
+    identity_files: dict | None,
+) -> None:
+    if not isinstance(identity_files, dict) or not identity_files:
+        return
+    profile_dir = profile_store.ensure_profile_dir(profile_id)
+    identity_dir = profile_dir / "identity"
+    identity_dir.mkdir(parents=True, exist_ok=True)
+    for filename, content in identity_files.items():
+        if filename not in PROFILE_IDENTITY_FILENAMES:
+            continue
+        if not isinstance(content, str):
+            continue
+        (identity_dir / filename).write_text(content, encoding="utf-8")
+
+
+def _invalidate_imported_profile_runtime(request: Request, profile_id: str) -> None:
+    try:
+        from openakita.prompt.builder import clear_prompt_section_cache
+
+        clear_prompt_section_cache()
+    except Exception as exc:
+        logger.warning("[AgentPackage] Failed to clear prompt cache after import: %s", exc)
+
+    for pool_attr in ("agent_pool", "orchestrator"):
+        obj = getattr(request.app.state, pool_attr, None)
+        if obj is None:
+            continue
+        pool = getattr(obj, "_pool", obj)
+        if not hasattr(pool, "invalidate_profile"):
+            continue
+        try:
+            pool.invalidate_profile(profile_id)
+        except Exception as exc:
+            logger.warning(
+                "[AgentPackage] Failed to invalidate profile runtime (%s, profile=%s): %s",
+                pool_attr,
+                profile_id,
+                exc,
+            )
 
 
 def _reload_skills(request) -> None:
@@ -236,6 +302,7 @@ async def export_agent_json(req: ExportJsonRequest):
         "format": "akita-agent",
         "version": req.version,
         "profile": data,
+        "identity_files": _read_profile_identity_files(profile_store, profile.id),
     }
 
     if req.output_path:
@@ -275,6 +342,7 @@ async def batch_export_agents_json(req: BatchExportJsonRequest):
         data = profile.to_dict()
         data.pop("ephemeral", None)
         data.pop("inherit_from", None)
+        data["identity_files"] = _read_profile_identity_files(profile_store, profile.id)
         exported.append(data)
 
     result = {
@@ -317,17 +385,23 @@ async def import_agent(
             raise HTTPException(400, f"无效的 JSON 文件: {e}")
 
         if data.get("format") == "akita-agent-batch":
-            agents_data = data.get("agents", [])
-        elif data.get("format") == "akita-agent":
-            agents_data = [data.get("profile", {})]
+            raw_agents = data.get("agents", [])
         elif isinstance(data.get("profile"), dict):
-            agents_data = [data["profile"]]
+            raw_agents = [data]
+        elif data.get("format") == "akita-agent":
+            raw_agents = [{}]
         else:
             raise HTTPException(400, "无法识别的 JSON 格式，缺少 profile 或 agents 字段")
 
         imported = []
         skipped = []
-        for pdata in agents_data:
+        for item in raw_agents:
+            if isinstance(item, dict) and isinstance(item.get("profile"), dict):
+                pdata = dict(item.get("profile", {}))
+                identity_files = item.get("identity_files")
+            else:
+                pdata = dict(item) if isinstance(item, dict) else {}
+                identity_files = pdata.pop("identity_files", None)
             if not pdata or not isinstance(pdata, dict):
                 continue
             pid = pdata.get("id", "")
@@ -346,6 +420,8 @@ async def import_agent(
 
             profile = AgentProfile.from_dict(pdata)
             profile_store.save(profile)
+            _write_profile_identity_files(profile_store, profile.id, identity_files)
+            _invalidate_imported_profile_runtime(request, profile.id)
             imported.append(profile.to_dict())
 
         _reload_skills(request)
@@ -377,6 +453,7 @@ async def import_agent(
         tmp_path.unlink(missing_ok=True)
 
     _reload_skills(request)
+    _invalidate_imported_profile_runtime(request, profile.id)
 
     return {
         "message": "Agent imported successfully",

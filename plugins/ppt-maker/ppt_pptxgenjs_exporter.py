@@ -19,7 +19,11 @@ class PptxGenJsExporter:
     """Render via Node/PptxGenJS when available, otherwise allow fallback."""
 
     def __init__(self, *, renderer_dir: str | Path | None = None) -> None:
-        self._renderer_dir = Path(renderer_dir) if renderer_dir else Path(__file__).parent / "renderers" / "pptxgenjs"
+        self._renderer_dir = (
+            Path(renderer_dir)
+            if renderer_dir
+            else Path(__file__).parent / "renderers" / "pptxgenjs"
+        )
 
     def is_available(self) -> bool:
         node = shutil.which("node")
@@ -43,7 +47,9 @@ class PptxGenJsExporter:
 
         path.parent.mkdir(parents=True, exist_ok=True)
         payload_path = path.with_suffix(".render_model.json")
-        payload_path.write_text(json.dumps(render_model, ensure_ascii=False, indent=2), encoding="utf-8")
+        payload_path.write_text(
+            json.dumps(render_model, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         command = [
             shutil.which("node") or "node",
             str(self._renderer_dir / "render.js"),
@@ -61,10 +67,11 @@ class PptxGenJsExporter:
         if completed.returncode != 0:
             if allow_fallback:
                 return PptxExporter().export(legacy_slides_ir, path)
-            raise PptxGenJsUnavailable(completed.stderr or completed.stdout or "PptxGenJS render failed")
+            raise PptxGenJsUnavailable(
+                completed.stderr or completed.stdout or "PptxGenJS render failed"
+            )
         if not path.exists() or path.stat().st_size == 0:
             if allow_fallback:
                 return PptxExporter().export(legacy_slides_ir, path)
             raise PptxGenJsUnavailable("PptxGenJS did not create an output file.")
         return path
-

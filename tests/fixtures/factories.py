@@ -116,7 +116,8 @@ def create_tool_definition(
         "category": category,
         "description": description,
         "detail": f"Detailed description for {name}",
-        "input_schema": input_schema or {
+        "input_schema": input_schema
+        or {
             "type": "object",
             "properties": {"query": {"type": "string", "description": "Input query"}},
             "required": ["query"],
@@ -153,4 +154,3 @@ def build_conversation(turns: list[tuple[str, str]]) -> list[dict]:
     Example: build_conversation([("user", "Hi"), ("assistant", "Hello!")])
     """
     return [{"role": role, "content": content} for role, content in turns]
-

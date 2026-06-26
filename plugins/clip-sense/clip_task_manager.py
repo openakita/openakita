@@ -122,9 +122,7 @@ class TaskManager:
 
     async def get_config(self, key: str) -> str | None:
         assert self._db
-        cur = await self._db.execute(
-            "SELECT value FROM config WHERE key = ?", (key,)
-        )
+        cur = await self._db.execute("SELECT value FROM config WHERE key = ?", (key,))
         row = await cur.fetchone()
         return row["value"] if row else None
 
@@ -170,9 +168,7 @@ class TaskManager:
         "error_hints": "error_hints_json",
         "pipeline_step": "pipeline_step",
     }
-    _TASK_JSON_KEYS: frozenset[str] = frozenset(
-        {"params", "segments", "cost", "error_hints"}
-    )
+    _TASK_JSON_KEYS: frozenset[str] = frozenset({"params", "segments", "cost", "error_hints"})
 
     async def create_task(
         self,
@@ -207,9 +203,7 @@ class TaskManager:
 
     async def get_task(self, task_id: str) -> dict[str, Any] | None:
         assert self._db
-        cur = await self._db.execute(
-            "SELECT * FROM tasks WHERE id = ?", (task_id,)
-        )
+        cur = await self._db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
         row = await cur.fetchone()
         return self._task_row_to_dict(row) if row else None
 
@@ -240,9 +234,7 @@ class TaskManager:
 
     async def delete_task(self, task_id: str) -> bool:
         assert self._db
-        cur = await self._db.execute(
-            "DELETE FROM tasks WHERE id = ?", (task_id,)
-        )
+        cur = await self._db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         await self._db.commit()
         return cur.rowcount > 0
 
@@ -265,9 +257,7 @@ class TaskManager:
             params.append(mode)
         where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
-        cur = await self._db.execute(
-            f"SELECT COUNT(*) as cnt FROM tasks {where}", params
-        )
+        cur = await self._db.execute(f"SELECT COUNT(*) as cnt FROM tasks {where}", params)
         total = (await cur.fetchone())["cnt"]
 
         cur = await self._db.execute(
@@ -279,9 +269,7 @@ class TaskManager:
 
     async def get_running_tasks(self) -> list[dict[str, Any]]:
         assert self._db
-        cur = await self._db.execute(
-            "SELECT * FROM tasks WHERE status IN ('pending', 'running')"
-        )
+        cur = await self._db.execute("SELECT * FROM tasks WHERE status IN ('pending', 'running')")
         rows = await cur.fetchall()
         return [self._task_row_to_dict(r) for r in rows]
 
@@ -376,9 +364,7 @@ class TaskManager:
 
     async def get_transcript(self, tid: str) -> dict[str, Any] | None:
         assert self._db
-        cur = await self._db.execute(
-            "SELECT * FROM transcripts WHERE id = ?", (tid,)
-        )
+        cur = await self._db.execute("SELECT * FROM transcripts WHERE id = ?", (tid,))
         row = await cur.fetchone()
         return self._transcript_row_to_dict(row) if row else None
 
@@ -417,15 +403,11 @@ class TaskManager:
 
     async def delete_transcript(self, tid: str) -> bool:
         assert self._db
-        cur = await self._db.execute(
-            "DELETE FROM transcripts WHERE id = ?", (tid,)
-        )
+        cur = await self._db.execute("DELETE FROM transcripts WHERE id = ?", (tid,))
         await self._db.commit()
         return cur.rowcount > 0
 
-    async def list_transcripts(
-        self, *, offset: int = 0, limit: int = 50
-    ) -> dict[str, Any]:
+    async def list_transcripts(self, *, offset: int = 0, limit: int = 50) -> dict[str, Any]:
         assert self._db
         cur = await self._db.execute("SELECT COUNT(*) as cnt FROM transcripts")
         total = (await cur.fetchone())["cnt"]

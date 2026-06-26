@@ -164,9 +164,11 @@ def detect_chrome_devtools_mcp() -> dict:
         "suggestion": "",
     }
 
+    from ...runtime_manager import resolve_toolchain_command
     from ...utils.path_helper import which_command
 
-    npx_path = which_command("npx")
+    # OpenAkita-managed Node first, then host PATH (with macOS login-shell fallback).
+    npx_path = resolve_toolchain_command("npx") or which_command("npx")
     result["npx_available"] = npx_path is not None
 
     chrome_path, _ = detect_chrome_installation()

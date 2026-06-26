@@ -57,10 +57,7 @@ def redact_text(text: object) -> str:
 def redact_value(value: Any) -> Any:
     """Recursively redact dict/list/string payloads."""
     if isinstance(value, Mapping):
-        return {
-            k: REDACTION if is_sensitive_key(k) else redact_value(v)
-            for k, v in value.items()
-        }
+        return {k: REDACTION if is_sensitive_key(k) else redact_value(v) for k, v in value.items()}
     if isinstance(value, tuple):
         return tuple(redact_value(v) for v in value)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):

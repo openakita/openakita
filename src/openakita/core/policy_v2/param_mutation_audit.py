@@ -132,9 +132,7 @@ def _sanitize_for_chain(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, (list, tuple)):
         items = list(value)
         if len(items) > _SANITIZE_MAX_LIST_LEN:
-            items = items[:_SANITIZE_MAX_LIST_LEN] + [
-                f"<truncated {len(items)} items>"
-            ]
+            items = items[:_SANITIZE_MAX_LIST_LEN] + [f"<truncated {len(items)} items>"]
         return [_sanitize_for_chain(v, depth=depth + 1) for v in items]
     if isinstance(value, (set, frozenset)):
         # C17 二轮: set ordering is iteration-order-dependent on most Python
@@ -152,9 +150,7 @@ def _sanitize_for_chain(value: Any, *, depth: int = 0) -> Any:
             # element that can't be repr'd is already too weird to chase.)
             ordered = list(value)
         if len(ordered) > _SANITIZE_MAX_LIST_LEN:
-            ordered = ordered[:_SANITIZE_MAX_LIST_LEN] + [
-                f"<truncated {len(ordered)} items>"
-            ]
+            ordered = ordered[:_SANITIZE_MAX_LIST_LEN] + [f"<truncated {len(ordered)} items>"]
         return [_sanitize_for_chain(v, depth=depth + 1) for v in ordered]
     if isinstance(value, BaseException):
         return f"<{type(value).__name__}: {value}>"
@@ -209,9 +205,7 @@ class _SnapshotFailedSentinel:
 SNAPSHOT_FAILED: _SnapshotFailedSentinel = _SnapshotFailedSentinel()
 
 
-def _diff_recursive(
-    before: Any, after: Any, prefix: str = ""
-) -> list[ParamDiff]:
+def _diff_recursive(before: Any, after: Any, prefix: str = "") -> list[ParamDiff]:
     """Stable recursive diff 算法。
 
     - dict: 按 sorted(keys) 遍历，区分 add / remove / modify
@@ -354,9 +348,7 @@ class ParamMutationAuditor:
             allowed=allowed,
             candidate_plugin_ids=candidate_plugin_ids,
             revert_reason=(
-                ""
-                if allowed
-                else "no candidate plugin has tool in manifest.mutates_params"
+                "" if allowed else "no candidate plugin has tool in manifest.mutates_params"
             ),
         )
 

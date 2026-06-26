@@ -81,7 +81,9 @@ def detect_header_row(rows: list[list[Any]], max_scan: int = 10) -> int | None:
 class WorkbookImporter:
     def __init__(self, data_root: str | Path, *, workbooks_root: str | Path | None = None) -> None:
         self._data_root = Path(data_root)
-        self._workbooks_root = Path(workbooks_root) if workbooks_root else self._data_root / "workbooks"
+        self._workbooks_root = (
+            Path(workbooks_root) if workbooks_root else self._data_root / "workbooks"
+        )
 
     def import_file(self, source_path: str | Path, workbook_id: str) -> ImportedWorkbook:
         source = Path(source_path).expanduser().resolve()
@@ -159,10 +161,13 @@ class WorkbookImporter:
             preview[ws.title] = {
                 "headers": headers,
                 "rows": data_rows[:MAX_PREVIEW_ROWS],
-                "truncated": (ws.max_row or 0) > MAX_PREVIEW_ROWS or (ws.max_column or 0) > MAX_PREVIEW_COLS,
+                "truncated": (ws.max_row or 0) > MAX_PREVIEW_ROWS
+                or (ws.max_column or 0) > MAX_PREVIEW_COLS,
             }
             if ws.max_row > 50000:
-                warnings.append(f"Sheet {ws.title} is large; previews and AI context will be sampled.")
+                warnings.append(
+                    f"Sheet {ws.title} is large; previews and AI context will be sampled."
+                )
         return sheets, preview, warnings
 
     def _inspect_csv(self, path: Path) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
@@ -206,4 +211,3 @@ class WorkbookImporter:
             },
             warnings,
         )
-

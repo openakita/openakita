@@ -118,15 +118,17 @@ class MockLLMClient:
         conversation_id: str | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        self.call_log.append({
-            "messages": messages,
-            "system": system,
-            "tools": tools,
-            "max_tokens": max_tokens,
-            "enable_thinking": enable_thinking,
-            "conversation_id": conversation_id,
-            "kwargs": kwargs,
-        })
+        self.call_log.append(
+            {
+                "messages": messages,
+                "system": system,
+                "tools": tools,
+                "max_tokens": max_tokens,
+                "enable_thinking": enable_thinking,
+                "conversation_id": conversation_id,
+                "kwargs": kwargs,
+            }
+        )
         if self._responses:
             return self._responses.pop(0).to_llm_response()
         if self._default_response:
@@ -135,16 +137,23 @@ class MockLLMClient:
 
     def chat_sync(self, messages: list[Any], **kwargs: Any) -> "LLMResponse":
         """Synchronous version of chat() for non-async tests."""
-        self.call_log.append({
-            "messages": messages, "system": "", "tools": None,
-            "max_tokens": 0, "enable_thinking": False,
-            "conversation_id": None, "kwargs": kwargs,
-        })
+        self.call_log.append(
+            {
+                "messages": messages,
+                "system": "",
+                "tools": None,
+                "max_tokens": 0,
+                "enable_thinking": False,
+                "conversation_id": None,
+                "kwargs": kwargs,
+            }
+        )
         if self._responses:
             return self._responses.pop(0).to_llm_response()
         if self._default_response:
             return self._default_response.to_llm_response()
         from openakita.llm.types import LLMResponse
+
         return MockResponse(content="No mock response configured").to_llm_response()
 
     async def chat_stream(
@@ -160,20 +169,41 @@ class MockLLMClient:
         **kwargs: Any,
     ) -> AsyncIterator[dict]:
         resp = await self.chat(
-            messages, system, tools, max_tokens, temperature,
-            enable_thinking, thinking_depth, conversation_id, **kwargs,
+            messages,
+            system,
+            tools,
+            max_tokens,
+            temperature,
+            enable_thinking,
+            thinking_depth,
+            conversation_id,
+            **kwargs,
         )
         for block in resp.content:
             if hasattr(block, "text"):
-                yield {"type": "content_block_delta", "delta": {"type": "text_delta", "text": block.text}}
+                yield {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": block.text},
+                }
             elif hasattr(block, "name"):
                 yield {
                     "type": "content_block_start",
-                    "content_block": {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input},
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    },
                 }
         yield {
             "type": "message_stop",
-            "message": {"stop_reason": resp.stop_reason.value, "usage": {"input_tokens": resp.usage.input_tokens, "output_tokens": resp.usage.output_tokens}},
+            "message": {
+                "stop_reason": resp.stop_reason.value,
+                "usage": {
+                    "input_tokens": resp.usage.input_tokens,
+                    "output_tokens": resp.usage.output_tokens,
+                },
+            },
         }
 
     @property
@@ -215,9 +245,7 @@ class MockBrain:
         if isinstance(system, str):
             sys_str = system
         elif isinstance(system, list):
-            sys_str = " ".join(
-                s.get("text", "") if isinstance(s, dict) else str(s) for s in system
-            )
+            sys_str = " ".join(s.get("text", "") if isinstance(s, dict) else str(s) for s in system)
         return await self.llm_client.chat(
             messages=messages or [],
             system=sys_str,
@@ -230,6 +258,7 @@ class MockBrain:
 
     async def think(self, prompt: str, **kwargs: Any) -> LLMResponse:
         from openakita.llm.types import Message
+
         return await self.llm_client.chat(
             messages=[Message(role="user", content=prompt)],
         )
@@ -315,9 +344,7 @@ class ReplayLLMClient:
                 continue
 
     async def chat(self, messages: list, **kwargs: Any) -> LLMResponse:
-        msg_hash = _hash_messages(
-            [self._normalize_msg(m) for m in messages]
-        )
+        msg_hash = _hash_messages([self._normalize_msg(m) for m in messages])
         if msg_hash in self._cache:
             return self._deserialize_response(self._cache[msg_hash])
         return MockResponse(content="[replay] No recording found for this input").to_llm_response()

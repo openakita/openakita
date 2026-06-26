@@ -105,4 +105,3 @@ def get_category_counts():
         "tools": len(load_tests_by_category("tools")),
         "search": len(load_tests_by_category("search")),
     }
-

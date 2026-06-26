@@ -71,9 +71,7 @@ def _drain_loop_tasks(loop: asyncio.AbstractEventLoop, timeout: float = 3.0) -> 
         pass
 
 
-def _feishu_ws_loop_exception_handler(
-    loop: asyncio.AbstractEventLoop, context: dict
-) -> None:
+def _feishu_ws_loop_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
     """飞书 WS 线程 loop 的异常处理器。
 
     Windows ProactorEventLoop 在 WebSocket 远端先关闭连接时，
@@ -113,10 +111,17 @@ def _import_lark():
             lark_oapi = lark
         except ImportError as exc:
             logger.error("lark_oapi import failed: %s", exc, exc_info=True)
-            if "JSONDecodeError" in str(exc) and "simplejson" in str(exc):
+            exc_str = str(exc)
+            if "JSONDecodeError" in exc_str and "simplejson" in exc_str:
                 raise ImportError(
                     "飞书 SDK 依赖冲突：simplejson 缺少 JSONDecodeError。"
                     "请前往「设置中心 → Python 环境」执行一键修复后重启。"
+                ) from exc
+            if "Crypto" in exc_str or "AES" in exc_str:
+                from openakita.tools._import_helper import import_or_hint
+
+                raise ImportError(
+                    import_or_hint("Crypto") or "缺少依赖: pip install pycryptodome"
                 ) from exc
             from openakita.tools._import_helper import import_or_hint
 
@@ -1075,7 +1080,20 @@ class FeishuAdapter(ChannelAdapter):
         return {}
 
     def _handle_security_decision(self, value: dict) -> dict:
-        """Handle security confirmation card button clicks."""
+        """Handle security confirmation card button clicks.
+
+        Called from two contexts:
+        1. WS mode (_on_card_action): runs in the Feishu WS thread — a foreign
+           thread with no running asyncio loop. We MUST dispatch to the main
+           event loop via run_coroutine_threadsafe so asyncio.Event.set() in
+           UIConfirmBus.resolve() reliably wakes the reasoning_engine waiter.
+        2. Webhook mode (_handle_card_action_webhook): runs inside the main
+           event loop thread (called from a sync FastAPI handler). We call
+           apply_resolution directly — already in the correct thread.
+
+        Detecting which case we're in: asyncio.get_running_loop() succeeds
+        when called from the event loop thread, raises RuntimeError otherwise.
+        """
         action = value.get("action", "")
         confirm_id = value.get("confirm_id", "")
         decision_map = {
@@ -1086,21 +1104,50 @@ class FeishuAdapter(ChannelAdapter):
             "security_allow_always": "allow_always",
         }
         decision = decision_map.get(action, "deny")
+        labels = {
+            "allow_once": "✅ 已允许",
+            "deny": "❌ 已拒绝",
+            "sandbox": "🔒 沙箱执行",
+            "allow_session": "✅ 会话允许",
+            "allow_always": "✅ 始终允许",
+        }
         try:
             from openakita.core.policy_v2 import apply_resolution
 
-            apply_resolution(confirm_id, decision)
-            labels = {
-                "allow_once": "✅ 已允许",
-                "deny": "❌ 已拒绝",
-                "sandbox": "🔒 沙箱执行",
-                "allow_session": "✅ 会话允许",
-                "allow_always": "✅ 始终允许",
-            }
+            try:
+                asyncio.get_running_loop()
+                in_event_loop = True
+            except RuntimeError:
+                in_event_loop = False
+
+            if in_event_loop:
+                apply_resolution(confirm_id, decision)
+            elif self._main_loop is not None and self._main_loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(
+                    self._apply_resolution_async(confirm_id, decision),
+                    self._main_loop,
+                )
+                future.result(timeout=2.5)
+            else:
+                apply_resolution(confirm_id, decision)
             return {"toast": {"type": "success", "content": labels.get(decision, decision)}}
+        except TimeoutError:
+            logger.warning(
+                "Feishu: security decision dispatch timed out (confirm_id=%s, decision=%s)",
+                confirm_id,
+                decision,
+            )
+            return {"toast": {"type": "warning", "content": labels.get(decision, decision)}}
         except Exception as e:
             logger.warning(f"Feishu: security decision failed: {e}")
             return {"toast": {"type": "error", "content": "处理失败"}}
+
+    @staticmethod
+    async def _apply_resolution_async(confirm_id: str, decision: str) -> bool:
+        """Thin async wrapper so apply_resolution runs inside the event loop."""
+        from openakita.core.policy_v2 import apply_resolution
+
+        return apply_resolution(confirm_id, decision)
 
     def _handle_expand_folder(self, path: str) -> dict:
         """读取目录内容并返回包含文件树和展开按钮的更新卡片。"""
@@ -1366,9 +1413,7 @@ class FeishuAdapter(ChannelAdapter):
                 detail = resp.json()
             except Exception:
                 detail = {"raw": resp.text[:500]}
-            raise RuntimeError(
-                f"CardKit API HTTP {resp.status_code} on {method} {path}: {detail}"
-            )
+            raise RuntimeError(f"CardKit API HTTP {resp.status_code} on {method} {path}: {detail}")
         result = resp.json()
         if validate and result.get("code", 0) != 0:
             raise RuntimeError(
@@ -1485,9 +1530,7 @@ class FeishuAdapter(ChannelAdapter):
             body=body,
         )
 
-    async def _finish_cardkit_card(
-        self, card_id: str, *, summary_text: str | None = None
-    ) -> None:
+    async def _finish_cardkit_card(self, card_id: str, *, summary_text: str | None = None) -> None:
         """关闭 CardKit 流式态，并写入正确摘要（避免聊天预览停留在「[生成中...]」）。
 
         ``settings`` 字段必须是 JSON **字符串**，sequence 严格递增。
@@ -1779,9 +1822,7 @@ class FeishuAdapter(ChannelAdapter):
                     # 用最终内容前 60 字作为聊天预览摘要，避免停留在「[生成中...]」
                     await self._finish_cardkit_card(card_id, summary_text=new_content)
                 except Exception as e:
-                    logger.info(
-                        f"Feishu: CardKit finish failed (content already updated): {e}"
-                    )
+                    logger.info(f"Feishu: CardKit finish failed (content already updated): {e}")
             return True
 
         # --- PatchMessage 回退（仅用于非 CardKit 创建的 schemaV1 卡片） ---
@@ -2054,9 +2095,7 @@ class FeishuAdapter(ChannelAdapter):
         if ck:
             ck_card_id, ck_element_id = ck
             try:
-                await self._overwrite_cardkit_card(
-                    ck_card_id, final_text, element_id=ck_element_id
-                )
+                await self._overwrite_cardkit_card(ck_card_id, final_text, element_id=ck_element_id)
                 # 覆盖成功后关闭流式态、写入摘要
                 with contextlib.suppress(Exception):
                     await self._finish_cardkit_card(ck_card_id, summary_text=final_text)
@@ -2072,9 +2111,7 @@ class FeishuAdapter(ChannelAdapter):
                 self._typing_status.pop(sk, None)
                 return True
             except Exception as e:
-                logger.warning(
-                    f"Feishu: _overwrite_cardkit_card fallback also failed: {e}"
-                )
+                logger.warning(f"Feishu: _overwrite_cardkit_card fallback also failed: {e}")
             # 覆盖失败前主动关闭流式态，避免飞书侧卡片留在「[生成中...]」预览
             with contextlib.suppress(Exception):
                 await self._finish_cardkit_card(ck_card_id, summary_text=final_text)

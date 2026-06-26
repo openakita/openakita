@@ -73,9 +73,7 @@ class TestConfigHint:
     def test_hint_dataclass_is_frozen(self) -> None:
         from dataclasses import FrozenInstanceError
 
-        h = ConfigHint(
-            scope="x", error_code="unknown", title="t", message="", actions=[]
-        )
+        h = ConfigHint(scope="x", error_code="unknown", title="t", message="", actions=[])
         with pytest.raises(FrozenInstanceError):
             h.scope = "y"  # type: ignore[misc]
 
@@ -134,6 +132,10 @@ class TestWebSearchHandlerErrorMapping:
 
         monkeypatch.setattr(reg, "_PROVIDERS", {}, raising=False)
         monkeypatch.setattr(reg, "_LOADED", True, raising=False)
+        monkeypatch.setattr(
+            "openakita.tools.handlers.web_search.settings.web_search_provider",
+            "",
+        )
         yield
 
     async def _run_handler(self) -> tuple[str | None, ConfigHint | None]:
@@ -155,6 +157,22 @@ class TestWebSearchHandlerErrorMapping:
         labels = [a.get("label", "") for a in hint.actions]
         assert any("前往配置" in lb for lb in labels)
         assert any("博查" in lb for lb in labels)  # signup link present
+
+    async def test_explicit_unavailable_provider_maps_to_missing_credential_hint(self) -> None:
+        from openakita.tools.handlers.web_search import WebSearchHandler
+
+        register(_FakeProvider("bocha", available=False))
+
+        with pytest.raises(ToolConfigError) as excinfo:
+            await WebSearchHandler()._web_search(
+                {"query": "test", "provider": "bocha", "timeout_seconds": 1}
+            )
+
+        hint = excinfo.value.hint
+        assert hint.error_code == "missing_credential"
+        assert "bocha" in hint.message
+        assert "API Key" in hint.message
+        assert "自动尝试其他源" in hint.message
 
     async def test_auth_failed_maps_to_auth_failed(self) -> None:
         register(_FakeProvider("p1", raise_on_search=AuthFailedError("bad key")))
@@ -182,17 +200,21 @@ class TestWebSearchHandlerErrorMapping:
         # ContentFilter is NOT in _FALLBACK_ERRORS — it should propagate to
         # the handler immediately, which maps to ToolConfigError(content_filter).
         register(_FakeProvider("p1", order=1, raise_on_search=ContentFilterError("bad query")))
-        register(_FakeProvider("p2", order=2, web_results=[
-            SearchResult(title="t", url="u", snippet="s")
-        ]))
+        register(
+            _FakeProvider(
+                "p2", order=2, web_results=[SearchResult(title="t", url="u", snippet="s")]
+            )
+        )
         text, hint = await self._run_handler()
         assert hint is not None
         assert hint.error_code == "content_filter"
 
     async def test_success_returns_text_only(self) -> None:
-        register(_FakeProvider("p1", web_results=[
-            SearchResult(title="Hello", url="https://x", snippet="World")
-        ]))
+        register(
+            _FakeProvider(
+                "p1", web_results=[SearchResult(title="Hello", url="https://x", snippet="World")]
+            )
+        )
         text, hint = await self._run_handler()
         assert hint is None
         assert "Hello" in text
@@ -216,9 +238,11 @@ class TestRuntimeAutoDetect:
 
     async def test_falls_back_through_credential_errors(self) -> None:
         register(_FakeProvider("p1", order=1, raise_on_search=MissingCredentialError("nope")))
-        register(_FakeProvider("p2", order=2, web_results=[
-            SearchResult(title="ok", url="u", snippet="s")
-        ]))
+        register(
+            _FakeProvider(
+                "p2", order=2, web_results=[SearchResult(title="ok", url="u", snippet="s")]
+            )
+        )
         bundle = await run_web_search("q", timeout_seconds=1)
         assert bundle.provider_id == "p2"
         assert len(bundle.results) == 1
@@ -226,9 +250,11 @@ class TestRuntimeAutoDetect:
     async def test_falls_back_through_network_errors(self) -> None:
         # New behavior (post-revision): NetworkUnreachable also triggers fallback.
         register(_FakeProvider("p1", order=1, raise_on_search=NetworkUnreachableError("x")))
-        register(_FakeProvider("p2", order=2, web_results=[
-            SearchResult(title="ok", url="u", snippet="s")
-        ]))
+        register(
+            _FakeProvider(
+                "p2", order=2, web_results=[SearchResult(title="ok", url="u", snippet="s")]
+            )
+        )
         bundle = await run_web_search("q", timeout_seconds=1)
         assert bundle.provider_id == "p2"
 
@@ -242,12 +268,25 @@ class TestRuntimeAutoDetect:
         with pytest.raises(NetworkUnreachableError):
             await run_web_search("q", provider_id="p1", timeout_seconds=1)
 
+    async def test_explicit_unavailable_provider_message_names_configuration(self) -> None:
+        register(_FakeProvider("bocha", available=False))
+
+        with pytest.raises(MissingCredentialError) as excinfo:
+            await run_web_search("q", provider_id="bocha", timeout_seconds=1)
+
+        message = str(excinfo.value)
+        assert "Provider 'bocha' is registered but not available" in message
+        assert "Configure its API key" in message
+        assert "configured but unavailable" not in message
+
     async def test_news_skips_providers_returning_none(self) -> None:
         # p1 returns None (no news), p2 returns results
         register(_FakeProvider("p1", order=1, news_results=None))
-        register(_FakeProvider("p2", order=2, news_results=[
-            SearchResult(title="news", url="u", snippet="s")
-        ]))
+        register(
+            _FakeProvider(
+                "p2", order=2, news_results=[SearchResult(title="news", url="u", snippet="s")]
+            )
+        )
         bundle = await run_news_search("q", timeout_seconds=1)
         assert bundle.provider_id == "p2"
 
@@ -325,11 +364,12 @@ class TestToolExecutorPropagation:
         executor = ToolExecutor(handler_registry=registry, max_parallel=1)
         # bypass policy
         from openakita.core.permission import PermissionDecision
+
         executor.check_permission = MagicMock(return_value=PermissionDecision("allow"))
 
-        results, _, _ = await executor.execute_batch([
-            {"id": "tool-1", "name": "web_search", "input": {"query": "x"}}
-        ])
+        results, _, _ = await executor.execute_batch(
+            [{"id": "tool-1", "name": "web_search", "input": {"query": "x"}}]
+        )
         assert len(results) == 1
         tr = results[0]
         # _hint MUST be present in the dict for ReasoningEngine to pop & emit

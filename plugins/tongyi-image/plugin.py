@@ -56,6 +56,7 @@ def _normalize_base_url(value: str | None, *, field: str = "Base URL") -> str:
 def _safe_log(data: dict, max_len: int = 500) -> str:
     """Truncate dict repr for safe logging."""
     import json as _json
+
     try:
         s = _json.dumps(data, ensure_ascii=False, default=str)
     except Exception:
@@ -64,6 +65,7 @@ def _safe_log(data: dict, max_len: int = 500) -> str:
 
 
 # ── Request models ──
+
 
 class CreateTaskBody(BaseModel):
     mode: str = "text2img"
@@ -139,64 +141,77 @@ class Plugin(PluginBase):
         self._register_routes(router)
         api.register_api_routes(router)
 
-        api.register_tools([
-            {
-                "name": "tongyi_image_create",
-                "description": (
-                    "Create a Tongyi (DashScope) image generation task. "
-                    "Blocks until the image is ready (DashScope async tasks "
-                    "are polled internally for up to ~3 minutes), so the "
-                    "returned JSON already carries the produced asset_ids "
-                    "and local_paths in the common case — no need to call "
-                    "tongyi_image_status afterwards. "
-                    "Returns JSON: {ok, task_id, status, mode, image_urls, "
-                    "local_paths, asset_ids}. Generated images are auto-downloaded "
-                    "to the plugin data dir and published to the Asset Bus, so the "
-                    "returned asset_ids can be fed into downstream workbenches "
-                    "(e.g. seedance_create.from_asset_ids) without rehosting. "
-                    "If status is still 'running' on return (very rare, only "
-                    "when DashScope is unusually slow), poll tongyi_image_status."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {"type": "string", "description": "Image generation prompt"},
-                        "model": {"type": "string", "description": "Model ID (e.g. wan27-pro, qwen-pro)"},
-                        "size": {"type": "string", "description": "Image size (e.g. 2K, 1024*1024)"},
-                        "negative_prompt": {"type": "string", "description": "Negative prompt"},
-                        "n": {"type": "integer", "default": 1, "description": "Number of images"},
+        api.register_tools(
+            [
+                {
+                    "name": "tongyi_image_create",
+                    "description": (
+                        "Create a Tongyi (DashScope) image generation task. "
+                        "Blocks until the image is ready (DashScope async tasks "
+                        "are polled internally for up to ~3 minutes), so the "
+                        "returned JSON already carries the produced asset_ids "
+                        "and local_paths in the common case — no need to call "
+                        "tongyi_image_status afterwards. "
+                        "Returns JSON: {ok, task_id, status, mode, image_urls, "
+                        "local_paths, asset_ids}. Generated images are auto-downloaded "
+                        "to the plugin data dir and published to the Asset Bus, so the "
+                        "returned asset_ids can be fed into downstream workbenches "
+                        "(e.g. seedance_create.from_asset_ids) without rehosting. "
+                        "If status is still 'running' on return (very rare, only "
+                        "when DashScope is unusually slow), poll tongyi_image_status."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {"type": "string", "description": "Image generation prompt"},
+                            "model": {
+                                "type": "string",
+                                "description": "Model ID (e.g. wan27-pro, qwen-pro)",
+                            },
+                            "size": {
+                                "type": "string",
+                                "description": "Image size (e.g. 2K, 1024*1024)",
+                            },
+                            "negative_prompt": {"type": "string", "description": "Negative prompt"},
+                            "n": {
+                                "type": "integer",
+                                "default": 1,
+                                "description": "Number of images",
+                            },
+                        },
+                        "required": ["prompt"],
                     },
-                    "required": ["prompt"],
                 },
-            },
-            {
-                "name": "tongyi_image_status",
-                "description": (
-                    "Check status of a Tongyi image generation task. Returns JSON: "
-                    "{ok, task_id, status, mode, image_urls, local_paths, asset_ids, "
-                    "error_message}. Use this to poll an async task created via "
-                    "tongyi_image_create — once status='succeeded' the asset_ids "
-                    "become available for downstream workbenches."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"task_id": {"type": "string"}},
-                    "required": ["task_id"],
+                {
+                    "name": "tongyi_image_status",
+                    "description": (
+                        "Check status of a Tongyi image generation task. Returns JSON: "
+                        "{ok, task_id, status, mode, image_urls, local_paths, asset_ids, "
+                        "error_message}. Use this to poll an async task created via "
+                        "tongyi_image_create — once status='succeeded' the asset_ids "
+                        "become available for downstream workbenches."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"task_id": {"type": "string"}},
+                        "required": ["task_id"],
+                    },
                 },
-            },
-            {
-                "name": "tongyi_image_list",
-                "description": (
-                    "List recent Tongyi image generation tasks. Returns JSON: "
-                    "{ok, total, tasks: [{task_id, status, mode, prompt, "
-                    "image_urls, local_paths, asset_ids, created_at}, ...]}."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"limit": {"type": "integer", "default": 10}},
+                {
+                    "name": "tongyi_image_list",
+                    "description": (
+                        "List recent Tongyi image generation tasks. Returns JSON: "
+                        "{ok, total, tasks: [{task_id, status, mode, prompt, "
+                        "image_urls, local_paths, asset_ids, created_at}, ...]}."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"limit": {"type": "integer", "default": 10}},
+                    },
                 },
-            },
-        ], handler=self._handle_tool)
+            ],
+            handler=self._handle_tool,
+        )
 
         api.spawn_task(self._async_init(), name="tongyi-image:init")
         api.log("Tongyi Image plugin loaded")
@@ -207,7 +222,8 @@ class Plugin(PluginBase):
         api_key, base_url = self._resolve_effective_endpoint(config)
         if api_key:
             self._client = DashScopeClient(
-                api_key, base_url=base_url or None,
+                api_key,
+                base_url=base_url or None,
             )
         self._start_polling()
 
@@ -327,9 +343,7 @@ class Plugin(PluginBase):
                     ensure_ascii=False,
                 )
             except Exception as e:
-                return _json.dumps(
-                    {"ok": False, "error": str(e)}, ensure_ascii=False
-                )
+                return _json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
             return _json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
 
         if tool_name == "tongyi_image_status":
@@ -349,16 +363,13 @@ class Plugin(PluginBase):
                     "ok": True,
                     "total": result.get("total", 0),
                     "tasks": [
-                        self._task_to_tool_payload(t, brief=True)
-                        for t in result.get("tasks", [])
+                        self._task_to_tool_payload(t, brief=True) for t in result.get("tasks", [])
                     ],
                 },
                 ensure_ascii=False,
             )
 
-        return _json.dumps(
-            {"ok": False, "error": f"Unknown tool: {tool_name}"}, ensure_ascii=False
-        )
+        return _json.dumps({"ok": False, "error": f"Unknown tool: {tool_name}"}, ensure_ascii=False)
 
     @staticmethod
     def _task_to_tool_payload(task: dict, *, brief: bool = False) -> dict:
@@ -387,7 +398,9 @@ class Plugin(PluginBase):
 
     async def _create_task_internal(self, params: dict) -> dict:
         if not self._client:
-            raise HTTPException(status_code=400, detail="API Key 未配置，请在设置中配置 DashScope API Key")
+            raise HTTPException(
+                status_code=400, detail="API Key 未配置，请在设置中配置 DashScope API Key"
+            )
 
         mode = params.get("mode", "text2img")
         model_id = params.get("model", "")
@@ -424,8 +437,11 @@ class Plugin(PluginBase):
             logger.info("Async task created: api_task_id=%s", api_task_id)
         else:
             image_urls = self._extract_image_urls(api_result)
-            logger.info("Sync result: %d images. Output keys: %s",
-                        len(image_urls), list(api_result.get("output", {}).keys()))
+            logger.info(
+                "Sync result: %d images. Output keys: %s",
+                len(image_urls),
+                list(api_result.get("output", {}).keys()),
+            )
 
         task = await self._tm.create_task(
             prompt=prompt,
@@ -462,7 +478,8 @@ class Plugin(PluginBase):
         # 必须 poll tongyi_image_status。
         if is_async and api_task_id:
             await self._wait_for_async_task(
-                task_id=task["id"], api_task_id=api_task_id,
+                task_id=task["id"],
+                api_task_id=api_task_id,
                 prompt=prompt,
             )
             refreshed = await self._tm.get_task(task["id"])
@@ -508,14 +525,16 @@ class Plugin(PluginBase):
             except DashScopeError as exc:
                 logger.info(
                     "tongyi_image_create wait: get_task(%s) DashScope error %s",
-                    api_task_id, exc,
+                    api_task_id,
+                    exc,
                 )
                 await asyncio.sleep(self._ASYNC_WAIT_INTERVAL)
                 continue
             except Exception as exc:
                 logger.info(
                     "tongyi_image_create wait: get_task(%s) network error %s",
-                    api_task_id, exc,
+                    api_task_id,
+                    exc,
                 )
                 await asyncio.sleep(self._ASYNC_WAIT_INTERVAL)
                 continue
@@ -525,17 +544,22 @@ class Plugin(PluginBase):
                 image_urls = self._extract_image_urls(result)
                 logger.info(
                     "tongyi_image_create wait: task %s SUCCEEDED after %d polls, %d images",
-                    task_id, attempt, len(image_urls),
+                    task_id,
+                    attempt,
+                    len(image_urls),
                 )
                 await self._tm.update_task(
-                    task_id, status="succeeded",
+                    task_id,
+                    status="succeeded",
                     image_urls=image_urls,
                     usage=result.get("usage", {}),
                 )
                 if image_urls:
                     try:
                         await self._download_and_publish_images(
-                            task_id, image_urls, prompt=prompt,
+                            task_id,
+                            image_urls,
+                            prompt=prompt,
                         )
                     except Exception:
                         logger.exception(
@@ -552,10 +576,13 @@ class Plugin(PluginBase):
                 )
                 logger.info(
                     "tongyi_image_create wait: task %s FAILED — %s",
-                    task_id, error_msg,
+                    task_id,
+                    error_msg,
                 )
                 await self._tm.update_task(
-                    task_id, status="failed", error_message=str(error_msg),
+                    task_id,
+                    status="failed",
+                    error_message=str(error_msg),
                 )
                 self._broadcast_update(task_id, "failed")
                 return
@@ -567,12 +594,11 @@ class Plugin(PluginBase):
         logger.info(
             "tongyi_image_create wait: task %s still running after %.0fs, "
             "handing off to background poller",
-            task_id, self._ASYNC_WAIT_TIMEOUT,
+            task_id,
+            self._ASYNC_WAIT_TIMEOUT,
         )
 
-    async def _dispatch_api_call(
-        self, mode: str, model_info: Any, params: dict
-    ) -> dict:
+    async def _dispatch_api_call(self, mode: str, model_info: Any, params: dict) -> dict:
         """Route API call to the correct DashScope endpoint based on mode."""
         assert self._client
 
@@ -633,7 +659,9 @@ class Plugin(PluginBase):
         messages: list[dict] = []
         prompt = params.get("prompt", "")
 
-        model_id_str = model_info.model_id if model_info else params.get("model", "wan2.7-image-pro")
+        model_id_str = (
+            model_info.model_id if model_info else params.get("model", "wan2.7-image-pro")
+        )
         use_async = model_info and model_info.api_type in ("async", "both")
 
         # DashScope's multimodal-generation endpoint (used by wan2.x-image,
@@ -716,7 +744,9 @@ class Plugin(PluginBase):
         # Format 2: async task result — results[].url
         for r in output.get("results", []):
             if isinstance(r, dict):
-                url = r.get("url") or r.get("image_url") or r.get("image") or r.get("orig_url") or ""
+                url = (
+                    r.get("url") or r.get("image_url") or r.get("image") or r.get("orig_url") or ""
+                )
                 if url:
                     urls.append(url)
             elif isinstance(r, str) and r.startswith("http"):
@@ -745,9 +775,7 @@ class Plugin(PluginBase):
     # ── Polling ──
 
     def _start_polling(self) -> None:
-        self._poll_task = self._api.spawn_task(
-            self._poll_loop(), name="tongyi-image:poll"
-        )
+        self._poll_task = self._api.spawn_task(self._poll_loop(), name="tongyi-image:poll")
 
     async def _poll_loop(self) -> None:
         while True:
@@ -778,13 +806,15 @@ class Plugin(PluginBase):
                     image_urls = self._extract_image_urls(result)
                     logger.info(
                         "Task %s completed: %d images. Raw output keys: %s",
-                        task["id"], len(image_urls),
+                        task["id"],
+                        len(image_urls),
                         list(result.get("output", {}).keys()),
                     )
                     if not image_urls:
                         logger.warning(
                             "Task %s SUCCEEDED but no images extracted. Response: %s",
-                            task["id"], _safe_log(result),
+                            task["id"],
+                            _safe_log(result),
                         )
                     await self._tm.update_task(
                         task["id"],
@@ -798,15 +828,17 @@ class Plugin(PluginBase):
                         # local_paths / asset_ids，进而被 OrgRuntime 工作台
                         # 钩子识别并登记为附件。
                         await self._download_and_publish_images(
-                            task["id"], image_urls, prompt=task.get("prompt") or "",
+                            task["id"],
+                            image_urls,
+                            prompt=task.get("prompt") or "",
                         )
                     self._broadcast_update(task["id"], "succeeded")
 
                 elif status == "FAILED":
-                    error_msg = output.get("message", "") or output.get("error_message", "Unknown error")
-                    await self._tm.update_task(
-                        task["id"], status="failed", error_message=error_msg
+                    error_msg = output.get("message", "") or output.get(
+                        "error_message", "Unknown error"
                     )
+                    await self._tm.update_task(task["id"], status="failed", error_message=error_msg)
                     self._broadcast_update(task["id"], "failed")
 
                 elif status == "RUNNING":
@@ -824,10 +856,9 @@ class Plugin(PluginBase):
         """
         try:
             import httpx
+
             config = await self._tm.get_all_config()
-            output_dir = config.get("output_dir") or str(
-                self._api.get_data_dir() / "images"
-            )
+            output_dir = config.get("output_dir") or str(self._api.get_data_dir() / "images")
             out_path = Path(output_dir)
             out_path.mkdir(parents=True, exist_ok=True)
 
@@ -874,7 +905,8 @@ class Plugin(PluginBase):
         except Exception as exc:
             logger.warning(
                 "tongyi-image: failed to create download dir %s: %s",
-                downloads_dir, exc,
+                downloads_dir,
+                exc,
             )
             return
 
@@ -901,7 +933,9 @@ class Plugin(PluginBase):
                         local_paths.append(str(filepath))
                     except Exception as exc:
                         logger.warning(
-                            "tongyi-image: download %s failed: %s", url, exc,
+                            "tongyi-image: download %s failed: %s",
+                            url,
+                            exc,
                         )
         except Exception as exc:
             logger.warning("tongyi-image: download session error: %s", exc)
@@ -929,7 +963,8 @@ class Plugin(PluginBase):
             except Exception as exc:
                 logger.warning(
                     "tongyi-image: publish_asset failed for %s: %s",
-                    local, exc,
+                    local,
+                    exc,
                 )
 
         try:
@@ -941,18 +976,19 @@ class Plugin(PluginBase):
         except Exception as exc:
             logger.warning(
                 "tongyi-image: persist asset metadata failed for %s: %s",
-                task_id, exc,
+                task_id,
+                exc,
             )
         logger.info(
             "tongyi-image: task %s materialised → %d local files, %d assets",
-            task_id, len(local_paths), len(asset_ids),
+            task_id,
+            len(local_paths),
+            len(asset_ids),
         )
 
     def _broadcast_update(self, task_id: str, status: str) -> None:
         try:
-            self._api.broadcast_ui_event(
-                "task_update", {"task_id": task_id, "status": status}
-            )
+            self._api.broadcast_ui_event("task_update", {"task_id": task_id, "status": status})
         except Exception:
             pass
 
@@ -996,9 +1032,14 @@ class Plugin(PluginBase):
 
             for scene_id, scene_prompt in prompts:
                 try:
-                    messages = [{"role": "user", "content": [
-                        {"type": "text", "text": scene_prompt},
-                    ]}]
+                    messages = [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": scene_prompt},
+                            ],
+                        }
+                    ]
 
                     model_str = model_info.model_id if model_info else model_id
                     use_async = model_info and model_info.api_type in ("async", "both")
@@ -1068,9 +1109,7 @@ class Plugin(PluginBase):
             offset: int = 0,
             limit: int = 20,
         ) -> dict:
-            result = await self._tm.list_tasks(
-                status=status, mode=mode, offset=offset, limit=limit
-            )
+            result = await self._tm.list_tasks(status=status, mode=mode, offset=offset, limit=limit)
             return {"ok": True, "tasks": result["tasks"], "total": result["total"]}
 
         @router.get("/tasks/{task_id}")
@@ -1155,7 +1194,9 @@ class Plugin(PluginBase):
             fname = f"tongyi_{prompt_prefix}_{idx}.png"
 
             return self._api.create_file_response(
-                source, filename=fname, media_type="image/png",
+                source,
+                filename=fname,
+                media_type="image/png",
                 as_download=bool(download),
             )
 
@@ -1178,6 +1219,7 @@ class Plugin(PluginBase):
             assets_dir.mkdir(parents=True, exist_ok=True)
 
             import uuid as _uuid
+
             filename = f"{_uuid.uuid4().hex[:8]}_{file.filename or 'file'}"
             filepath = assets_dir / filename
             filepath.write_bytes(content)
@@ -1205,7 +1247,8 @@ class Plugin(PluginBase):
             cleaned: dict[str, str] = {k: (v or "").strip() for k, v in body.updates.items()}
             if "dashscope_base_url" in cleaned:
                 cleaned["dashscope_base_url"] = _normalize_base_url(
-                    cleaned["dashscope_base_url"], field="DashScope Base URL",
+                    cleaned["dashscope_base_url"],
+                    field="DashScope Base URL",
                 )
             await self._tm.set_configs(cleaned)
             saved = await self._tm.get_all_config()
@@ -1309,7 +1352,10 @@ class Plugin(PluginBase):
                 ("uploads", data_dir / "uploads"),
             ]:
                 report = await collect_storage_stats(
-                    d, max_files=20000, sample_paths=0, skip_hidden=True,
+                    d,
+                    max_files=20000,
+                    sample_paths=0,
+                    skip_hidden=True,
                 )
                 truncated_any = truncated_any or report.truncated
                 stats[label] = {

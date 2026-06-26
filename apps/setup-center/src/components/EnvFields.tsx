@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, IS_WEB, IS_TAURI } from "../platform";
+import { invoke, IS_TAURI } from "../platform";
 import { safeFetch } from "../providers";
 import { IconInfo, IconKey } from "../icons";
 import type { EnvMap } from "../types";

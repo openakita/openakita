@@ -120,6 +120,7 @@ class MigrateWorkspaceRequest(BaseModel):
     """Phase 2a：把当前 user 在 ``from_workspace_id`` 里的记忆迁到
     ``to_workspace_id``。空 ``to_workspace_id`` 时取当前 session 的
     workspace_id（一般是用户切到 project 模式后的项目哈希值）。"""
+
     from_workspace_id: str = "default"
     to_workspace_id: str = ""
     scope: str = "user"
@@ -427,7 +428,9 @@ def _active_slot_index(store: Any, user_id: str, workspace_id: str) -> set[str]:
     }
 
 
-def _mark_legacy_reviewed(store: Any, mem: Any, reason: str, superseded_by: str | None = None) -> None:
+def _mark_legacy_reviewed(
+    store: Any, mem: Any, reason: str, superseded_by: str | None = None
+) -> None:
     updates: dict[str, Any] = {
         "tags": _normalize_legacy_tags(mem, "legacy_pending_review", f"legacy_reason:{reason}"),
     }
@@ -479,7 +482,9 @@ def _safe_import_legacy_memories(
             continue
         to_promote.append(winner)
         for mem, _subject, _predicate in items[1:]:
-            _mark_legacy_reviewed(store, mem, "legacy_identity_conflict", superseded_by=winner[0].id)
+            _mark_legacy_reviewed(
+                store, mem, "legacy_identity_conflict", superseded_by=winner[0].id
+            )
             conflict_skipped += 1
 
     to_promote.extend(accepted_general)
@@ -496,7 +501,9 @@ def _safe_import_legacy_memories(
             "predicate": predicate,
             "importance_score": importance,
             "priority": _priority_for_importance(
-                mem.type if isinstance(mem.type, MemoryType) else MemoryType(_memory_type_value(mem)),
+                mem.type
+                if isinstance(mem.type, MemoryType)
+                else MemoryType(_memory_type_value(mem)),
                 importance,
             ).value,
             "confidence": min(float(getattr(mem, "confidence", 0.5) or 0.5), 0.7),
@@ -1121,4 +1128,3 @@ async def refresh_md(request: Request):
 
     lifecycle.refresh_memory_md(lifecycle.identity_dir)
     return {"ok": True}
-

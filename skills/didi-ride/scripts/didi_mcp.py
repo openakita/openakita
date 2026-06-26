@@ -23,8 +23,7 @@ def get_mcp_url() -> str:
     return MCP_URL_TEMPLATE.format(key=key)
 
 
-def jsonrpc_call(url: str, method: str, params: dict | None = None,
-                 req_id: int = 1) -> dict:
+def jsonrpc_call(url: str, method: str, params: dict | None = None, req_id: int = 1) -> dict:
     payload = {
         "jsonrpc": "2.0",
         "method": method,
@@ -44,63 +43,87 @@ def jsonrpc_call(url: str, method: str, params: dict | None = None,
 
 
 def mcp_initialize(url: str) -> dict:
-    return jsonrpc_call(url, "initialize", {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "openakita-didi", "version": "1.0.0"},
-    }, req_id=0)
+    return jsonrpc_call(
+        url,
+        "initialize",
+        {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "openakita-didi", "version": "1.0.0"},
+        },
+        req_id=0,
+    )
 
 
 def mcp_tool_call(url: str, tool_name: str, arguments: dict) -> dict:
-    return jsonrpc_call(url, "tools/call", {
-        "name": tool_name,
-        "arguments": arguments,
-    })
+    return jsonrpc_call(
+        url,
+        "tools/call",
+        {
+            "name": tool_name,
+            "arguments": arguments,
+        },
+    )
 
 
 def cmd_ride(args):
     url = get_mcp_url()
     mcp_initialize(url)
-    result = mcp_tool_call(url, "create_ride", {
-        "from_address": args.from_addr,
-        "to_address": args.to_addr,
-    })
+    result = mcp_tool_call(
+        url,
+        "create_ride",
+        {
+            "from_address": args.from_addr,
+            "to_address": args.to_addr,
+        },
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def cmd_route(args):
     url = get_mcp_url()
     mcp_initialize(url)
-    result = mcp_tool_call(url, "route_plan", {
-        "from_address": args.from_addr,
-        "to_address": args.to_addr,
-    })
+    result = mcp_tool_call(
+        url,
+        "route_plan",
+        {
+            "from_address": args.from_addr,
+            "to_address": args.to_addr,
+        },
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def cmd_poi(args):
     url = get_mcp_url()
     mcp_initialize(url)
-    result = mcp_tool_call(url, "poi_search", {
-        "keyword": args.keyword,
-        "location": args.location or "",
-    })
+    result = mcp_tool_call(
+        url,
+        "poi_search",
+        {
+            "keyword": args.keyword,
+            "location": args.location or "",
+        },
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def cmd_price(args):
     url = get_mcp_url()
     mcp_initialize(url)
-    result = mcp_tool_call(url, "estimate_price", {
-        "from_address": args.from_addr,
-        "to_address": args.to_addr,
-    })
+    result = mcp_tool_call(
+        url,
+        "estimate_price",
+        {
+            "from_address": args.from_addr,
+            "to_address": args.to_addr,
+        },
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="滴滴出行 MCP 客户端 (env: DIDI_MCP_KEY)")
+    parser = argparse.ArgumentParser(description="滴滴出行 MCP 客户端 (env: DIDI_MCP_KEY)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_ride = sub.add_parser("ride", help="叫车")
@@ -120,10 +143,8 @@ def main():
     p_price.add_argument("--to", dest="to_addr", required=True, help="目的地址")
 
     args = parser.parse_args()
-    {"ride": cmd_ride, "route": cmd_route,
-     "poi": cmd_poi, "price": cmd_price}[args.command](args)
+    {"ride": cmd_ride, "route": cmd_route, "poi": cmd_poi, "price": cmd_price}[args.command](args)
 
 
 if __name__ == "__main__":
     main()
-

@@ -48,7 +48,9 @@ def _outer_span(text: str, open_ch: str, close_ch: str) -> str | None:
     return None
 
 
-def _try_load(raw: str, expect: type | tuple[type, ...], errors: list[str] | None, label: str) -> Any:
+def _try_load(
+    raw: str, expect: type | tuple[type, ...], errors: list[str] | None, label: str
+) -> Any:
     try:
         value = json.loads(raw)
     except (TypeError, ValueError) as exc:
@@ -94,10 +96,13 @@ def parse_llm_json(
     return fallback
 
 
-def parse_llm_json_object(text: str, *, fallback: Any = None, errors: list[str] | None = None) -> Any:
+def parse_llm_json_object(
+    text: str, *, fallback: Any = None, errors: list[str] | None = None
+) -> Any:
     return parse_llm_json(text, fallback=fallback, expect=dict, errors=errors)
 
 
-def parse_llm_json_array(text: str, *, fallback: Any = None, errors: list[str] | None = None) -> Any:
+def parse_llm_json_array(
+    text: str, *, fallback: Any = None, errors: list[str] | None = None
+) -> Any:
     return parse_llm_json(text, fallback=fallback, expect=list, errors=errors)
-

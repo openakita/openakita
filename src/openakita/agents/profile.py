@@ -225,6 +225,14 @@ class AgentProfile:
         self.memory_inherit_global = _coerce_bool(self.memory_inherit_global)
         if not self.created_at:
             self.created_at = datetime.now(UTC).isoformat()
+        # Invariant: 默认 name_i18n[zh] 与 name 一致；description 同理。
+        # caller 显式给了 zh 译名时尊重 caller（例如 name="Alice" + name_i18n.zh="艾莉丝"），
+        # 缺省路径（直接 AgentProfile(name=...) / from_dict() 无 i18n 字段）由这里兜底，
+        # 防止 get_display_name("zh") 与 name 在系统提示词、Agents 列表、chat header 之间漂移。
+        if self.name and not self.name_i18n.get("zh"):
+            self.name_i18n = {**self.name_i18n, "zh": self.name}
+        if self.description and not self.description_i18n.get("zh"):
+            self.description_i18n = {**self.description_i18n, "zh": self.description}
 
     @property
     def is_system(self) -> bool:
@@ -333,13 +341,32 @@ class AgentProfile:
         inherit_from: str | None = None,
         **overrides: Any,
     ) -> AgentProfile:
-        """Create a derived profile while preserving runtime and isolation settings."""
+        """Create a derived profile while preserving runtime and isolation settings.
+
+        When ``name`` (resp. ``description``) is explicitly overridden, mirror it
+        into ``name_i18n["zh"]`` (resp. ``description_i18n["zh"]``) so the derived
+        profile does not inherit a stale Chinese display name from the parent. The
+        rule matches ``ProfileStore.update`` and is bypassed if the caller passes
+        an explicit ``name_i18n`` / ``description_i18n`` via ``overrides``.
+        """
         data = self.to_dict()
+        new_name = name if name is not None else self.name
+        new_description = description if description is not None else self.description
+
+        if name is not None and "name_i18n" not in overrides:
+            merged = dict(self.name_i18n or {})
+            merged["zh"] = new_name
+            data["name_i18n"] = merged
+        if description is not None and "description_i18n" not in overrides:
+            merged = dict(self.description_i18n or {})
+            merged["zh"] = new_description
+            data["description_i18n"] = merged
+
         data.update(
             {
                 "id": id,
-                "name": name if name is not None else self.name,
-                "description": description if description is not None else self.description,
+                "name": new_name,
+                "description": new_description,
                 "type": type,
                 "created_by": created_by,
                 "created_at": "",
@@ -406,12 +433,109 @@ class ProfileStore:
             try:
                 data = json.loads(fp.read_text(encoding="utf-8"))
                 profile = AgentProfile.from_dict(data)
+                profile = self._heal_loaded_profile(profile, fp)
                 self._cache[profile.id] = profile
                 loaded += 1
             except Exception as e:
                 logger.warning(f"Failed to load profile {fp.name}: {e}")
         if loaded:
             logger.info(f"ProfileStore loaded {loaded} profile(s) from {self._profiles_dir}")
+
+    def _heal_loaded_profile(
+        self,
+        profile: AgentProfile,
+        source_path: Path,
+    ) -> AgentProfile:
+        """Repair a SYSTEM profile whose ``name_i18n.zh`` drifted off ``name``.
+
+        Older releases of ``ProfileStore.update`` did not mirror ``name`` into
+        ``name_i18n['zh']``. A user who renamed the default Agent through the
+        Agents manager (PUT ``/api/agents/profiles/{id}`` with a single
+        ``name`` field) ended up with a JSON file where ``name`` was their new
+        choice but ``name_i18n['zh']`` still held the original preset value.
+        ``Agent._resolve_agent_voice`` reads ``profile.get_display_name('zh')``
+        first, so the LLM kept introducing itself with the stale name even
+        after the user had renamed the profile.
+
+        The fix in ``ProfileStore.update`` and ``AgentProfile.__post_init__``
+        prevents new divergence, but it does not retroactively heal a file
+        that already diverged on disk: ``__post_init__`` only fills
+        ``name_i18n['zh']`` when it is missing, deliberately keeping
+        legitimate explicit translations (``name='Alice'`` +
+        ``name_i18n['zh']='艾莉丝'``) intact.
+
+        This method narrows the heal to SYSTEM profiles only. The shipped
+        ``SYSTEM_PRESETS`` always declare ``name == name_i18n['zh']`` (the
+        ``en`` slot carries the localized variant), and no UI surface allows
+        a user to author a different Chinese display name for a SYSTEM
+        profile, so divergence on a SYSTEM profile on disk is unambiguously
+        the legacy mirroring bug. CUSTOM / DYNAMIC profiles may legitimately
+        carry an independent ``name_i18n['zh']`` (e.g. profiles installed
+        from the Agent Hub whose publisher provided a Chinese localization
+        distinct from the canonical name); for those we log a warning and
+        leave the file alone so we never clobber a publisher's intent.
+        """
+        try:
+            current_zh = (profile.name_i18n or {}).get("zh") or ""
+            primary = profile.name or ""
+            current_desc_zh = (profile.description_i18n or {}).get("zh") or ""
+            primary_desc = profile.description or ""
+
+            name_diverged = bool(primary) and bool(current_zh) and primary != current_zh
+            desc_diverged = (
+                bool(primary_desc) and bool(current_desc_zh) and primary_desc != current_desc_zh
+            )
+            if not name_diverged and not desc_diverged:
+                return profile
+
+            if not profile.is_system:
+                if name_diverged:
+                    logger.warning(
+                        "Profile %s has name=%r but name_i18n['zh']=%r; the "
+                        "UI/Agents list will show one and the LLM self-reference "
+                        "will use the other. Update name_i18n explicitly via the "
+                        "agents API to align them, or rename the profile.",
+                        profile.id,
+                        primary,
+                        current_zh,
+                    )
+                return profile
+
+            healed_name_i18n = dict(profile.name_i18n or {})
+            healed_desc_i18n = dict(profile.description_i18n or {})
+            if name_diverged:
+                healed_name_i18n["zh"] = primary
+            if desc_diverged:
+                healed_desc_i18n["zh"] = primary_desc
+
+            data = profile.to_dict()
+            data["name_i18n"] = healed_name_i18n
+            data["description_i18n"] = healed_desc_i18n
+            healed = AgentProfile.from_dict(data)
+
+            atomic_json_write(source_path, healed.to_dict())
+            logger.info(
+                "ProfileStore self-healed SYSTEM profile %s on load: "
+                "name_i18n['zh'] %r -> %r, description_i18n['zh'] %r -> %r",
+                profile.id,
+                current_zh if name_diverged else healed_name_i18n.get("zh"),
+                healed.name_i18n.get("zh"),
+                current_desc_zh if desc_diverged else healed_desc_i18n.get("zh"),
+                healed.description_i18n.get("zh"),
+            )
+            return healed
+        except Exception as exc:
+            # Self-heal is best-effort. A failure (e.g. disk full, permission
+            # denied) must not block the rest of profile loading; the
+            # in-memory object remains the pre-heal value so behaviour
+            # degrades to "old release" rather than "no profile at all".
+            logger.warning(
+                "ProfileStore failed to self-heal profile %s at %s: %s",
+                profile.id,
+                source_path,
+                exc,
+            )
+            return profile
 
     def get(self, profile_id: str) -> AgentProfile | None:
         with self._lock:
@@ -501,6 +625,26 @@ class ProfileStore:
                 # 实质修改时自动标记
                 if set(updates.keys()) & self._CUSTOMIZATION_FIELDS:
                     updates["user_customized"] = True
+
+            # 当调用方仅改了 name/description 而未显式提供对应的 i18n 字段时，
+            # 镜像新值到 `name_i18n['zh']` / `description_i18n['zh']`，避免出现
+            # `name="中秋"` 而 `name_i18n.zh="小秋"` 的内部不自洽状态。该状态会
+            # 让 system prompt（用 name）和 IM 显示 / 像素办公室 / 日志（用 name_i18n
+            # 经 get_display_name 解析）出现"双名"漂移。
+            # 调用方若需精确控制多语言版本，可同时显式传 name_i18n/description_i18n
+            # 直接覆盖本兜底。仅同步 zh 一键，保留 en 等其它语种的既有值不动。
+            if "name" in updates and "name_i18n" not in updates:
+                new_name = str(updates.get("name") or "").strip()
+                if new_name:
+                    merged_name_i18n = dict(existing.name_i18n or {})
+                    merged_name_i18n["zh"] = new_name
+                    updates["name_i18n"] = merged_name_i18n
+            if "description" in updates and "description_i18n" not in updates:
+                new_desc = str(updates.get("description") or "").strip()
+                if new_desc:
+                    merged_desc_i18n = dict(existing.description_i18n or {})
+                    merged_desc_i18n["zh"] = new_desc
+                    updates["description_i18n"] = merged_desc_i18n
 
             data = existing.to_dict()
             # Phase 2b.2：data（来自 to_dict）同时含 `memory_mode` 和

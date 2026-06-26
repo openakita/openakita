@@ -34,9 +34,8 @@ def supports_max_reasoning_effort(provider: str, base_url: str, model: str) -> b
     provider_l = (provider or "").lower()
     base_l = (base_url or "").lower()
     model_l = (model or "").lower()
-    return (
-        model_l == "deepseek-v4-pro"
-        and (provider_l == "deepseek" or "api.deepseek.com" in base_l)
+    return model_l == "deepseek-v4-pro" and (
+        provider_l == "deepseek" or "api.deepseek.com" in base_l
     )
 
 

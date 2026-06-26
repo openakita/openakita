@@ -52,21 +52,33 @@ class TestSemanticMemoryCRUD:
         assert len(results) >= 0  # FTS5 may or may not find depending on tokenizer
 
     def test_query(self, store):
-        store.save_semantic(SemanticMemory(
-            content="rule1", type=MemoryType.RULE, importance_score=0.9,
-        ))
-        store.save_semantic(SemanticMemory(
-            content="fact1", type=MemoryType.FACT, importance_score=0.3,
-        ))
+        store.save_semantic(
+            SemanticMemory(
+                content="rule1",
+                type=MemoryType.RULE,
+                importance_score=0.9,
+            )
+        )
+        store.save_semantic(
+            SemanticMemory(
+                content="fact1",
+                type=MemoryType.FACT,
+                importance_score=0.3,
+            )
+        )
 
         rules = store.query_semantic(memory_type="rule")
         assert len(rules) == 1
         assert rules[0].content == "rule1"
 
     def test_find_similar(self, store):
-        store.save_semantic(SemanticMemory(
-            content="Python 3.10", subject="Python", predicate="版本",
-        ))
+        store.save_semantic(
+            SemanticMemory(
+                content="Python 3.10",
+                subject="Python",
+                predicate="版本",
+            )
+        )
         found = store.find_similar("Python", "版本")
         assert found is not None
         assert found.content == "Python 3.10"
@@ -141,9 +153,7 @@ class TestConversationTurns:
 
 class TestExtractionQueue:
     def test_enqueue_dequeue(self, store):
-        store.enqueue_extraction(
-            session_id="s1", turn_index=0, content="test content"
-        )
+        store.enqueue_extraction(session_id="s1", turn_index=0, content="test content")
         items = store.dequeue_extraction(batch_size=5)
         assert len(items) == 1
         assert items[0]["content"] == "test content"
@@ -161,4 +171,3 @@ class TestStats:
         stats = store.get_stats()
         assert "memory_count" in stats
         assert "search_backend" in stats
-

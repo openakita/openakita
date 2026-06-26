@@ -90,6 +90,7 @@ def mode_to_dict(m: ClipMode) -> dict[str, Any]:
 # Silence presets (conservative / standard / aggressive)
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class SilencePreset:
     id: str
@@ -134,6 +135,7 @@ SILENCE_PRESETS_BY_ID: dict[str, SilencePreset] = {p.id: p for p in SILENCE_PRES
 # Pricing
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class PriceEntry:
     """Per-unit price for a single API."""
@@ -170,22 +172,26 @@ def estimate_cost(mode_id: str, duration_sec: float) -> CostPreview:
 
     if "transcribe" not in mode.skip_steps:
         asr_cost = duration_sec * 0.0008
-        items.append({
-            "api": "paraformer-v2",
-            "description": "语音转写",
-            "quantity": f"{duration_sec:.0f}秒",
-            "cost_cny": round(asr_cost, 4),
-        })
+        items.append(
+            {
+                "api": "paraformer-v2",
+                "description": "语音转写",
+                "quantity": f"{duration_sec:.0f}秒",
+                "cost_cny": round(asr_cost, 4),
+            }
+        )
 
     if "analyze" not in mode.skip_steps:
         tokens_est = duration_sec * 3.5
         qwen_cost = (tokens_est / 1000.0) * 0.004
-        items.append({
-            "api": "qwen-plus",
-            "description": "AI 分析",
-            "quantity": f"~{tokens_est:.0f} tokens",
-            "cost_cny": round(qwen_cost, 4),
-        })
+        items.append(
+            {
+                "api": "qwen-plus",
+                "description": "AI 分析",
+                "quantity": f"~{tokens_est:.0f} tokens",
+                "cost_cny": round(qwen_cost, 4),
+            }
+        )
 
     total = sum(it["cost_cny"] for it in items)
     return CostPreview(total_cny=round(total, 4), items=items)

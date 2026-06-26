@@ -45,9 +45,7 @@ def test_parse_response_recovers_visible_text_from_message_output_without_reason
 
 def test_parse_response_recovers_visible_text_from_top_level_output_with_choices():
     data = _empty_content_response()
-    data["output"] = [
-        {"type": "message", "content": [{"type": "output_text", "text": "可见回复"}]}
-    ]
+    data["output"] = [{"type": "message", "content": [{"type": "output_text", "text": "可见回复"}]}]
 
     response = _provider()._parse_response(data)
 

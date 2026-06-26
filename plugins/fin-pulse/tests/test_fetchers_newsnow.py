@@ -61,9 +61,7 @@ def _patch_transport(monkeypatch: pytest.MonkeyPatch, handler: Any) -> None:
 
 
 class TestFetchFromNewsNow:
-    def test_success_envelope_yields_items(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_success_envelope_yields_items(self, monkeypatch: pytest.MonkeyPatch) -> None:
         payload = {
             "status": "success",
             "items": [
@@ -152,9 +150,7 @@ class TestFetchFromNewsNow:
                 )
             )
 
-    def test_cache_status_is_accepted(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_cache_status_is_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         payload = {
             "status": "cache",
             "items": [
@@ -203,9 +199,7 @@ class TestFetchFromNewsNow:
             )
         assert exc_info.value.kind == "cloudflare_blocked"
 
-    def test_invalid_source_id_short_circuits_retry(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_invalid_source_id_short_circuits_retry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``Invalid source id`` never recovers on retry — assert we only
         hit the network once and surface the hint for eastmoney-like
         platforms that never existed on the aggregator.
@@ -214,9 +208,7 @@ class TestFetchFromNewsNow:
 
         def handler(request: httpx.Request) -> httpx.Response:
             calls["n"] += 1
-            return httpx.Response(
-                500, json={"error": True, "message": "Invalid source id"}
-            )
+            return httpx.Response(500, json={"error": True, "message": "Invalid source id"})
 
         _patch_transport(monkeypatch, handler)
 
@@ -232,9 +224,7 @@ class TestFetchFromNewsNow:
         assert exc_info.value.kind == "invalid_source_id"
         assert calls["n"] == 1, "invalid_source_id is permanent — no retry"
 
-    def test_transient_5xx_retries_once(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_transient_5xx_retries_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cold-start 502/504 on the volunteer-run aggregator should be
         absorbed by a single transparent retry before we escalate to
         the fallback path. Keeps the drawer noise-free for blips.

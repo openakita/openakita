@@ -59,7 +59,9 @@ SCENARIO_SKILLS: dict[str, ScenarioSkill] = {
 }
 
 
-def select_scenario_skill(*, mode: str, style: str = "", prompt: str = "", has_table: bool = False) -> ScenarioSkill:
+def select_scenario_skill(
+    *, mode: str, style: str = "", prompt: str = "", has_table: bool = False
+) -> ScenarioSkill:
     """Pick a conservative skill from explicit signals."""
 
     text = f"{mode} {style} {prompt}".lower()
@@ -74,4 +76,3 @@ def select_scenario_skill(*, mode: str, style: str = "", prompt: str = "", has_t
     if "review" in text or "复盘" in text or "项目" in text:
         return SCENARIO_SKILLS["project_review"]
     return SCENARIO_SKILLS["consulting_report" if "consulting" in text else "project_review"]
-

@@ -37,7 +37,7 @@ def test_inline_helpers_import() -> None:
     from word_maker_inline.python_deps import list_optional_groups
 
     assert safe_name("a/b c.docx") == "a_b_c.docx"
-    assert parse_llm_json_object("```json\n{\"ok\": true}\n```") == {"ok": True}
+    assert parse_llm_json_object('```json\n{"ok": true}\n```') == {"ok": True}
     assert "core" in list_optional_groups()
 
 
@@ -64,4 +64,3 @@ def test_ui_header_omits_redundant_health_controls() -> None:
 
     assert "header-right" not in html
     assert "__wmRefresh" not in html
-

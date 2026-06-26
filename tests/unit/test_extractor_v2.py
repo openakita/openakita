@@ -18,6 +18,7 @@ from tests.fixtures.mock_llm import MockLLMClient
 @dataclass
 class SimpleResponse:
     """Mimics Brain.Response where content is a plain string."""
+
     content: str = ""
     tool_calls: list = field(default_factory=list)
     stop_reason: str = "end_turn"
@@ -80,16 +81,20 @@ class TestExtractFromTurnV2:
         assert result == []
 
     async def test_extracts_from_ai_response(self, extractor, mock_brain_simple):
-        mock_brain_simple.preset(json.dumps([
-            {
-                "type": "PREFERENCE",
-                "subject": "用户",
-                "predicate": "主题偏好",
-                "content": "用户喜欢深色主题",
-                "importance": 0.8,
-                "is_update": False,
-            }
-        ]))
+        mock_brain_simple.preset(
+            json.dumps(
+                [
+                    {
+                        "type": "PREFERENCE",
+                        "subject": "用户",
+                        "predicate": "主题偏好",
+                        "content": "用户喜欢深色主题",
+                        "importance": 0.8,
+                        "is_update": False,
+                    }
+                ]
+            )
+        )
         turn = ConversationTurn(role="user", content="我一直使用深色主题来编程，护眼又好看")
         result = await extractor.extract_from_turn_v2(turn)
         assert len(result) == 1
@@ -109,15 +114,19 @@ class TestExtractFromTurnV2:
         assert result == []
 
     async def test_with_tool_calls(self, extractor, mock_brain_simple):
-        mock_brain_simple.preset(json.dumps([
-            {
-                "type": "SKILL",
-                "subject": "代码格式化",
-                "predicate": "工具使用",
-                "content": "成功使用 black 格式化代码",
-                "importance": 0.6,
-            }
-        ]))
+        mock_brain_simple.preset(
+            json.dumps(
+                [
+                    {
+                        "type": "SKILL",
+                        "subject": "代码格式化",
+                        "predicate": "工具使用",
+                        "content": "成功使用 black 格式化代码",
+                        "importance": 0.6,
+                    }
+                ]
+            )
+        )
         turn = ConversationTurn(
             role="assistant",
             content="已经用 black 格式化了代码",
@@ -128,30 +137,42 @@ class TestExtractFromTurnV2:
         assert len(result) >= 1
 
     async def test_importance_clamped(self, extractor, mock_brain_simple):
-        mock_brain_simple.preset(json.dumps([
-            {"type": "FACT", "content": "Clamped importance value", "importance": 99},
-        ]))
+        mock_brain_simple.preset(
+            json.dumps(
+                [
+                    {"type": "FACT", "content": "Clamped importance value", "importance": 99},
+                ]
+            )
+        )
         turn = ConversationTurn(role="user", content="记住这个重要信息，非常非常重要")
         result = await extractor.extract_from_turn_v2(turn)
         if result:
             assert result[0]["importance"] <= 1.0
 
     async def test_filters_short_content(self, extractor, mock_brain_simple):
-        mock_brain_simple.preset(json.dumps([
-            {"type": "FACT", "content": "hi"},
-        ]))
+        mock_brain_simple.preset(
+            json.dumps(
+                [
+                    {"type": "FACT", "content": "hi"},
+                ]
+            )
+        )
         turn = ConversationTurn(role="user", content="这段话用来测试短内容被过滤的逻辑")
         result = await extractor.extract_from_turn_v2(turn)
         assert all(len(r["content"]) >= 5 for r in result)
 
     async def test_handles_structured_turn_content(self, mock_brain_simple):
-        mock_brain_simple.preset(json.dumps([
-            {
-                "type": "FACT",
-                "content": "用户使用多模态消息",
-                "importance": 0.6,
-            }
-        ]))
+        mock_brain_simple.preset(
+            json.dumps(
+                [
+                    {
+                        "type": "FACT",
+                        "content": "用户使用多模态消息",
+                        "importance": 0.6,
+                    }
+                ]
+            )
+        )
         extractor = MemoryExtractor(brain=mock_brain_simple)
         turn = ConversationTurn(
             role="user",
@@ -165,7 +186,9 @@ class TestExtractFromTurnV2:
 
     async def test_handles_structured_response_content(self):
         extractor = MemoryExtractor(brain=ObjectContentBrain({"message": "NONE"}))
-        turn = ConversationTurn(role="user", content="这段内容足够长，用来验证结构化响应不会触发 strip 错误")
+        turn = ConversationTurn(
+            role="user", content="这段内容足够长，用来验证结构化响应不会触发 strip 错误"
+        )
 
         result = await extractor.extract_from_turn_v2(turn)
 
@@ -182,9 +205,7 @@ class TestExtractQuickFacts:
         assert facts == []
 
     def test_limit_to_5(self, extractor_no_brain):
-        messages = [
-            {"role": "user", "content": f"我喜欢工具 {i}，必须使用它"} for i in range(10)
-        ]
+        messages = [{"role": "user", "content": f"我喜欢工具 {i}，必须使用它"} for i in range(10)]
         facts = extractor_no_brain.extract_quick_facts(messages)
         assert len(facts) <= 5
 
@@ -194,15 +215,19 @@ class TestExtractQuickFacts:
 
 class TestExtractFromConversation:
     async def test_handles_structured_conversation_content(self, mock_brain_simple):
-        mock_brain_simple.preset(json.dumps([
-            {
-                "type": "FACT",
-                "subject": "用户",
-                "predicate": "消息类型",
-                "content": "用户发送过结构化内容",
-                "importance": 0.6,
-            }
-        ]))
+        mock_brain_simple.preset(
+            json.dumps(
+                [
+                    {
+                        "type": "FACT",
+                        "subject": "用户",
+                        "predicate": "消息类型",
+                        "content": "用户发送过结构化内容",
+                        "importance": 0.6,
+                    }
+                ]
+            )
+        )
         extractor = MemoryExtractor(brain=mock_brain_simple)
         turns = [
             ConversationTurn(
@@ -241,18 +266,23 @@ class TestGenerateEpisode:
         assert result is None
 
     async def test_generates_episode_with_brain(self, extractor, mock_brain_simple):
-        mock_brain_simple.preset(json.dumps({
-            "summary": "用户请求重构记忆系统",
-            "goal": "记忆系统重构",
-            "outcome": "success",
-            "entities": ["memory", "storage.py"],
-            "tools_used": ["write_file"],
-        }))
+        mock_brain_simple.preset(
+            json.dumps(
+                {
+                    "summary": "用户请求重构记忆系统",
+                    "goal": "记忆系统重构",
+                    "outcome": "success",
+                    "entities": ["memory", "storage.py"],
+                    "tools_used": ["write_file"],
+                }
+            )
+        )
 
         turns = [
             ConversationTurn(role="user", content="帮我重构记忆系统"),
             ConversationTurn(
-                role="assistant", content="好的，我来重构",
+                role="assistant",
+                content="好的，我来重构",
                 tool_calls=[{"name": "write_file", "input": {"path": "storage.py"}, "id": "t1"}],
             ),
         ]
@@ -263,14 +293,24 @@ class TestGenerateEpisode:
         assert result.session_id == "sess-1"
         assert "write_file" in result.tools_used
 
-    async def test_generate_episode_normalizes_malformed_tools_used(self, extractor, mock_brain_simple):
-        mock_brain_simple.preset(json.dumps({
-            "summary": "用户查看近期任务",
-            "goal": "查看任务",
-            "outcome": "success",
-            "entities": [],
-            "tools_used": [{"name": {"bad": "shape"}}, {"function": {"name": "search_memory"}}],
-        }, ensure_ascii=False))
+    async def test_generate_episode_normalizes_malformed_tools_used(
+        self, extractor, mock_brain_simple
+    ):
+        mock_brain_simple.preset(
+            json.dumps(
+                {
+                    "summary": "用户查看近期任务",
+                    "goal": "查看任务",
+                    "outcome": "success",
+                    "entities": [],
+                    "tools_used": [
+                        {"name": {"bad": "shape"}},
+                        {"function": {"name": "search_memory"}},
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
 
         turns = [
             ConversationTurn(role="user", content="查看最近任务"),
@@ -300,7 +340,8 @@ class TestGenerateEpisode:
     def test_extracts_action_nodes(self, extractor):
         turns = [
             ConversationTurn(
-                role="assistant", content="done",
+                role="assistant",
+                content="done",
                 tool_calls=[
                     {"name": "read_file", "input": {"path": "a.py"}, "id": "t1"},
                     {"name": "write_file", "input": {"path": "b.py"}, "id": "t2"},
@@ -330,8 +371,10 @@ class TestUpdateScratchpad:
 - 编写单元测试
 """)
         episode = Episode(
-            session_id="s1", summary="重构了记忆系统",
-            goal="记忆系统重构", outcome="success",
+            session_id="s1",
+            summary="重构了记忆系统",
+            goal="记忆系统重构",
+            outcome="success",
         )
         result = await extractor.update_scratchpad(None, episode)
         assert isinstance(result, Scratchpad)
@@ -340,16 +383,20 @@ class TestUpdateScratchpad:
     async def test_without_brain_appends(self, extractor_no_brain):
         current = Scratchpad(content="## 近期进展\n- 之前的内容")
         episode = Episode(
-            session_id="s1", summary="完成了新功能",
-            goal="新功能", outcome="success",
+            session_id="s1",
+            summary="完成了新功能",
+            goal="新功能",
+            outcome="success",
         )
         result = await extractor_no_brain.update_scratchpad(current, episode)
         assert "完成了新功能" in result.content
 
     async def test_without_brain_creates_new(self, extractor_no_brain):
         episode = Episode(
-            session_id="s1", summary="第一次对话",
-            goal="hello", outcome="success",
+            session_id="s1",
+            summary="第一次对话",
+            goal="hello",
+            outcome="success",
         )
         result = await extractor_no_brain.update_scratchpad(None, episode)
         assert "第一次对话" in result.content
@@ -398,4 +445,3 @@ class TestHelperMethods:
         result = extractor._append_to_section(content, "近期进展", "- first item")
         assert "## 近期进展" in result
         assert "- first item" in result
-

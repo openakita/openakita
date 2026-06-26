@@ -87,9 +87,7 @@ def test_read_lock_non_hex_digest_returns_none(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _write_yaml_with_lock(
-    tmp_path: Path, tasks: list[dict[str, Any]]
-) -> tuple[Path, Path]:
+def _write_yaml_with_lock(tmp_path: Path, tasks: list[dict[str, Any]]) -> tuple[Path, Path]:
     yaml_path = tmp_path / "SYSTEM_TASKS.yaml"
     lock_path = tmp_path / "system_tasks.lock"
     content = yaml.safe_dump({"version": 1, "tasks": tasks}).encode("utf-8")
@@ -150,7 +148,9 @@ def test_load_registry_lock_mismatch_empty(tmp_path, caplog):
         ],
     )
     # Simulate adversary tampering: edit yaml after lock was written.
-    yaml_path.write_bytes(b"version: 1\ntasks:\n  - id: evil\n    description: bypass\n    tools: [delete_file]\n    path_globs: ['**']\n")
+    yaml_path.write_bytes(
+        b"version: 1\ntasks:\n  - id: evil\n    description: bypass\n    tools: [delete_file]\n    path_globs: ['**']\n"
+    )
 
     with caplog.at_level("WARNING"):
         reg = load_registry(yaml_path, lock_path)
@@ -231,37 +231,25 @@ def test_try_match_unknown_task_returns_none():
 
 def test_try_match_wrong_tool_returns_none():
     reg = _make_registry(tools=("read_file",))
-    assert (
-        reg.try_match("test_task", "delete_file", {"path": "data/audit/x.log"})
-        is None
-    )
+    assert reg.try_match("test_task", "delete_file", {"path": "data/audit/x.log"}) is None
 
 
 def test_try_match_happy_path():
     reg = _make_registry(path_globs=("data/audit/**",))
-    result = reg.try_match(
-        "test_task", "read_file", {"path": "data/audit/sub/file.jsonl"}
-    )
+    result = reg.try_match("test_task", "read_file", {"path": "data/audit/sub/file.jsonl"})
     assert result is not None
     assert result.id == "test_task"
 
 
 def test_try_match_path_outside_glob_returns_none():
     reg = _make_registry(path_globs=("data/audit/**",))
-    assert (
-        reg.try_match(
-            "test_task", "read_file", {"path": "data/sessions/x.json"}
-        )
-        is None
-    )
+    assert reg.try_match("test_task", "read_file", {"path": "data/sessions/x.json"}) is None
 
 
 def test_try_match_multiple_paths_all_must_match():
     """If a tool takes multiple paths (move/copy), ALL must fall inside
     the task's globs — partial match → reject."""
-    reg = _make_registry(
-        tools=("move_file",), path_globs=("data/audit/**",)
-    )
+    reg = _make_registry(tools=("move_file",), path_globs=("data/audit/**",))
     # Both paths inside
     result = reg.try_match(
         "test_task",
@@ -281,13 +269,8 @@ def test_try_match_multiple_paths_all_must_match():
 def test_try_match_no_path_args_passes():
     """A task whose tool legitimately has no path params (e.g. trigger
     a state refresh) doesn't fail glob-match."""
-    reg = _make_registry(
-        tools=("rebuild_index",), path_globs=("data/cache/**",)
-    )
-    assert (
-        reg.try_match("test_task", "rebuild_index", {"force": True})
-        is not None
-    )
+    reg = _make_registry(tools=("rebuild_index",), path_globs=("data/cache/**",))
+    assert reg.try_match("test_task", "rebuild_index", {"force": True}) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -322,9 +305,7 @@ def test_normalize_path_strips_dot_slash():
 
 
 def test_normalize_path_backslash_to_forward():
-    assert (
-        _normalize_path("data\\audit\\x.json", None) == "data/audit/x.json"
-    )
+    assert _normalize_path("data\\audit\\x.json", None) == "data/audit/x.json"
 
 
 def test_normalize_path_relative_to_workspace(tmp_path):
@@ -465,9 +446,7 @@ def test_request_bypass_no_backup_skips_checkpoint(tmp_path):
     target IS a backup), no checkpoint is taken — but audit still
     records the bypass."""
     audit_path = tmp_path / "system_tasks.jsonl"
-    reg = _make_registry(
-        path_globs=("data/checkpoints/**",), requires_backup=False
-    )
+    reg = _make_registry(path_globs=("data/checkpoints/**",), requires_backup=False)
     cp = _FakeCheckpointMgr()
 
     decision = request_bypass(

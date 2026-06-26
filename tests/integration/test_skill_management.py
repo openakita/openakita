@@ -32,8 +32,8 @@ async def client():
 # 1. 已安装技能列表
 # ---------------------------------------------------------------------------
 
-class TestListSkills:
 
+class TestListSkills:
     async def test_list_skills_returns_200(self, client):
         resp = await client.get("/api/skills")
         assert resp.status_code == 200
@@ -68,8 +68,8 @@ class TestListSkills:
 # 2. 含斜杠的技能名查看详情
 # ---------------------------------------------------------------------------
 
-class TestSkillWithSlashName:
 
+class TestSkillWithSlashName:
     async def test_slash_skill_name_not_404(self, client):
         resp = await client.get("/api/skills/content/openakita/skills@canvas-design")
         assert resp.status_code != 404
@@ -83,8 +83,8 @@ class TestSkillWithSlashName:
 # 3. 技能内容读取
 # ---------------------------------------------------------------------------
 
-class TestGetSkillContent:
 
+class TestGetSkillContent:
     async def test_get_existing_skill_content(self, client):
         list_resp = await client.get("/api/skills")
         if list_resp.status_code != 200:
@@ -113,8 +113,8 @@ class TestGetSkillContent:
 # 4. 技能内容更新（非系统技能）
 # ---------------------------------------------------------------------------
 
-class TestUpdateSkillContent:
 
+class TestUpdateSkillContent:
     async def test_update_nonexistent_skill_returns_error(self, client):
         resp = await client.put(
             "/api/skills/content/__nonexistent_skill_xyz__",
@@ -146,8 +146,8 @@ class TestUpdateSkillContent:
 # 5. 系统技能不可编辑
 # ---------------------------------------------------------------------------
 
-class TestSystemSkillReadOnly:
 
+class TestSystemSkillReadOnly:
     async def test_system_skill_cannot_be_updated(self, client):
         list_resp = await client.get("/api/skills")
         if list_resp.status_code != 200:
@@ -171,8 +171,8 @@ class TestSystemSkillReadOnly:
 # 6. 技能搜索
 # ---------------------------------------------------------------------------
 
-class TestSkillSearch:
 
+class TestSkillSearch:
     async def test_marketplace_search_returns_response(self, client):
         resp = await client.get("/api/skills/marketplace?q=test")
         assert resp.status_code in (200, 500, 502, 503)
@@ -186,8 +186,8 @@ class TestSkillSearch:
 # 7. 技能重载
 # ---------------------------------------------------------------------------
 
-class TestSkillReload:
 
+class TestSkillReload:
     async def test_reload_returns_success_or_error(self, client):
         resp = await client.post("/api/skills/reload")
         assert resp.status_code in (200, 500)
@@ -213,8 +213,8 @@ class TestSkillReload:
 # 8. 边界情况
 # ---------------------------------------------------------------------------
 
-class TestSkillEdgeCases:
 
+class TestSkillEdgeCases:
     async def test_special_characters_in_skill_name(self, client):
         resp = await client.get("/api/skills/content/skill%20with%20spaces")
         assert resp.status_code != 500
@@ -230,4 +230,3 @@ class TestSkillEdgeCases:
             json={"skill_name": "test-skill", "config": {"key": "value"}},
         )
         assert resp.status_code in (200, 500)
-

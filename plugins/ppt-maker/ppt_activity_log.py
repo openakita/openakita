@@ -47,11 +47,7 @@ ACTIVITY_FILENAME = "activity.jsonl"
 
 
 def _iso(ts: float) -> str:
-    return (
-        datetime.fromtimestamp(ts, tz=UTC)
-        .astimezone()
-        .isoformat(timespec="seconds")
-    )
+    return datetime.fromtimestamp(ts, tz=UTC).astimezone().isoformat(timespec="seconds")
 
 
 class PptActivityLogger:

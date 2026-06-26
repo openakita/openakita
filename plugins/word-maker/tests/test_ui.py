@@ -33,4 +33,3 @@ def test_ui_uses_self_contained_assets() -> None:
 
     assert "_assets/bootstrap.js" in html
     assert "/api/plugins/_sdk" not in html
-

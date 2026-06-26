@@ -34,7 +34,7 @@ def _load_api_key() -> str:
 
     print(
         "❌ 未找到 Moltbook API Key。请设置环境变量 MOLTBOOK_API_KEY，\n"
-        "   或在 ~/.config/moltbook/credentials.json 里写入 {\"api_key\": \"...\"}。",
+        '   或在 ~/.config/moltbook/credentials.json 里写入 {"api_key": "..."}。',
         file=sys.stderr,
     )
     sys.exit(2)

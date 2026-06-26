@@ -197,16 +197,12 @@ def read_lock(lock_path: Path) -> str | None:
     and is logged at DEBUG.
     """
     if not lock_path.exists():
-        logger.debug(
-            "[C15 system_tasks] lock file absent: %s", lock_path
-        )
+        logger.debug("[C15 system_tasks] lock file absent: %s", lock_path)
         return None
     try:
         text = lock_path.read_text(encoding="utf-8").strip()
     except OSError as exc:
-        logger.warning(
-            "[C15 system_tasks] failed to read lock %s: %s", lock_path, exc
-        )
+        logger.warning("[C15 system_tasks] failed to read lock %s: %s", lock_path, exc)
         return None
     if not text.startswith(_LOCK_PREFIX):
         logger.warning(
@@ -215,11 +211,9 @@ def read_lock(lock_path: Path) -> str | None:
             _LOCK_PREFIX,
         )
         return None
-    digest = text[len(_LOCK_PREFIX):].strip()
+    digest = text[len(_LOCK_PREFIX) :].strip()
     if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
-        logger.warning(
-            "[C15 system_tasks] lock %s has malformed digest", lock_path
-        )
+        logger.warning("[C15 system_tasks] lock %s has malformed digest", lock_path)
         return None
     return digest
 
@@ -320,9 +314,7 @@ def load_registry(
         what is at most a config typo.
     """
     if not yaml_path.exists():
-        logger.debug(
-            "[C15 system_tasks] %s absent — no whitelist active", yaml_path
-        )
+        logger.debug("[C15 system_tasks] %s absent — no whitelist active", yaml_path)
         return SystemTaskRegistry({})
 
     try:
@@ -361,9 +353,7 @@ def load_registry(
 
             yaml_loader = yaml.safe_load
         except ImportError:  # pragma: no cover - pyyaml is in deps
-            logger.error(
-                "[C15 system_tasks] PyYAML not available; empty registry"
-            )
+            logger.error("[C15 system_tasks] PyYAML not available; empty registry")
             return SystemTaskRegistry({})
 
     try:
@@ -394,9 +384,7 @@ def load_registry(
     out: dict[str, SystemTask] = {}
     for idx, item in enumerate(tasks_raw):
         if not isinstance(item, dict):
-            logger.warning(
-                "[C15 system_tasks] tasks[%d] not a mapping; skipping", idx
-            )
+            logger.warning("[C15 system_tasks] tasks[%d] not a mapping; skipping", idx)
             continue
         try:
             task = _parse_task(item)
@@ -417,9 +405,7 @@ def load_registry(
             continue
         out[task.id] = task
 
-    logger.info(
-        "[C15 system_tasks] loaded %d task(s) from %s", len(out), yaml_path
-    )
+    logger.info("[C15 system_tasks] loaded %d task(s) from %s", len(out), yaml_path)
     return SystemTaskRegistry(out)
 
 
@@ -439,9 +425,7 @@ def _parse_task(raw: dict[str, Any]) -> SystemTask:
         raise ValueError("'tools' must not be empty")
 
     path_globs = raw.get("path_globs", [])
-    if not isinstance(path_globs, list) or not all(
-        isinstance(g, str) for g in path_globs
-    ):
+    if not isinstance(path_globs, list) or not all(isinstance(g, str) for g in path_globs):
         raise ValueError("'path_globs' must be a list of strings")
 
     requires_backup = raw.get("requires_backup", True)
@@ -542,9 +526,7 @@ def _glob_match(path: str, pattern: str) -> bool:
         return path == prefix[:-1] or path.startswith(prefix)
     if pattern.startswith("**/"):
         suffix = pattern[3:]
-        return fnmatch(path, suffix) or any(
-            fnmatch(path[i:], suffix) for i in range(len(path))
-        )
+        return fnmatch(path, suffix) or any(fnmatch(path[i:], suffix) for i in range(len(path)))
     parts = pattern.split("**")
     if len(parts) == 2:
         prefix, suffix = parts
@@ -606,8 +588,7 @@ def _append_audit(audit_path: Path, record: dict[str, Any]) -> None:
         chain_exc = exc
 
     logger.warning(
-        "[C16 system_tasks] chain append failed for %s: %s; "
-        "falling back to raw append.",
+        "[C16 system_tasks] chain append failed for %s: %s; falling back to raw append.",
         audit_path,
         chain_exc,
     )
@@ -653,9 +634,7 @@ def request_bypass(
         a checkpoint. The caller is responsible for invoking the
         handler.
     """
-    task = registry.try_match(
-        task_id, tool_name, params, workspace=workspace
-    )
+    task = registry.try_match(task_id, tool_name, params, workspace=workspace)
     if task is None:
         # Audit the rejection so operators see "why didn't bypass run?"
         _append_audit(

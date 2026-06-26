@@ -15,7 +15,9 @@ class PathSafetyResult:
     safe_ref: str = ""
 
 
-def resolve_within_root(path: str, roots: list[str | Path], *, max_len: int = 4096) -> PathSafetyResult:
+def resolve_within_root(
+    path: str, roots: list[str | Path], *, max_len: int = 4096
+) -> PathSafetyResult:
     """Resolve a path and ensure it stays inside at least one allowed root."""
     raw = str(path or "")
     if not raw:
@@ -48,4 +50,6 @@ def resolve_within_root(path: str, roots: list[str | Path], *, max_len: int = 40
             continue
 
     digest = hashlib.sha256(str(resolved).encode("utf-8", errors="ignore")).hexdigest()[:12]
-    return PathSafetyResult(False, resolved=resolved, reason="outside_allowed_roots", safe_ref=f"sha256:{digest}")
+    return PathSafetyResult(
+        False, resolved=resolved, reason="outside_allowed_roots", safe_ref=f"sha256:{digest}"
+    )

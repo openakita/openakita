@@ -152,9 +152,7 @@ class TestExactRepeatStillTerminates:
         """1-2 种签名 ping-pong 可能是正常检查/执行流，只记录软事件。"""
         sup = RuntimeSupervisor(enabled=True)
         for i in range(8):
-            sup.record_tool_signature(
-                "tool_a(h1)" if i % 2 == 0 else "tool_b(h2)"
-            )
+            sup.record_tool_signature("tool_a(h1)" if i % 2 == 0 else "tool_b(h2)")
         out = sup._check_signature_repeat(iteration=8)
         assert out is not None
         assert out.level == InterventionLevel.NUDGE
@@ -240,9 +238,7 @@ class TestUnproductiveAdminPruned:
                 result_text="✅ updated",
             )
         out = sup._check_unproductive_loop(iteration=5)
-        assert out is None, (
-            f"连续 5 次 update_todo_step 不应被判 unproductive，got {out}"
-        )
+        assert out is None, f"连续 5 次 update_todo_step 不应被判 unproductive，got {out}"
 
     def test_five_consecutive_get_todo_status_still_unproductive(self):
         """纯查询工具连续 5 次 仍然触发 unproductive。"""
@@ -341,4 +337,3 @@ class TestFailureAnalysisEvidence:
         assert "targets=['write_file:path=D:/reports/ai_trend.md']" in joined
         assert "targets=['write_file:path=D:/reports/ev_market.md']" in joined
         assert "signatures=['write_file(" in joined
-

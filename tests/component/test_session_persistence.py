@@ -24,13 +24,16 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_session_manager(tmp_path, **kwargs):
     from openakita.sessions import SessionManager
+
     return SessionManager(storage_path=tmp_path, **kwargs)
 
 
 def _make_unified_store(tmp_path):
     from openakita.memory.unified_store import UnifiedStore
+
     db_path = tmp_path / "test.db"
     return UnifiedStore(db_path=db_path)
 
@@ -38,6 +41,7 @@ def _make_unified_store(tmp_path):
 # ===========================================================================
 # Fix-1: Session no longer expires after 30 minutes
 # ===========================================================================
+
 
 class TestNoSessionExpiry:
     """Session should persist across long idle periods."""
@@ -82,12 +86,16 @@ class TestNoSessionExpiry:
             chat_id="123",
             user_id="user1",
             last_active=datetime.now() - timedelta(hours=3),
-            context=SessionContext(messages=[
-                {"role": "user", "content": "old message", "timestamp": "2026-01-01T00:00:00"},
-            ]),
+            context=SessionContext(
+                messages=[
+                    {"role": "user", "content": "old message", "timestamp": "2026-01-01T00:00:00"},
+                ]
+            ),
         )
         sessions_file = tmp_path / "sessions.json"
-        sessions_file.write_text(json.dumps([session.to_dict()], ensure_ascii=False), encoding="utf-8")
+        sessions_file.write_text(
+            json.dumps([session.to_dict()], ensure_ascii=False), encoding="utf-8"
+        )
 
         sm = _make_session_manager(tmp_path)
         loaded = sm.get_session("telegram", "123", "user1", create_if_missing=False)
@@ -100,8 +108,8 @@ class TestNoSessionExpiry:
 # Fix-1 continued: max_history still works
 # ===========================================================================
 
-class TestMaxHistoryTruncation:
 
+class TestMaxHistoryTruncation:
     def test_truncation_fires_at_limit(self, tmp_path):
         from openakita.sessions.session import Session, SessionConfig
 
@@ -122,8 +130,8 @@ class TestMaxHistoryTruncation:
 # Fix-2: turn_index continuity
 # ===========================================================================
 
-class TestTurnIndexContinuity:
 
+class TestTurnIndexContinuity:
     def test_get_max_turn_index_empty(self, tmp_path):
         store = _make_unified_store(tmp_path)
         assert store.get_max_turn_index("nonexistent") == 0
@@ -137,9 +145,12 @@ class TestTurnIndexContinuity:
     def test_start_session_loads_offset(self, tmp_path):
         store = _make_unified_store(tmp_path)
         for i in range(3):
-            store.save_turn(session_id="telegram__123__user1", turn_index=i, role="user", content=f"m{i}")
+            store.save_turn(
+                session_id="telegram__123__user1", turn_index=i, role="user", content=f"m{i}"
+            )
 
         from openakita.memory.manager import MemoryManager
+
         mm = MemoryManager.__new__(MemoryManager)
         mm.store = store
         mm._current_session_id = None
@@ -209,8 +220,8 @@ class TestTurnIndexContinuity:
 # Fix-2 continued: get_recent_turns
 # ===========================================================================
 
-class TestGetRecentTurns:
 
+class TestGetRecentTurns:
     def test_returns_chronological_order(self, tmp_path):
         store = _make_unified_store(tmp_path)
         for i in range(10):
@@ -229,8 +240,8 @@ class TestGetRecentTurns:
 # Fix-3: getChatHistory SQLite fallback
 # ===========================================================================
 
-class TestGetChatHistoryFallback:
 
+class TestGetChatHistoryFallback:
     def test_fallback_method_returns_none_without_memory_manager(self):
         from openakita.tools.handlers.im_channel import IMChannelHandler
 
@@ -247,8 +258,12 @@ class TestGetChatHistoryFallback:
         from openakita.tools.handlers.im_channel import IMChannelHandler
 
         store = _make_unified_store(tmp_path)
-        store.save_turn(session_id="telegram__123__user1", turn_index=0, role="user", content="hello world")
-        store.save_turn(session_id="telegram__123__user1", turn_index=1, role="assistant", content="hi there")
+        store.save_turn(
+            session_id="telegram__123__user1", turn_index=0, role="user", content="hello world"
+        )
+        store.save_turn(
+            session_id="telegram__123__user1", turn_index=1, role="assistant", content="hi there"
+        )
 
         mm = MagicMock()
         mm.store = store
@@ -269,8 +284,12 @@ class TestGetChatHistoryFallback:
         from openakita.tools.handlers.im_channel import IMChannelHandler
 
         store = _make_unified_store(tmp_path)
-        store.save_turn(session_id="desktop__conv_123__desktop_user", turn_index=0,
-                        role="user", content="test msg")
+        store.save_turn(
+            session_id="desktop__conv_123__desktop_user",
+            turn_index=0,
+            role="user",
+            content="test msg",
+        )
 
         mm = MagicMock()
         mm.store = store
@@ -290,8 +309,8 @@ class TestGetChatHistoryFallback:
 # Fix-4: search_memory uses RetrievalEngine
 # ===========================================================================
 
-class TestSearchMemorySemantic:
 
+class TestSearchMemorySemantic:
     def test_add_memory_defaults_to_fact_when_type_missing(self):
         from openakita.memory.types import MemoryType
         from openakita.tools.handlers.memory import MemoryHandler
@@ -379,8 +398,8 @@ class TestSearchMemorySemantic:
 # Fix-4b: get_session_context tolerates malformed persisted context
 # ===========================================================================
 
-class TestGetSessionContextFormatting:
 
+class TestGetSessionContextFormatting:
     def _make_handler(self, context):
         from openakita.tools.handlers.memory import MemoryHandler
 
@@ -411,9 +430,9 @@ class TestGetSessionContextFormatting:
         result = handler._get_session_context({"sections": ["summary", "sub_agents"]})
 
         assert "## 会话概况" in result
-        assert "- 工具: {\"bad\": \"shape\"}" in result
-        assert "- 任务: {\"goal\": \"分析 issue\"}" in result
-        assert "- 结果预览:\n[\"done\"]" in result
+        assert '- 工具: {"bad": "shape"}' in result
+        assert '- 任务: {"goal": "分析 issue"}' in result
+        assert '- 结果预览:\n["done"]' in result
 
     def test_tools_and_messages_with_non_string_fields_do_not_crash(self):
         context = SimpleNamespace(
@@ -436,15 +455,16 @@ class TestGetSessionContextFormatting:
 
         result = handler._get_session_context({"sections": ["tools", "messages"]})
 
-        assert "1. {\"name\": \"get_session_context\"} ([\"ok\"])" in result
-        assert "[1735689600] {\"kind\": \"user\"}: {\"text\": \"hello\"}" in result
+        assert '1. {"name": "get_session_context"} (["ok"])' in result
+        assert '[1735689600] {"kind": "user"}: {"text": "hello"}' in result
+
 
 # ===========================================================================
 # Fix-5: Session backfill from SQLite
 # ===========================================================================
 
-class TestSessionBackfillOnRestart:
 
+class TestSessionBackfillOnRestart:
     def test_backfill_recovers_missing_messages(self, tmp_path):
         from openakita.sessions.session import Session, SessionContext
 
@@ -453,12 +473,16 @@ class TestSessionBackfillOnRestart:
             channel="telegram",
             chat_id="123",
             user_id="user1",
-            context=SessionContext(messages=[
-                {"role": "user", "content": "msg1", "timestamp": "2026-02-20T10:00:00"},
-            ]),
+            context=SessionContext(
+                messages=[
+                    {"role": "user", "content": "msg1", "timestamp": "2026-02-20T10:00:00"},
+                ]
+            ),
         )
         sessions_file = tmp_path / "sessions.json"
-        sessions_file.write_text(json.dumps([session.to_dict()], ensure_ascii=False), encoding="utf-8")
+        sessions_file.write_text(
+            json.dumps([session.to_dict()], ensure_ascii=False), encoding="utf-8"
+        )
 
         def mock_loader(safe_id):
             return [
@@ -491,7 +515,9 @@ class TestSessionBackfillOnRestart:
             context=SessionContext(messages=[]),
         )
         sessions_file = tmp_path / "sessions.json"
-        sessions_file.write_text(json.dumps([session.to_dict()], ensure_ascii=False), encoding="utf-8")
+        sessions_file.write_text(
+            json.dumps([session.to_dict()], ensure_ascii=False), encoding="utf-8"
+        )
 
         def mock_loader(safe_id):
             return [
@@ -522,12 +548,16 @@ class TestSessionBackfillOnRestart:
             channel="test",
             chat_id="1",
             user_id="u",
-            context=SessionContext(messages=[
-                {"role": "user", "content": "msg1", "timestamp": "2026-02-20T12:00:00"},
-            ]),
+            context=SessionContext(
+                messages=[
+                    {"role": "user", "content": "msg1", "timestamp": "2026-02-20T12:00:00"},
+                ]
+            ),
         )
         sessions_file = tmp_path / "sessions.json"
-        sessions_file.write_text(json.dumps([session.to_dict()], ensure_ascii=False), encoding="utf-8")
+        sessions_file.write_text(
+            json.dumps([session.to_dict()], ensure_ascii=False), encoding="utf-8"
+        )
 
         def mock_loader(safe_id):
             return [
@@ -544,8 +574,8 @@ class TestSessionBackfillOnRestart:
 # Fix-5 continued: Graceful shutdown saves
 # ===========================================================================
 
-class TestGracefulShutdownSave:
 
+class TestGracefulShutdownSave:
     @pytest.mark.asyncio
     async def test_stop_saves_sessions(self, tmp_path):
         sm = _make_session_manager(tmp_path)
@@ -563,4 +593,3 @@ class TestGracefulShutdownSave:
         assert len(data) == 1
         msgs = data[0]["context"]["messages"]
         assert any(m["content"] == "important message" for m in msgs)
-

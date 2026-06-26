@@ -115,9 +115,7 @@ class TestUserAllowlistManager:
         assert entry["pattern"] == "npm install*"
 
     def test_match_command_semantic_normalization(self, cfg: PolicyConfigV2) -> None:
-        cfg.user_allowlist = UserAllowlistConfig(
-            commands=[{"pattern": "pip install*"}]
-        )
+        cfg.user_allowlist = UserAllowlistConfig(commands=[{"pattern": "pip install*"}])
         m = UserAllowlistManager(cfg)
         entry = m.match(
             "run_shell",
@@ -138,16 +136,12 @@ class TestUserAllowlistManager:
         assert m.match("run_shell", {"command": "ls"}) is None
 
     def test_match_empty_pattern_skipped(self, cfg: PolicyConfigV2) -> None:
-        cfg.user_allowlist = UserAllowlistConfig(
-            commands=[{"pattern": "", "needs_sandbox": False}]
-        )
+        cfg.user_allowlist = UserAllowlistConfig(commands=[{"pattern": "", "needs_sandbox": False}])
         m = UserAllowlistManager(cfg)
         assert m.match("run_shell", {"command": "ls"}) is None
 
     def test_match_command_field_missing(self, cfg: PolicyConfigV2) -> None:
-        cfg.user_allowlist = UserAllowlistConfig(
-            commands=[{"pattern": "npm*"}]
-        )
+        cfg.user_allowlist = UserAllowlistConfig(commands=[{"pattern": "npm*"}])
         m = UserAllowlistManager(cfg)
         # No command in params → falls through to tools branch (also empty).
         assert m.match("run_shell", {}) is None
@@ -169,9 +163,7 @@ class TestUserAllowlistManager:
 
     def test_add_raw_entry_no_field_mutation(self, cfg: PolicyConfigV2) -> None:
         m = UserAllowlistManager(cfg)
-        entry = m.add_raw_entry(
-            "command", {"pattern": "custom*", "added_at": "2025-01-01"}
-        )
+        entry = m.add_raw_entry("command", {"pattern": "custom*", "added_at": "2025-01-01"})
         # added_at preserved (not overridden with current time)
         assert entry["added_at"] == "2025-01-01"
         assert m.match("run_shell", {"command": "custom thing"}) is not None
@@ -193,9 +185,7 @@ class TestUserAllowlistManager:
         # internal still intact
         assert len(m.snapshot()["tools"]) == 1
 
-    def test_save_to_yaml_round_trip(
-        self, cfg: PolicyConfigV2, tmp_path: Path
-    ) -> None:
+    def test_save_to_yaml_round_trip(self, cfg: PolicyConfigV2, tmp_path: Path) -> None:
         yaml_path = tmp_path / "POLICIES.yaml"
         yaml_path.write_text("security: {}\n", encoding="utf-8")
         m = UserAllowlistManager(cfg)
@@ -212,9 +202,7 @@ class TestUserAllowlistManager:
         m.add_entry("write_file", {"path": "/x"})
         assert m.save_to_yaml(tmp_path / "does-not-exist.yaml") is False
 
-    def test_save_to_yaml_silent_on_unreadable(
-        self, cfg: PolicyConfigV2, tmp_path: Path
-    ) -> None:
+    def test_save_to_yaml_silent_on_unreadable(self, cfg: PolicyConfigV2, tmp_path: Path) -> None:
         # Pass a directory as YAML path → open() raises → swallowed → False
         m = UserAllowlistManager(cfg)
         result = m.save_to_yaml(tmp_path)
@@ -347,7 +335,9 @@ class TestDeathSwitchTracker:
         # interleave deny with read-allow so consecutive never hits 3
         for _ in range(6):
             t.record_decision(action="deny", tool_name="foo", threshold=3, total_multiplier=2)
-            t.record_decision(action="allow", tool_name="read_file", threshold=3, total_multiplier=2)
+            t.record_decision(
+                action="allow", tool_name="read_file", threshold=3, total_multiplier=2
+            )
         assert t.is_readonly_mode() is True
         assert t.stats()["total_denials"] == 6
 
@@ -443,9 +433,7 @@ class TestEngineStep9UserAllowlist:
         self, engine: PolicyEngineV2, ctx: PolicyContext
     ) -> None:
         engine.user_allowlist.add_entry("sensitive_tool", {})
-        d = engine.evaluate_tool_call(
-            ToolCallEvent(tool="sensitive_tool", params={}), ctx
-        )
+        d = engine.evaluate_tool_call(ToolCallEvent(tool="sensitive_tool", params={}), ctx)
         assert d.action == DecisionAction.ALLOW
         assert "persistent_allowlist" in d.reason
 
@@ -453,9 +441,7 @@ class TestEngineStep9UserAllowlist:
         self, engine: PolicyEngineV2, ctx: PolicyContext
     ) -> None:
         get_skill_allowlist_manager().add("skill_x", ["sensitive_tool"])
-        d = engine.evaluate_tool_call(
-            ToolCallEvent(tool="sensitive_tool", params={}), ctx
-        )
+        d = engine.evaluate_tool_call(ToolCallEvent(tool="sensitive_tool", params={}), ctx)
         assert d.action == DecisionAction.ALLOW
         assert "skill_allowlist" in d.reason
         assert "skill_x" in d.reason
@@ -463,9 +449,7 @@ class TestEngineStep9UserAllowlist:
     def test_no_allowlist_falls_through_to_confirm(
         self, engine: PolicyEngineV2, ctx: PolicyContext
     ) -> None:
-        d = engine.evaluate_tool_call(
-            ToolCallEvent(tool="sensitive_tool", params={}), ctx
-        )
+        d = engine.evaluate_tool_call(ToolCallEvent(tool="sensitive_tool", params={}), ctx)
         assert d.action == DecisionAction.CONFIRM
 
     def test_user_allowlist_does_not_bypass_matrix_deny(
@@ -480,9 +464,7 @@ class TestEngineStep9UserAllowlist:
             is_owner=True,
         )
         engine.user_allowlist.add_entry("deny_me", {})
-        d = engine.evaluate_tool_call(
-            ToolCallEvent(tool="deny_me", params={}), ask_ctx
-        )
+        d = engine.evaluate_tool_call(ToolCallEvent(tool="deny_me", params={}), ask_ctx)
         # ASK + DESTRUCTIVE = DENY before user_allowlist even runs
         assert d.action == DecisionAction.DENY
 
@@ -496,14 +478,10 @@ class TestEngineStep10DeathSwitch:
     def test_normal_evaluation_when_not_readonly(
         self, engine: PolicyEngineV2, ctx: PolicyContext
     ) -> None:
-        d = engine.evaluate_tool_call(
-            ToolCallEvent(tool="sensitive_tool", params={}), ctx
-        )
+        d = engine.evaluate_tool_call(ToolCallEvent(tool="sensitive_tool", params={}), ctx)
         assert d.action == DecisionAction.CONFIRM  # not DENY
 
-    def test_readonly_denies_mutating(
-        self, engine: PolicyEngineV2, ctx: PolicyContext
-    ) -> None:
+    def test_readonly_denies_mutating(self, engine: PolicyEngineV2, ctx: PolicyContext) -> None:
         get_death_switch_tracker().reset()  # extra-safety; autouse already does
         # Manually trigger readonly via 3 denies (use deny_me tool)
         # ASK mode + DESTRUCTIVE → matrix DENY (3 denies trigger threshold=3)
@@ -515,21 +493,15 @@ class TestEngineStep10DeathSwitch:
             is_owner=True,
         )
         for _ in range(3):
-            engine.evaluate_tool_call(
-                ToolCallEvent(tool="deny_me", params={}), ask_ctx
-            )
+            engine.evaluate_tool_call(ToolCallEvent(tool="deny_me", params={}), ask_ctx)
         assert get_death_switch_tracker().is_readonly_mode() is True
 
         # Now sensitive_tool (CONFIRM normally) should DENY due to readonly
-        d = engine.evaluate_tool_call(
-            ToolCallEvent(tool="sensitive_tool", params={}), ctx
-        )
+        d = engine.evaluate_tool_call(ToolCallEvent(tool="sensitive_tool", params={}), ctx)
         assert d.action == DecisionAction.DENY
         assert "death_switch" in d.reason
 
-    def test_readonly_allows_read_tools(
-        self, engine: PolicyEngineV2, ctx: PolicyContext
-    ) -> None:
+    def test_readonly_allows_read_tools(self, engine: PolicyEngineV2, ctx: PolicyContext) -> None:
         get_death_switch_tracker().reset()
         ask_ctx = PolicyContext(
             session_id="t",
@@ -539,18 +511,14 @@ class TestEngineStep10DeathSwitch:
             is_owner=True,
         )
         for _ in range(3):
-            engine.evaluate_tool_call(
-                ToolCallEvent(tool="deny_me", params={}), ask_ctx
-            )
+            engine.evaluate_tool_call(ToolCallEvent(tool="deny_me", params={}), ask_ctx)
         # read_file is READONLY_GLOBAL/SCOPED → should still ALLOW
         d = engine.evaluate_tool_call(
             ToolCallEvent(tool="read_file", params={"path": "README.md"}), ctx
         )
         assert d.action != DecisionAction.DENY  # ALLOW or CONFIRM, not DENY
 
-    def test_disabled_does_not_trigger(
-        self, engine: PolicyEngineV2, ctx: PolicyContext
-    ) -> None:
+    def test_disabled_does_not_trigger(self, engine: PolicyEngineV2, ctx: PolicyContext) -> None:
         engine._config.death_switch.enabled = False
         ask_ctx = PolicyContext(
             session_id="t",
@@ -560,9 +528,7 @@ class TestEngineStep10DeathSwitch:
             is_owner=True,
         )
         for _ in range(10):
-            engine.evaluate_tool_call(
-                ToolCallEvent(tool="deny_me", params={}), ask_ctx
-            )
+            engine.evaluate_tool_call(ToolCallEvent(tool="deny_me", params={}), ask_ctx)
         assert get_death_switch_tracker().is_readonly_mode() is False
 
     def test_count_in_death_switch_false_skips_counting(
@@ -577,9 +543,7 @@ class TestEngineStep10DeathSwitch:
             is_owner=True,
         )
         for _ in range(10):
-            engine.evaluate_tool_call(
-                ToolCallEvent(tool="deny_me", params={}), ask_ctx
-            )
+            engine.evaluate_tool_call(ToolCallEvent(tool="deny_me", params={}), ask_ctx)
         # Tracker untouched
         assert get_death_switch_tracker().is_readonly_mode() is False
         assert get_death_switch_tracker().stats()["total_denials"] == 0
@@ -591,14 +555,10 @@ class TestEngineStep10DeathSwitch:
 
 
 class TestC8b1Compat:
-    def test_engine_user_allowlist_property_returns_manager(
-        self, engine: PolicyEngineV2
-    ) -> None:
+    def test_engine_user_allowlist_property_returns_manager(self, engine: PolicyEngineV2) -> None:
         assert isinstance(engine.user_allowlist, UserAllowlistManager)
 
-    def test_engine_count_in_death_switch_default_true(
-        self, engine: PolicyEngineV2
-    ) -> None:
+    def test_engine_count_in_death_switch_default_true(self, engine: PolicyEngineV2) -> None:
         assert engine.count_in_death_switch is True
 
     def test_two_engines_share_skill_singleton_but_different_user_managers(
@@ -641,16 +601,12 @@ class TestC8b1PreviewIsolation:
                 return ApprovalClass.DESTRUCTIVE, DecisionSource.EXPLICIT_HANDLER_ATTR
             return None
 
-        clf = ApprovalClassifier(
-            explicit_lookup=_lookup, shell_risk_config=cfg.shell_risk
-        )
+        clf = ApprovalClassifier(explicit_lookup=_lookup, shell_risk_config=cfg.shell_risk)
         # Manually inject the cfg + classifier
         prev = make_preview_engine(cfg)
         prev._classifier = clf
         for _ in range(5):
-            d = prev.evaluate_tool_call(
-                ToolCallEvent(tool="deny_me", params={}), ask_ctx
-            )
+            d = prev.evaluate_tool_call(ToolCallEvent(tool="deny_me", params={}), ask_ctx)
             assert d.action == DecisionAction.DENY
         # Global tracker untouched
         assert get_death_switch_tracker().is_readonly_mode() is False

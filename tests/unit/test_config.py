@@ -32,18 +32,25 @@ class TestLoadEndpointsConfig:
 
     def test_valid_config_loads_endpoints(self, tmp_path):
         config_file = tmp_path / "endpoints.json"
-        config_file.write_text(json.dumps({
-            "endpoints": [{
-                "name": "test-ep",
-                "provider": "openai",
-                "api_type": "openai",
-                "base_url": "https://api.test.com/v1",
-                "api_key": "sk-test",
-                "model": "gpt-4",
-                "priority": 1,
-            }],
-            "settings": {"retry_count": 3},
-        }), encoding="utf-8")
+        config_file.write_text(
+            json.dumps(
+                {
+                    "endpoints": [
+                        {
+                            "name": "test-ep",
+                            "provider": "openai",
+                            "api_type": "openai",
+                            "base_url": "https://api.test.com/v1",
+                            "api_key": "sk-test",
+                            "model": "gpt-4",
+                            "priority": 1,
+                        }
+                    ],
+                    "settings": {"retry_count": 3},
+                }
+            ),
+            encoding="utf-8",
+        )
         endpoints, _, _, settings = load_endpoints_config(config_file)
         assert len(endpoints) == 1
         assert endpoints[0].name == "test-ep"
@@ -52,30 +59,58 @@ class TestLoadEndpointsConfig:
 
     def test_endpoints_sorted_by_priority(self, tmp_path):
         config_file = tmp_path / "endpoints.json"
-        config_file.write_text(json.dumps({
-            "endpoints": [
-                {"name": "low", "provider": "a", "api_type": "openai", "base_url": "https://a.com", "api_key": "k", "model": "m", "priority": 3},
-                {"name": "high", "provider": "b", "api_type": "openai", "base_url": "https://b.com", "api_key": "k", "model": "m", "priority": 1},
-            ],
-        }), encoding="utf-8")
+        config_file.write_text(
+            json.dumps(
+                {
+                    "endpoints": [
+                        {
+                            "name": "low",
+                            "provider": "a",
+                            "api_type": "openai",
+                            "base_url": "https://a.com",
+                            "api_key": "k",
+                            "model": "m",
+                            "priority": 3,
+                        },
+                        {
+                            "name": "high",
+                            "provider": "b",
+                            "api_type": "openai",
+                            "base_url": "https://b.com",
+                            "api_key": "k",
+                            "model": "m",
+                            "priority": 1,
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         endpoints, _, _, _ = load_endpoints_config(config_file)
         assert endpoints[0].name == "high"
         assert endpoints[1].name == "low"
 
     def test_compiler_endpoints_loaded(self, tmp_path):
         config_file = tmp_path / "endpoints.json"
-        config_file.write_text(json.dumps({
-            "endpoints": [],
-            "compiler_endpoints": [{
-                "name": "compiler",
-                "provider": "openai",
-                "api_type": "openai",
-                "base_url": "https://api.test.com/v1",
-                "api_key": "sk-test",
-                "model": "gpt-4o-mini",
-                "priority": 1,
-            }],
-        }), encoding="utf-8")
+        config_file.write_text(
+            json.dumps(
+                {
+                    "endpoints": [],
+                    "compiler_endpoints": [
+                        {
+                            "name": "compiler",
+                            "provider": "openai",
+                            "api_type": "openai",
+                            "base_url": "https://api.test.com/v1",
+                            "api_key": "sk-test",
+                            "model": "gpt-4o-mini",
+                            "priority": 1,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         _, compiler_eps, _, _ = load_endpoints_config(config_file)
         assert len(compiler_eps) == 1
         assert compiler_eps[0].name == "compiler"
@@ -135,17 +170,24 @@ class TestValidateConfig:
 
     def test_validate_valid_config(self, tmp_path):
         config_file = tmp_path / "endpoints.json"
-        config_file.write_text(json.dumps({
-            "endpoints": [{
-                "name": "test",
-                "provider": "openai",
-                "api_type": "openai",
-                "base_url": "https://api.test.com/v1",
-                "api_key": "sk-direct-key",
-                "model": "gpt-4",
-                "priority": 1,
-            }],
-        }), encoding="utf-8")
+        config_file.write_text(
+            json.dumps(
+                {
+                    "endpoints": [
+                        {
+                            "name": "test",
+                            "provider": "openai",
+                            "api_type": "openai",
+                            "base_url": "https://api.test.com/v1",
+                            "api_key": "sk-direct-key",
+                            "model": "gpt-4",
+                            "priority": 1,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         errors = validate_config(config_file)
         # May have warnings about env var, but base_url and api_type are valid
         api_type_errors = [e for e in errors if "api_type" in e]
@@ -153,49 +195,70 @@ class TestValidateConfig:
 
     def test_validate_invalid_api_type(self, tmp_path):
         config_file = tmp_path / "endpoints.json"
-        config_file.write_text(json.dumps({
-            "endpoints": [{
-                "name": "bad",
-                "provider": "custom",
-                "api_type": "grpc",
-                "base_url": "https://api.test.com/v1",
-                "api_key": "sk-test",
-                "model": "m",
-                "priority": 1,
-            }],
-        }), encoding="utf-8")
+        config_file.write_text(
+            json.dumps(
+                {
+                    "endpoints": [
+                        {
+                            "name": "bad",
+                            "provider": "custom",
+                            "api_type": "grpc",
+                            "base_url": "https://api.test.com/v1",
+                            "api_key": "sk-test",
+                            "model": "m",
+                            "priority": 1,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         errors = validate_config(config_file)
         assert any("api_type" in e for e in errors)
 
     def test_validate_invalid_base_url(self, tmp_path):
         config_file = tmp_path / "endpoints.json"
-        config_file.write_text(json.dumps({
-            "endpoints": [{
-                "name": "bad",
-                "provider": "openai",
-                "api_type": "openai",
-                "base_url": "not-a-url",
-                "api_key": "sk-test",
-                "model": "m",
-                "priority": 1,
-            }],
-        }), encoding="utf-8")
+        config_file.write_text(
+            json.dumps(
+                {
+                    "endpoints": [
+                        {
+                            "name": "bad",
+                            "provider": "openai",
+                            "api_type": "openai",
+                            "base_url": "not-a-url",
+                            "api_key": "sk-test",
+                            "model": "m",
+                            "priority": 1,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         errors = validate_config(config_file)
         assert any("base_url" in e for e in errors)
 
     def test_validate_missing_api_key_env(self, tmp_path):
         config_file = tmp_path / "endpoints.json"
-        config_file.write_text(json.dumps({
-            "endpoints": [{
-                "name": "test",
-                "provider": "openai",
-                "api_type": "openai",
-                "base_url": "https://api.test.com/v1",
-                "api_key_env": "NONEXISTENT_KEY_VAR",
-                "model": "m",
-                "priority": 1,
-            }],
-        }), encoding="utf-8")
+        config_file.write_text(
+            json.dumps(
+                {
+                    "endpoints": [
+                        {
+                            "name": "test",
+                            "provider": "openai",
+                            "api_type": "openai",
+                            "base_url": "https://api.test.com/v1",
+                            "api_key_env": "NONEXISTENT_KEY_VAR",
+                            "model": "m",
+                            "priority": 1,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         os.environ.pop("NONEXISTENT_KEY_VAR", None)
         errors = validate_config(config_file)
         assert any("NONEXISTENT_KEY_VAR" in e for e in errors)
@@ -229,13 +292,14 @@ class TestRuntimeConfigConstraints:
         agent = SimpleNamespace(_current_task_monitor=monitor)
         handler = SystemHandler(agent)
 
-        result = handler._set_task_timeout({
-            "progress_timeout_seconds": 0,
-            "hard_timeout_seconds": 0,
-            "reason": "disable for long task",
-        })
+        result = handler._set_task_timeout(
+            {
+                "progress_timeout_seconds": 0,
+                "hard_timeout_seconds": 0,
+                "reason": "disable for long task",
+            }
+        )
 
         assert "✅" in result
         assert monitor.timeout_seconds == 0
         assert monitor.hard_timeout_seconds == 0
-

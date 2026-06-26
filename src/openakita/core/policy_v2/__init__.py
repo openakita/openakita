@@ -57,10 +57,15 @@ from .declared_class_trust import (
     infer_skill_declared_trust,
 )
 from .defaults import (
+    FACTORY_DEFAULT_PROFILE,
+    PROFILE_BUNDLES,
     default_blocked_commands,
     default_controlled_paths,
     default_forbidden_paths,
     default_protected_paths,
+    factory_default_confirmation_mode,
+    factory_default_profile_current,
+    profile_bundle,
 )
 from .engine import PolicyEngineV2, build_engine_from_config
 from .entry_point import (
@@ -298,6 +303,12 @@ __all__ = [
     "default_controlled_paths",
     "default_forbidden_paths",
     "default_protected_paths",
+    # v1.27.13 — factory security profile single source of truth
+    "FACTORY_DEFAULT_PROFILE",
+    "PROFILE_BUNDLES",
+    "factory_default_confirmation_mode",
+    "factory_default_profile_current",
+    "profile_bundle",
     # C8b-3 session allowlist + UI confirm resolution helper
     "SessionAllowlistManager",
     "apply_resolution",

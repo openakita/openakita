@@ -3,12 +3,6 @@ name: word-maker
 description: Guided Word document generation for editable DOCX reports, proposals, minutes, contracts, SOPs, and enterprise templates.
 ---
 
----
-name: word-maker
-description: Create, revise, audit, and export Word documents through the Word Maker plugin.
-risk_class: mutating_scoped
----
-
 # word-maker Skill Card
 
 Use this plugin when the user asks to create, revise, audit, or export a Word
@@ -30,11 +24,13 @@ downloadable editable DOCX.
 1. `word_start_project`
 2. `word_ingest_sources` when files or notes are provided
 3. `word_upload_template` and `word_extract_template_vars` when a template is used
-4. `word_generate_outline`
-5. `word_confirm_outline`
-6. `word_fill_template`
-7. `word_audit`
-8. `word_export`
+4. `word_clarify_requirements` when requirements are vague or incomplete
+5. `word_generate_outline`
+6. `word_confirm_outline`
+7. `word_extract_fields` when a template needs values from sources
+8. `word_fill_template`
+9. `word_audit`
+10. `word_export`
 
 Do not claim a document is generated unless `word_export` returns a real output
 path. Ask the user to confirm missing template fields instead of silently

@@ -210,9 +210,7 @@ class AvatarTaskManager:
         await self._conn.execute(
             "ALTER TABLE figures ADD COLUMN detect_status TEXT NOT NULL DEFAULT 'pending'"
         )
-        await self._conn.execute(
-            "UPDATE figures SET detect_status = 'pass' WHERE detect_pass = 1"
-        )
+        await self._conn.execute("UPDATE figures SET detect_status = 'pass' WHERE detect_pass = 1")
 
     async def _migrate_figures_oss_columns(self) -> None:
         """Add ``figures.oss_url`` / ``figures.oss_key`` if missing.
@@ -498,9 +496,7 @@ class AvatarTaskManager:
         return fig_id
 
     async def get_figure(self, fig_id: str) -> dict[str, Any] | None:
-        async with self._conn.execute(
-            "SELECT * FROM figures WHERE id = ?", (fig_id,)
-        ) as cur:
+        async with self._conn.execute("SELECT * FROM figures WHERE id = ?", (fig_id,)) as cur:
             row = await cur.fetchone()
         return dict(row) if row else None
 
@@ -582,4 +578,3 @@ class AvatarTaskManager:
         ) as cur:
             rows = await cur.fetchall()
         return [(r["id"], r["dashscope_id"], r["dashscope_endpoint"] or "") for r in rows]
-

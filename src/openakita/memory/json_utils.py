@@ -7,9 +7,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-_CONTROL_CHARS_EXCEPT_JSON_WHITESPACE = dict.fromkeys(
-    i for i in range(32) if i not in (9, 10, 13)
-)
+_CONTROL_CHARS_EXCEPT_JSON_WHITESPACE = dict.fromkeys(i for i in range(32) if i not in (9, 10, 13))
 
 
 def coerce_text(value: Any) -> str:
@@ -136,16 +134,15 @@ def _format_plugin_event(value_type: str, data: Any) -> str:
 
     if not isinstance(data, dict):
         detail = coerce_text(data).strip()
-        return f"插件 {plugin_name} {event_label}: {detail}" if detail else f"插件 {plugin_name} {event_label}"
+        return (
+            f"插件 {plugin_name} {event_label}: {detail}"
+            if detail
+            else f"插件 {plugin_name} {event_label}"
+        )
 
     status = data.get("status") or data.get("state") or data.get("phase")
     message = data.get("message") or data.get("title") or data.get("name")
-    identifier = (
-        data.get("task_id")
-        or data.get("group_id")
-        or data.get("id")
-        or data.get("job_id")
-    )
+    identifier = data.get("task_id") or data.get("group_id") or data.get("id") or data.get("job_id")
 
     detail_parts: list[str] = []
     if status:

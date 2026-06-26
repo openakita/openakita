@@ -140,7 +140,10 @@ async def synth_voice(
                 # aiohttp.ClientError) we deliberately catch broadly.
                 last_exc = exc
                 exc_name = type(exc).__name__
-                if exc_name in {"WSServerHandshakeError", "NoAudioReceived"} and attempt < retry_count - 1:
+                if (
+                    exc_name in {"WSServerHandshakeError", "NoAudioReceived"}
+                    and attempt < retry_count - 1
+                ):
                     logger.warning(
                         "edge-tts attempt %d for voice=%s failed: %s — retrying",
                         attempt + 1,

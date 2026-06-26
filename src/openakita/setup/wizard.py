@@ -57,6 +57,17 @@ def _load_providers() -> list[dict]:
     return json.loads(providers_path.read_text(encoding="utf-8"))
 
 
+def _resolve_identity_template(rel_name: str) -> Path | None:
+    """Locate a packaged identity template (e.g. ``SOUL.md.example``).
+
+    Thin wrapper over ``core.identity._resolve_bundled_identity_template`` so
+    wizard-time and runtime template lookup share a single source of truth.
+    """
+    from openakita.core.identity import _resolve_bundled_identity_template
+
+    return _resolve_bundled_identity_template(rel_name)
+
+
 class SetupWizard:
     """交互式安装向导"""
 
@@ -857,12 +868,14 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         # Default settings
         existing_settings = mgr.get_all_config().get("settings", {})
         if not existing_settings:
-            mgr.update_settings({
-                "retry_count": 2,
-                "retry_delay_seconds": 2,
-                "health_check_interval": 60,
-                "fallback_on_error": True,
-            })
+            mgr.update_settings(
+                {
+                    "retry_count": 2,
+                    "retry_delay_seconds": 2,
+                    "health_check_interval": 60,
+                    "fallback_on_error": True,
+                }
+            )
 
         console.print(f"  [green]✓[/green] LLM endpoints saved to {mgr.json_path}")
 
@@ -1394,7 +1407,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             [
                 "",
                 "# ========== Agent Configuration ==========",
-                "AGENT_NAME=OpenAkita",
+                "# Agent 的显示名称由桌面端 Agents 菜单的 Agent Profile 管理，无需在 .env 配置。",
                 f"MAX_ITERATIONS={self.config.get('MAX_ITERATIONS', '300')}  # ReAct 循环最大迭代次数",
                 "AUTO_CONFIRM=false  # 工具调用是否自动确认（无需人工审批）",
                 "SELFCHECK_AUTOFIX=true  # Agent 自检发现问题后是否自动修复",
@@ -1741,31 +1754,52 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         return "\n".join(lines)
 
     def _create_identity_examples(self):
-        """创建 identity 目录下的示例文件"""
+        """Seed identity/SOUL.md by copying from the shipped SOUL.md.example.
+
+        Earlier the wizard wrote a short hardcoded stub that began with
+        ``你是 OpenAkita ...``. That stub bypassed the per-Agent
+        ``{{agent_name}}`` substitution introduced alongside the templated
+        ``SOUL.md.example``: once the stub existed on disk, the runtime
+        ``Identity._sync_identity_file`` saw a file present, recorded its
+        hash, and never replaced it with the templated example. Every Agent
+        profile then read back ``OpenAkita`` from the stub regardless of
+        what the user had named the profile in the Agents manager.
+
+        The wizard now resolves the bundled ``SOUL.md.example`` (either in
+        the repo checkout under dev install, or under the installed
+        ``openakita`` package directory for wheel installs - see the
+        ``[tool.hatch.build.targets.wheel.force-include]`` entries that
+        ship the identity templates into the wheel) and copies it
+        verbatim. If neither location is available - e.g. running from a
+        loose source tarball that is neither a dev checkout nor an
+        installed wheel - we deliberately leave ``SOUL.md`` unwritten
+        rather than seeding a hardcoded brand name. In that fallback
+        case the prompt builder reaches into
+        ``_STATIC_FALLBACKS['identity_core']`` (compiler.py), which
+        itself uses the ``{{agent_name}}`` placeholder, so chat
+        self-introduction still respects per-Agent naming even without
+        a populated ``SOUL.md``.
+        """
         identity_dir = self.project_dir / "identity"
         identity_dir.mkdir(exist_ok=True)
 
-        # SOUL.md - Agent 的核心身份
-        soul_example = identity_dir / "SOUL.md"
-        if not soul_example.exists():
-            soul_example.write_text(
-                """# Agent Soul
+        soul_target = identity_dir / "SOUL.md"
+        if soul_target.exists():
+            return
 
-你是 OpenAkita，一个忠诚可靠的 AI 助手。
-
-## 核心特质
-- 永不放弃，持续尝试直到成功
-- 诚实可靠，不会隐瞒问题
-- 主动学习，不断自我改进
-
-## 行为准则
-- 优先考虑用户的真实需求
-- 遇到困难时寻找替代方案
-- 保持简洁清晰的沟通方式
-""",
-                encoding="utf-8",
+        soul_template = _resolve_identity_template("SOUL.md.example")
+        if soul_template is None:
+            console.print(
+                "  [yellow]![/yellow] identity/SOUL.md.example not found; "
+                "skipping seed (runtime will create SOUL.md from the bundled "
+                "template on first agent start)"
             )
-            console.print("  [green]✓[/green] Created identity/SOUL.md")
+            return
+
+        import shutil
+
+        shutil.copy2(soul_template, soul_target)
+        console.print("  [green]✓[/green] Created identity/SOUL.md from SOUL.md.example")
 
     def _check_channel_deps(self):
         """检查并安装已选 IM 通道的可选依赖。"""

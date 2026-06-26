@@ -96,11 +96,13 @@ def _normalize_plan_steps(steps: Any) -> Any:
         content = _first_present(step, "content", "description", "task", "title")
         if not content:
             continue
-        normalized_steps.append({
-            "id": step.get("id") or f"step_{idx}",
-            "content": str(content),
-            "status": step.get("status", "pending"),
-        })
+        normalized_steps.append(
+            {
+                "id": step.get("id") or f"step_{idx}",
+                "content": str(content),
+                "status": step.get("status", "pending"),
+            }
+        )
     return normalized_steps
 
 
@@ -122,7 +124,9 @@ def _normalize_browser_type_input(params: dict[str, Any]) -> dict[str, Any]:
     if not normalized.get("selector"):
         selector = _first_present(normalized, "locator", "css", "query", "target_selector")
         if selector is None:
-            selector = _selector_for_field(_first_present(normalized, "field", "name", "target", "label"))
+            selector = _selector_for_field(
+                _first_present(normalized, "field", "name", "target", "label")
+            )
         if selector is not None:
             normalized["selector"] = selector
 

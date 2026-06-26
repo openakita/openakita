@@ -29,6 +29,7 @@ from ..tools.handlers import SystemHandlerRegistry
 from ..tools.input_normalizer import normalize_tool_input
 from ..tools.tool_hints import ConfigHint, ToolConfigError
 from ..tracing.tracer import get_tracer
+from .abort_scope import AbortScope, current_abort_scope
 from .agent_state import TaskState
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,9 @@ _OVERFLOW_MAX_FILES = 200  # fallback; runtime value comes from settings
 
 def _get_tool_result_max_chars() -> int:
     try:
-        return max(1000, int(getattr(settings, "tool_result_max_chars", DEFAULT_TOOL_RESULT_MAX_CHARS)))
+        return max(
+            1000, int(getattr(settings, "tool_result_max_chars", DEFAULT_TOOL_RESULT_MAX_CHARS))
+        )
     except (TypeError, ValueError):
         return DEFAULT_TOOL_RESULT_MAX_CHARS
 
@@ -505,7 +508,106 @@ class ToolExecutor:
         if grounding_block:
             return grounding_block, None
 
-        return await self._execute_tool_impl(tool_name, tool_input)
+        # v1.28 S3 + S4 (plan: conversation concurrency v1.28).
+        #
+        # S3 — per-tool AbortScope so subprocesses, nested awaits, and
+        #   tool handlers can observe cancel without explicit parameter
+        #   threading.  Parent scope comes from the contextvar (set by
+        #   ReasoningEngine at turn start); if absent we fall back to the
+        #   task's ``abort_root``.
+        # S4 — register the running tool in ``TaskState.in_flight_tools``
+        #   so a sibling chat handler arriving with INTERRUPT policy can
+        #   downgrade to QUEUE when a block-class tool is mid-flight.
+        #   ``execute_tool_with_policy`` (the execute_batch path) wraps
+        #   the same in-flight tracking around ITS body for the
+        #   reasoning_engine code path; both entry points are covered.
+        # FOLLOW-UP-S4-B — when the dispatched tool is ``call_mcp_tool``
+        #   the actual remote tool name lives in ``tool_input["tool_name"]``;
+        #   register the encoded ``mcp:server:sub`` form so the preempt
+        #   resolver can consult MCP annotations per sub-tool instead of
+        #   treating every MCP call as block.
+        #
+        # All teardown happens in the same finally so they pair up
+        # regardless of which arm raised.
+        task = self._resolve_task(session_id)
+        in_flight_name = self._in_flight_name(tool_name, tool_input)
+        if task is not None:
+            task.begin_tool(in_flight_name)
+
+        parent_scope: AbortScope | None = current_abort_scope.get()
+        if parent_scope is None and task is not None:
+            parent_scope = getattr(task, "abort_root", None)
+
+        tool_scope: AbortScope | None = None
+        scope_token = None
+        if parent_scope is not None:
+            tool_scope = parent_scope.create_child(f"tool:{tool_name}")
+            scope_token = current_abort_scope.set(tool_scope)
+        try:
+            return await self._execute_tool_impl(tool_name, tool_input, session_id=session_id)
+        finally:
+            if scope_token is not None:
+                try:
+                    current_abort_scope.reset(scope_token)
+                except (LookupError, ValueError):
+                    # Task boundary differences can make reset fail; safe to ignore.
+                    pass
+            if tool_scope is not None and parent_scope is not None:
+                parent_scope.remove_child(tool_scope)
+            if task is not None:
+                task.end_tool(in_flight_name)
+
+    @staticmethod
+    def _in_flight_name(tool_name: str, tool_input: dict | None) -> str:
+        """Encode the in-flight tracking name for a tool dispatch.
+
+        For ``call_mcp_tool`` we extract the remote ``server`` /
+        ``tool_name`` from ``tool_input`` and return
+        ``mcp:server:sub_tool`` so the preempt resolver can look up the
+        real tool's MCP annotations.  For everything else we return the
+        canonical tool name unchanged.  Missing / malformed inputs fall
+        back to ``"call_mcp_tool"`` so the static-map default applies.
+        """
+        if tool_name != "call_mcp_tool" or not isinstance(tool_input, dict):
+            return tool_name
+        from .tool_interrupt_behavior import encode_mcp_sub_tool
+
+        server = tool_input.get("server") or ""
+        sub_tool_name = tool_input.get("tool_name") or ""
+        return encode_mcp_sub_tool(str(server), str(sub_tool_name))
+
+    def _resolve_task(self, session_id: str | None) -> Any | None:
+        """Look up the active TaskState for the given session_id.
+
+        Shared by S3 (AbortScope lookup) and S4 (in_flight_tools tracking).
+        Returns ``None`` when there's no agent state attached (CLI direct
+        execution, scheduler-spawned tasks, unit tests) — callers should
+        handle that gracefully and run without per-task tracking.
+        """
+        agent = self._agent_ref
+        if agent is None:
+            return None
+        state = getattr(agent, "agent_state", None)
+        if state is None:
+            return None
+        try:
+            if session_id:
+                t = state.get_task_for_session(session_id)
+                if t is not None:
+                    return t
+            return state.current_task
+        except Exception:
+            return None
+
+    def _resolve_parent_scope(self, session_id: str | None) -> AbortScope | None:
+        """Legacy helper retained for callers that only need the abort scope
+        (not the task).  Internally delegates to :meth:`_resolve_task`.
+        Returns ``None`` if no active task — execute_tool then runs without
+        scope tracking (still works; just loses sub-tool fan-out)."""
+        task = self._resolve_task(session_id)
+        if task is None:
+            return None
+        return getattr(task, "abort_root", None)
 
     async def _dispatch_hook(self, hook_name: str, **kwargs) -> None:
         """Fire a plugin hook if a HookRegistry is attached. Never raises.
@@ -524,9 +626,7 @@ class ToolExecutor:
         except Exception as e:
             logger.debug(f"[ToolExecutor] {hook_name} hook error (ignored): {e}")
 
-    async def _dispatch_before_tool_use_hook(
-        self, *, tool_name: str, tool_input: Any
-    ) -> None:
+    async def _dispatch_before_tool_use_hook(self, *, tool_name: str, tool_input: Any) -> None:
         """C10：on_before_tool_use 专用 dispatch + R2-12 强制审计。
 
         步骤：
@@ -551,13 +651,9 @@ class ToolExecutor:
         before_snapshot = auditor.snapshot(tool_input)
 
         try:
-            await hooks.dispatch(
-                "on_before_tool_use", tool_name=tool_name, tool_input=tool_input
-            )
+            await hooks.dispatch("on_before_tool_use", tool_name=tool_name, tool_input=tool_input)
         except Exception as e:
-            logger.debug(
-                f"[ToolExecutor] on_before_tool_use hook error (ignored): {e}"
-            )
+            logger.debug(f"[ToolExecutor] on_before_tool_use hook error (ignored): {e}")
 
         if not isinstance(tool_input, dict):
             # Hook 不会原地改非 dict，diff 没意义
@@ -576,11 +672,10 @@ class ToolExecutor:
             )
 
         plugin_manager = getattr(self, "_plugin_manager", None)
-        if plugin_manager is not None and hasattr(
-            plugin_manager, "plugin_allows_param_mutation"
-        ):
+        if plugin_manager is not None and hasattr(plugin_manager, "plugin_allows_param_mutation"):
             is_authorized = plugin_manager.plugin_allows_param_mutation
         else:
+
             def is_authorized(_plugin_id: str, _tool: str) -> bool:
                 return False
 
@@ -641,6 +736,8 @@ class ToolExecutor:
         self,
         tool_name: str,
         tool_input: dict,
+        *,
+        session_id: str | None = None,
     ) -> ToolResultWithHint:
         """Execute a tool after todo / permission gates have been handled.
 
@@ -648,6 +745,12 @@ class ToolExecutor:
         raised :class:`ToolConfigError` — that's the central catch site.
         Other error paths (``ToolError`` / generic ``Exception``) return
         ``(error_text, None)``.
+
+        ``session_id`` flows through as informational — the in-flight
+        tool tracking lives in the two public entry points
+        (:meth:`execute_tool` and :meth:`execute_tool_with_policy`) so
+        special pre-execution paths (sandbox, todo gate, grounding gate)
+        get tracked correctly too.
         """
         logger.info(f"Executing tool: {tool_name} with {tool_input}")
 
@@ -662,9 +765,7 @@ class ToolExecutor:
             )
             return err_msg, None
 
-        await self._dispatch_hook(
-            "on_before_tool_use", tool_name=tool_name, tool_input=tool_input
-        )
+        await self._dispatch_hook("on_before_tool_use", tool_name=tool_name, tool_input=tool_input)
 
         # 导入日志缓存
         from ..logging import get_session_log_buffer
@@ -740,7 +841,10 @@ class ToolExecutor:
                 # can't learn to mimic UI markers in its own outputs.
                 logger.info(
                     "[ToolExecutor] %s raised ToolConfigError(scope=%s, code=%s): %s",
-                    tool_name, e.hint.scope, e.hint.error_code, e.hint.title,
+                    tool_name,
+                    e.hint.scope,
+                    e.hint.error_code,
+                    e.hint.title,
                 )
                 span.set_attribute("config_hint_scope", e.hint.scope)
                 span.set_attribute("config_hint_code", e.hint.error_code)
@@ -864,7 +968,57 @@ class ToolExecutor:
         return paths (todo gate / grounding gate / sandbox) return
         ``(text, None)`` because they don't carry user-correctable config
         signals.
+
+        v1.28.2 hotfix (FIX-S4-1): in-flight tracking + per-tool
+        AbortScope live at this entry point AND at :meth:`execute_tool` —
+        wrapping ``_execute_tool_impl`` alone would miss the sandbox /
+        todo-gate / grounding-gate early returns that exit before the
+        impl is reached, and the original S3/S4 wiring only at
+        ``execute_tool`` was bypassed by the ``execute_batch`` path.
+
+        FOLLOW-UP-S4-B: ``call_mcp_tool`` dispatches register an encoded
+        sub-tool reference (``mcp:server:tool_name``) so the preempt
+        resolver can consult MCP annotations per sub-tool.
         """
+        task = self._resolve_task(session_id)
+        in_flight_name = self._in_flight_name(tool_name, tool_input)
+        if task is not None:
+            task.begin_tool(in_flight_name)
+
+        parent_scope: AbortScope | None = current_abort_scope.get()
+        if parent_scope is None and task is not None:
+            parent_scope = getattr(task, "abort_root", None)
+
+        tool_scope: AbortScope | None = None
+        scope_token = None
+        if parent_scope is not None:
+            tool_scope = parent_scope.create_child(f"tool:{tool_name}")
+            scope_token = current_abort_scope.set(tool_scope)
+        try:
+            return await self._execute_tool_with_policy_inner(
+                tool_name, tool_input, policy_result, session_id=session_id
+            )
+        finally:
+            if scope_token is not None:
+                try:
+                    current_abort_scope.reset(scope_token)
+                except (LookupError, ValueError):
+                    pass
+            if tool_scope is not None and parent_scope is not None:
+                parent_scope.remove_child(tool_scope)
+            if task is not None:
+                task.end_tool(in_flight_name)
+
+    async def _execute_tool_with_policy_inner(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        policy_result: Any,
+        *,
+        session_id: str | None = None,
+    ) -> ToolResultWithHint:
+        """Real body of :meth:`execute_tool_with_policy`; the public method
+        is a thin in-flight-tracking wrapper around this inner."""
         _policy_action = getattr(policy_result, "action", "")
         if str(getattr(_policy_action, "value", _policy_action)) == "defer":
             from .policy_v2.exceptions import DeferredApprovalRequired
@@ -927,7 +1081,7 @@ class ToolExecutor:
                 sandbox_output += f"stderr:\n{sb_result.stderr}\n"
             return self._guard_truncate(tool_name, sandbox_output), None
 
-        return await self._execute_tool_impl(tool_name, tool_input)
+        return await self._execute_tool_impl(tool_name, tool_input, session_id=session_id)
 
     async def execute_batch(
         self,
@@ -1040,6 +1194,7 @@ class ToolExecutor:
                     if state_task_id is None:
                         try:
                             from ..scheduler.locks import get_current_scheduled_task_id
+
                             state_task_id = get_current_scheduled_task_id()
                         except Exception:
                             state_task_id = None
@@ -1219,7 +1374,8 @@ class ToolExecutor:
                     # after the type sweep), accept the raw value as text.
                     logger.warning(
                         "[ToolExecutor] %s returned non-tuple result: %r",
-                        tool_name, type(result).__name__,
+                        tool_name,
+                        type(result).__name__,
                     )
                     result_content = result
                     hint = None
@@ -1263,7 +1419,8 @@ class ToolExecutor:
                 # 三者都算 TaskVerify 眼里的有效交付证据。
                 if (
                     capture_delivery_receipts
-                    and tool_name in (
+                    and tool_name
+                    in (
                         "deliver_artifacts",
                         "org_submit_deliverable",
                         "org_accept_deliverable",
@@ -1676,9 +1833,7 @@ class ToolExecutor:
                     try:
                         ac = _registry.get_tool_class(tool_name)
                         if ac is not None:
-                            approval_class_str = (
-                                ac.value if hasattr(ac, "value") else str(ac)
-                            )
+                            approval_class_str = ac.value if hasattr(ac, "value") else str(ac)
                     except Exception:
                         # Unknown / dynamic tool → preview just says "unknown".
                         # UI renders that with a neutral badge; engine still
@@ -1770,16 +1925,12 @@ class ToolExecutor:
             return {
                 "type": "tool_result",
                 "tool_use_id": tool_use_id,
-                "content": (
-                    "⚠️ 无人值守审批写入失败，工具调用已拒绝以保护安全。"
-                    f"详情: {exc}"
-                ),
+                "content": (f"⚠️ 无人值守审批写入失败，工具调用已拒绝以保护安全。详情: {exc}"),
                 "is_error": True,
             }
 
         logger.info(
-            "[ToolExec] Created pending_approval %s for %s "
-            "(strategy=%s, session=%s, task=%s)",
+            "[ToolExec] Created pending_approval %s for %s (strategy=%s, session=%s, task=%s)",
             entry.id,
             tool_name,
             unattended_strategy,

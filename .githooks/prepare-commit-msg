@@ -1,0 +1,48 @@
+#!/bin/sh
+# prepare-commit-msg
+#
+# Strip AI co-author trailers that some AI coding tools (notably Cursor's
+# Shell-tool wrapper and Cursor Cloud Agent) append automatically to every
+# commit message.
+#
+# The project prefers a git history without AI-tool-injected co-author
+# lines — the canonical attribution is the contributor's `git config`
+# author/committer, not the assisting tool. This hook is the local safety
+# net that runs *after* any tool wrapper has assembled the commit message
+# but *before* the commit object is written, catching the case where a
+# contributor either forgot to disable Cursor's `Commit Attribution`
+# setting, is using Cursor Cloud Agent (no opt-out as of this writing),
+# or is on a Cursor Enterprise plan that forces the trailer on.
+#
+# This hook is shipped in `.githooks/` rather than `.git/hooks/` because git
+# does not version-control `.git/hooks/`. To activate it, run once per clone:
+#
+#     git config core.hooksPath .githooks
+#
+# See `.githooks/README.md` for details.
+#
+# The hook is intentionally minimal: it removes any line that contains an
+# AI co-author email pattern. It does not touch any other line. The
+# original commit message file is rewritten in place.
+
+msg_file="$1"
+
+# Lines stripped:
+#   Co-authored-by: Cursor <cursoragent@cursor.com>
+#   Made-with: Cursor
+#
+# Both patterns are anchored at the start of the line so that text in the
+# commit body that *quotes* a trailer as an example (e.g. when explaining
+# why this hook exists) is left untouched. Only real trailer lines, which
+# must by convention live at column 0, get removed.
+#
+# We use a portable sed invocation that works on Linux, macOS (BSD sed),
+# and Git for Windows. BSD sed (macOS) needs an empty string after -i;
+# GNU sed does not. Detect and dispatch accordingly.
+if sed --version >/dev/null 2>&1; then
+    # GNU sed
+    sed -i -E '/^Co-authored-by:.*cursoragent@cursor\.com/d;/^Made-with: Cursor/d' "$msg_file"
+else
+    # BSD sed (macOS)
+    sed -i '' -E '/^Co-authored-by:.*cursoragent@cursor\.com/d;/^Made-with: Cursor/d' "$msg_file"
+fi

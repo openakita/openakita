@@ -91,39 +91,49 @@ def _build_content(args) -> list[dict]:
         role = "first_frame"
         if getattr(args, "image_role", None):
             role = args.image_role
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": _file_to_data_url(args.image)},
-            "role": role,
-        })
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": _file_to_data_url(args.image)},
+                "role": role,
+            }
+        )
 
     if args.last_frame:
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": _file_to_data_url(args.last_frame)},
-            "role": "last_frame",
-        })
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": _file_to_data_url(args.last_frame)},
+                "role": "last_frame",
+            }
+        )
 
-    for img in (args.ref_images or []):
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": _file_to_data_url(img)},
-            "role": "reference_image",
-        })
+    for img in args.ref_images or []:
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": _file_to_data_url(img)},
+                "role": "reference_image",
+            }
+        )
 
-    for vid in (args.ref_videos or []):
-        content.append({
-            "type": "video_url",
-            "video_url": {"url": vid},
-            "role": "reference_video",
-        })
+    for vid in args.ref_videos or []:
+        content.append(
+            {
+                "type": "video_url",
+                "video_url": {"url": vid},
+                "role": "reference_video",
+            }
+        )
 
-    for aud in (args.ref_audios or []):
-        content.append({
-            "type": "audio_url",
-            "audio_url": {"url": aud},
-            "role": "reference_audio",
-        })
+    for aud in args.ref_audios or []:
+        content.append(
+            {
+                "type": "audio_url",
+                "audio_url": {"url": aud},
+                "role": "reference_audio",
+            }
+        )
 
     return content
 
@@ -328,10 +338,12 @@ def cmd_chain(args) -> None:
         print(f"\n===== CHAIN [{idx + 1}/{len(prompts)}] =====")
         content: list[dict] = [{"type": "text", "text": prompt}]
         if image_url:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": image_url},
-            })
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_url},
+                }
+            )
 
         payload: dict = {
             "model": args.model or ARK_DEFAULT_MODEL,
@@ -412,21 +424,25 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--prompt", "-p", help="Text prompt")
     c.add_argument("--image", "-i", help="First-frame / reference image (URL or local path)")
     c.add_argument(
-        "--image-role", choices=["first_frame", "reference_image"],
+        "--image-role",
+        choices=["first_frame", "reference_image"],
         default="first_frame",
         help="Role for --image (default: first_frame)",
     )
     c.add_argument("--last-frame", help="Last-frame image (URL or local path)")
     c.add_argument(
-        "--ref-images", nargs="+",
+        "--ref-images",
+        nargs="+",
         help="Reference images with role=reference_image (1-9, Seedance 2.0)",
     )
     c.add_argument(
-        "--ref-videos", nargs="+",
+        "--ref-videos",
+        nargs="+",
         help="Reference video URLs (0-3, Seedance 2.0)",
     )
     c.add_argument(
-        "--ref-audios", nargs="+",
+        "--ref-audios",
+        nargs="+",
         help="Reference audio URLs (0-3, Seedance 2.0)",
     )
     c.add_argument("--model", "-m", choices=ARK_MODELS, help="Model ID")
@@ -437,22 +453,24 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--camera-fixed", action="store_true", help="Lock camera")
     c.add_argument("--watermark", action="store_true", help="Add watermark")
     c.add_argument(
-        "--generate-audio", type=_str_to_bool, default=None, metavar="BOOL",
+        "--generate-audio",
+        type=_str_to_bool,
+        default=None,
+        metavar="BOOL",
         help="Generate audio (true/false)",
     )
     c.add_argument("--draft", action="store_true", help="Draft / low-cost preview mode")
     c.add_argument("--return-last-frame", action="store_true", help="Return the last frame image")
     c.add_argument("--web-search", action="store_true", help="Enable web search (2.0 text mode)")
     c.add_argument(
-        "--service-tier", choices=["default", "flex"],
+        "--service-tier",
+        choices=["default", "flex"],
         help="Service tier: default (online) or flex (offline, 50%% cost)",
     )
     c.add_argument("--expires", type=int, help="Offline task timeout in seconds (default 172800)")
     c.add_argument("--callback-url", help="Webhook URL for task status notifications")
     c.add_argument("--wait", "-w", action="store_true", help="Wait for task completion")
-    c.add_argument(
-        "--interval", type=int, default=15, help="Poll interval in seconds (default 15)"
-    )
+    c.add_argument("--interval", type=int, default=15, help="Poll interval in seconds (default 15)")
     c.add_argument("--download", metavar="DIR", help="Download directory")
 
     # ---- status ----
@@ -483,7 +501,10 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("--duration", "-d", type=int, default=5, help="Duration per segment")
     ch.add_argument("--resolution", "-r", choices=RESOLUTIONS, default="720p")
     ch.add_argument(
-        "--generate-audio", type=_str_to_bool, default=None, metavar="BOOL",
+        "--generate-audio",
+        type=_str_to_bool,
+        default=None,
+        metavar="BOOL",
     )
     ch.add_argument("--interval", type=int, default=30, help="Poll interval (default 30)")
     ch.add_argument("--download", metavar="DIR", help="Download directory")
@@ -521,4 +542,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

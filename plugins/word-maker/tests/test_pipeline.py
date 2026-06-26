@@ -20,7 +20,12 @@ async def test_pipeline_generates_docx_without_template(tmp_path: Path) -> None:
             outline={
                 "title": "调研报告",
                 "sections": [
-                    {"id": "background", "title": "背景", "goal": "说明背景", "bullets": ["目标明确"]}
+                    {
+                        "id": "background",
+                        "title": "背景",
+                        "goal": "说明背景",
+                        "bullets": ["目标明确"],
+                    }
                 ],
             },
         )
@@ -76,4 +81,3 @@ def test_build_ppt_asset_metadata() -> None:
     assert metadata["project_id"] == "doc_1"
     assert metadata["handoff_version"] == 1
     assert metadata["export_docx_path"] == "out.docx"
-

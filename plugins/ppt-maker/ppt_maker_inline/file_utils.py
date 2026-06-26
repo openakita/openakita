@@ -93,4 +93,3 @@ def dataset_dir(data_root: str | Path, dataset_id: str) -> Path:
 
 def template_dir(data_root: str | Path, template_id: str) -> Path:
     return ensure_dir(Path(data_root) / "templates" / safe_name(template_id))
-

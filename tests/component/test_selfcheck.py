@@ -132,4 +132,3 @@ class TestSelfCheckResilience:
         assert report.partial is True
         assert "时间预算" in report.status_note
         assert (tmp_path / "data" / "selfcheck" / f"{report.date}_report.json").exists()
-

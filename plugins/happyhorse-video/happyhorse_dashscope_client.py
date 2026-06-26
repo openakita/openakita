@@ -169,12 +169,7 @@ def _classify_dashscope_body(body: Any, fallback_kind: str) -> str:
         return fallback_kind
     code = str(body.get("code") or body.get("error_code") or "").lower()
     msg = str(body.get("message") or body.get("error_message") or "").lower()
-    if (
-        "quota" in code
-        or "balance" in code
-        or "insufficient" in msg
-        or "balance" in msg
-    ):
+    if "quota" in code or "balance" in code or "insufficient" in msg or "balance" in msg:
         return ERROR_KIND_QUOTA
     if (
         "humanoid" in msg
@@ -318,7 +313,8 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         # blank, keep the historical behaviour: any configured relay wins.
         relay_base_url = str(merged.get("relay_base_url") or "").strip().rstrip("/")
         use_relay = request_channel == "relay" or (
-            request_channel == "" and bool(relay_base_url or str(merged.get("relay_endpoint") or "").strip())
+            request_channel == ""
+            and bool(relay_base_url or str(merged.get("relay_endpoint") or "").strip())
         )
         if relay_base_url and use_relay:
             merged["base_url"] = relay_base_url
@@ -830,8 +826,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 )
             if len(refs) > 9:
                 raise VendorError(
-                    f"model {model_id!r} accepts at most 9 reference "
-                    f"images (got {len(refs)})",
+                    f"model {model_id!r} accepts at most 9 reference images (got {len(refs)})",
                     status=422,
                     retryable=False,
                     kind=ERROR_KIND_CLIENT,
@@ -863,8 +858,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             # driving_audio_url) is not part of this model's spec.
             if not source_video_url:
                 raise VendorError(
-                    f"model {model_id!r} requires source_video_url "
-                    "(the video to edit) — got empty",
+                    f"model {model_id!r} requires source_video_url (the video to edit) — got empty",
                     status=422,
                     retryable=False,
                     kind=ERROR_KIND_CLIENT,
@@ -886,8 +880,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             refs = list(reference_urls or [])
             if len(refs) > 5:
                 raise VendorError(
-                    f"model {model_id!r} accepts at most 5 reference "
-                    f"images (got {len(refs)})",
+                    f"model {model_id!r} accepts at most 5 reference images (got {len(refs)})",
                     status=422,
                     retryable=False,
                     kind=ERROR_KIND_CLIENT,
@@ -949,8 +942,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         humanoid = bool(out.get("humanoid") or out.get("is_human"))
         if not (check_pass and humanoid):
             raise VendorError(
-                f"face-detect rejected the input "
-                f"(check_pass={check_pass}, humanoid={humanoid})",
+                f"face-detect rejected the input (check_pass={check_pass}, humanoid={humanoid})",
                 status=200,
                 body=out,
                 retryable=False,
@@ -1217,7 +1209,11 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             params["x_scale"] = float(x_scale)
         if y_scale is not None:
             params["y_scale"] = float(y_scale)
-        body = {"model": "image-out-painting", "input": {"image_url": image_url}, "parameters": params}
+        body = {
+            "model": "image-out-painting",
+            "input": {"image_url": image_url},
+            "parameters": params,
+        }
         return await self._submit_async(PATH_OUTPAINT, body)
 
     async def submit_sketch_to_image(
@@ -1519,8 +1515,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
 
         if resp.status_code in (401, 403):
             raise VendorError(
-                f"cosyvoice-v2 HTTP {resp.status_code}: API Key 被拒绝 "
-                f"({resp.text[:200]})",
+                f"cosyvoice-v2 HTTP {resp.status_code}: API Key 被拒绝 ({resp.text[:200]})",
                 status=resp.status_code,
                 retryable=False,
                 kind=ERROR_KIND_AUTH,
@@ -1598,8 +1593,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             from dashscope.audio.tts_v2 import VoiceEnrollmentService
         except ImportError as e:
             raise VendorError(
-                "未安装 cosyvoice-v2 所需的 dashscope SDK；"
-                "请在 Settings → Python 依赖 中一键安装",
+                "未安装 cosyvoice-v2 所需的 dashscope SDK；请在 Settings → Python 依赖 中一键安装",
                 status=500,
                 retryable=False,
                 kind=ERROR_KIND_DEPENDENCY,
@@ -1704,9 +1698,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             msg = self._coerce_dict(choices[0].get("message"))
             content = msg.get("content")
             if isinstance(content, list):
-                text_chunks = [
-                    str(c.get("text", "")) for c in content if isinstance(c, dict)
-                ]
+                text_chunks = [str(c.get("text", "")) for c in content if isinstance(c, dict)]
             elif isinstance(content, str):
                 text_chunks = [content]
         text = "\n".join(s for s in text_chunks if s)

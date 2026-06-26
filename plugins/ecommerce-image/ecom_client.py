@@ -73,6 +73,7 @@ class EcomClient:
         )
         self._base_url = new_base
         import asyncio
+
         try:
             loop = asyncio.get_event_loop()
             loop.create_task(old_client.aclose())
@@ -192,7 +193,11 @@ class EcomClient:
         return size
 
     async def _generate_background(
-        self, model: str, prompt: str, images: dict | None = None, **kwargs: Any,
+        self,
+        model: str,
+        prompt: str,
+        images: dict | None = None,
+        **kwargs: Any,
     ) -> dict:
         body: dict[str, Any] = {
             "model": model or "wanx-background-generation-v2",

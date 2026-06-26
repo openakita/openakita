@@ -60,9 +60,7 @@ class TranscriptResult:
 class AsrError(Exception):
     """ASR / analysis failure."""
 
-    def __init__(
-        self, message: str, *, retryable: bool = False, kind: str = "unknown"
-    ) -> None:
+    def __init__(self, message: str, *, retryable: bool = False, kind: str = "unknown") -> None:
         super().__init__(message)
         self.retryable = retryable
         self.kind = kind
@@ -116,6 +114,7 @@ class ClipAsrClient:
     async def _ensure_client(self) -> Any:
         if self._client is None:
             import httpx
+
             self._client = httpx.AsyncClient(timeout=self._timeout)
         return self._client
 
@@ -162,9 +161,7 @@ class ClipAsrClient:
     # Paraformer transcription (P0-1, P0-2, P0-3)
     # ------------------------------------------------------------------
 
-    async def transcribe(
-        self, source_url: str, *, language: str = "auto"
-    ) -> TranscriptResult:
+    async def transcribe(self, source_url: str, *, language: str = "auto") -> TranscriptResult:
         """Submit Paraformer-v2 transcription, poll, return sentences.
 
         Args:
@@ -204,7 +201,8 @@ class ClipAsrClient:
         except httpx.HTTPError as exc:
             raise AsrError(
                 f"Paraformer submit network error: {exc}",
-                retryable=True, kind="network",
+                retryable=True,
+                kind="network",
             ) from exc
 
         if resp.status_code >= 400:
@@ -248,12 +246,7 @@ class ClipAsrClient:
             status = _normalize_paraformer_task_status(raw_status)
             if status in _TERMINAL_STATES:
                 if status != "SUCCEEDED":
-                    msg = (
-                        out.get("message")
-                        or out.get("msg")
-                        or out.get("detail")
-                        or ""
-                    )
+                    msg = out.get("message") or out.get("msg") or out.get("detail") or ""
                     code = out.get("code") or data.get("code") or ""
                     if not msg and out:
                         try:
@@ -268,7 +261,9 @@ class ClipAsrClient:
                     parts.append(f"task_id={task_id}")
                     logger.warning(
                         "Paraformer terminal status=%s task_id=%s body=%s",
-                        status, task_id, json.dumps(data, ensure_ascii=False)[:1200],
+                        status,
+                        task_id,
+                        json.dumps(data, ensure_ascii=False)[:1200],
                     )
                     code_s = str(code).strip().upper()
                     msg_s = str(msg).strip().upper()
@@ -288,7 +283,8 @@ class ClipAsrClient:
         else:
             raise AsrError(
                 f"Paraformer task {task_id} timed out after {self._poll_max_seconds}s",
-                retryable=True, kind="timeout",
+                retryable=True,
+                kind="timeout",
             )
 
         results = (data.get("output") or {}).get("results") or []
@@ -311,7 +307,8 @@ class ClipAsrClient:
         except httpx.HTTPError as exc:
             raise AsrError(
                 f"Paraformer transcript download error: {exc}",
-                retryable=True, kind="network",
+                retryable=True,
+                kind="network",
             ) from exc
 
         sentences = _flatten_sentences(transcript)
@@ -348,7 +345,9 @@ class ClipAsrClient:
         if flavor:
             prompt += f"选段偏好：{flavor}\n"
         if total_duration_sec > 0:
-            prompt += f"视频总时长：{total_duration_sec:.0f}秒，请确保选段在视频前、中、后部均有分布。\n"
+            prompt += (
+                f"视频总时长：{total_duration_sec:.0f}秒，请确保选段在视频前、中、后部均有分布。\n"
+            )
         prompt += (
             "\n转写文本（每句带时间戳）：\n"
             + _format_sentences_for_prompt(sentences)
@@ -429,10 +428,12 @@ class ClipAsrClient:
         for attempt in range(max_retries + 1):
             messages = [{"role": "user", "content": prompt}]
             if last_feedback:
-                messages.append({
-                    "role": "user",
-                    "content": f"**IMPORTANT - PREVIOUS ATTEMPT FAILED:** {last_feedback}\n请只返回合法的 JSON。",
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": f"**IMPORTANT - PREVIOUS ATTEMPT FAILED:** {last_feedback}\n请只返回合法的 JSON。",
+                    }
+                )
 
             body = {
                 "model": self._qwen_model,
@@ -441,12 +442,10 @@ class ClipAsrClient:
             }
 
             try:
-                resp = await client.post(
-                    url, headers=self._analysis_auth_headers(), json=body
-                )
+                resp = await client.post(url, headers=self._analysis_auth_headers(), json=body)
             except httpx.HTTPError as exc:
                 if attempt < max_retries:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
                     continue
                 raise AsrError(
                     f"Qwen network error: {exc}", retryable=True, kind="network"
@@ -454,7 +453,7 @@ class ClipAsrClient:
 
             if resp.status_code >= 400:
                 if attempt < max_retries and resp.status_code in (429, 500, 502, 503, 504):
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
                     continue
                 kind = "auth" if resp.status_code in (401, 403) else "network"
                 raise AsrError(
@@ -463,23 +462,19 @@ class ClipAsrClient:
                 )
 
             data = resp.json()
-            content = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-            )
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
             errors: list[str] = []
-            result = parse_llm_json(
-                content, fallback=None, expect=expect_type, errors=errors
-            )
+            result = parse_llm_json(content, fallback=None, expect=expect_type, errors=errors)
             if result is not None:
                 return result
 
             last_feedback = "; ".join(errors[:3])
             logger.warning(
                 "Qwen JSON parse failed (attempt %d/%d): %s",
-                attempt + 1, max_retries + 1, last_feedback,
+                attempt + 1,
+                max_retries + 1,
+                last_feedback,
             )
 
         logger.error("Qwen analysis exhausted all retries, returning fallback")
@@ -509,28 +504,25 @@ class ClipAsrClient:
         for attempt in range(max_retries + 1):
             user = prompt
             if last_feedback:
-                user += (
-                    "\n\n上一次输出无法解析，错误："
-                    f"{last_feedback}\n请只返回合法 JSON。"
-                )
+                user += f"\n\n上一次输出无法解析，错误：{last_feedback}\n请只返回合法 JSON。"
             try:
                 content = await _call_host_brain(brain, system=system, prompt=user)
             except Exception as exc:
                 if attempt < max_retries:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
                     continue
                 raise AsrError(f"Host LLM analysis error: {exc}", kind="unknown") from exc
 
             errors: list[str] = []
-            result = parse_llm_json(
-                content, fallback=None, expect=expect_type, errors=errors
-            )
+            result = parse_llm_json(content, fallback=None, expect=expect_type, errors=errors)
             if result is not None:
                 return result
             last_feedback = "; ".join(errors[:3])
             logger.warning(
                 "Host LLM JSON parse failed (attempt %d/%d): %s",
-                attempt + 1, max_retries + 1, last_feedback,
+                attempt + 1,
+                max_retries + 1,
+                last_feedback,
             )
 
         logger.error("Host LLM analysis exhausted all retries, returning fallback")
@@ -601,12 +593,14 @@ def _flatten_sentences(payload: dict[str, Any]) -> list[TranscriptSentence]:
     out: list[TranscriptSentence] = []
     for sent in sentences_raw:
         try:
-            out.append(TranscriptSentence(
-                start=float(sent.get("begin_time", 0)) / 1000.0,
-                end=float(sent.get("end_time", 0)) / 1000.0,
-                text=str(sent.get("text", "")).strip(),
-                confidence=float(sent.get("confidence", 1.0) or 1.0),
-            ))
+            out.append(
+                TranscriptSentence(
+                    start=float(sent.get("begin_time", 0)) / 1000.0,
+                    end=float(sent.get("end_time", 0)) / 1000.0,
+                    text=str(sent.get("text", "")).strip(),
+                    confidence=float(sent.get("confidence", 1.0) or 1.0),
+                )
+            )
         except (TypeError, ValueError):
             continue
     return out

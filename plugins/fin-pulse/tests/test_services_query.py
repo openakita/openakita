@@ -117,9 +117,7 @@ def test_set_settings_rejects_empty(tmp_path: Path) -> None:
         tm = await _make_tm(tmp_path)
         try:
             assert (await query_svc.set_settings(tm=tm, args={}))["ok"] is False
-            assert (
-                await query_svc.set_settings(tm=tm, args={"updates": {}})
-            )["ok"] is False
+            assert (await query_svc.set_settings(tm=tm, args={"updates": {}}))["ok"] is False
             res = await query_svc.set_settings(
                 tm=tm, args={"updates": {"brain_model": "gpt-4.1-mini"}}
             )
@@ -313,9 +311,7 @@ class _StubPipeline:
         self.brief_calls: list[dict[str, Any]] = []
         self.radar_calls: list[dict[str, Any]] = []
 
-    async def ingest(
-        self, *, sources: Any, since_hours: int, task_id: str
-    ) -> dict[str, Any]:
+    async def ingest(self, *, sources: Any, since_hours: int, task_id: str) -> dict[str, Any]:
         self.ingest_calls.append(
             {"sources": sources, "since_hours": since_hours, "task_id": task_id}
         )

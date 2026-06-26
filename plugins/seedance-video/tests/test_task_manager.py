@@ -64,9 +64,7 @@ async def test_set_config_overrides_default(tm):
 
 @pytest.mark.asyncio
 async def test_set_configs_batch(tm):
-    await tm.set_configs(
-        {"poll_interval": "30", "service_tier_default": "flex"}
-    )
+    await tm.set_configs({"poll_interval": "30", "service_tier_default": "flex"})
     cfg = await tm.get_all_config()
     assert cfg["poll_interval"] == "30"
     assert cfg["service_tier_default"] == "flex"
@@ -319,6 +317,7 @@ async def test_update_task_bumps_updated_at(tm):
     task = await tm.create_task()
     original = (await tm.get_task(task["id"]))["updated_at"]
     import asyncio
+
     await asyncio.sleep(0.02)
     await tm.update_task(task["id"], status="running")
     bumped = (await tm.get_task(task["id"]))["updated_at"]
@@ -355,8 +354,12 @@ async def test_update_task_whitelist_covers_all_existing_callsites(tm):
     new feature adds an update key without registering it.
     """
     callsite_keys = {
-        "status", "video_url", "revised_prompt", "last_frame_url",
-        "error_message", "local_video_path",
+        "status",
+        "video_url",
+        "revised_prompt",
+        "last_frame_url",
+        "error_message",
+        "local_video_path",
     }
     assert callsite_keys <= set(TaskManager._UPDATABLE_COLUMNS)
 
@@ -372,9 +375,7 @@ async def test_update_task_params_value_is_valid_json_in_db(tm):
     task = await tm.create_task()
     await tm.update_task(task["id"], params={"k": "v"})
     # peek at the underlying row to confirm JSON encoding (not Python repr)
-    cur = await tm._db.execute(
-        "SELECT params_json FROM tasks WHERE id = ?", (task["id"],)
-    )
+    cur = await tm._db.execute("SELECT params_json FROM tasks WHERE id = ?", (task["id"],))
     rows = await cur.fetchall()
     assert json.loads(rows[0][0]) == {"k": "v"}
 
@@ -410,9 +411,15 @@ async def test_create_asset_defaults(tm):
 async def test_create_asset_custom(tm):
     task = await tm.create_task()
     asset = await tm.create_asset(
-        task_id=task["id"], type="video", file_path="/tmp/v.mp4",
-        original_name="orig.mp4", size_bytes=4096,
-        width=1280, height=720, duration_sec=12.5, role="ref",
+        task_id=task["id"],
+        type="video",
+        file_path="/tmp/v.mp4",
+        original_name="orig.mp4",
+        size_bytes=4096,
+        width=1280,
+        height=720,
+        duration_sec=12.5,
+        role="ref",
     )
     persisted = await tm.get_asset(asset["id"])
     assert persisted["task_id"] == task["id"]
@@ -496,4 +503,3 @@ async def test_close_is_idempotent(tmp_path):
     await manager.close()
     # Calling twice must not raise.
     await manager.close()
-

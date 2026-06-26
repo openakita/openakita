@@ -32,131 +32,299 @@ CONV_MEMORY_RECALL = f"conv_recall_{uuid.uuid4().hex[:8]}"
 
 TESTS = [
     # ══════ Group 1: Baseline — 不应触发记忆 ══════
-    {"id": 1, "name": "简单问候", "msg": "你好", "conv": None,
-     "no_mem_tool": True},
-    {"id": 2, "name": "数学计算", "msg": "127 × 53 等于多少", "conv": None,
-     "no_mem_tool": True},
-    {"id": 3, "name": "常识-光速", "msg": "光速是多少", "conv": None,
-     "no_mem_tool": True},
-    {"id": 4, "name": "常识-月球", "msg": "月球离地球多远", "conv": None,
-     "no_mem_tool": True},
-    {"id": 5, "name": "中文翻译", "msg": "翻译成英文：今天天气真好", "conv": None,
-     "kw": ["weather", "nice", "today"]},
+    {"id": 1, "name": "简单问候", "msg": "你好", "conv": None, "no_mem_tool": True},
+    {"id": 2, "name": "数学计算", "msg": "127 × 53 等于多少", "conv": None, "no_mem_tool": True},
+    {"id": 3, "name": "常识-光速", "msg": "光速是多少", "conv": None, "no_mem_tool": True},
+    {"id": 4, "name": "常识-月球", "msg": "月球离地球多远", "conv": None, "no_mem_tool": True},
+    {
+        "id": 5,
+        "name": "中文翻译",
+        "msg": "翻译成英文：今天天气真好",
+        "conv": None,
+        "kw": ["weather", "nice", "today"],
+    },
     {"id": 6, "name": "英文翻译", "msg": "Translate: The cat sat on the mat", "conv": None},
-
     # ══════ Group 2: 称呼设定与覆盖（同一会话） ══════
     {"id": 7, "name": "设定称呼-铁子", "msg": "以后叫我铁子", "conv": CONV_NICKNAME},
-    {"id": 8, "name": "验证称呼-铁子", "msg": "你现在怎么称呼我？", "conv": CONV_NICKNAME,
-     "kw": ["铁子"]},
+    {
+        "id": 8,
+        "name": "验证称呼-铁子",
+        "msg": "你现在怎么称呼我？",
+        "conv": CONV_NICKNAME,
+        "kw": ["铁子"],
+    },
     {"id": 9, "name": "覆盖称呼-Boss", "msg": "不对，叫我Boss", "conv": CONV_NICKNAME},
-    {"id": 10, "name": "验证称呼-Boss", "msg": "再说一次，你该怎么叫我？", "conv": CONV_NICKNAME,
-     "kw": ["Boss"]},
-    {"id": 11, "name": "跨会话验证称呼", "msg": "你该怎么称呼我？", "conv": None,
-     "desc": "跨会话后是否记住最新称呼"},
-
+    {
+        "id": 10,
+        "name": "验证称呼-Boss",
+        "msg": "再说一次，你该怎么叫我？",
+        "conv": CONV_NICKNAME,
+        "kw": ["Boss"],
+    },
+    {
+        "id": 11,
+        "name": "跨会话验证称呼",
+        "msg": "你该怎么称呼我？",
+        "conv": None,
+        "desc": "跨会话后是否记住最新称呼",
+    },
     # ══════ Group 3: 规则设定与验证（同一会话） ══════
-    {"id": 12, "name": "设定规则-喵", "msg": "从现在开始，你每句话结尾都要加上「喵~」", "conv": CONV_RULE},
-    {"id": 13, "name": "验证规则-喵", "msg": "今天星期几？", "conv": CONV_RULE,
-     "kw": ["喵"]},
-    {"id": 14, "name": "追加规则-emoji", "msg": "另外，每条回复开头都加一个合适的emoji", "conv": CONV_RULE},
-    {"id": 15, "name": "验证双规则", "msg": "帮我算一下 2+3", "conv": CONV_RULE,
-     "kw": ["喵"]},
+    {
+        "id": 12,
+        "name": "设定规则-喵",
+        "msg": "从现在开始，你每句话结尾都要加上「喵~」",
+        "conv": CONV_RULE,
+    },
+    {"id": 13, "name": "验证规则-喵", "msg": "今天星期几？", "conv": CONV_RULE, "kw": ["喵"]},
+    {
+        "id": 14,
+        "name": "追加规则-emoji",
+        "msg": "另外，每条回复开头都加一个合适的emoji",
+        "conv": CONV_RULE,
+    },
+    {"id": 15, "name": "验证双规则", "msg": "帮我算一下 2+3", "conv": CONV_RULE, "kw": ["喵"]},
     {"id": 16, "name": "取消规则-喵", "msg": "不用加喵了，太幼稚了", "conv": CONV_RULE},
-    {"id": 17, "name": "验证规则取消", "msg": "1+1等于几", "conv": CONV_RULE,
-     "desc": "不应再出现喵"},
-
+    {
+        "id": 17,
+        "name": "验证规则取消",
+        "msg": "1+1等于几",
+        "conv": CONV_RULE,
+        "desc": "不应再出现喵",
+    },
     # ══════ Group 4: 事实记忆设定与召回 ══════
     {"id": 18, "name": "设定事实-生日", "msg": "记住，我的生日是3月15日", "conv": None},
     {"id": 19, "name": "设定事实-城市", "msg": "我住在深圳", "conv": None},
     {"id": 20, "name": "设定事实-项目", "msg": "我现在在做的项目叫 SkyNet-Alpha", "conv": None},
-    {"id": 21, "name": "设定偏好-语言", "msg": "我最喜欢用 Rust 和 TypeScript，讨厌 PHP", "conv": None},
-    {"id": 22, "name": "召回-生日", "msg": "我的生日是哪天？", "conv": CONV_MEMORY_RECALL,
-     "kw": ["3月15"]},
-    {"id": 23, "name": "召回-城市", "msg": "我住在哪个城市？", "conv": CONV_MEMORY_RECALL,
-     "kw": ["深圳"]},
+    {
+        "id": 21,
+        "name": "设定偏好-语言",
+        "msg": "我最喜欢用 Rust 和 TypeScript，讨厌 PHP",
+        "conv": None,
+    },
+    {
+        "id": 22,
+        "name": "召回-生日",
+        "msg": "我的生日是哪天？",
+        "conv": CONV_MEMORY_RECALL,
+        "kw": ["3月15"],
+    },
+    {
+        "id": 23,
+        "name": "召回-城市",
+        "msg": "我住在哪个城市？",
+        "conv": CONV_MEMORY_RECALL,
+        "kw": ["深圳"],
+    },
     {"id": 24, "name": "召回-项目", "msg": "我在做什么项目？", "conv": CONV_MEMORY_RECALL},
-    {"id": 25, "name": "召回-偏好", "msg": "我喜欢和讨厌什么编程语言？", "conv": CONV_MEMORY_RECALL},
-
+    {
+        "id": 25,
+        "name": "召回-偏好",
+        "msg": "我喜欢和讨厌什么编程语言？",
+        "conv": CONV_MEMORY_RECALL,
+    },
     # ══════ Group 5: 多轮对话（同一话题延续） ══════
-    {"id": 26, "name": "讨论-开始", "msg": "我想搭一个智能家居系统，你觉得需要哪些硬件？", "conv": CONV_MULTITURN},
+    {
+        "id": 26,
+        "name": "讨论-开始",
+        "msg": "我想搭一个智能家居系统，你觉得需要哪些硬件？",
+        "conv": CONV_MULTITURN,
+    },
     {"id": 27, "name": "讨论-追问1", "msg": "传感器用哪种好？", "conv": CONV_MULTITURN},
-    {"id": 28, "name": "讨论-追问2", "msg": "中枢控制器推荐用树莓派还是ESP32？", "conv": CONV_MULTITURN},
-    {"id": 29, "name": "讨论-突然切换", "msg": "对了，帮我查一下今天的新闻", "conv": CONV_MULTITURN,
-     "desc": "同会话内话题切换"},
-    {"id": 30, "name": "讨论-回到原题", "msg": "回到刚才的话题，智能家居系统还需要什么软件？", "conv": CONV_MULTITURN},
-
+    {
+        "id": 28,
+        "name": "讨论-追问2",
+        "msg": "中枢控制器推荐用树莓派还是ESP32？",
+        "conv": CONV_MULTITURN,
+    },
+    {
+        "id": 29,
+        "name": "讨论-突然切换",
+        "msg": "对了，帮我查一下今天的新闻",
+        "conv": CONV_MULTITURN,
+        "desc": "同会话内话题切换",
+    },
+    {
+        "id": 30,
+        "name": "讨论-回到原题",
+        "msg": "回到刚才的话题，智能家居系统还需要什么软件？",
+        "conv": CONV_MULTITURN,
+    },
     # ══════ Group 6: 代码任务（同一会话） ══════
-    {"id": 31, "name": "写Python函数", "msg": "用 Python 写一个函数，判断一个数是否是素数", "conv": CONV_CODING},
+    {
+        "id": 31,
+        "name": "写Python函数",
+        "msg": "用 Python 写一个函数，判断一个数是否是素数",
+        "conv": CONV_CODING,
+    },
     {"id": 32, "name": "写测试用例", "msg": "给上面的素数函数写几个测试用例", "conv": CONV_CODING},
     {"id": 33, "name": "代码解释", "msg": "解释一下 Python 的 GIL 是什么", "conv": None},
     {"id": 34, "name": "正则表达式", "msg": "写一个正则表达式匹配中国手机号", "conv": None},
-    {"id": 35, "name": "SQL查询", "msg": "写一个 SQL 查询，找出订单金额最高的前10个客户", "conv": None},
-
+    {
+        "id": 35,
+        "name": "SQL查询",
+        "msg": "写一个 SQL 查询，找出订单金额最高的前10个客户",
+        "conv": None,
+    },
     # ══════ Group 7: Shell 和文件操作 ══════
-    {"id": 36, "name": "Shell-列目录", "msg": "列出当前目录下的文件夹", "conv": None,
-     "tool": "list_directory"},
-    {"id": 37, "name": "文件-创建", "msg": "在 data/temp 下创建 e2e_v3_hello.txt，写入 Hello E2E v3", "conv": None,
-     "tool": "write_file"},
-    {"id": 38, "name": "文件-读取", "msg": "读取 data/temp/e2e_v3_hello.txt 的内容", "conv": None,
-     "tool": "read_file"},
+    {
+        "id": 36,
+        "name": "Shell-列目录",
+        "msg": "列出当前目录下的文件夹",
+        "conv": None,
+        "tool": "list_directory",
+    },
+    {
+        "id": 37,
+        "name": "文件-创建",
+        "msg": "在 data/temp 下创建 e2e_v3_hello.txt，写入 Hello E2E v3",
+        "conv": None,
+        "tool": "write_file",
+    },
+    {
+        "id": 38,
+        "name": "文件-读取",
+        "msg": "读取 data/temp/e2e_v3_hello.txt 的内容",
+        "conv": None,
+        "tool": "read_file",
+    },
     {"id": 39, "name": "Shell-系统信息", "msg": "查一下当前系统的 Python 版本", "conv": None},
-
     # ══════ Group 8: 浏览器任务 ══════
-    {"id": 40, "name": "浏览器-打开Bing", "msg": "用浏览器打开 https://www.bing.com", "conv": None,
-     "tool": "browser"},
-    {"id": 41, "name": "浏览器-搜索", "msg": "在bing上搜索 OpenAI GPT-5 然后截图", "conv": None,
-     "tool": "browser"},
-
+    {
+        "id": 40,
+        "name": "浏览器-打开Bing",
+        "msg": "用浏览器打开 https://www.bing.com",
+        "conv": None,
+        "tool": "browser",
+    },
+    {
+        "id": 41,
+        "name": "浏览器-搜索",
+        "msg": "在bing上搜索 OpenAI GPT-5 然后截图",
+        "conv": None,
+        "tool": "browser",
+    },
     # ══════ Group 9: 项目讨论（同一会话） ══════
-    {"id": 42, "name": "项目-需求分析", "msg": "帮我分析一下做一个在线教育平台需要哪些核心功能", "conv": CONV_PROJECT},
-    {"id": 43, "name": "项目-技术选型", "msg": "这个教育平台用什么技术栈比较合适？", "conv": CONV_PROJECT},
-    {"id": 44, "name": "项目-数据库设计", "msg": "课程和学生的数据库表结构大概怎么设计？", "conv": CONV_PROJECT},
-
+    {
+        "id": 42,
+        "name": "项目-需求分析",
+        "msg": "帮我分析一下做一个在线教育平台需要哪些核心功能",
+        "conv": CONV_PROJECT,
+    },
+    {
+        "id": 43,
+        "name": "项目-技术选型",
+        "msg": "这个教育平台用什么技术栈比较合适？",
+        "conv": CONV_PROJECT,
+    },
+    {
+        "id": 44,
+        "name": "项目-数据库设计",
+        "msg": "课程和学生的数据库表结构大概怎么设计？",
+        "conv": CONV_PROJECT,
+    },
     # ══════ Group 10: 知识问答（不应搜记忆） ══════
-    {"id": 45, "name": "历史问题", "msg": "秦始皇统一六国是哪一年？", "conv": None,
-     "no_mem_tool": True},
-    {"id": 46, "name": "地理问题", "msg": "世界上最深的海沟叫什么？", "conv": None,
-     "no_mem_tool": True},
-    {"id": 47, "name": "科学概念", "msg": "量子纠缠是什么意思？简单解释", "conv": None,
-     "no_mem_tool": True},
-
+    {
+        "id": 45,
+        "name": "历史问题",
+        "msg": "秦始皇统一六国是哪一年？",
+        "conv": None,
+        "no_mem_tool": True,
+    },
+    {
+        "id": 46,
+        "name": "地理问题",
+        "msg": "世界上最深的海沟叫什么？",
+        "conv": None,
+        "no_mem_tool": True,
+    },
+    {
+        "id": 47,
+        "name": "科学概念",
+        "msg": "量子纠缠是什么意思？简单解释",
+        "conv": None,
+        "no_mem_tool": True,
+    },
     # ══════ Group 11: 记忆隔离测试 ══════
-    {"id": 48, "name": "会话A-设定", "msg": "在这个对话里，我要讨论的主题是机器学习", "conv": f"conv_iso_a_{uuid.uuid4().hex[:6]}"},
-    {"id": 49, "name": "会话B-设定", "msg": "在这个对话里，我要讨论的主题是烘焙蛋糕", "conv": f"conv_iso_b_{uuid.uuid4().hex[:6]}"},
-    {"id": 50, "name": "会话C-验证", "msg": "我们刚才在聊什么话题？", "conv": None,
-     "desc": "新会话不应知道A或B的话题"},
-
+    {
+        "id": 48,
+        "name": "会话A-设定",
+        "msg": "在这个对话里，我要讨论的主题是机器学习",
+        "conv": f"conv_iso_a_{uuid.uuid4().hex[:6]}",
+    },
+    {
+        "id": 49,
+        "name": "会话B-设定",
+        "msg": "在这个对话里，我要讨论的主题是烘焙蛋糕",
+        "conv": f"conv_iso_b_{uuid.uuid4().hex[:6]}",
+    },
+    {
+        "id": 50,
+        "name": "会话C-验证",
+        "msg": "我们刚才在聊什么话题？",
+        "conv": None,
+        "desc": "新会话不应知道A或B的话题",
+    },
     # ══════ Group 12: 复合任务 ══════
-    {"id": 51, "name": "多步骤-时间写文件", "msg": "做两件事：1. 获取当前时间 2. 把时间写入 data/temp/v3_time.txt", "conv": None},
-    {"id": 52, "name": "多步骤-搜索总结", "msg": "搜索一下最新的 AI Agent 技术趋势，简要总结", "conv": None},
-
+    {
+        "id": 51,
+        "name": "多步骤-时间写文件",
+        "msg": "做两件事：1. 获取当前时间 2. 把时间写入 data/temp/v3_time.txt",
+        "conv": None,
+    },
+    {
+        "id": 52,
+        "name": "多步骤-搜索总结",
+        "msg": "搜索一下最新的 AI Agent 技术趋势，简要总结",
+        "conv": None,
+    },
     # ══════ Group 13: 边界情况 ══════
     {"id": 53, "name": "超短消息", "msg": "嗯", "conv": None},
     {"id": 54, "name": "纯数字", "msg": "42", "conv": None},
     {"id": 55, "name": "纯emoji", "msg": "👍", "conv": None},
-    {"id": 56, "name": "长消息", "msg": "请帮我写一篇关于人工智能在医疗健康领域应用的文章大纲，要求包含以下方面：诊断辅助、药物研发、个性化治疗方案、医学影像分析、手术机器人、患者数据管理、远程医疗、AI伦理问题。每个方面都要有2-3个要点。", "conv": None},
-
+    {
+        "id": 56,
+        "name": "长消息",
+        "msg": "请帮我写一篇关于人工智能在医疗健康领域应用的文章大纲，要求包含以下方面：诊断辅助、药物研发、个性化治疗方案、医学影像分析、手术机器人、患者数据管理、远程医疗、AI伦理问题。每个方面都要有2-3个要点。",
+        "conv": None,
+    },
     # ══════ Group 14: 历史回顾与记忆系统自检 ══════
-    {"id": 57, "name": "回顾任务", "msg": "总结一下我今天让你做了哪些事？", "conv": None,
-     "desc": "验证历史回顾能力"},
+    {
+        "id": 57,
+        "name": "回顾任务",
+        "msg": "总结一下我今天让你做了哪些事？",
+        "conv": None,
+        "desc": "验证历史回顾能力",
+    },
     {"id": 58, "name": "回顾规则", "msg": "你记得我设置过什么规则吗？", "conv": None},
     {"id": 59, "name": "回顾偏好", "msg": "你知道我的编程语言偏好吗？", "conv": None},
-
     # ══════ Group 15: 最终综合验证 ══════
-    {"id": 60, "name": "综合验证", "msg": "快速回答：我叫什么、住哪里、生日是哪天、在做什么项目？", "conv": None,
-     "desc": "一次性验证多个记忆点"},
+    {
+        "id": 60,
+        "name": "综合验证",
+        "msg": "快速回答：我叫什么、住哪里、生日是哪天、在做什么项目？",
+        "conv": None,
+        "desc": "一次性验证多个记忆点",
+    },
 ]
 
 
 def send_chat(message: str, conversation_id: str | None = None) -> dict:
     payload = json.dumps({"message": message, "conversation_id": conversation_id}).encode("utf-8")
     req = urllib.request.Request(
-        f"{API_BASE}/api/chat", data=payload,
-        headers={"Content-Type": "application/json"}, method="POST",
+        f"{API_BASE}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
-    result = {"full_text": "", "tools_called": [], "thinking": "",
-              "conversation_id": conversation_id, "error": None,
-              "iterations": 0, "usage": {}}
+    result = {
+        "full_text": "",
+        "tools_called": [],
+        "thinking": "",
+        "conversation_id": conversation_id,
+        "error": None,
+        "iterations": 0,
+        "usage": {},
+    }
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             for raw_line in resp:
@@ -369,7 +537,9 @@ def main():
         status = "PASS" if verdict["pass"] else "FAIL"
         warn = " (WARN)" if verdict["issues"] and verdict["pass"] else ""
 
-        log(f"  [{status}{warn}] {elapsed:.1f}s | {result['iterations']} iters | tools: {tools[:6]}")
+        log(
+            f"  [{status}{warn}] {elapsed:.1f}s | {result['iterations']} iters | tools: {tools[:6]}"
+        )
         if result["full_text"]:
             reply_preview = result["full_text"][:150].replace("\n", " ")
             log(f"  回复: {reply_preview}...")
@@ -377,17 +547,20 @@ def main():
             log(f"  ! {issue}")
         log()
 
-        results.append({
-            "id": test["id"], "name": test["name"],
-            "msg": test["msg"][:100],
-            "elapsed": round(elapsed, 2),
-            "verdict": status,
-            "issues": verdict["issues"],
-            "tools": tools,
-            "reply_preview": result["full_text"][:200],
-            "usage": result["usage"],
-            "conv_id": conv_id,
-        })
+        results.append(
+            {
+                "id": test["id"],
+                "name": test["name"],
+                "msg": test["msg"][:100],
+                "elapsed": round(elapsed, 2),
+                "verdict": status,
+                "issues": verdict["issues"],
+                "tools": tools,
+                "reply_preview": result["full_text"][:200],
+                "usage": result["usage"],
+                "conv_id": conv_id,
+            }
+        )
 
         if i < len(TESTS) - 1:
             time.sleep(DELAY)
@@ -423,12 +596,24 @@ def main():
 
     # Save JSON report
     with open(REPORT_JSON, "w", encoding="utf-8") as f:
-        json.dump({
-            "timestamp": datetime.now().isoformat(),
-            "summary": {"total": len(results), "passed": passed, "failed": failed, "warned": warned},
-            "total_tokens": total_tokens, "total_time": round(total_time, 2),
-            "results": results, "sqlite_issues": sqlite_issues,
-        }, f, ensure_ascii=False, indent=2)
+        json.dump(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "summary": {
+                    "total": len(results),
+                    "passed": passed,
+                    "failed": failed,
+                    "warned": warned,
+                },
+                "total_tokens": total_tokens,
+                "total_time": round(total_time, 2),
+                "results": results,
+                "sqlite_issues": sqlite_issues,
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
 
     log(f"\n  报告: {REPORT_TXT}")
     log(f"  JSON: {REPORT_JSON}")
@@ -437,4 +622,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

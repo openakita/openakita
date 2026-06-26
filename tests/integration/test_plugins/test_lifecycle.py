@@ -51,9 +51,7 @@ def _create_test_plugin(
     if extra_manifest:
         manifest.update(extra_manifest)
 
-    (plugin_dir / "plugin.json").write_text(
-        json.dumps(manifest, indent=2), encoding="utf-8"
-    )
+    (plugin_dir / "plugin.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     if plugin_type == "python":
         if raise_on_load:
@@ -147,9 +145,7 @@ async def test_load_all_example_plugins(tmp_path: Path) -> None:
     assert len(all_discovered) >= 11, (
         f"Expected at least 11 plugins discovered, got {len(all_discovered)}: {all_discovered}"
     )
-    assert pm.loaded_count >= 3, (
-        f"Expected at least 3 plugins loaded, got {pm.loaded_count}"
-    )
+    assert pm.loaded_count >= 3, f"Expected at least 3 plugins loaded, got {pm.loaded_count}"
 
 
 @pytest.mark.asyncio
@@ -163,7 +159,7 @@ async def test_plugin_load_and_unload(tmp_path: Path) -> None:
         "test-basic",
         permissions=["tools.register"],
         on_load_body=(
-            'api.register_tools('
+            "api.register_tools("
             '[{"type": "function", "function": {"name": "noop", '
             '"description": "no-op", "parameters": {"type": "object", "properties": {}}}}], '
             'lambda n, p: "ok")'
@@ -257,9 +253,7 @@ async def test_error_accumulation_auto_disable() -> None:
 
     call_count_before = call_count
     await registry.dispatch("on_init")
-    assert call_count == call_count_before, (
-        "Callback should be skipped after auto-disable"
-    )
+    assert call_count == call_count_before, "Callback should be skipped after auto-disable"
 
 
 @pytest.mark.asyncio
@@ -321,9 +315,7 @@ async def test_tool_definitions_chain(tmp_path):
             self.registered: dict[str, Any] = {}
 
         def register(self, handler_name, handler, tool_names=None):
-            self.registered[handler_name] = {
-                "handler": handler, "tool_names": tool_names
-            }
+            self.registered[handler_name] = {"handler": handler, "tool_names": tool_names}
 
         def unregister(self, handler_name):
             self.registered.pop(handler_name, None)
@@ -353,22 +345,25 @@ async def test_tool_definitions_chain(tmp_path):
 
     assert pm.loaded_count == 1
 
-    assert any(d.get("name") == "plugin_hello" for d in tool_definitions), \
+    assert any(d.get("name") == "plugin_hello" for d in tool_definitions), (
         "Plugin tool definition must be added to tool_definitions list"
+    )
 
-    assert "plugin_hello" in catalog._tools, \
-        "Plugin tool must be added to tool_catalog"
+    assert "plugin_hello" in catalog._tools, "Plugin tool must be added to tool_catalog"
 
-    assert "plugin_tool-test" in registry.registered, \
+    assert "plugin_tool-test" in registry.registered, (
         "Plugin handler must be registered in handler_registry"
+    )
 
     await pm.unload_plugin("tool-test")
 
-    assert not any(d.get("name") == "plugin_hello" for d in tool_definitions), \
+    assert not any(d.get("name") == "plugin_hello" for d in tool_definitions), (
         "Plugin tool must be removed from tool_definitions on unload"
+    )
 
-    assert "plugin_hello" not in catalog._tools, \
+    assert "plugin_hello" not in catalog._tools, (
         "Plugin tool must be removed from tool_catalog on unload"
+    )
 
 
 @pytest.mark.asyncio
@@ -380,15 +375,21 @@ async def test_llm_provider_cleanup_chain(tmp_path):
     plugin_dir = plugins_dir / "llm-test"
     plugin_dir.mkdir(parents=True, exist_ok=True)
 
-    (plugin_dir / "plugin.json").write_text(json.dumps({
-        "id": "llm-test",
-        "name": "LLM Test",
-        "version": "0.1.0",
-        "type": "python",
-        "permissions": list(BASIC_PERMISSIONS) + ["llm.register"],
-    }), encoding="utf-8")
+    (plugin_dir / "plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "llm-test",
+                "name": "LLM Test",
+                "version": "0.1.0",
+                "type": "python",
+                "permissions": list(BASIC_PERMISSIONS) + ["llm.register"],
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    (plugin_dir / "plugin.py").write_text(textwrap.dedent("""\
+    (plugin_dir / "plugin.py").write_text(
+        textwrap.dedent("""\
         from openakita.plugins.api import PluginAPI, PluginBase
 
         class FakeProvider:
@@ -400,13 +401,19 @@ async def test_llm_provider_cleanup_chain(tmp_path):
 
             def on_unload(self) -> None:
                 pass
-    """), encoding="utf-8")
+    """),
+        encoding="utf-8",
+    )
 
-    _write_state_file(state_path, {
-        "llm-test": {"granted_permissions": list(BASIC_PERMISSIONS) + ["llm.register"]},
-    })
+    _write_state_file(
+        state_path,
+        {
+            "llm-test": {"granted_permissions": list(BASIC_PERMISSIONS) + ["llm.register"]},
+        },
+    )
 
     from openakita.plugins import PLUGIN_PROVIDER_MAP
+
     PLUGIN_PROVIDER_MAP.clear()
 
     pm = PluginManager(
@@ -418,13 +425,15 @@ async def test_llm_provider_cleanup_chain(tmp_path):
 
     assert "fake_proto" in PLUGIN_PROVIDER_MAP
     cls = PLUGIN_PROVIDER_MAP["fake_proto"]
-    assert getattr(cls, "__plugin_id__", None) == "llm-test", \
+    assert getattr(cls, "__plugin_id__", None) == "llm-test", (
         "__plugin_id__ must be set on provider class for cleanup tracking"
+    )
 
     await pm.unload_plugin("llm-test")
 
-    assert "fake_proto" not in PLUGIN_PROVIDER_MAP, \
+    assert "fake_proto" not in PLUGIN_PROVIDER_MAP, (
         "Provider must be cleaned up from PLUGIN_PROVIDER_MAP on unload"
+    )
 
 
 @pytest.mark.asyncio
@@ -438,15 +447,21 @@ async def test_memory_backends_chain(tmp_path):
     plugin_dir = plugins_dir / "mem-test"
     plugin_dir.mkdir(parents=True, exist_ok=True)
 
-    (plugin_dir / "plugin.json").write_text(json.dumps({
-        "id": "mem-test",
-        "name": "Memory Test",
-        "version": "0.1.0",
-        "type": "python",
-        "permissions": list(BASIC_PERMISSIONS) + ["memory.write"],
-    }), encoding="utf-8")
+    (plugin_dir / "plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "mem-test",
+                "name": "Memory Test",
+                "version": "0.1.0",
+                "type": "python",
+                "permissions": list(BASIC_PERMISSIONS) + ["memory.write"],
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    (plugin_dir / "plugin.py").write_text(textwrap.dedent("""\
+    (plugin_dir / "plugin.py").write_text(
+        textwrap.dedent("""\
         from openakita.plugins.api import PluginAPI, PluginBase
 
         class FakeBackend:
@@ -461,11 +476,16 @@ async def test_memory_backends_chain(tmp_path):
 
             def on_unload(self) -> None:
                 pass
-    """), encoding="utf-8")
+    """),
+        encoding="utf-8",
+    )
 
-    _write_state_file(state_path, {
-        "mem-test": {"granted_permissions": list(BASIC_PERMISSIONS) + ["memory.write"]},
-    })
+    _write_state_file(
+        state_path,
+        {
+            "mem-test": {"granted_permissions": list(BASIC_PERMISSIONS) + ["memory.write"]},
+        },
+    )
 
     pm = PluginManager(
         plugins_dir=plugins_dir,
@@ -474,13 +494,13 @@ async def test_memory_backends_chain(tmp_path):
     )
     await pm.load_all()
 
-    assert "mem-test" in memory_backends, \
+    assert "mem-test" in memory_backends, (
         "Plugin memory backend must be registered in memory_backends dict"
+    )
 
     await pm.unload_plugin("mem-test")
 
-    assert "mem-test" not in memory_backends, \
-        "Plugin memory backend must be cleaned up on unload"
+    assert "mem-test" not in memory_backends, "Plugin memory backend must be cleaned up on unload"
 
 
 @pytest.mark.asyncio
@@ -509,6 +529,6 @@ async def test_gateway_late_wiring(tmp_path):
 
     loaded = pm.get_loaded("gw-test")
     assert loaded is not None
-    assert loaded.api._host.get("gateway") is not None, \
+    assert loaded.api._host.get("gateway") is not None, (
         "Mutating host_refs dict must propagate to existing PluginAPI instances"
-
+    )

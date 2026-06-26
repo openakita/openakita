@@ -339,4 +339,3 @@ class DashScopeClient:
             return resp.status_code in (200, 400, 404)
         except Exception:
             return False
-

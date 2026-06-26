@@ -11,7 +11,7 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '_shared'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_shared"))
 from baidu_appbuilder import parse_common_args, run_skill_query
 
 
@@ -33,8 +33,9 @@ def main() -> None:
 
     p_create = sub.add_parser("create", help="创建新应用")
     p_create.add_argument("description", help="应用描述")
-    p_create.add_argument("--platform", default="", choices=["web", "mobile", "mini-program"],
-                          help="目标平台")
+    p_create.add_argument(
+        "--platform", default="", choices=["web", "mobile", "mini-program"], help="目标平台"
+    )
 
     p_chat = sub.add_parser("chat", help="对话式构建")
     p_chat.add_argument("message", help="构建指令或需求描述")
@@ -51,4 +52,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

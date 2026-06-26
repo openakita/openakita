@@ -70,9 +70,7 @@ class TestSkillsHandlerInstall:
         agent = _make_agent_for_skills_handler()
         handler = SkillsHandler(agent)
 
-        result = await handler._install_skill(
-            {"source": "github:foo/bar"}
-        )
+        result = await handler._install_skill({"source": "github:foo/bar"})
         assert result == "ok"
         agent.skill_manager.install_skill.assert_awaited_once()
         agent.propagate_skill_change.assert_called_once_with(SkillEvent.INSTALL)
@@ -84,9 +82,7 @@ class TestSkillsHandlerInstall:
 
 
 class TestSkillsHandlerLoad:
-    def test_load_success_triggers_propagate_load_rescan_false(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_load_success_triggers_propagate_load_rescan_false(self, tmp_path: Path, monkeypatch):
         from openakita.config import settings as real_settings
         from openakita.skills.events import SkillEvent
         from openakita.tools.handlers.skills import SkillsHandler
@@ -105,9 +101,7 @@ class TestSkillsHandlerLoad:
         out = handler._load_skill({"skill_name": "newbie"})
         assert "技能加载成功" in out
 
-        agent.propagate_skill_change.assert_called_once_with(
-            SkillEvent.LOAD, rescan=False
-        )
+        agent.propagate_skill_change.assert_called_once_with(SkillEvent.LOAD, rescan=False)
 
     def test_load_nonexistent_dir_no_propagate(self, tmp_path, monkeypatch):
         from openakita.config import settings as real_settings
@@ -210,9 +204,7 @@ class TestSkillsHandlerReload:
         handler = SkillsHandler(agent)
         out = handler._reload_skill({"skill_name": "x"})
         assert "重新加载成功" in out
-        agent.propagate_skill_change.assert_called_once_with(
-            SkillEvent.RELOAD, rescan=False
-        )
+        agent.propagate_skill_change.assert_called_once_with(SkillEvent.RELOAD, rescan=False)
 
     def test_reload_skill_not_loaded_no_propagate(self):
         from openakita.tools.handlers.skills import SkillsHandler
@@ -232,9 +224,7 @@ class TestSkillsHandlerReload:
 
 
 class TestManageSkillEnabled:
-    def test_enable_writes_allowlist_and_propagates_enable(
-        self, tmp_path: Path, monkeypatch
-    ):
+    def test_enable_writes_allowlist_and_propagates_enable(self, tmp_path: Path, monkeypatch):
         from openakita.config import settings as real_settings
         from openakita.skills.events import SkillEvent
         from openakita.tools.handlers.skills import SkillsHandler
@@ -244,9 +234,7 @@ class TestManageSkillEnabled:
 
         agent = _make_agent_for_skills_handler()
         # registry.get 返回一个非 system skill
-        skill = SimpleNamespace(
-            skill_id="foo", name="foo", system=False, disabled=False
-        )
+        skill = SimpleNamespace(skill_id="foo", name="foo", system=False, disabled=False)
         agent.skill_registry.get.return_value = skill
         agent.skill_registry.list_all.return_value = [skill]
         # loader._loaded_skills 也包含 foo
@@ -264,15 +252,11 @@ class TestManageSkillEnabled:
         # 最新写入的 allowlist 文件应包含 foo
         import json
 
-        cfg = json.loads(
-            (tmp_path / "data" / "skills.json").read_text(encoding="utf-8")
-        )
+        cfg = json.loads((tmp_path / "data" / "skills.json").read_text(encoding="utf-8"))
         assert "foo" in cfg["external_allowlist"]
 
         # ENABLE（不是 DISABLE）+ rescan=False
-        agent.propagate_skill_change.assert_called_once_with(
-            SkillEvent.ENABLE, rescan=False
-        )
+        agent.propagate_skill_change.assert_called_once_with(SkillEvent.ENABLE, rescan=False)
 
     def test_disable_uses_disable_action(self, tmp_path, monkeypatch):
         from openakita.config import settings as real_settings
@@ -287,9 +271,7 @@ class TestManageSkillEnabled:
         )
 
         agent = _make_agent_for_skills_handler()
-        skill = SimpleNamespace(
-            skill_id="foo", name="foo", system=False, disabled=False
-        )
+        skill = SimpleNamespace(skill_id="foo", name="foo", system=False, disabled=False)
         agent.skill_registry.get.return_value = skill
         agent.skill_registry.list_all.return_value = [skill]
         agent.skill_loader._loaded_skills = {
@@ -297,14 +279,10 @@ class TestManageSkillEnabled:
         }
 
         handler = SkillsHandler(agent)
-        out = handler._manage_skill_enabled(
-            {"changes": [{"skill_name": "foo", "enabled": False}]}
-        )
+        out = handler._manage_skill_enabled({"changes": [{"skill_name": "foo", "enabled": False}]})
         assert "外部技能启用列表已更新" in out
         assert "foo" in out and "禁用" in out
-        agent.propagate_skill_change.assert_called_once_with(
-            SkillEvent.DISABLE, rescan=False
-        )
+        agent.propagate_skill_change.assert_called_once_with(SkillEvent.DISABLE, rescan=False)
 
     def test_empty_changes_no_propagate(self):
         from openakita.tools.handlers.skills import SkillsHandler
@@ -322,17 +300,13 @@ class TestManageSkillEnabled:
         monkeypatch.setattr(real_settings, "project_root", tmp_path, raising=False)
 
         agent = _make_agent_for_skills_handler()
-        sys_skill = SimpleNamespace(
-            skill_id="sys", name="sys", system=True, disabled=False
-        )
+        sys_skill = SimpleNamespace(skill_id="sys", name="sys", system=True, disabled=False)
         agent.skill_registry.get.return_value = sys_skill
         agent.skill_registry.list_all.return_value = [sys_skill]
         agent.skill_loader._loaded_skills = {}
 
         handler = SkillsHandler(agent)
-        out = handler._manage_skill_enabled(
-            {"changes": [{"skill_name": "sys", "enabled": False}]}
-        )
+        out = handler._manage_skill_enabled({"changes": [{"skill_name": "sys", "enabled": False}]})
         assert "未执行" in out
         agent.propagate_skill_change.assert_not_called()
 
@@ -355,8 +329,10 @@ class TestUninstallHandler:
         skills_root.mkdir(parents=True)
         monkeypatch.setattr(real_settings, "project_root", tmp_path, raising=False)
         monkeypatch.setattr(
-            type(real_settings), "skills_path",
-            property(lambda self: skills_root), raising=False,
+            type(real_settings),
+            "skills_path",
+            property(lambda self: skills_root),
+            raising=False,
         )
         (tmp_path / "data").mkdir(exist_ok=True)
         (tmp_path / "data" / "skills.json").write_text(
@@ -384,15 +360,11 @@ class TestUninstallHandler:
         # allowlist 已移除 foo
         import json
 
-        cfg = json.loads(
-            (tmp_path / "data" / "skills.json").read_text(encoding="utf-8")
-        )
+        cfg = json.loads((tmp_path / "data" / "skills.json").read_text(encoding="utf-8"))
         assert "foo" not in cfg["external_allowlist"]
 
         # 最终统一刷新调用（rescan=False，因为 registry.unregister 已单独处理）
-        agent.propagate_skill_change.assert_called_once_with(
-            SkillEvent.UNINSTALL, rescan=False
-        )
+        agent.propagate_skill_change.assert_called_once_with(SkillEvent.UNINSTALL, rescan=False)
 
     def test_uninstall_system_skill_blocked_no_propagate(self, tmp_path, monkeypatch):
         from openakita.config import settings as real_settings
@@ -442,9 +414,7 @@ class TestSkillStoreInstall:
 
         result = await handler._install({"skill_id": "foo"})
         assert "安装成功" in result
-        agent.propagate_skill_change.assert_called_once_with(
-            SkillEvent.STORE_INSTALL
-        )
+        agent.propagate_skill_change.assert_called_once_with(SkillEvent.STORE_INSTALL)
 
     async def test_install_missing_id_no_propagate(self):
         from openakita.tools.handlers.skill_store import SkillStoreHandler
@@ -539,9 +509,7 @@ class TestWatcherCallback:
 
         fake = SimpleNamespace()
         fake.propagate_skill_change = MagicMock()
-        fake._on_skills_dir_changed = types.MethodType(
-            Agent._on_skills_dir_changed, fake
-        )
+        fake._on_skills_dir_changed = types.MethodType(Agent._on_skills_dir_changed, fake)
 
         fake._on_skills_dir_changed()
         fake.propagate_skill_change.assert_called_once_with(SkillEvent.HOT_RELOAD)
@@ -553,8 +521,6 @@ class TestWatcherCallback:
 
         fake = SimpleNamespace()
         fake.propagate_skill_change = MagicMock(side_effect=RuntimeError("fail"))
-        fake._on_skills_dir_changed = types.MethodType(
-            Agent._on_skills_dir_changed, fake
-        )
+        fake._on_skills_dir_changed = types.MethodType(Agent._on_skills_dir_changed, fake)
 
         fake._on_skills_dir_changed()  # 不应抛

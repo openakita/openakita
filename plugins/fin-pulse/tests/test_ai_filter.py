@@ -116,7 +116,7 @@ class TestExtractTags:
         assert brain.calls[0]["system"] == TAG_EXTRACTION_SYSTEM_ZH
 
     def test_strips_markdown_fence(self) -> None:
-        fenced = "```json\n{\"tags\":[{\"tag\":\"x\",\"description\":\"d\"}]}\n```"
+        fenced = '```json\n{"tags":[{"tag":"x","description":"d"}]}\n```'
         brain = _StubBrain(replies=[fenced])
         tags = _run(extract_tags(brain, interests="x"))
         assert tags == [{"tag": "x", "description": "d"}]
@@ -198,9 +198,7 @@ class TestScoreBatch:
     def test_missing_ids_filled_with_failure_sentinel(self) -> None:
         # LLM only returns 1/3 ids; the other two must land graceful defaults.
         brain = _StubBrain(
-            replies=[
-                json.dumps([{"id": "a0", "tag_id": 0, "score": 7.0, "reason": "x"}])
-            ]
+            replies=[json.dumps([{"id": "a0", "tag_id": 0, "score": 7.0, "reason": "x"}])]
         )
         out = _run(
             score_batch(
@@ -219,14 +217,18 @@ class TestScoreBatch:
         # 5 items with batch_size=2 → 3 LLM calls.
         brain = _StubBrain(
             replies=[
-                json.dumps([
-                    {"id": "a0", "tag_id": 0, "score": 6.0},
-                    {"id": "a1", "tag_id": 0, "score": 7.0},
-                ]),
-                json.dumps([
-                    {"id": "a2", "tag_id": 0, "score": 8.0},
-                    {"id": "a3", "tag_id": 0, "score": 9.0},
-                ]),
+                json.dumps(
+                    [
+                        {"id": "a0", "tag_id": 0, "score": 6.0},
+                        {"id": "a1", "tag_id": 0, "score": 7.0},
+                    ]
+                ),
+                json.dumps(
+                    [
+                        {"id": "a2", "tag_id": 0, "score": 8.0},
+                        {"id": "a3", "tag_id": 0, "score": 9.0},
+                    ]
+                ),
                 json.dumps([{"id": "a4", "tag_id": 0, "score": 5.0}]),
             ]
         )

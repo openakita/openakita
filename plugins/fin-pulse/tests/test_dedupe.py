@@ -52,9 +52,7 @@ class TestCanonicalDedupeKey:
         assert a == b
 
     def test_different_hosts_do_not_collide(self) -> None:
-        assert canonical_dedupe_key("https://a.com/x") != canonical_dedupe_key(
-            "https://b.com/x"
-        )
+        assert canonical_dedupe_key("https://a.com/x") != canonical_dedupe_key("https://b.com/x")
 
 
 class TestSimhash:
@@ -183,9 +181,7 @@ class TestIngestDedupe:
         collapsed = [
             a
             for a in articles
-            if a.get("url_hash") == canonical_dedupe_key(
-                "https://wallstreetcn.com/articles/1"
-            )
+            if a.get("url_hash") == canonical_dedupe_key("https://wallstreetcn.com/articles/1")
         ]
         assert len(collapsed) == 1
         row = collapsed[0]

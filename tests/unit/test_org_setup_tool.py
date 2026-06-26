@@ -30,6 +30,7 @@ def test_organization_watchdog_disabled_by_default():
 def handler():
     """Create an OrgSetupHandler with a mocked agent."""
     from openakita.tools.handlers.org_setup import OrgSetupHandler
+
     mock_agent = MagicMock()
     return OrgSetupHandler(mock_agent)
 
@@ -93,10 +94,19 @@ class TestPreview:
             "name": "测试团队",
             "core_business": "软件开发",
             "nodes": [
-                {"role_title": "CTO", "level": 0, "department": "技术部",
-                 "agent_profile_id": "architect"},
-                {"role_title": "开发工程师", "level": 1, "department": "技术部",
-                 "agent_profile_id": "code-assistant", "parent_role_title": "CTO"},
+                {
+                    "role_title": "CTO",
+                    "level": 0,
+                    "department": "技术部",
+                    "agent_profile_id": "architect",
+                },
+                {
+                    "role_title": "开发工程师",
+                    "level": 1,
+                    "department": "技术部",
+                    "agent_profile_id": "code-assistant",
+                    "parent_role_title": "CTO",
+                },
             ],
         }
         result = handler._preview(params)
@@ -191,7 +201,9 @@ class TestBuildOrgStructure:
         }
         nodes, edges, errors = handler._build_org_structure(params)
         assert len(nodes[0]["external_tools"]) > 0
-        assert "research" in nodes[0]["external_tools"] or "filesystem" in nodes[0]["external_tools"]
+        assert (
+            "research" in nodes[0]["external_tools"] or "filesystem" in nodes[0]["external_tools"]
+        )
 
     def test_error_on_missing_parent(self, handler):
         params = {
@@ -227,16 +239,22 @@ class TestCreate:
     async def test_create_success(self, handler, tmp_data_dir):
         with patch("openakita.config.settings") as mock_settings:
             mock_settings.data_dir = tmp_data_dir
-            result = await handler._create({
-                "name": "测试组织",
-                "description": "测试描述",
-                "core_business": "软件开发",
-                "nodes": [
-                    {"role_title": "CEO", "level": 0, "agent_profile_id": "default"},
-                    {"role_title": "CTO", "level": 1, "parent_role_title": "CEO",
-                     "agent_profile_id": "architect"},
-                ],
-            })
+            result = await handler._create(
+                {
+                    "name": "测试组织",
+                    "description": "测试描述",
+                    "core_business": "软件开发",
+                    "nodes": [
+                        {"role_title": "CEO", "level": 0, "agent_profile_id": "default"},
+                        {
+                            "role_title": "CTO",
+                            "level": 1,
+                            "parent_role_title": "CEO",
+                            "agent_profile_id": "architect",
+                        },
+                    ],
+                }
+            )
         assert "✅" in result
         assert "测试组织" in result
         assert "节点数: 2" in result
@@ -276,6 +294,7 @@ class TestToolDefinition:
 
     def test_tool_definition_valid(self):
         from openakita.tools.definitions.org_setup import ORG_SETUP_TOOLS
+
         assert len(ORG_SETUP_TOOLS) == 1
         tool = ORG_SETUP_TOOLS[0]
         assert tool["name"] == "setup_organization"
@@ -285,6 +304,7 @@ class TestToolDefinition:
 
     def test_tool_has_examples(self):
         from openakita.tools.definitions.org_setup import ORG_SETUP_TOOLS
+
         tool = ORG_SETUP_TOOLS[0]
         assert "examples" in tool
         assert len(tool["examples"]) >= 2
@@ -295,26 +315,31 @@ class TestToolRegistration:
 
     def test_exported_from_definitions(self):
         from openakita.tools.definitions import ORG_SETUP_TOOLS
+
         assert len(ORG_SETUP_TOOLS) > 0
 
     def test_not_in_base_tools(self):
         from openakita.tools.definitions import BASE_TOOLS, ORG_SETUP_TOOLS
+
         base_names = {t["name"] for t in BASE_TOOLS}
         org_names = {t["name"] for t in ORG_SETUP_TOOLS}
         assert not base_names.intersection(org_names)
 
     def test_handler_has_create_handler(self):
         from openakita.tools.handlers.org_setup import create_handler
+
         assert callable(create_handler)
 
     def test_handler_accepts_agent(self):
         from openakita.tools.handlers.org_setup import create_handler
+
         mock_agent = MagicMock()
         handler_fn = create_handler(mock_agent)
         assert callable(handler_fn)
 
     def test_action_enum_includes_new_actions(self):
         from openakita.tools.definitions.org_setup import ORG_SETUP_TOOLS
+
         tool = ORG_SETUP_TOOLS[0]
         actions = tool["input_schema"]["properties"]["action"]["enum"]
         for a in ("list_orgs", "get_org", "update_org", "delete_org"):
@@ -322,11 +347,13 @@ class TestToolRegistration:
 
     def test_schema_has_org_id(self):
         from openakita.tools.definitions.org_setup import ORG_SETUP_TOOLS
+
         props = ORG_SETUP_TOOLS[0]["input_schema"]["properties"]
         assert "org_id" in props
 
     def test_schema_has_update_nodes(self):
         from openakita.tools.definitions.org_setup import ORG_SETUP_TOOLS
+
         props = ORG_SETUP_TOOLS[0]["input_schema"]["properties"]
         assert "update_nodes" in props
         assert "remove_nodes" in props
@@ -337,63 +364,78 @@ class TestToolRegistration:
 # list_orgs / get_org / update_org / delete_org tests
 # ============================================================
 
+
 @pytest.fixture
 def created_org(handler, tmp_data_dir):
     """Create a test org and return (org_id, data_dir)."""
     from openakita.orgs.manager import OrgManager
+
     manager = OrgManager(tmp_data_dir)
-    org = manager.create({
-        "name": "测试修改组织",
-        "description": "用于测试修改",
-        "core_business": "软件开发",
-        "nodes": [
-            {
-                "id": "node_root",
-                "role_title": "CTO",
-                "role_goal": "技术方向",
-                "department": "技术部",
-                "level": 0,
-                "agent_source": "ref:architect",
-                "agent_profile_id": "architect",
-                "external_tools": ["research", "filesystem"],
-                "position": {"x": 400, "y": 0},
-            },
-            {
-                "id": "node_dev",
-                "role_title": "开发工程师",
-                "role_goal": "写代码",
-                "department": "技术部",
-                "level": 1,
-                "agent_source": "ref:code-assistant",
-                "agent_profile_id": "code-assistant",
-                "external_tools": ["filesystem", "research"],
-                "position": {"x": 400, "y": 180},
-            },
-            {
-                "id": "node_qa",
-                "role_title": "QA 测试",
-                "role_goal": "质量保障",
-                "department": "技术部",
-                "level": 1,
-                "agent_source": "ref:code-assistant",
-                "agent_profile_id": "code-assistant",
-                "external_tools": ["filesystem"],
-                "position": {"x": 650, "y": 180},
-            },
-        ],
-        "edges": [
-            {"id": "edge_1", "source": "node_root", "target": "node_dev",
-             "edge_type": "hierarchy", "bidirectional": True},
-            {"id": "edge_2", "source": "node_root", "target": "node_qa",
-             "edge_type": "hierarchy", "bidirectional": True},
-        ],
-    })
+    org = manager.create(
+        {
+            "name": "测试修改组织",
+            "description": "用于测试修改",
+            "core_business": "软件开发",
+            "nodes": [
+                {
+                    "id": "node_root",
+                    "role_title": "CTO",
+                    "role_goal": "技术方向",
+                    "department": "技术部",
+                    "level": 0,
+                    "agent_source": "ref:architect",
+                    "agent_profile_id": "architect",
+                    "external_tools": ["research", "filesystem"],
+                    "position": {"x": 400, "y": 0},
+                },
+                {
+                    "id": "node_dev",
+                    "role_title": "开发工程师",
+                    "role_goal": "写代码",
+                    "department": "技术部",
+                    "level": 1,
+                    "agent_source": "ref:code-assistant",
+                    "agent_profile_id": "code-assistant",
+                    "external_tools": ["filesystem", "research"],
+                    "position": {"x": 400, "y": 180},
+                },
+                {
+                    "id": "node_qa",
+                    "role_title": "QA 测试",
+                    "role_goal": "质量保障",
+                    "department": "技术部",
+                    "level": 1,
+                    "agent_source": "ref:code-assistant",
+                    "agent_profile_id": "code-assistant",
+                    "external_tools": ["filesystem"],
+                    "position": {"x": 650, "y": 180},
+                },
+            ],
+            "edges": [
+                {
+                    "id": "edge_1",
+                    "source": "node_root",
+                    "target": "node_dev",
+                    "edge_type": "hierarchy",
+                    "bidirectional": True,
+                },
+                {
+                    "id": "edge_2",
+                    "source": "node_root",
+                    "target": "node_qa",
+                    "edge_type": "hierarchy",
+                    "bidirectional": True,
+                },
+            ],
+        }
+    )
     return org.id, tmp_data_dir
 
 
 def _fresh_manager(data_dir):
     """Create a fresh OrgManager to bypass in-memory cache."""
     from openakita.orgs.manager import OrgManager
+
     return OrgManager(data_dir)
 
 
@@ -474,16 +516,18 @@ class TestUpdateOrg:
         org_id, data_dir = created_org
         with patch("openakita.config.settings") as ms:
             ms.data_dir = data_dir
-            result = await handler._update_org({
-                "org_id": org_id,
-                "update_nodes": [
-                    {
-                        "node_id": "node_dev",
-                        "role_title": "高级开发工程师",
-                        "agent_profile_id": "architect",
-                    }
-                ],
-            })
+            result = await handler._update_org(
+                {
+                    "org_id": org_id,
+                    "update_nodes": [
+                        {
+                            "node_id": "node_dev",
+                            "role_title": "高级开发工程师",
+                            "agent_profile_id": "architect",
+                        }
+                    ],
+                }
+            )
         assert "✅" in result
         assert "修改节点" in result
 
@@ -499,15 +543,17 @@ class TestUpdateOrg:
         org_id, data_dir = created_org
         with patch("openakita.config.settings") as ms:
             ms.data_dir = data_dir
-            result = await handler._update_org({
-                "org_id": org_id,
-                "update_nodes": [
-                    {
-                        "role_title": "QA 测试",
-                        "role_goal": "自动化测试 + 性能测试",
-                    }
-                ],
-            })
+            result = await handler._update_org(
+                {
+                    "org_id": org_id,
+                    "update_nodes": [
+                        {
+                            "role_title": "QA 测试",
+                            "role_goal": "自动化测试 + 性能测试",
+                        }
+                    ],
+                }
+            )
         assert "✅" in result
 
         org = _fresh_manager(data_dir).get(org_id)
@@ -521,19 +567,21 @@ class TestUpdateOrg:
         org_id, data_dir = created_org
         with patch("openakita.config.settings") as ms:
             ms.data_dir = data_dir
-            result = await handler._update_org({
-                "org_id": org_id,
-                "update_nodes": [
-                    {
-                        "role_title": "数据工程师",
-                        "role_goal": "数据管道建设",
-                        "department": "技术部",
-                        "level": 1,
-                        "agent_profile_id": "data-analyst",
-                        "parent_role_title": "CTO",
-                    }
-                ],
-            })
+            result = await handler._update_org(
+                {
+                    "org_id": org_id,
+                    "update_nodes": [
+                        {
+                            "role_title": "数据工程师",
+                            "role_goal": "数据管道建设",
+                            "department": "技术部",
+                            "level": 1,
+                            "agent_profile_id": "data-analyst",
+                            "parent_role_title": "CTO",
+                        }
+                    ],
+                }
+            )
         assert "✅" in result
         assert "新增节点" in result
 
@@ -553,10 +601,12 @@ class TestUpdateOrg:
         org_id, data_dir = created_org
         with patch("openakita.config.settings") as ms:
             ms.data_dir = data_dir
-            result = await handler._update_org({
-                "org_id": org_id,
-                "remove_nodes": ["QA 测试"],
-            })
+            result = await handler._update_org(
+                {
+                    "org_id": org_id,
+                    "remove_nodes": ["QA 测试"],
+                }
+            )
         assert "✅" in result
         assert "删除节点" in result
 
@@ -571,10 +621,12 @@ class TestUpdateOrg:
         org_id, data_dir = created_org
         with patch("openakita.config.settings") as ms:
             ms.data_dir = data_dir
-            result = await handler._update_org({
-                "org_id": org_id,
-                "remove_nodes": ["node_qa"],
-            })
+            result = await handler._update_org(
+                {
+                    "org_id": org_id,
+                    "remove_nodes": ["node_qa"],
+                }
+            )
         assert "✅" in result
 
         org = _fresh_manager(data_dir).get(org_id)
@@ -586,13 +638,15 @@ class TestUpdateOrg:
         org_id, data_dir = created_org
         with patch("openakita.config.settings") as ms:
             ms.data_dir = data_dir
-            result = await handler._update_org({
-                "org_id": org_id,
-                "update_fields": {
-                    "name": "重命名组织",
-                    "core_business": "AI 产品开发",
-                },
-            })
+            result = await handler._update_org(
+                {
+                    "org_id": org_id,
+                    "update_fields": {
+                        "name": "重命名组织",
+                        "core_business": "AI 产品开发",
+                    },
+                }
+            )
         assert "✅" in result
 
         org = _fresh_manager(data_dir).get(org_id)
@@ -614,12 +668,14 @@ class TestUpdateOrg:
         org_id, data_dir = created_org
         with patch("openakita.config.settings") as ms:
             ms.data_dir = data_dir
-            await handler._update_org({
-                "org_id": org_id,
-                "update_nodes": [
-                    {"node_id": "node_dev", "role_goal": "写高质量代码"},
-                ],
-            })
+            await handler._update_org(
+                {
+                    "org_id": org_id,
+                    "update_nodes": [
+                        {"node_id": "node_dev", "role_goal": "写高质量代码"},
+                    ],
+                }
+            )
 
         org = _fresh_manager(data_dir).get(org_id)
         assert len(org.nodes) == 3
@@ -632,20 +688,22 @@ class TestUpdateOrg:
         org_id, data_dir = created_org
         with patch("openakita.config.settings") as ms:
             ms.data_dir = data_dir
-            result = await handler._update_org({
-                "org_id": org_id,
-                "remove_nodes": ["node_qa"],
-                "update_nodes": [
-                    {"node_id": "node_dev", "role_title": "全栈工程师"},
-                    {
-                        "role_title": "DevOps",
-                        "level": 1,
-                        "agent_profile_id": "devops-engineer",
-                        "parent_role_title": "CTO",
-                    },
-                ],
-                "update_fields": {"description": "重构后的技术团队"},
-            })
+            result = await handler._update_org(
+                {
+                    "org_id": org_id,
+                    "remove_nodes": ["node_qa"],
+                    "update_nodes": [
+                        {"node_id": "node_dev", "role_title": "全栈工程师"},
+                        {
+                            "role_title": "DevOps",
+                            "level": 1,
+                            "agent_profile_id": "devops-engineer",
+                            "parent_role_title": "CTO",
+                        },
+                    ],
+                    "update_fields": {"description": "重构后的技术团队"},
+                }
+            )
         assert "✅" in result
 
         org = _fresh_manager(data_dir).get(org_id)
@@ -666,8 +724,9 @@ class TestDeleteOrg:
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent(self, handler, tmp_data_dir):
-        with patch("openakita.config.settings") as ms, patch(
-            "openakita.orgs.runtime.get_runtime", return_value=None
+        with (
+            patch("openakita.config.settings") as ms,
+            patch("openakita.orgs.runtime.get_runtime", return_value=None),
         ):
             ms.data_dir = tmp_data_dir
             result = await handler._delete_org({"org_id": "nonexistent"})
@@ -677,8 +736,9 @@ class TestDeleteOrg:
     @pytest.mark.asyncio
     async def test_delete_success(self, handler, tmp_data_dir, created_org):
         org_id, data_dir = created_org
-        with patch("openakita.config.settings") as ms, patch(
-            "openakita.orgs.runtime.get_runtime", return_value=None
+        with (
+            patch("openakita.config.settings") as ms,
+            patch("openakita.orgs.runtime.get_runtime", return_value=None),
         ):
             ms.data_dir = data_dir
             result = await handler._delete_org({"org_id": org_id})

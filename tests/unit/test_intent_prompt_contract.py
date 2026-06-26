@@ -662,9 +662,7 @@ def test_explicit_no_tool_keeps_pure_writing_path():
     """Even with deliverable-style verbs, an explicit "no tools" rider should
     still route the request to text-only sub-agent flow (preserves the
     "扮演 X 写一段 200 字" use case introduced in 5/8)."""
-    message = (
-        "请扮演记者写一份 200 字的产品介绍。直接用纯文本回复，不要调用任何工具。"
-    )
+    message = "请扮演记者写一份 200 字的产品介绍。直接用纯文本回复，不要调用任何工具。"
 
     assert _looks_like_external_tool_request(message) is False
 

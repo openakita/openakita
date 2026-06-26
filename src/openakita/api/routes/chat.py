@@ -19,6 +19,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from openakita.core.confirmation_state import ConfirmationDecision, get_confirmation_store
+from openakita.core.context_stats import get_context_snapshot, merge_context_snapshot_into_usage
 from openakita.core.engine_bridge import engine_stream, is_dual_loop, to_engine
 from openakita.core.security_actions import execute_controlled_action
 from openakita.core.trusted_paths import grant_session_trust
@@ -105,6 +106,66 @@ def _format_controlled_action_result(
     )
 
 
+def _observe_todo_snapshot_event(current: dict | None, event: dict) -> dict | None:
+    """Fold one progress event into the latest todo snapshot.
+
+    Kept as a compatibility wrapper for tests and older call sites; the
+    persisted source of truth is now the progress-event journal.
+    """
+    from ..message_parts import append_progress_event, project_progress_events_to_todo
+
+    journal: list[dict] = []
+    if isinstance(current, dict):
+        journal = append_progress_event(journal, {"type": "todo_created", "plan": current})
+    journal = append_progress_event(journal, event)
+    return project_progress_events_to_todo(journal) or current
+
+
+def _observe_progress_event_journal(current: list[dict] | None, event: dict) -> list[dict]:
+    """Append a progress SSE event to this turn's persisted event journal."""
+    from ..message_parts import append_progress_event
+
+    return append_progress_event(current, event)
+
+
+def _attach_todo_snapshot_meta(
+    meta: dict,
+    *,
+    conversation_id: str,
+    todo_snapshot: dict | None,
+    progress_events: list[dict] | None = None,
+) -> None:
+    """Attach progress journal and latest todo projection to assistant metadata."""
+    try:
+        from ..message_parts import (
+            normalize_progress_events,
+            project_progress_events_to_todo,
+            serialize_plan_to_chat_todo,
+        )
+
+        journal = normalize_progress_events(progress_events)
+        snapshot = project_progress_events_to_todo(journal)
+        if snapshot is None and isinstance(todo_snapshot, dict):
+            snapshot = serialize_plan_to_chat_todo(todo_snapshot)
+        if not (snapshot and snapshot.get("steps")):
+            from ...tools.handlers.plan import get_todo_handler_for_session, has_active_todo
+
+            if conversation_id and has_active_todo(conversation_id):
+                handler = get_todo_handler_for_session(conversation_id)
+                plan = handler.get_plan_for(conversation_id) if handler else None
+                snapshot = serialize_plan_to_chat_todo(plan)
+                if snapshot and not journal:
+                    journal = normalize_progress_events(
+                        [{"type": "todo_created", "plan": snapshot, "restored": True}]
+                    )
+        if journal:
+            meta["progress_events"] = journal
+        if snapshot and snapshot.get("steps"):
+            meta["todo"] = snapshot
+    except Exception:
+        pass
+
+
 class _RiskAuthorizedReplay:
     """Sentinel returned by ``_handle_pending_risk_answer`` when the user has
     confirmed a high-risk action **but** the classification has no controlled
@@ -147,9 +208,9 @@ async def _handle_pending_risk_answer(
     # 决策是 CONFIRM/INSPECT_ONLY（即非 CANCEL），则向 session 写入一条
     # 信任规则。仅按 operation_kind 维度记录，不绑定具体 path_pattern，
     # 因为前端 UI 此处暂不传具体路径；保持克制 ⇒ 仅在本会话内生效。
-    if (
-        remember_for_session
-        and decision in (ConfirmationDecision.CONFIRM, ConfirmationDecision.INSPECT_ONLY)
+    if remember_for_session and decision in (
+        ConfirmationDecision.CONFIRM,
+        ConfirmationDecision.INSPECT_ONLY,
     ):
         try:
             session_manager = getattr(request.app.state, "session_manager", None)
@@ -241,14 +302,10 @@ async def _handle_pending_risk_answer(
                                     _intent.scope,
                                 )
                         except Exception as exc:
-                            logger.warning(
-                                "[Chat API] Failed to derive AuthorizedIntent: %s", exc
-                            )
+                            logger.warning("[Chat API] Failed to derive AuthorizedIntent: %s", exc)
                         session_manager.persist()
                 except Exception as exc:
-                    logger.warning(
-                        "[Chat API] Failed to persist risk_authorized_replay: %s", exc
-                    )
+                    logger.warning("[Chat API] Failed to persist risk_authorized_replay: %s", exc)
             logger.info(
                 "[RiskGate] User confirmed high-risk action without controlled entry — "
                 "replaying original message via LLM (session=%s, confirmation=%s)",
@@ -352,6 +409,39 @@ async def list_commands():
         for c in get_commands()
         if CommandScope.DESKTOP in c.scope
     ]
+
+
+def _backfill_ask_user_answer(session, answer_text: str) -> None:
+    """Persist an ask_user answer onto the assistant message that raised it.
+
+    A user's reply to an ask_user prompt is sent as a normal follow-up message
+    (it starts a new turn). The frontend already marks the prompt answered
+    locally, but that state was never persisted, so a reload / second window
+    re-rendered the prompt as freshly clickable. ask_user ends the turn, so the
+    answer is the message immediately following the assistant turn that owns
+    the prompt — reliable within a conversation even under the per-conversation
+    busy lock. We mark only the most-recent unanswered ask_user.
+    """
+    if not answer_text:
+        return
+    try:
+        msgs = session.context.messages
+    except Exception:
+        return
+    if not msgs:
+        return
+    for m in reversed(msgs):
+        role = m.get("role")
+        if role == "user":
+            # Skip the just-added answer (and any other trailing user turns).
+            continue
+        if role == "assistant":
+            au = m.get("ask_user")
+            if isinstance(au, dict) and not au.get("answered"):
+                au["answered"] = True
+                au["answer"] = answer_text
+        # Only the immediately preceding assistant turn can own the prompt.
+        return
 
 
 @router.post("/api/chat/clear")
@@ -482,7 +572,7 @@ def _extract_source_used(event: dict) -> dict | None:
         marker = "[OPENAKITA_SOURCE]"
         if marker not in result:
             return None
-        line = result[result.index(marker) + len(marker):].strip().splitlines()[0].strip()
+        line = result[result.index(marker) + len(marker) :].strip().splitlines()[0].strip()
         try:
             payload = json.loads(line)
         except (json.JSONDecodeError, TypeError, ValueError):
@@ -515,7 +605,7 @@ def _extract_mcp_call(event: dict) -> dict | None:
     if marker not in result:
         return None
     try:
-        line = result[result.index(marker) + len(marker):].strip().splitlines()[0].strip()
+        line = result[result.index(marker) + len(marker) :].strip().splitlines()[0].strip()
         payload = json.loads(line)
     except (json.JSONDecodeError, TypeError, ValueError, IndexError):
         return None
@@ -527,6 +617,101 @@ def _extract_mcp_call(event: dict) -> dict | None:
     payload.setdefault("reconnected", False)
     payload.setdefault("error", "")
     return payload
+
+
+def _artifact_data_from_receipt(receipt: dict) -> dict | None:
+    """Convert one delivery receipt into the chat artifact shape."""
+    if not isinstance(receipt, dict):
+        return None
+    if receipt.get("status") != "delivered" or not receipt.get("file_url"):
+        return None
+    return {
+        "artifact_type": receipt.get("type", "file"),
+        "file_url": receipt["file_url"],
+        "path": receipt.get("path", ""),
+        "name": receipt.get("name", ""),
+        "caption": receipt.get("caption", ""),
+        "size": receipt.get("size"),
+    }
+
+
+def _extract_artifact_events(event: dict) -> list[dict]:
+    """Extract delivered artifacts from tool events without emitting SSE."""
+    if event.get("type") != "tool_call_end":
+        return []
+    tool_name = event.get("tool")
+    artifacts: list[dict] = []
+    if tool_name in ("deliver_artifacts", "send_sticker"):
+        try:
+            result_str = event.get("result", "{}")
+            _log_marker = "\n\n[执行日志]"
+            if _log_marker in result_str:
+                result_str = result_str[: result_str.index(_log_marker)]
+            result_data = json.loads(result_str)
+            for receipt in result_data.get("receipts", []):
+                art_data = _artifact_data_from_receipt(receipt)
+                if art_data:
+                    artifacts.append(art_data)
+            logger.info(
+                "[Chat API] Artifact parsed: tool=%s receipts=%d emitted=%d",
+                tool_name,
+                len(result_data.get("receipts", [])),
+                len(artifacts),
+            )
+        except (json.JSONDecodeError, TypeError, KeyError) as exc:
+            logger.warning(
+                f"[Chat API] Artifact parse failed for {event.get('tool')}: {exc!r}, "
+                f"result preview: {str(event.get('result', ''))[:200]}"
+            )
+    elif tool_name in ("delegate_to_agent", "delegate_parallel", "spawn_agent"):
+        _art_marker = "__ARTIFACT_RECEIPTS__\n"
+        _del_result = event.get("result", "")
+        _search_pos = 0
+        while _art_marker in _del_result[_search_pos:]:
+            try:
+                _idx = _del_result.index(_art_marker, _search_pos) + len(_art_marker)
+                _eol = _del_result.find("\n", _idx)
+                _chunk = _del_result[_idx:] if _eol < 0 else _del_result[_idx:_eol]
+                _search_pos = _idx + len(_chunk)
+                for receipt in json.loads(_chunk):
+                    art_data = _artifact_data_from_receipt(receipt)
+                    if art_data:
+                        artifacts.append(art_data)
+            except (json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
+                logger.warning(
+                    f"[Chat API] Delegation artifact parse failed: {exc!r}, "
+                    f"chunk preview: {_del_result[max(0, _search_pos - 50) : _search_pos + 100]}"
+                )
+                break
+        if _art_marker in _del_result:
+            logger.info(
+                "[Chat API] Delegation artifact parsed: tool=%s emitted=%d",
+                tool_name,
+                len(artifacts),
+            )
+    return artifacts
+
+
+def _append_unique_artifacts(collected: list[dict], artifacts: list[dict]) -> list[dict]:
+    """Append artifacts by stable identity, returning only newly-added items."""
+    seen = {
+        (
+            str(item.get("file_url", "")),
+            str(item.get("path", "")),
+            str(item.get("name", "")),
+        )
+        for item in collected
+        if isinstance(item, dict)
+    }
+    added: list[dict] = []
+    for art in artifacts:
+        key = (str(art.get("file_url", "")), str(art.get("path", "")), str(art.get("name", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        collected.append(art)
+        added.append(art)
+    return added
 
 
 def _resolve_agent(agent: object):
@@ -592,6 +777,125 @@ def _get_existing_agent(request: Request, conversation_id: str | None):
     return getattr(request.app.state, "agent", None)
 
 
+def _discard_pending_cancel(agent: object, conversation_id: str | None) -> None:
+    """Drop a stale pending cancel for an idle conversation, if present."""
+    if not conversation_id:
+        return
+    pending = getattr(agent, "_pending_cancels", None)
+    if isinstance(pending, dict):
+        pending.pop(conversation_id, None)
+
+
+def _agent_has_cancel_target(agent: object, conversation_id: str) -> bool:
+    """Return whether a cancel can still target this agent turn.
+
+    A TaskState is the normal target. During the short startup/prepare window,
+    TaskState may not exist yet; in that case ``_stream_chat`` pre-pins
+    ``_current_conversation_id`` so a user stop can still be delivered as a
+    pending cancel. If both are absent, the agent has already cleaned up this
+    conversation and a cancel would only create stale state.
+    """
+    state = getattr(agent, "agent_state", None)
+    get_task = getattr(state, "get_task_for_session", None)
+    if callable(get_task):
+        try:
+            if get_task(conversation_id) is not None:
+                return True
+        except Exception:
+            pass
+    return getattr(agent, "_current_conversation_id", None) == conversation_id
+
+
+async def _cancel_running_chat_task(
+    actual_agent: object,
+    conversation_id: str | None,
+    reason: str,
+    *,
+    source: str,
+) -> dict:
+    """Cancel a chat task only while its lifecycle lock is still busy.
+
+    ``Agent.cancel_current_task`` intentionally records a pending cancel when
+    no TaskState exists yet, so a stop request can abort the prepare phase.
+    Once the lifecycle lock is already idle, the same pending cancel becomes
+    stale and can kill a future turn that reuses the conversation id.  Control
+    routes therefore use the lifecycle lock as the authority for whether a
+    cancel is still meaningful.
+    """
+    conv_id = conversation_id or getattr(actual_agent, "_current_conversation_id", None)
+    if not conv_id:
+        logger.info("[Chat API] %s cancel without conversation id; using legacy agent cancel", source)
+        actual_agent.cancel_current_task(reason)
+        return {"status": "ok", "action": "cancel", "reason": reason}
+
+    lifecycle = get_lifecycle_manager()
+    try:
+        busy_status = await lifecycle.get_busy_status(conv_id)
+        is_busy = bool(busy_status.get("busy"))
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.warning(
+            "[Chat API] %s cancel busy check failed for conv=%s: %s; proceeding",
+            source,
+            conv_id,
+            exc,
+        )
+        is_busy = True
+
+    if not is_busy:
+        _discard_pending_cancel(actual_agent, conv_id)
+        logger.info(
+            "[Chat API] %s cancel ignored for idle conversation: conv=%s",
+            source,
+            conv_id,
+        )
+        return {
+            "status": "ok",
+            "action": "noop",
+            "reason": reason,
+            "conversation_id": conv_id,
+            "message": "No running task to cancel",
+        }
+
+    if not _agent_has_cancel_target(actual_agent, conv_id):
+        released = await lifecycle.finish(conv_id)
+        _discard_pending_cancel(actual_agent, conv_id)
+        logger.info(
+            "[Chat API] %s cancel ignored: lifecycle was busy but agent turn already "
+            "cleaned up (conv=%s, released=%s)",
+            source,
+            conv_id,
+            released,
+        )
+        return {
+            "status": "ok",
+            "action": "noop",
+            "reason": reason,
+            "conversation_id": conv_id,
+            "message": "No running task to cancel",
+        }
+
+    actual_agent.cancel_current_task(reason, session_id=conv_id)
+
+    # Release busy-lock immediately so the UI reflects cancellation. If the
+    # lock has already been released by the stream finalizer, the cancel arrived
+    # too late; discard the pending signal that may have been written above.
+    released = await lifecycle.finish(conv_id)
+    if not released:
+        _discard_pending_cancel(actual_agent, conv_id)
+        logger.info(
+            "[Chat API] %s cancel arrived after lifecycle idle; discarded pending cancel: conv=%s",
+            source,
+            conv_id,
+        )
+
+    return {
+        "status": "ok",
+        "action": "cancel",
+        "reason": reason,
+        "conversation_id": conv_id,
+    }
+
+
 def _apply_agent_profile(session: object, new_profile_id: str) -> bool:
     """Store agent_profile_id in session context and record the switch.
 
@@ -643,6 +947,10 @@ def _schedule_background_save(
     full_reply_snapshot: str,
     collected_artifacts: list,
     save_done: bool,
+    todo_snapshot: dict | None = None,
+    collected_sources: list | None = None,
+    collected_mcp_calls: list | None = None,
+    progress_events: list[dict] | None = None,
 ) -> None:
     """Register a background callback so that when a long-running agent task
     finally completes after the SSE stream has closed, the result is still
@@ -656,11 +964,24 @@ def _schedule_background_save(
 
         bg_reply = full_reply_snapshot
         bg_artifacts = list(collected_artifacts)
+        bg_sources = list(collected_sources or [])
+        bg_mcp_calls = list(collected_mcp_calls or [])
+        bg_todo_snapshot = todo_snapshot
+        bg_progress_events = list(progress_events or [])
         try:
             while not agent_queue.empty():
                 ev = agent_queue.get_nowait()
                 if ev is None or ev.get("type") == "__agent_error__":
                     break
+                bg_progress_events = _observe_progress_event_journal(bg_progress_events, ev)
+                bg_todo_snapshot = _observe_todo_snapshot_event(bg_todo_snapshot, ev)
+                _append_unique_artifacts(bg_artifacts, _extract_artifact_events(ev))
+                _source_used = _extract_source_used(ev)
+                if _source_used:
+                    bg_sources.append(_source_used)
+                _mcp_call = _extract_mcp_call(ev)
+                if _mcp_call:
+                    bg_mcp_calls.append(_mcp_call)
                 et = ev.get("type", "")
                 if et == "text_delta" and "content" in ev:
                     bg_reply += ev["content"]
@@ -674,6 +995,16 @@ def _schedule_background_save(
                 meta: dict = {}
                 if bg_artifacts:
                     meta["artifacts"] = bg_artifacts
+                if bg_sources:
+                    meta["sources"] = bg_sources
+                if bg_mcp_calls:
+                    meta["mcp_calls"] = bg_mcp_calls
+                _attach_todo_snapshot_meta(
+                    meta,
+                    conversation_id=conversation_id,
+                    todo_snapshot=bg_todo_snapshot,
+                    progress_events=bg_progress_events,
+                )
                 session.add_message("assistant", bg_reply, **meta)
                 if session_manager:
                     session_manager.persist()
@@ -728,6 +1059,25 @@ async def _stream_chat(
     _ask_user_options: list[dict] = []
     _ask_user_questions: list[dict] = []
     _collected_artifacts: list[dict] = []
+    _collected_sources: list[dict] = []
+    _collected_mcp_calls: list[dict] = []
+    # Latest plan snapshot observed on the SSE stream this turn. Captured here
+    # (mirroring the frontend's ``currentPlan``) so the *final* state survives —
+    # ``auto_close_todo`` unregisters the plan before the assistant message is
+    # saved, so a save-time registry lookup would miss completed plans (#615).
+    _last_todo_snapshot: dict | None = None
+    # Persisted causal progress event journal for this assistant turn. The
+    # final ``todo`` card is a projection of this journal; keeping the events
+    # lets history/reload recover progress as first-class data instead of only
+    # the folded snapshot.
+    _progress_events: list[dict] = []
+    # Server-side mirror of the browser's reasoning-chain assembly. Built from
+    # the same SSE events so the persisted history can restore the causal
+    # timeline (thinking / narration / tool args / results, in order) instead of
+    # the lossy chain_summary on cross-window / cross-device reload.
+    from ..chain_timeline import ChainTimelineBuilder
+
+    _chain_timeline_builder = ChainTimelineBuilder()
 
     async def _check_disconnected() -> bool:
         nonlocal _client_disconnected
@@ -743,37 +1093,25 @@ async def _stream_chat(
                 pass
         return False
 
-    # ── C17 Phase B.1/B.2: SSE replay session ──
+    # ── SSE replay session ──
     # 每个 conversation_id 对应一个 SSESession（per-session ringbuffer +
-    # 单调 seq）。客户端断线后 ``fetch /api/chat`` 带 ``Last-Event-ID``
-    # header 时，我们先 flush ringbuffer 里 seq > last_seq 的事件再接
-    # active 流。新连接（没带 Last-Event-ID）则 seq 从已有计数继续累加，
-    # 客户端要么从 0 开始接（首次 fetch），要么自己处理 dedup。
+    # 单调 seq）。每条 SSE event 都会 ``add_event`` 进 ringbuffer 并带一行
+    # ``id: <seq>``，供断点续传去重。ringbuffer 与 seq 是 per-conversation、
+    # 跨 turn 持续累积的，所以本函数（= 一个全新 turn）在下方 try 块开头会调
+    # ``begin_turn()`` 把 replay floor 推到当前 max seq——确保后续的
+    # ``/api/chat/resume`` 只能 replay 本 turn 内的事件，绝不会把上一 turn 已
+    # 完成的尾巴（最终答复）回放到新 turn 里。
+    # POST 本身不做任何 replay：一条全新消息不是断点重连。
     # 注意：``conversation_id`` 在下方 try 块里才会被赋值（包含 uuid 补全
     # 逻辑），这里直接读 ``chat_request.conversation_id``——足够当 session
-    # key；如果用户传空字符串就降级回不带 replay 的旧行为。
-    from ...core.sse_replay import (
-        format_sse_frame,
-        parse_last_event_id,
-    )
+    # key；如果用户传空字符串就降级回不带 ringbuffer 的旧行为。
+    from ...core.sse_replay import format_sse_frame
     from ...core.sse_replay import (
         get_registry as _get_sse_registry,
     )
 
     _sse_conv_key = chat_request.conversation_id or ""
-    _sse_session = (
-        _get_sse_registry().get_or_create(_sse_conv_key)
-        if _sse_conv_key
-        else None
-    )
-
-    _last_event_id_header = None
-    if http_request is not None:
-        try:
-            _last_event_id_header = http_request.headers.get("last-event-id")
-        except Exception:
-            _last_event_id_header = None
-    _last_event_id = parse_last_event_id(_last_event_id_header)
+    _sse_session = _get_sse_registry().get_or_create(_sse_conv_key) if _sse_conv_key else None
 
     def _sse(event_type: str, data: dict | None = None) -> str:
         nonlocal _reply_chars, _reply_preview, _full_reply, _chain_reply, _done_sent
@@ -826,28 +1164,30 @@ async def _stream_chat(
     conversation_id = chat_request.conversation_id or ""
 
     try:
-        # ── C17 Phase B.2: replay buffered events for reconnecting clients ──
-        # When the client sets ``Last-Event-ID``, flush ringbuffer events
-        # with ``seq > last_seq`` **before** anything new. These frames
-        # carry their original seq so the client can dedup based on
-        # ``seenSequenceNums``; we don't push them back into the buffer
-        # (they're already there) and don't bump _reply_chars / preview
-        # (those state vars only reflect the *new* turn we're about to
-        # generate).
-        if _sse_session is not None and _last_event_id is not None:
-            _missed = _sse_session.replay_from(_last_event_id)
-            if _missed:
-                logger.info(
-                    "[Chat API] replaying %d SSE event(s) for conv=%s after "
-                    "Last-Event-ID=%s",
-                    len(_missed),
-                    conversation_id,
-                    _last_event_id,
-                )
-                for evt in _missed:
-                    yield format_sse_frame(
-                        evt, data_json=json.dumps(evt.payload, ensure_ascii=False)
-                    )
+        # ── Turn-scoped replay floor (cross-turn replay guard) ──
+        # A POST /api/chat ALWAYS starts a brand-new turn. The per-conversation
+        # ringbuffer + monotonic seq persist across turns, so we seal a fresh
+        # replay scope here by advancing the session's floor to the current max
+        # seq. From now on any /api/chat/resume (or a stale Last-Event-ID from
+        # some other client) can only replay events generated DURING this turn —
+        # never the tail of a previous, completed turn. That is what stops a
+        # finished turn's answer from being replayed on top of the next
+        # question (the bug users hit after backgrounding mid-stream).
+        #
+        # We deliberately do NOT replay anything on the POST itself: a new turn
+        # is not a reconnect. The official client no longer sends Last-Event-ID
+        # on POST, and reconnect / catch-up is handled out-of-band by
+        # ``attemptRecovery`` (REST history) and GET /api/chat/resume (which
+        # re-attaches WITHIN the active turn and is now floor-clamped too).
+        if _sse_session is not None:
+            _sse_session.begin_turn()
+
+        # Yield an SSE comment keepalive before Agent resolution.
+        # Agent lazy-init (Brain/tools/memory/prompt) can take several
+        # seconds on cold start; sending an SSE comment immediately
+        # opens the HTTP chunked response so the client's fetch stream
+        # is activated and won't be treated as an empty response.
+        yield ":keepalive\n\n"
 
         actual_agent = _resolve_agent(agent)
         if actual_agent is None:
@@ -903,7 +1243,9 @@ async def _stream_chat(
                     if chat_request.agent_profile_id:
                         _apply_agent_profile(session, chat_request.agent_profile_id)
                     session.set_metadata("selected_endpoint", chat_request.endpoint or "")
-                    session.set_metadata("endpoint_policy", chat_request.endpoint_policy or "prefer")
+                    session.set_metadata(
+                        "endpoint_policy", chat_request.endpoint_policy or "prefer"
+                    )
                     session.set_metadata(
                         "ui_org_state",
                         {
@@ -915,6 +1257,7 @@ async def _stream_chat(
 
                     if chat_request.message:
                         session.add_message("user", chat_request.message)
+                        _backfill_ask_user_answer(session, chat_request.message)
                     session_messages_history = (
                         list(session.context.messages) if hasattr(session, "context") else []
                     )
@@ -925,6 +1268,14 @@ async def _stream_chat(
         from openakita.core.policy_v2 import DeferredApprovalRequired
 
         # ── Background agent task: decoupled from SSE lifecycle ──
+        # Pin the conversation before the background runner reaches
+        # ReasoningEngine.begin_task(). This keeps an immediate user cancel
+        # meaningful during the startup/prepare window while still letting the
+        # control route reject late cancels after Agent cleanup clears the pin.
+        with contextlib.suppress(Exception):
+            actual_agent._current_session_id = conversation_id
+            actual_agent._current_conversation_id = conversation_id
+
         async def _agent_runner():
             try:
                 async for ev in actual_agent.chat_with_session_stream(
@@ -955,9 +1306,7 @@ async def _stream_chat(
                             f"/api/pending_approvals/{approval_id}" if approval_id else None
                         ),
                         "resolve_url": (
-                            f"/api/pending_approvals/{approval_id}/resolve"
-                            if approval_id
-                            else None
+                            f"/api/pending_approvals/{approval_id}/resolve" if approval_id else None
                         ),
                         "unattended_strategy": exc.unattended_strategy,
                         "message": str(exc),
@@ -1016,33 +1365,128 @@ async def _stream_chat(
         _disconnect_watcher_task = asyncio.create_task(_disconnect_watcher())
 
         # --- 主 SSE 事件循环：从 queue 读取事件并转发 ---
-        # 每 SSE_KEEPALIVE_INTERVAL 秒无真实事件时发送 keepalive，
-        # 防止前端 fetch 连接因长时间无数据而超时断开（LLM 重试等场景）。
+        # v1.27.15 P0-2: every `text_delta` / `thinking_delta` / `chain_text`
+        # used to round-trip as its own HTTP chunk, saturating the React
+        # bubble-renderer on long contexts ("字一个一个慢慢出" 用户反馈).
+        # We now coalesce these high-frequency deltas through a 50ms /
+        # 2000-char window before emitting (DeltaCoalescer).  Non-delta
+        # events (tool_call_*, ask_user, artifact, ...) bypass the
+        # coalescer and remain on the low-latency path; arrival of any
+        # non-delta event also flushes pending deltas first so ordering
+        # is preserved end-to-end.
+        from ...core.sse_throttle import DeltaCoalescer
+
+        coalescer = DeltaCoalescer()
+
+        # Keepalive: 15s of true silence still needs a comment ping so
+        # nginx / cloudflare / corp proxies don't drop the SSE socket
+        # for being idle.  We can no longer use the agent_queue wait
+        # timeout for this — the coalescer needs us to tick the loop
+        # roughly every 50ms — so track elapsed-since-last-emit
+        # independently.
         SSE_KEEPALIVE_INTERVAL = 15.0
+        COALESCER_TICK_INTERVAL = 0.05
+        _last_emit_ts = time.time()
         _agent_errored = False
         _agent_error_msg = ""
+
+        def _emit_via_coalescer(etype: str, edata: dict | None) -> list[str]:
+            """Push one upstream event through the coalescer.
+
+            Returns the (possibly empty) list of fully-formed SSE
+            frames to ``yield``.  ``_sse`` is called once per merged
+            event so ``_full_reply`` / ``_reply_chars`` / replay
+            ringbuffer all see the post-merge content (their semantics
+            are unchanged — the merged event is functionally identical
+            to the sum of its parts).
+            """
+            out: list[str] = []
+            for et, ed in coalescer.offer(etype, edata or {}):
+                out.append(_sse(et, ed))
+            return out
+
+        def _tick_coalescer() -> list[str]:
+            """Flush any time-window-due bucket without taking new input."""
+            out: list[str] = []
+            for et, ed in coalescer.tick():
+                out.append(_sse(et, ed))
+            return out
+
+        def _drain_coalescer() -> list[str]:
+            out: list[str] = []
+            for et, ed in coalescer.drain():
+                out.append(_sse(et, ed))
+            return out
+
         while True:
             try:
-                event = await asyncio.wait_for(_agent_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
+                event = await asyncio.wait_for(_agent_queue.get(), timeout=COALESCER_TICK_INTERVAL)
             except TimeoutError:
-                if not _client_disconnected and not await _check_disconnected():
-                    yield _sse("heartbeat", {"ts": time.time()})
+                # No new event in the last 50ms.  Two responsibilities:
+                # 1) Flush any time-window-due coalescer buckets.
+                # 2) If we're approaching the 15s keepalive deadline,
+                #    emit a heartbeat to keep proxies happy.
+                _is_conn = not _client_disconnected and not await _check_disconnected()
+                if _is_conn:
+                    for line in _tick_coalescer():
+                        if line:
+                            _last_emit_ts = time.time()
+                            yield line
+                    if time.time() - _last_emit_ts >= SSE_KEEPALIVE_INTERVAL:
+                        yield _sse("heartbeat", {"ts": time.time()})
+                        _last_emit_ts = time.time()
                 continue
             if event is None:
                 break
 
             event_type = event.get("type", "")
 
+            # Observe every raw event (before coalescing / disconnect gating) so
+            # the persisted timeline is complete regardless of wire state.
+            _chain_timeline_builder.observe(event)
+            # Same for plan state: once the frontend disconnects we still drain
+            # the agent queue and save history, so todo events must be observed
+            # before the wire-output branch can skip the rest of the loop.
+            _progress_events = _observe_progress_event_journal(_progress_events, event)
+            _last_todo_snapshot = _observe_todo_snapshot_event(_last_todo_snapshot, event)
+            _new_artifacts = _append_unique_artifacts(
+                _collected_artifacts,
+                _extract_artifact_events(event),
+            )
+            _source_used = _extract_source_used(event)
+            if _source_used:
+                _collected_sources.append(_source_used)
+                try:
+                    actual_agent._last_link_diagnostic = dict(_source_used)
+                    if http_request is not None:
+                        http_request.app.state.last_link_diagnostic = dict(_source_used)
+                except Exception:
+                    pass
+            _mcp_call = _extract_mcp_call(event)
+            if _mcp_call:
+                _collected_mcp_calls.append(_mcp_call)
+
             if event_type == "__agent_error__":
                 _agent_errored = True
                 _agent_error_msg = event.get("__exc_msg__") or "Unknown error"
                 if not _client_disconnected:
+                    # Flush any buffered deltas before the error so the
+                    # user sees as much of the partial answer as possible.
+                    for line in _drain_coalescer():
+                        if line:
+                            yield line
                     yield _sse("error", {"message": _agent_error_msg, "is_truncated": True})
                     yield _sse("done")
                 break
 
             # 拦截 done 事件：不在此处转发，等 usage 收集完毕后统一发送
             if event_type == "done":
+                # ensure any pending deltas get out before we hold done
+                if not _client_disconnected:
+                    for line in _drain_coalescer():
+                        if line:
+                            _last_emit_ts = time.time()
+                            yield line
                 continue
 
             # 捕获 ask_user 问题文本和选项（用于 session 保存）
@@ -1051,103 +1495,38 @@ async def _stream_chat(
                 _ask_user_options = event.get("options", [])
                 _ask_user_questions = event.get("questions", [])
 
-            # Always call _sse to accumulate _full_reply regardless of connection
+            # Push the event through the coalescer.  For non-delta types
+            # it bypasses immediately (potentially preceded by pending
+            # delta flushes); for delta types it may be buffered.
             event_data = {k: v for k, v in event.items() if k != "type"}
-            sse_line = _sse(event_type, event_data)
+            _emitted = _emit_via_coalescer(event_type, event_data)
 
-            # Client disconnected — text is accumulated by _sse above, skip SSE output
+            # Client disconnected — text is accumulated by _sse above
+            # (which we still call via the coalescer), skip wire output.
             _is_connected = not _client_disconnected
             if _is_connected and not await _check_disconnected():
-                yield sse_line
+                for line in _emitted:
+                    if line:
+                        _last_emit_ts = time.time()
+                        yield line
             else:
                 continue
 
-            _source_used = _extract_source_used(event)
             if _source_used:
-                try:
-                    actual_agent._last_link_diagnostic = dict(_source_used)
-                    if http_request is not None:
-                        http_request.app.state.last_link_diagnostic = dict(_source_used)
-                except Exception:
-                    pass
+                # FIX-F (post-S2 audit): these direct-yield paths bypass
+                # the coalescer, so we need to update _last_emit_ts
+                # ourselves or the heartbeat watchdog will think the
+                # stream has been silent and emit spurious pings.
                 yield _sse("source_used", _source_used)
+                _last_emit_ts = time.time()
 
-            _mcp_call = _extract_mcp_call(event)
             if _mcp_call:
                 yield _sse("mcp_call", _mcp_call)
+                _last_emit_ts = time.time()
 
-            # deliver_artifacts / send_sticker 都可能返回带 receipts 的 JSON
-            _artifact_tools = ("deliver_artifacts", "send_sticker")
-            if event_type == "tool_call_end" and event.get("tool") in _artifact_tools:
-                try:
-                    result_str = event.get("result", "{}")
-                    _log_marker = "\n\n[执行日志]"
-                    if _log_marker in result_str:
-                        result_str = result_str[: result_str.index(_log_marker)]
-                    result_data = json.loads(result_str)
-                    _receipts = result_data.get("receipts", [])
-                    _emitted = 0
-                    for receipt in _receipts:
-                        if receipt.get("status") == "delivered" and receipt.get("file_url"):
-                            art_data = {
-                                "artifact_type": receipt.get("type", "file"),
-                                "file_url": receipt["file_url"],
-                                "path": receipt.get("path", ""),
-                                "name": receipt.get("name", ""),
-                                "caption": receipt.get("caption", ""),
-                                "size": receipt.get("size"),
-                            }
-                            _collected_artifacts.append(art_data)
-                            yield _sse("artifact", art_data)
-                            _emitted += 1
-                    logger.info(
-                        f"[Chat API] Artifact SSE: tool={event.get('tool')}, "
-                        f"receipts={len(_receipts)}, emitted={_emitted}"
-                    )
-                except (json.JSONDecodeError, TypeError, KeyError) as exc:
-                    logger.warning(
-                        f"[Chat API] Artifact parse failed for {event.get('tool')}: {exc!r}, "
-                        f"result preview: {str(event.get('result', ''))[:200]}"
-                    )
-
-            # Forward artifact receipts from sub-agents (via orchestrator delegation).
-            # delegate_parallel may contain multiple __ARTIFACT_RECEIPTS__ blocks.
-            _delegation_tools = ("delegate_to_agent", "delegate_parallel", "spawn_agent")
-            if event_type == "tool_call_end" and event.get("tool") in _delegation_tools:
-                _art_marker = "__ARTIFACT_RECEIPTS__\n"
-                _del_result = event.get("result", "")
-                _search_pos = 0
-                _del_emitted = 0
-                while _art_marker in _del_result[_search_pos:]:
-                    try:
-                        _idx = _del_result.index(_art_marker, _search_pos) + len(_art_marker)
-                        _eol = _del_result.find("\n", _idx)
-                        _chunk = _del_result[_idx:] if _eol < 0 else _del_result[_idx:_eol]
-                        _search_pos = _idx + len(_chunk)
-                        for receipt in json.loads(_chunk):
-                            if isinstance(receipt, dict) and receipt.get("file_url"):
-                                art_data = {
-                                    "artifact_type": receipt.get("type", "file"),
-                                    "file_url": receipt["file_url"],
-                                    "path": receipt.get("path", ""),
-                                    "name": receipt.get("name", ""),
-                                    "caption": receipt.get("caption", ""),
-                                    "size": receipt.get("size"),
-                                }
-                                _collected_artifacts.append(art_data)
-                                yield _sse("artifact", art_data)
-                                _del_emitted += 1
-                    except (json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
-                        logger.warning(
-                            f"[Chat API] Delegation artifact parse failed: {exc!r}, "
-                            f"chunk preview: {_del_result[max(0, _search_pos - 50) : _search_pos + 100]}"
-                        )
-                        break
-                if _art_marker in _del_result:
-                    logger.info(
-                        f"[Chat API] Delegation artifact SSE: tool={event.get('tool')}, "
-                        f"emitted={_del_emitted}"
-                    )
+            for art_data in _new_artifacts:
+                yield _sse("artifact", art_data)
+                _last_emit_ts = time.time()
 
             # Inject ui_preference events for system_config set_ui results
             if event_type == "tool_call_end" and event.get("tool") == "system_config":
@@ -1161,6 +1540,7 @@ async def _stream_chat(
                         ui_pref = result_data.get("ui_preference")
                         if ui_pref:
                             yield _sse("ui_preference", ui_pref)
+                            _last_emit_ts = time.time()
                 except (json.JSONDecodeError, TypeError, KeyError):
                     pass
 
@@ -1205,29 +1585,8 @@ async def _stream_chat(
                             _usage_data["usage_source"] = (
                                 "mixed" if len(usage_sources) > 1 else next(iter(usage_sources))
                             )
-                ctx_mgr = getattr(actual_agent, "context_manager", None) or getattr(
-                    re, "_context_manager", None
-                )
-                if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
-                    _max_ctx = ctx_mgr.get_max_context_tokens()
-                    _msgs = getattr(re, "_last_working_messages", None) or getattr(
-                        getattr(actual_agent, "_context", None), "messages", []
-                    )
-                    _cur_ctx = ctx_mgr.estimate_messages_tokens(_msgs) if _msgs else 0
-                    if _usage_data is None:
-                        _usage_data = {}
-                    _usage_data["context_tokens"] = _cur_ctx
-                    _usage_data["context_limit"] = _max_ctx
-                    _usage_data["history_context_tokens"] = _cur_ctx
-                    _usage_data["history_context_limit"] = _max_ctx
-                # 透出 ContextPressure 摘要 — 供前端"上下文健康度"展示。
-                # 已由 reasoning_engine 在每轮 token 异常检测时同步刷新，
-                # 此处直接读取，零额外计算。
-                _last_pressure = getattr(re, "_last_context_pressure", None)
-                if _last_pressure:
-                    if _usage_data is None:
-                        _usage_data = {}
-                    _usage_data["context_pressure"] = dict(_last_pressure)
+            _snapshot = get_context_snapshot(actual_agent)
+            _usage_data = merge_context_snapshot_into_usage(_usage_data, _snapshot)
         except Exception:
             pass
 
@@ -1286,10 +1645,17 @@ async def _stream_chat(
                 _msg_meta: dict = {}
                 if _chain_summary:
                     _msg_meta["chain_summary"] = _chain_summary
+                _chain_timeline = _chain_timeline_builder.build()
+                if _chain_timeline:
+                    _msg_meta["chain_timeline"] = _chain_timeline
                 if _tool_summary:
                     _msg_meta["tool_summary"] = _tool_summary
                 if _collected_artifacts:
                     _msg_meta["artifacts"] = _collected_artifacts
+                if _collected_sources:
+                    _msg_meta["sources"] = _collected_sources
+                if _collected_mcp_calls:
+                    _msg_meta["mcp_calls"] = _collected_mcp_calls
                 if _usage_data and (
                     _usage_data.get("input_tokens") or _usage_data.get("output_tokens")
                 ):
@@ -1301,6 +1667,18 @@ async def _stream_chat(
                     if _ask_user_questions:
                         _ask_user_data["questions"] = _ask_user_questions
                     _msg_meta["ask_user"] = _ask_user_data
+                # Snapshot the plan onto the assistant message so the plan card
+                # survives reload / multi-window switch (#615). Prefer the
+                # snapshot captured from the live SSE stream (which retains the
+                # *final* state even after auto_close unregisters the plan);
+                # fall back to the registry for an in-progress plan that emitted
+                # no events this turn. The shape matches the ``todo_created`` SSE.
+                _attach_todo_snapshot_meta(
+                    _msg_meta,
+                    conversation_id=conversation_id,
+                    todo_snapshot=_last_todo_snapshot,
+                    progress_events=_progress_events,
+                )
                 if _agent_errored:
                     _msg_meta["is_truncated"] = True
                     _msg_meta["truncation_reason"] = "mid_stream_failure"
@@ -1319,21 +1697,41 @@ async def _stream_chat(
                 session_manager.mark_dirty()
 
         if not _client_disconnected and not _agent_errored:
+            # P0-2: ensure any final pending deltas are flushed before
+            # we send the terminating ``done`` — otherwise the last few
+            # tens of characters of the answer can race the done frame
+            # and be dropped by a strict client.
+            for _final_line in _drain_coalescer():
+                if _final_line:
+                    yield _final_line
             # 透传本轮真实生效的 mode（IntentAnalyzer 可能把 CHAT 类闲聊静默
             # 降级为 ask），让前端能识别"用户传 agent 但被降为 ask"的场景。
             _eff_mode = getattr(actual_agent, "_last_effective_mode", None) or chat_request.mode
-            yield _sse("done", {
-                "usage": _usage_data,
-                "request_id": request_id,
-                "turn_id": turn_id,
-                "effective_mode": _eff_mode,
-                "requested_mode": requested_mode or chat_request.mode,
-                "tool_policy_source": getattr(actual_agent, "_last_tool_policy_source", "mode_ruleset"),
-            })
+            yield _sse(
+                "done",
+                {
+                    "usage": _usage_data,
+                    "request_id": request_id,
+                    "turn_id": turn_id,
+                    "effective_mode": _eff_mode,
+                    "requested_mode": requested_mode or chat_request.mode,
+                    "tool_policy_source": getattr(
+                        actual_agent, "_last_tool_policy_source", "mode_ruleset"
+                    ),
+                },
+            )
 
     except Exception as e:
         logger.error(f"Chat stream error: {e}", exc_info=True)
         if not _client_disconnected:
+            # Flush remaining deltas so the user sees as much of the
+            # partial answer as possible before the error frame.
+            try:
+                for _err_line in _drain_coalescer():
+                    if _err_line:
+                        yield _err_line
+            except Exception:
+                pass
             err_msg = str(e)[:500] or f"{type(e).__name__}: unknown error"
             yield _sse("error", {"message": err_msg})
             yield _sse("done")
@@ -1359,6 +1757,10 @@ async def _stream_chat(
                         _full_reply,
                         _collected_artifacts,
                         _save_done,
+                        _last_todo_snapshot,
+                        _collected_sources,
+                        _collected_mcp_calls,
+                        _progress_events,
                     )
 
         # Drain remaining queue events to accumulate _full_reply for deferred save
@@ -1368,7 +1770,17 @@ async def _stream_chat(
                     ev = _agent_queue.get_nowait()
                     if ev is None or ev.get("type") == "__agent_error__":
                         break
+                    _progress_events = _observe_progress_event_journal(_progress_events, ev)
+                    _last_todo_snapshot = _observe_todo_snapshot_event(_last_todo_snapshot, ev)
+                    _append_unique_artifacts(_collected_artifacts, _extract_artifact_events(ev))
+                    _source_used = _extract_source_used(ev)
+                    if _source_used:
+                        _collected_sources.append(_source_used)
+                    _mcp_call = _extract_mcp_call(ev)
+                    if _mcp_call:
+                        _collected_mcp_calls.append(_mcp_call)
                     et = ev.get("type", "")
+                    _chain_timeline_builder.observe(ev)
                     if et != "done":
                         _sse(et, {k: v for k, v in ev.items() if k != "type"})
             except Exception:
@@ -1380,6 +1792,19 @@ async def _stream_chat(
                     _deferred_meta: dict = {}
                     if _collected_artifacts:
                         _deferred_meta["artifacts"] = _collected_artifacts
+                    if _collected_sources:
+                        _deferred_meta["sources"] = _collected_sources
+                    if _collected_mcp_calls:
+                        _deferred_meta["mcp_calls"] = _collected_mcp_calls
+                    _deferred_timeline = _chain_timeline_builder.build()
+                    if _deferred_timeline:
+                        _deferred_meta["chain_timeline"] = _deferred_timeline
+                    _attach_todo_snapshot_meta(
+                        _deferred_meta,
+                        conversation_id=conversation_id,
+                        todo_snapshot=_last_todo_snapshot,
+                        progress_events=_progress_events,
+                    )
                     session.add_message("assistant", _deferred_text, **_deferred_meta)
                     if session_manager:
                         session_manager.persist()
@@ -1407,6 +1832,7 @@ async def _stream_chat(
                 pass
             try:
                 import openakita.main as _main_mod
+
                 _orch = getattr(_main_mod, "_orchestrator", None)
                 _sid = chat_request.conversation_id or ""
                 if _orch is not None and _sid:
@@ -1429,6 +1855,25 @@ async def _stream_chat(
                     },
                 )
 
+        # v1.27.14 (plan: v1.28, S1.6): mark turn finished so subsequent
+        # retries with the same turn_id receive turn_already_finished 409
+        # instead of opening a duplicate stream.
+        _turn_id = (getattr(chat_request, "turn_id", "") or "").strip()
+        if _turn_id:
+            from .turn_registry import get_turn_registry
+
+            try:
+                if _full_reply:
+                    await get_turn_registry().mark_succeeded(_turn_id, summary=_full_reply[:80])
+                else:
+                    await get_turn_registry().mark_failed(_turn_id, summary="no_reply")
+            except Exception:
+                logger.debug(
+                    "[Chat API] turn_registry mark failed for turn_id=%s",
+                    _turn_id,
+                    exc_info=True,
+                )
+
 
 def _org_file_attachments_to_chat_attachments(attachments: list[dict]) -> list[dict]:
     """Convert org runtime file attachments to ChatView attachment objects."""
@@ -1449,14 +1894,75 @@ def _org_file_attachments_to_chat_attachments(attachments: list[dict]) -> list[d
         name = str(att.get("filename") or Path(file_path).name or "file")
         suffix = Path(name).suffix.lower()
         att_type = "document" if suffix in {".doc", ".docx", ".pdf", ".md", ".txt"} else "file"
-        converted.append({
-            "type": att_type,
-            "name": name,
-            "localPath": file_path,
-            "size": att.get("file_size") or att.get("size"),
-            "uploadStatus": "uploaded",
-        })
+        converted.append(
+            {
+                "type": att_type,
+                "name": name,
+                "localPath": file_path,
+                "size": att.get("file_size") or att.get("size"),
+                "uploadStatus": "uploaded",
+            }
+        )
     return converted
+
+
+def _enrich_org_content_with_attachments(content: str, attachments: list | None) -> str:
+    """Read text file content from desktop attachments and append to org content.
+
+    Mirrors the gateway's ``_extract_text_file_content`` logic for the desktop
+    API path so that org commands submitted from the setup-center can include
+    file contents inline.
+    """
+    if not attachments:
+        return content
+
+    from pathlib import Path
+
+    from openakita.channels.gateway import MessageGateway
+
+    parts: list[str] = []
+    for att in attachments:
+        local_path = getattr(att, "local_path", None) or ""
+        if not local_path:
+            url = getattr(att, "url", None) or ""
+            if url:
+                try:
+                    from openakita.api.routes.upload import resolve_upload_path
+
+                    resolved = resolve_upload_path(url)
+                    if resolved:
+                        local_path = str(resolved)
+                except Exception:
+                    logger.debug("[OrgAttach] failed to resolve upload URL %s", url, exc_info=True)
+        if not local_path:
+            continue
+        fpath = Path(local_path)
+        if not fpath.exists():
+            continue
+        name = getattr(att, "name", None) or fpath.name
+        suffix = fpath.suffix.lower()
+        mime = getattr(att, "mime_type", None) or ""
+        try:
+            if suffix in MessageGateway._TEXT_FILE_EXTENSIONS or (
+                mime and mime.startswith("text/")
+            ):
+                if fpath.stat().st_size <= MessageGateway._TEXT_FILE_SIZE_LIMIT:
+                    file_content = fpath.read_text(encoding="utf-8", errors="replace")
+                    parts.append(f"\n\n--- 文件: {name} ---\n{file_content}\n--- 文件结束 ---")
+                else:
+                    parts.append(
+                        f"\n[附件: {name} ({mime or suffix}), "
+                        f"文件过大无法内联，本地路径: {local_path}]"
+                    )
+            elif suffix == ".pdf" or (mime and "pdf" in mime):
+                parts.append(f"\n[附件: {name} (PDF), 本地路径: {local_path}]")
+            else:
+                parts.append(f"\n[附件: {name} ({mime or suffix}), 本地路径: {local_path}]")
+        except Exception:
+            logger.warning(f"Failed to read attachment for org content: {local_path}")
+    if parts:
+        return content + "".join(parts)
+    return content
 
 
 async def _stream_org_command_chat(
@@ -1516,11 +2022,18 @@ async def _stream_org_command_chat(
             default_scope_for_surface,
         )
 
+        # Enrich org content with text from uploaded file attachments
+        org_content = chat_request.message or ""
+        if chat_request.attachments:
+            org_content = _enrich_org_content_with_attachments(
+                org_content, chat_request.attachments
+            )
+
         try:
             started = svc.submit(
                 OrgCommandRequest(
                     org_id=org_id,
-                    content=chat_request.message or "",
+                    content=org_content,
                     target_node_id=target_node_id,
                     source=OrgCommandSource(
                         channel="desktop",
@@ -1543,11 +2056,14 @@ async def _stream_org_command_chat(
             surface="desktop_chat",
             target=conversation_id,
         )
-        yield _sse("org_command_started", {
-            "org_id": org_id,
-            "command_id": command_id,
-            "root_node_id": started.get("root_node_id", ""),
-        })
+        yield _sse(
+            "org_command_started",
+            {
+                "org_id": org_id,
+                "command_id": command_id,
+                "root_node_id": started.get("root_node_id", ""),
+            },
+        )
 
         final_text = ""
         # 进度行只用于历史持久化中的 org_timeline 字段，前端已经通过 org_progress
@@ -1563,13 +2079,15 @@ async def _stream_org_command_chat(
             if item.get("type") == "org_progress":
                 summary = item.get("summary") or ""
                 if summary:
-                    progress_entries.append({
-                        "status": "progress",
-                        "summary": str(summary),
-                        "node_id": item.get("node_id"),
-                        "category": item.get("category") or item.get("label"),
-                        "timestamp": int(time.time() * 1000),
-                    })
+                    progress_entries.append(
+                        {
+                            "status": "progress",
+                            "summary": str(summary),
+                            "node_id": item.get("node_id"),
+                            "category": item.get("category") or item.get("label"),
+                            "timestamp": int(time.time() * 1000),
+                        }
+                    )
                     yield _sse("org_progress", item)
                 continue
 
@@ -1697,12 +2215,83 @@ async def chat(request: Request, body: ChatRequest):
     elif pending_response is not None:
         return pending_response
 
+    # ── Per-turn idempotency short-circuit ──
+    # (v1.27.14, plan: conversation concurrency v1.28, S1.6)
+    # 客户端可在 body.turn_id 提供一个稳定 ID（前端 retry / SSE 重连用同
+    # 一个 turn_id；用户重新点 send 用新 turn_id）。同 turn_id 在 TTL=60s
+    # 内重发返回 409 + Retry-After，避免重复开 SSE 流写脏 session。
+    turn_id = (getattr(body, "turn_id", None) or "").strip()
+    if turn_id:
+        from .turn_registry import get_turn_registry
+
+        registry = get_turn_registry()
+        status, _rec = await registry.begin(turn_id)
+        if status == "in_flight":
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "turn_already_processing",
+                    "turn_id": turn_id,
+                    "conversation_id": conversation_id,
+                    "retry_after_ms": 2000,
+                    "message": "上一次相同请求仍在处理中，请稍后再试。",
+                },
+                headers={"Retry-After": "2"},
+            )
+        # succeeded / failed: 也按"重复请求"短路；客户端要新请求得换 turn_id。
+        if status in ("succeeded", "failed"):
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "turn_already_finished",
+                    "turn_id": turn_id,
+                    "conversation_id": conversation_id,
+                    "previous_status": status,
+                    "message": "该 turn_id 上一次已完成。若是新消息，请使用新的 turn_id。",
+                },
+            )
+
     # ── Busy-lock check (via lifecycle manager) ──
+    # v1.27.14 FIX 2/3: honour DoubleTextingPolicy at the HTTP layer.
+    # Default for desktop is QUEUE (per settings.double_texting_per_channel).
+    # On QUEUE same-client conflict we await wait_for_idle and retry once
+    # before falling back to 409.  Header X-OpenAkita-DoubleTexting can
+    # override per request (used by frontend "force interrupt" button when
+    # double_texting_allow_interrupt is enabled).
+    from .double_texting import DoubleTextingPolicy, resolve_policy
+
+    _dt_header = request.headers.get("x-openakita-doubletexting")
+    _dt_policy = resolve_policy(channel="desktop", header_value=_dt_header)
+
+    # STEER hands the new message to the running ReAct loop via
+    # insert_user_message, which is text-only.  If this request carries
+    # attachments, steering would silently drop them — so downgrade to
+    # QUEUE here and let the message run as its own turn (with the
+    # attachments intact) once the current turn settles.  The frontend
+    # makes the same decision client-side, but a desktop client on an
+    # older build (or any non-desktop caller) could still POST attachments
+    # under a STEER policy, so we must guard the backend too.
+    if _dt_policy is DoubleTextingPolicy.STEER and body.attachments:
+        logger.info(
+            "[Chat API] STEER downgraded to QUEUE: conv=%s carries %d "
+            "attachment(s) that cannot be steered into the running turn.",
+            conversation_id,
+            len(body.attachments),
+        )
+        _dt_policy = DoubleTextingPolicy.QUEUE
+
     lifecycle = get_lifecycle_manager()
     busy_gen = 0
     if client_id:
         try:
-            conflict, busy_gen = await lifecycle.start(conversation_id, client_id)
+            start_result = await lifecycle.start(
+                conversation_id,
+                client_id,
+                policy=_dt_policy,
+                turn_id=turn_id or None,
+            )
+            conflict = start_result.conflict
+            busy_gen = start_result.generation
         except Exception as exc:
             return _chat_startup_error_response(
                 exc,
@@ -1710,7 +2299,324 @@ async def chat(request: Request, body: ChatRequest):
                 request_id=request_id,
                 stage="conversation_lifecycle",
             )
+
+        # P1-4 (v1.27.15): STEER policy short-circuit.  Lifecycle didn't
+        # acquire the lock; we just need to hand the new message off to
+        # the still-running ReAct loop via insert_user_message and tell
+        # the client "we got it, follow the existing stream via
+        # /api/chat/resume".
+        if start_result.steered:
+            actual_agent = _resolve_agent(_get_existing_agent(request, conversation_id))
+            ok = False
+            if actual_agent is not None:
+                try:
+                    # FIX-E (post-S2 audit): STEER is "user wanted to add
+                    # to the running task" — the new message MUST land in
+                    # the active task's pending_user_inserts buffer even
+                    # if the client immediately disconnects (e.g. mobile
+                    # browser tab swipe-away).  Without shield, a client
+                    # cancel between the HTTP request landing and the
+                    # insert completing would silently drop the message
+                    # and the user would think "I sent it but the agent
+                    # never saw it."  insert_user_message is fast (single
+                    # asyncio.Lock acquire + list append), so the shield
+                    # cannot meaningfully delay cancel propagation.
+                    ok = await asyncio.shield(
+                        actual_agent.insert_user_message(
+                            body.message or "",
+                            session_id=conversation_id,
+                        )
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning("[Chat API] STEER insert failed: %s", exc)
+                    ok = False
+            if turn_id:
+                from .turn_registry import get_turn_registry
+
+                # Mark this turn as succeeded so a retry with the same
+                # turn_id is treated as duplicate (steered messages are
+                # not "new turns" — they are appendices to the active one).
+                await get_turn_registry().mark_succeeded(turn_id, summary="steered")
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": "steered" if ok else "steer_failed",
+                    "conversation_id": conversation_id,
+                    "policy": _dt_policy.value,
+                    "message": (
+                        "已加入当前任务的上下文，请通过 /api/chat/resume 跟随原回复。"
+                        if ok
+                        else "Steer 失败：当前任务可能已结束，请重试发送新消息。"
+                    ),
+                    "resume_hint": {
+                        "endpoint": "/api/chat/resume",
+                        "params": {"conversation_id": conversation_id},
+                    },
+                },
+            )
+
+        # FIX 3 + P1-5: QUEUE same-client conflict → await previous lock
+        # inside a StreamingResponse generator so we can emit SSE keepalive
+        # pings while waiting (nginx/cloudflare drop the socket after 30-60s
+        # of no data; the wait can legitimately take that long).  If
+        # wait_for_idle returns True we retry start() and fall back into
+        # the normal SSE pipeline; on timeout we emit a final error frame
+        # and close cleanly.
+        if conflict is not None and start_result.queued_after_generation is not None:
+            from openakita.config import settings
+
+            # Queue wait uses its own (generous) timeout — NOT
+            # preempt_settle_timeout_ms.  Waiting for a still-running
+            # predecessor turn to finish naturally can legitimately take
+            # minutes; the 6s settle window is for cancelled tasks, not for
+            # queued ones.  Decoupling these is what stops "排队超过 6s 报错".
+            _queue_timeout_s = max(0.5, settings.queue_wait_timeout_ms / 1000.0)
+            _queued_after_gen = start_result.queued_after_generation
+            logger.info(
+                "[Chat API] QUEUE wait conv=%s after gen=%d (timeout=%.1fs)",
+                conversation_id,
+                _queued_after_gen,
+                _queue_timeout_s,
+            )
+
+            async def _queued_stream() -> AsyncIterator[str]:
+                # 1) Tell the client we're queued — gives the UI a chance
+                # to show "排队中…" instead of an opaque empty stream.
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "type": "queued",
+                            "conversation_id": conversation_id,
+                            "after_generation": _queued_after_gen,
+                            "timeout_ms": settings.queue_wait_timeout_ms,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n\n"
+                )
+
+                # 2) Race wait_for_idle against a 5s ping loop.  We do this
+                # by polling wait_for_idle in 5s slices instead of one
+                # long await — same effect, but we get to yield ping
+                # between slices so transparent HTTP proxies don't kill
+                # the connection during long settle.
+                _PING_INTERVAL = 5.0
+                _waited = 0.0
+                _idle_reached = False
+                while _waited < _queue_timeout_s:
+                    _slice = min(_PING_INTERVAL, _queue_timeout_s - _waited)
+                    _slice_start = time.time()
+                    _idle_reached = await lifecycle.wait_for_idle(
+                        conversation_id,
+                        target_generation=_queued_after_gen,
+                        timeout=_slice,
+                    )
+                    _waited += time.time() - _slice_start
+                    if _idle_reached:
+                        break
+                    # Periodic ping — SSE comment line, ignored by all
+                    # spec-compliant clients but keeps proxies happy.
+                    yield f": ping queued-wait elapsed={_waited:.1f}s\n\n"
+                    if await request.is_disconnected():
+                        logger.info(
+                            "[Chat API] QUEUE wait abandoned (client disconnect) conv=%s",
+                            conversation_id,
+                        )
+                        return
+
+                if not _idle_reached:
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "type": "error",
+                                "error": "queue_timeout",
+                                "message": (
+                                    f"等待上一次任务结束超过 {settings.queue_wait_timeout_ms}ms，"
+                                    "请稍后重试或显式取消上一次任务。"
+                                ),
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n\n"
+                    )
+                    yield 'data: {"type": "done"}\n\n'
+                    if turn_id:
+                        try:
+                            from .turn_registry import get_turn_registry
+
+                            await get_turn_registry().mark_failed(turn_id, summary="queue_timeout")
+                        except Exception:
+                            pass
+                    return
+
+                # 3) Idle reached — retry lifecycle.start.  If that still
+                # conflicts (rare; someone raced in between), surface a
+                # 409-style error frame and close.
+                try:
+                    retry_result = await lifecycle.start(
+                        conversation_id,
+                        client_id,
+                        policy=_dt_policy,
+                        turn_id=turn_id or None,
+                    )
+                except Exception as exc:
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "type": "error",
+                                "error": "lifecycle_retry_failed",
+                                "message": str(exc)[:200],
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n\n"
+                    )
+                    yield 'data: {"type": "done"}\n\n'
+                    return
+
+                if retry_result.conflict is not None:
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "type": "error",
+                                "error": "conversation_busy",
+                                "message": ("上一次任务结束后立即又有新任务占用，请稍后重试。"),
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n\n"
+                    )
+                    yield 'data: {"type": "done"}\n\n'
+                    if turn_id:
+                        try:
+                            from .turn_registry import get_turn_registry
+
+                            await get_turn_registry().mark_failed(
+                                turn_id, summary="conversation_busy_after_queue"
+                            )
+                        except Exception:
+                            pass
+                    return
+
+                # 4) Got the lock — splice into the normal SSE pipeline.
+                # We delegate to _stream_chat exactly like the no-conflict
+                # path; the queued frame above already informed the UI.
+                #
+                # FIX-A (post-S2 audit): wrap everything from lock acquire
+                # to ownership-transfer in try/finally.  If the client
+                # cancels mid-await (network drop, browser tab close,
+                # browser-side fetch abort) between ``lifecycle.start``
+                # returning and ``_stream_chat`` 's finally block taking
+                # over, CancelledError would skip ``except Exception``
+                # and leak the lock forever — the conversation becomes
+                # un-startable until process restart.  The safety-net
+                # finish() below is idempotent (generation-guarded), so
+                # it is a no-op when _stream_chat already cleaned up.
+                _lock_owned_by_outer = True
+                try:
+                    try:
+                        _agent_lazy = await _get_agent_for_session(
+                            request,
+                            conversation_id,
+                            body.agent_profile_id,
+                        )
+                    except Exception as exc:
+                        await lifecycle.finish(
+                            conversation_id,
+                            generation=retry_result.generation,
+                        )
+                        _lock_owned_by_outer = False
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "type": "error",
+                                    "error": "agent_init_failed",
+                                    "message": str(exc)[:200],
+                                },
+                                ensure_ascii=False,
+                            )
+                            + "\n\n"
+                        )
+                        yield 'data: {"type": "done"}\n\n'
+                        return
+                    _sm_lazy = getattr(request.app.state, "session_manager", None)
+                    # Mirror the main path's mode resolution: plan_mode shim
+                    # + permission_mode override.  Don't duplicate the full
+                    # block here — the main flow's effective_mode lives only
+                    # in that scope, so we re-derive the minimal set.
+                    _eff_mode_lazy = body.mode
+                    if body.plan_mode and _eff_mode_lazy == "agent":
+                        _eff_mode_lazy = "plan"
+                    if body.permission_mode == "plan" and _eff_mode_lazy == "agent":
+                        _eff_mode_lazy = "plan"
+                    _requested_mode_lazy = body.mode
+                    body.mode = _eff_mode_lazy
+                    body.conversation_id = conversation_id
+
+                    _sub_gen = _stream_chat(
+                        body,
+                        _agent_lazy,
+                        _sm_lazy,
+                        http_request=request,
+                        busy_generation=retry_result.generation,
+                        request_id=request_id,
+                        requested_mode=_requested_mode_lazy,
+                    )
+                    if is_dual_loop():
+                        _sub_gen = engine_stream(_sub_gen)
+                    # Once we start iterating _sub_gen, its body enters
+                    # the try-block (the first yield suspends inside the
+                    # try), so its finally is guaranteed to run on any
+                    # subsequent cancel — flip the ownership flag so the
+                    # outer safety-net doesn't double-finish.
+                    async for _line in _sub_gen:
+                        if _lock_owned_by_outer:
+                            _lock_owned_by_outer = False
+                        yield _line
+                finally:
+                    if _lock_owned_by_outer:
+                        try:
+                            await lifecycle.finish(
+                                conversation_id,
+                                generation=retry_result.generation,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "[Chat API] queued-stream safety-net "
+                                "finish failed (conv=%s, gen=%d)",
+                                conversation_id,
+                                retry_result.generation,
+                                exc_info=True,
+                            )
+
+            # IMPORTANT: do NOT call _stream_chat directly here.  The
+            # queued path needs its own StreamingResponse so the SSE
+            # connection opens immediately (so the proxy sees data
+            # within seconds), instead of blocking on wait_for_idle
+            # before even sending headers.
+            return StreamingResponse(
+                _queued_stream(),
+                media_type="text/event-stream; charset=utf-8",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
         if conflict is not None:
+            # REJECT, cross-client, or QUEUE that timed out / re-conflicted
+            # after the wait. Mark the registered turn (if any) as failed so
+            # the client must supply a fresh turn_id to retry.
+            if turn_id:
+                from .turn_registry import get_turn_registry
+
+                await get_turn_registry().mark_failed(turn_id, summary="conversation_busy")
             return JSONResponse(
                 status_code=409,
                 content={
@@ -1718,6 +2624,7 @@ async def chat(request: Request, body: ChatRequest):
                     "conversation_id": conversation_id,
                     "busy_client_id": conflict.client_id,
                     "busy_since": conflict.start_time,
+                    "policy": _dt_policy.value,
                     "message": "该会话正在其他终端进行中，请新建会话或稍后再试",
                 },
             )
@@ -1779,6 +2686,7 @@ async def chat(request: Request, body: ChatRequest):
     if body.agent_profile_id:
         from openakita.agents.presets import SYSTEM_PRESETS
         from openakita.agents.profile import get_profile_store
+
         _known = any(p.id == body.agent_profile_id for p in SYSTEM_PRESETS)
         if not _known:
             try:
@@ -2025,6 +2933,7 @@ async def chat_sync(request: Request, body: ChatRequest):
                 if session is not None:
                     apply_classification_to_session(session, classify_entry("api-sync"))
                     session.add_message("user", body.message or "")
+                    _backfill_ask_user_answer(session, body.message or "")
                     session_messages_history = session.context.get_messages()
             except Exception as exc:
                 logger.warning(
@@ -2060,9 +2969,7 @@ async def chat_sync(request: Request, body: ChatRequest):
             return JSONResponse(
                 status_code=202,
                 headers=(
-                    {"Location": f"/api/pending_approvals/{approval_id}"}
-                    if approval_id
-                    else {}
+                    {"Location": f"/api/pending_approvals/{approval_id}"} if approval_id else {}
                 ),
                 content={
                     "status": "pending_approval",
@@ -2073,9 +2980,7 @@ async def chat_sync(request: Request, body: ChatRequest):
                         f"/api/pending_approvals/{approval_id}" if approval_id else None
                     ),
                     "resolve_url": (
-                        f"/api/pending_approvals/{approval_id}/resolve"
-                        if approval_id
-                        else None
+                        f"/api/pending_approvals/{approval_id}/resolve" if approval_id else None
                     ),
                     "unattended_strategy": exc.unattended_strategy,
                     "message": (
@@ -2162,6 +3067,190 @@ async def chat_answer(request: Request, body: ChatAnswerRequest):
     }
 
 
+@router.get("/api/chat/resume")
+async def chat_resume(
+    request: Request,
+    conversation_id: str,
+    since_seq: int = 0,
+):
+    """Read-only SSE attach to an in-flight agent task.
+
+    v1.27.15 (S2 P0-1, follow-up to S1).  Solves the "agent still running
+    but UI shows nothing after reconnect" problem.
+
+    Why a separate endpoint instead of just letting POST /api/chat with
+    Last-Event-ID re-enter?
+    --------------------------------------------------------------
+    S1 made ``POST /api/chat`` go through ``lifecycle.start()`` which
+    409s same-conversation overlap (REJECT) or QUEUE-waits up to 30s
+    (QUEUE).  Either way a reconnecting client can't actually get back
+    to the original SSE stream — it would either be rejected or queued
+    behind the still-running task forever.  The C17 Phase B replay
+    logic inside ``_stream_chat`` therefore became unreachable in the
+    common case.
+
+    This endpoint is **strictly read-only attach**:
+
+    * Does NOT touch ``ConversationLifecycleManager`` (no busy-lock
+      change, no generation bump, no policy resolution).
+    * Does NOT call any Agent method, does NOT register a turn in
+      ``TurnRegistry``.
+    * Does NOT modify the SSE session except by reading its current_seq.
+
+    Flow:
+    1. Flush ringbuffer events with ``seq > since_seq`` immediately
+       (this carries replay frames with their ORIGINAL seq so the
+       client's ``seenSequenceNums`` dedup works).
+    2. Tail-poll the ringbuffer every 100ms; whenever ``current_seq``
+       advances, flush the newly-buffered events.
+    3. Exit when ANY of:
+       - Client disconnects (``request.is_disconnected()``).
+       - Lifecycle reports the conversation idle (task ended).
+       - 15 minutes elapse with no new events (matches the SSE
+         disconnect grace period — beyond this we'd just be a leak).
+
+    The same conversation can have multiple concurrent ``/resume``
+    subscribers (e.g. user has the app open on two devices); each gets
+    its own polling loop reading the shared ringbuffer.
+
+    Query params:
+        conversation_id: required.  The conversation to attach to.
+        since_seq: optional, default 0.  Skip events with seq <= this
+            value.  Pass the highest seq the client has already rendered
+            to avoid double-rendering after a reconnect.
+    """
+    from ...core.sse_replay import format_sse_frame
+    from ...core.sse_replay import get_registry as _get_sse_registry
+
+    sse_session = _get_sse_registry().get(conversation_id)
+    if sse_session is None:
+        # No buffered events for this conversation at all (process restart,
+        # GC'd after TTL, or the conversation never streamed anything).
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "no_sse_session",
+                "conversation_id": conversation_id,
+                "message": ("没有可恢复的会话流。可能是后端重启或会话已超时；请直接发起新消息。"),
+            },
+        )
+
+    lifecycle = get_lifecycle_manager()
+
+    async def _resume_stream() -> AsyncIterator[str]:
+        _tail_started_at = time.time()
+        _MAX_TAIL_SECONDS = 15 * 60  # 15min — matches DISCONNECT_GRACE_SECONDS
+        _POLL_INTERVAL = 0.1
+        _last_emitted_seq = since_seq if since_seq >= 0 else 0
+        _last_event_time = time.time()
+
+        # 1) Initial flush — everything past since_seq right now.
+        try:
+            initial = sse_session.replay_from(_last_emitted_seq)
+            if initial:
+                logger.info(
+                    "[Chat Resume] conv=%s flushing %d buffered event(s) (since_seq=%d → up to %d)",
+                    conversation_id,
+                    len(initial),
+                    _last_emitted_seq,
+                    initial[-1].seq,
+                )
+                for evt in initial:
+                    yield format_sse_frame(
+                        evt,
+                        data_json=json.dumps(evt.payload, ensure_ascii=False),
+                    )
+                    _last_emitted_seq = evt.seq
+                _last_event_time = time.time()
+
+            # Send a synthetic "resume_attached" so the client UI can
+            # transition out of "connecting…" state immediately even
+            # before the next real event arrives.
+            yield (
+                f"data: {json.dumps({'type': 'resume_attached', 'conversation_id': conversation_id, 'last_seq': _last_emitted_seq}, ensure_ascii=False)}\n\n"
+            )
+
+            # 2) Tail loop — poll for new events.
+            # FIX-C (post-S2 audit): emit SSE comment pings every
+            # SSE_KEEPALIVE_INTERVAL (15s) of idle so cloudflare /
+            # nginx / corporate proxies don't drop the resume socket
+            # while the underlying agent is taking a long thinking
+            # turn (LLM with extended-thinking can pause 30-60s
+            # between deltas).  Without this, mobile clients see the
+            # stream silently die after ~30s on idle.
+            _last_ping_time = time.time()
+            while True:
+                if time.time() - _tail_started_at > _MAX_TAIL_SECONDS:
+                    logger.info(
+                        "[Chat Resume] conv=%s max tail duration reached, closing",
+                        conversation_id,
+                    )
+                    break
+                try:
+                    if await request.is_disconnected():
+                        logger.debug("[Chat Resume] conv=%s client disconnected", conversation_id)
+                        break
+                except Exception:
+                    pass
+
+                cur = sse_session.current_seq
+                if cur > _last_emitted_seq:
+                    new_events = sse_session.replay_from(_last_emitted_seq)
+                    for evt in new_events:
+                        yield format_sse_frame(
+                            evt,
+                            data_json=json.dumps(evt.payload, ensure_ascii=False),
+                        )
+                        _last_emitted_seq = evt.seq
+                    _now = time.time()
+                    _last_event_time = _now
+                    _last_ping_time = _now
+                else:
+                    # No new events.  Check if the lifecycle says the
+                    # conversation is no longer busy and we've quiesced
+                    # for a bit — then we can close cleanly.
+                    try:
+                        status = await lifecycle.get_busy_status(conversation_id)
+                        busy = bool(status.get("busy"))
+                    except Exception:
+                        busy = False
+                    if not busy and time.time() - _last_event_time > 1.0:
+                        # Emit a synthetic done so the client can clean up.
+                        yield (
+                            f"data: {json.dumps({'type': 'done', 'reason': 'task_idle', 'last_seq': _last_emitted_seq}, ensure_ascii=False)}\n\n"
+                        )
+                        break
+                    # Idle but still busy — periodic keepalive ping so
+                    # the connection survives long LLM thinking turns.
+                    if time.time() - _last_ping_time >= 15.0:
+                        yield (
+                            f": ping resume-tail elapsed={(time.time() - _tail_started_at):.0f}s\n\n"
+                        )
+                        _last_ping_time = time.time()
+
+                await asyncio.sleep(_POLL_INTERVAL)
+        except asyncio.CancelledError:
+            # Client gone or server shutdown.  Just exit; ringbuffer is
+            # unaffected so other subscribers / future reconnects still work.
+            logger.debug("[Chat Resume] conv=%s tail cancelled", conversation_id)
+            raise
+        except Exception as exc:  # pragma: no cover
+            logger.warning("[Chat Resume] conv=%s tail error: %s", conversation_id, exc)
+            yield (
+                f"data: {json.dumps({'type': 'error', 'message': f'resume tail failed: {exc!s}'[:200]}, ensure_ascii=False)}\n\n"
+            )
+
+    return StreamingResponse(
+        _resume_stream(),
+        media_type="text/event-stream; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/api/chat/cancel")
 async def chat_cancel(request: Request, body: ChatControlRequest):
     """Cancel the current running task for the specified conversation."""
@@ -2177,9 +3266,7 @@ async def chat_cancel(request: Request, body: ChatControlRequest):
             org_id, node_id = parts[1], parts[3]
             rt = getattr(request.app.state, "org_runtime", None)
             if rt:
-                logger.info(
-                    f"[Chat API] Cancel routed to OrgRuntime: org={org_id}, node={node_id}"
-                )
+                logger.info(f"[Chat API] Cancel routed to OrgRuntime: org={org_id}, node={node_id}")
                 result = await to_engine(rt.cancel_node_task(org_id, node_id, reason))
                 return {"status": "ok", "action": "cancel", "reason": reason, **result}
 
@@ -2191,16 +3278,14 @@ async def chat_cancel(request: Request, body: ChatControlRequest):
 
     _conv_id = conv_id or getattr(actual_agent, "_current_conversation_id", None)
     logger.info(f"[Chat API] Cancel 接收到请求: reason={reason!r}, conv_id={_conv_id!r}")
-    actual_agent.cancel_current_task(reason, session_id=_conv_id)
-
-    # Immediately release busy-lock so the UI reflects the cancellation.
-    # _stream_chat's finally block will also call finish() with a generation
-    # guard, which will be a safe no-op since the lock is already released.
-    if _conv_id:
-        await get_lifecycle_manager().finish(_conv_id)
-
+    result = await _cancel_running_chat_task(
+        actual_agent,
+        _conv_id,
+        reason,
+        source="Cancel",
+    )
     logger.info(f"[Chat API] Cancel 执行完成: reason={reason!r}")
-    return {"status": "ok", "action": "cancel", "reason": reason}
+    return result
 
 
 @router.post("/api/chat/skip")
@@ -2244,11 +3329,14 @@ async def chat_insert(request: Request, body: ChatControlRequest):
         reason = f"用户发送停止指令: {body.message}"
         _conv_id = conv_id or getattr(actual_agent, "_current_conversation_id", None)
         logger.info(f"[Chat API] Insert -> STOP: reason={reason!r}, conv_id={_conv_id!r}")
-        actual_agent.cancel_current_task(reason, session_id=_conv_id)
-        if _conv_id:
-            await get_lifecycle_manager().finish(_conv_id)
+        result = await _cancel_running_chat_task(
+            actual_agent,
+            _conv_id,
+            reason,
+            source="Insert STOP",
+        )
         logger.info("[Chat API] Insert -> STOP 执行完成")
-        return {"status": "ok", "action": "cancel", "reason": reason}
+        return result
 
     if msg_type == "skip":
         reason = f"用户发送跳过指令: {body.message}"
@@ -2382,4 +3470,3 @@ async def dismiss_plan_approval(request: Request):
     if isinstance(pending_map, dict):
         pending_map.pop(conversation_id, None)
     return {"ok": True}
-

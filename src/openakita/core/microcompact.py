@@ -69,7 +69,11 @@ def microcompact(
             if block_type == "tool_result" and not is_recent:
                 result_content = block.get("content", "")
                 cache_key = str(block.get("cache_key", "") or "")
-                if not cache_key and isinstance(result_content, str) and result_content.startswith("[系统缓存:"):
+                if (
+                    not cache_key
+                    and isinstance(result_content, str)
+                    and result_content.startswith("[系统缓存:")
+                ):
                     cache_key = result_content.split("]", 1)[0]
                 if cache_key:
                     if cache_key in seen_cache_refs:
@@ -80,7 +84,9 @@ def microcompact(
 
                 tool_name = str(block.get("tool_name", "") or "")
                 if isinstance(result_content, str) and result_content:
-                    fp = hashlib.md5(result_content[:4000].encode("utf-8", errors="ignore")).hexdigest()[:12]
+                    fp = hashlib.md5(
+                        result_content[:4000].encode("utf-8", errors="ignore")
+                    ).hexdigest()[:12]
                     semantic_key = f"{tool_name}:{fp}"
                     previous = seen_tool_fingerprints.get(semantic_key, 0)
                     if previous >= 1:

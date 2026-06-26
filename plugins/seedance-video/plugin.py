@@ -62,6 +62,7 @@ def _normalize_base_url(value: str | None, *, field: str = "Base URL") -> str:
 
 # ── Request / Response models ──
 
+
 class CreateTaskBody(BaseModel):
     prompt: str = ""
     mode: str = "t2v"
@@ -82,6 +83,7 @@ class CreateTaskBody(BaseModel):
     client_request_id: str = ""
     content: list[dict] | None = None
 
+
 class VideoUrlTaskBody(BaseModel):
     prompt: str = ""
     source_video_url: str
@@ -98,13 +100,16 @@ class VideoUrlTaskBody(BaseModel):
     client_request_id: str = ""
     next_scene_prompt: str = ""
 
+
 class DraftConfirmBody(BaseModel):
     resolution: str = "720p"
     watermark: bool = False
     return_last_frame: bool = False
 
+
 class ConfigUpdateBody(BaseModel):
     updates: dict[str, str]
+
 
 class PromptOptimizeBody(BaseModel):
     prompt: str
@@ -175,128 +180,146 @@ class Plugin(PluginBase):
         self._register_routes(router)
         api.register_api_routes(router)
 
-        api.register_tools([
-            {
-                "name": "seedance_create",
-                "description": (
-                    "Create a Seedance video generation task. Returns JSON: "
-                    "{ok, task_id, status, mode, video_url, video_path, "
-                    "last_frame_url, asset_ids}. Often used as a 'video output' "
-                    "workbench node in org orchestration — set from_asset_ids "
-                    "to the upstream image workbench's asset_ids to feed "
-                    "first_frame/last_frame/reference_image directly without "
-                    "rehosting."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {"type": "string", "description": "Video generation prompt"},
-                        "mode": {"type": "string", "enum": ["t2v", "i2v", "i2v_end", "multimodal", "edit", "extend"]},
-                        "duration": {"type": "integer", "default": 5},
-                        "ratio": {"type": "string", "default": "16:9"},
-                        "from_asset_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": (
-                                "Asset Bus IDs produced by upstream workbenches "
-                                "(e.g. tongyi-image). Expanded into content[].image_url "
-                                "before submission. Role assignment by index + mode: "
-                                "i2v → first_frame (0), reference_image (1+); "
-                                "i2v_end → first_frame (0), last_frame (1+); "
-                                "multimodal → first_frame (0), reference_image (1+)."
-                            ),
+        api.register_tools(
+            [
+                {
+                    "name": "seedance_create",
+                    "description": (
+                        "Create a Seedance video generation task. Returns JSON: "
+                        "{ok, task_id, status, mode, video_url, video_path, "
+                        "last_frame_url, asset_ids}. Often used as a 'video output' "
+                        "workbench node in org orchestration — set from_asset_ids "
+                        "to the upstream image workbench's asset_ids to feed "
+                        "first_frame/last_frame/reference_image directly without "
+                        "rehosting."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {"type": "string", "description": "Video generation prompt"},
+                            "mode": {
+                                "type": "string",
+                                "enum": ["t2v", "i2v", "i2v_end", "multimodal", "edit", "extend"],
+                            },
+                            "duration": {"type": "integer", "default": 5},
+                            "ratio": {"type": "string", "default": "16:9"},
+                            "from_asset_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "Asset Bus IDs produced by upstream workbenches "
+                                    "(e.g. tongyi-image). Expanded into content[].image_url "
+                                    "before submission. Role assignment by index + mode: "
+                                    "i2v → first_frame (0), reference_image (1+); "
+                                    "i2v_end → first_frame (0), last_frame (1+); "
+                                    "multimodal → first_frame (0), reference_image (1+)."
+                                ),
+                            },
                         },
+                        "required": ["prompt"],
                     },
-                    "required": ["prompt"],
                 },
-            },
-            {
-                "name": "seedance_status",
-                "description": (
-                    "Check status of a Seedance video generation task. "
-                    "Returns JSON: {ok, task_id, status, mode, video_url, "
-                    "video_path, last_frame_url, asset_ids, error_message}."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"task_id": {"type": "string"}},
-                    "required": ["task_id"],
-                },
-            },
-            {
-                "name": "seedance_edit",
-                "description": (
-                    "Edit an existing Seedance video. Requires source_video_url "
-                    "to be a public http(s) cloud video URL, usually the video_url "
-                    "returned by a previous seedance task. Local files/base64 are rejected."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {"type": "string", "description": "Edit instruction"},
-                        "source_video_url": {"type": "string", "description": "Public http(s) video URL"},
-                        "model": {"type": "string", "default": "2.0"},
-                        "duration": {"type": "integer", "default": 5},
-                        "ratio": {"type": "string", "default": "16:9"},
-                        "resolution": {"type": "string", "default": "720p"},
+                {
+                    "name": "seedance_status",
+                    "description": (
+                        "Check status of a Seedance video generation task. "
+                        "Returns JSON: {ok, task_id, status, mode, video_url, "
+                        "video_path, last_frame_url, asset_ids, error_message}."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"task_id": {"type": "string"}},
+                        "required": ["task_id"],
                     },
-                    "required": ["prompt", "source_video_url"],
                 },
-            },
-            {
-                "name": "seedance_extend",
-                "description": (
-                    "Extend/continue an existing Seedance video. Requires source_video_url "
-                    "to be a public http(s) cloud video URL, usually the video_url returned "
-                    "by a previous seedance task."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {"type": "string", "description": "Continuation instruction"},
-                        "source_video_url": {"type": "string", "description": "Public http(s) video URL"},
-                        "model": {"type": "string", "default": "2.0"},
-                        "duration": {"type": "integer", "default": 5},
-                        "ratio": {"type": "string", "default": "16:9"},
-                        "resolution": {"type": "string", "default": "720p"},
+                {
+                    "name": "seedance_edit",
+                    "description": (
+                        "Edit an existing Seedance video. Requires source_video_url "
+                        "to be a public http(s) cloud video URL, usually the video_url "
+                        "returned by a previous seedance task. Local files/base64 are rejected."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {"type": "string", "description": "Edit instruction"},
+                            "source_video_url": {
+                                "type": "string",
+                                "description": "Public http(s) video URL",
+                            },
+                            "model": {"type": "string", "default": "2.0"},
+                            "duration": {"type": "integer", "default": 5},
+                            "ratio": {"type": "string", "default": "16:9"},
+                            "resolution": {"type": "string", "default": "720p"},
+                        },
+                        "required": ["prompt", "source_video_url"],
                     },
-                    "required": ["prompt", "source_video_url"],
                 },
-            },
-            {
-                "name": "seedance_transition",
-                "description": (
-                    "Generate an AI transition/bridge clip from the first source video "
-                    "toward the next scene. Uses Seedance cloud generation rather than "
-                    "ffmpeg hard concatenation. Requires source_video_url as public http(s)."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {"type": "string", "description": "Transition instruction"},
-                        "source_video_url": {"type": "string", "description": "Public http(s) video URL to extend from"},
-                        "next_scene_prompt": {"type": "string", "description": "Description of the target next scene"},
-                        "model": {"type": "string", "default": "2.0"},
-                        "duration": {"type": "integer", "default": 4},
-                        "ratio": {"type": "string", "default": "16:9"},
-                        "resolution": {"type": "string", "default": "720p"},
+                {
+                    "name": "seedance_extend",
+                    "description": (
+                        "Extend/continue an existing Seedance video. Requires source_video_url "
+                        "to be a public http(s) cloud video URL, usually the video_url returned "
+                        "by a previous seedance task."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {"type": "string", "description": "Continuation instruction"},
+                            "source_video_url": {
+                                "type": "string",
+                                "description": "Public http(s) video URL",
+                            },
+                            "model": {"type": "string", "default": "2.0"},
+                            "duration": {"type": "integer", "default": 5},
+                            "ratio": {"type": "string", "default": "16:9"},
+                            "resolution": {"type": "string", "default": "720p"},
+                        },
+                        "required": ["prompt", "source_video_url"],
                     },
-                    "required": ["prompt", "source_video_url"],
                 },
-            },
-            {
-                "name": "seedance_list",
-                "description": (
-                    "List recent Seedance video generation tasks. Returns JSON: "
-                    "{ok, total, tasks: [{task_id, status, mode, prompt, "
-                    "video_url, video_path, asset_ids, created_at}, ...]}."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"limit": {"type": "integer", "default": 10}},
+                {
+                    "name": "seedance_transition",
+                    "description": (
+                        "Generate an AI transition/bridge clip from the first source video "
+                        "toward the next scene. Uses Seedance cloud generation rather than "
+                        "ffmpeg hard concatenation. Requires source_video_url as public http(s)."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "prompt": {"type": "string", "description": "Transition instruction"},
+                            "source_video_url": {
+                                "type": "string",
+                                "description": "Public http(s) video URL to extend from",
+                            },
+                            "next_scene_prompt": {
+                                "type": "string",
+                                "description": "Description of the target next scene",
+                            },
+                            "model": {"type": "string", "default": "2.0"},
+                            "duration": {"type": "integer", "default": 4},
+                            "ratio": {"type": "string", "default": "16:9"},
+                            "resolution": {"type": "string", "default": "720p"},
+                        },
+                        "required": ["prompt", "source_video_url"],
+                    },
                 },
-            },
-        ], handler=self._handle_tool)
+                {
+                    "name": "seedance_list",
+                    "description": (
+                        "List recent Seedance video generation tasks. Returns JSON: "
+                        "{ok, total, tasks: [{task_id, status, mode, prompt, "
+                        "video_url, video_path, asset_ids, created_at}, ...]}."
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"limit": {"type": "integer", "default": 10}},
+                    },
+                },
+            ],
+            handler=self._handle_tool,
+        )
 
         api.spawn_task(self._async_init(), name="seedance-video:init")
         api.log("Seedance Video plugin loaded")
@@ -395,7 +418,9 @@ class Plugin(PluginBase):
                     pass
                 except Exception as exc:
                     logger.warning(
-                        "seedance-video chain %s drain error: %s", gid, exc,
+                        "seedance-video chain %s drain error: %s",
+                        gid,
+                        exc,
                     )
         self._active_chains.clear()
         for fut in list(self._pending_create_requests.values()):
@@ -490,15 +515,11 @@ class Plugin(PluginBase):
                 {
                     "ok": True,
                     "total": total,
-                    "tasks": [
-                        self._task_to_tool_payload(t, brief=True) for t in tasks
-                    ],
+                    "tasks": [self._task_to_tool_payload(t, brief=True) for t in tasks],
                 },
                 ensure_ascii=False,
             )
-        return _json.dumps(
-            {"ok": False, "error": f"Unknown tool: {tool_name}"}, ensure_ascii=False
-        )
+        return _json.dumps({"ok": False, "error": f"Unknown tool: {tool_name}"}, ensure_ascii=False)
 
     @staticmethod
     def _task_to_tool_payload(task: dict, *, brief: bool = False) -> dict:
@@ -586,12 +607,7 @@ class Plugin(PluginBase):
     @staticmethod
     def _build_video_url_create_args(args: dict, *, mode: str) -> dict:
         """Build a canonical seedance_create payload for edit/extend wrappers."""
-        source_url = (
-            args.get("source_video_url")
-            or args.get("video_url")
-            or args.get("url")
-            or ""
-        )
+        source_url = args.get("source_video_url") or args.get("video_url") or args.get("url") or ""
         if not isinstance(source_url, str) or not source_url.strip():
             label = "编辑" if mode == "edit" else "延长/过渡"
             raise HTTPException(status_code=400, detail=f"{label}模式缺少 source_video_url")
@@ -608,7 +624,8 @@ class Plugin(PluginBase):
         if mode == "extend" and args.get("next_scene_prompt"):
             prompt = (
                 f"{prompt}\n\n请自然过渡到下一场景：{args.get('next_scene_prompt')}"
-                if prompt else f"请自然过渡到下一场景：{args.get('next_scene_prompt')}"
+                if prompt
+                else f"请自然过渡到下一场景：{args.get('next_scene_prompt')}"
             )
         if not prompt:
             prompt = "保持原视频风格，进行自然续写。"
@@ -795,7 +812,8 @@ class Plugin(PluginBase):
                 if existing:
                     logger.info(
                         "create_task deduped by persisted client_request_id=%s task=%s",
-                        client_request_id, existing.get("id"),
+                        client_request_id,
+                        existing.get("id"),
                     )
                     return existing
 
@@ -868,10 +886,7 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=400, detail="content 不能为空")
 
             def _has(content_type: str) -> bool:
-                return any(
-                    isinstance(c, dict) and c.get("type") == content_type
-                    for c in content
-                )
+                return any(isinstance(c, dict) and c.get("type") == content_type for c in content)
 
             def _image_with_role(role: str) -> bool:
                 for c in content:
@@ -894,12 +909,10 @@ class Plugin(PluginBase):
                 # roles (preferred) or two un-tagged image_urls — accept both
                 # as long as we get at least 2 images.
                 image_count = sum(
-                    1 for c in content
-                    if isinstance(c, dict) and c.get("type") == "image_url"
+                    1 for c in content if isinstance(c, dict) and c.get("type") == "image_url"
                 )
-                has_explicit_pair = (
-                    _image_with_role("first_frame")
-                    and _image_with_role("last_frame")
+                has_explicit_pair = _image_with_role("first_frame") and _image_with_role(
+                    "last_frame"
                 )
                 if not has_explicit_pair and image_count < 2:
                     raise HTTPException(
@@ -908,7 +921,8 @@ class Plugin(PluginBase):
                     )
             if mode == "multimodal":
                 media_count = sum(
-                    1 for c in content
+                    1
+                    for c in content
                     if isinstance(c, dict) and c.get("type") in ("image_url", "video_url")
                 )
                 if media_count < 1:
@@ -936,7 +950,10 @@ class Plugin(PluginBase):
                 image_idx = 0
                 normalized: list[dict] = []
                 for item in items:
-                    if not isinstance(item, dict) or item.get("type") not in ("image_url", "video_url"):
+                    if not isinstance(item, dict) or item.get("type") not in (
+                        "image_url",
+                        "video_url",
+                    ):
                         normalized.append(item)
                         continue
                     copied = dict(item)
@@ -986,7 +1003,8 @@ class Plugin(PluginBase):
             if existing_duplicate:
                 logger.info(
                     "create_task deduped by request_signature=%s task=%s",
-                    request_signature, existing_duplicate.get("id"),
+                    request_signature,
+                    existing_duplicate.get("id"),
                 )
                 return existing_duplicate
             params["request_signature"] = request_signature
@@ -1078,9 +1096,7 @@ class Plugin(PluginBase):
     # ── Polling ──
 
     def _start_polling(self) -> None:
-        self._poll_task = self._api.spawn_task(
-            self._poll_loop(), name="seedance-video:poll"
-        )
+        self._poll_task = self._api.spawn_task(self._poll_loop(), name="seedance-video:poll")
 
     async def _poll_loop(self) -> None:
         while True:
@@ -1113,9 +1129,7 @@ class Plugin(PluginBase):
                     if isinstance(content, dict):
                         video_url = content.get("video_url", "") or ""
                         last_frame_url = (
-                            content.get("last_frame_url", "")
-                            or content.get("image_url", "")
-                            or ""
+                            content.get("last_frame_url", "") or content.get("image_url", "") or ""
                         )
                         revised_prompt = content.get("revised_prompt", "") or ""
 
@@ -1129,7 +1143,9 @@ class Plugin(PluginBase):
                                         video_url = item.get("video_url", {}).get("url", "")
                                     if isinstance(item, dict) and item.get("type") == "image_url":
                                         if not last_frame_url:
-                                            last_frame_url = item.get("image_url", {}).get("url", "")
+                                            last_frame_url = item.get("image_url", {}).get(
+                                                "url", ""
+                                            )
                             if not revised_prompt:
                                 revised_prompt = output.get("revised_prompt", "")
                             if not last_frame_url:
@@ -1148,7 +1164,9 @@ class Plugin(PluginBase):
                     # 仅 URL，由 hook 的远端下载兜底。
                     if video_url:
                         await self._download_and_publish_video(
-                            task["id"], video_url, last_frame_url=last_frame_url,
+                            task["id"],
+                            video_url,
+                            last_frame_url=last_frame_url,
                             prompt=task.get("prompt") or "",
                         )
 
@@ -1156,7 +1174,11 @@ class Plugin(PluginBase):
 
                 elif status == "failed":
                     error = result.get("error", {})
-                    error_msg = error.get("message", "Unknown error") if isinstance(error, dict) else str(error)
+                    error_msg = (
+                        error.get("message", "Unknown error")
+                        if isinstance(error, dict)
+                        else str(error)
+                    )
                     await self._tm.update_task(task["id"], status="failed", error_message=error_msg)
                     self._broadcast_update(task["id"], "failed")
 
@@ -1239,6 +1261,7 @@ class Plugin(PluginBase):
         """Download video to local output directory."""
         try:
             import httpx
+
             config = await self._tm.get_all_config()
             output_dir = config.get("output_dir") or str(Path.home() / "seedance-output")
             subdir_mode = config.get("output_subdir_mode", "date")
@@ -1247,6 +1270,7 @@ class Plugin(PluginBase):
             out_path = Path(output_dir)
             if subdir_mode == "date":
                 import datetime
+
                 out_path = out_path / datetime.date.today().isoformat()
             out_path.mkdir(parents=True, exist_ok=True)
 
@@ -1256,13 +1280,16 @@ class Plugin(PluginBase):
 
             prompt_prefix = (task.get("prompt", "")[:20] or "video").strip()
             safe_prefix = "".join(c if c.isalnum() or c in "-_ " else "_" for c in prompt_prefix)
-            filename = naming.format(
-                task_id=task_id,
-                date=time.strftime("%Y%m%d"),
-                prompt_prefix=safe_prefix,
-                mode=task.get("mode", "t2v"),
-                seq=task_id[:6],
-            ) + ".mp4"
+            filename = (
+                naming.format(
+                    task_id=task_id,
+                    date=time.strftime("%Y%m%d"),
+                    prompt_prefix=safe_prefix,
+                    mode=task.get("mode", "t2v"),
+                    seq=task_id[:6],
+                )
+                + ".mp4"
+            )
 
             filepath = out_path / filename
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -1298,7 +1325,8 @@ class Plugin(PluginBase):
         except Exception as exc:
             logger.warning(
                 "seedance-video: failed to create download dir %s: %s",
-                downloads_dir, exc,
+                downloads_dir,
+                exc,
             )
             return
 
@@ -1334,7 +1362,8 @@ class Plugin(PluginBase):
                         last_frame_path.write_bytes(resp2.content)
                     except Exception as exc:
                         logger.warning(
-                            "seedance-video: last-frame download failed: %s", exc,
+                            "seedance-video: last-frame download failed: %s",
+                            exc,
                         )
                         last_frame_path = None
         except Exception as exc:
@@ -1379,7 +1408,8 @@ class Plugin(PluginBase):
                     asset_ids.append(aid)
             except Exception as exc:
                 logger.warning(
-                    "seedance-video: publish_asset(last_frame) failed: %s", exc,
+                    "seedance-video: publish_asset(last_frame) failed: %s",
+                    exc,
                 )
 
         updates: dict[str, Any] = {"asset_ids": asset_ids}
@@ -1392,7 +1422,8 @@ class Plugin(PluginBase):
         except Exception as exc:
             logger.warning(
                 "seedance-video: persist asset metadata failed for %s: %s",
-                task_id, exc,
+                task_id,
+                exc,
             )
         logger.info(
             "seedance-video: task %s materialised → video=%s last_frame=%s assets=%d",
@@ -1404,9 +1435,7 @@ class Plugin(PluginBase):
 
     def _broadcast_update(self, task_id: str, status: str) -> None:
         try:
-            self._api.broadcast_ui_event(
-                "task_update", {"task_id": task_id, "status": status}
-            )
+            self._api.broadcast_ui_event("task_update", {"task_id": task_id, "status": status})
         except Exception as exc:
             # Don't let UI broadcast failures bring down the polling loop, but
             # log them so an operator can spot a stuck WebSocket / event bus.
@@ -1465,8 +1494,11 @@ class Plugin(PluginBase):
             limit: int = 20,
         ) -> dict:
             tasks, total = await self._tm.list_tasks(
-                status=status, is_draft=is_draft, service_tier=service_tier,
-                offset=offset, limit=limit,
+                status=status,
+                is_draft=is_draft,
+                service_tier=service_tier,
+                offset=offset,
+                limit=limit,
             )
             return {"ok": True, "tasks": tasks, "total": total}
 
@@ -1555,7 +1587,17 @@ class Plugin(PluginBase):
             # because the FE thought the upload succeeded but had no
             # payload to send).
             MAX_UPLOAD_BYTES = 50 * 1024 * 1024
-            IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".gif", ".heic", ".heif"}
+            IMAGE_EXTS = {
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp",
+                ".bmp",
+                ".tiff",
+                ".gif",
+                ".heic",
+                ".heif",
+            }
             VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv"}
             AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".ogg", ".flac"}
 
@@ -1611,6 +1653,7 @@ class Plugin(PluginBase):
             dest_dir.mkdir(parents=True, exist_ok=True)
 
             import uuid as _uuid
+
             filename = f"{_uuid.uuid4().hex[:8]}_{file.filename or 'file'}"
             filepath = dest_dir / filename
             filepath.write_bytes(content)
@@ -1654,9 +1697,10 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=404, detail="No video available")
 
             prompt_prefix = (task.get("prompt", "") or "video")[:30].strip() or "video"
-            safe_prefix = "".join(
-                c if c.isalnum() or c in "-_ " else "_" for c in prompt_prefix
-            ).strip(" .") or "video"
+            safe_prefix = (
+                "".join(c if c.isalnum() or c in "-_ " else "_" for c in prompt_prefix).strip(" .")
+                or "video"
+            )
             fname = f"seedance_{safe_prefix}.mp4"
 
             return self._api.create_file_response(
@@ -1699,7 +1743,8 @@ class Plugin(PluginBase):
             cleaned: dict[str, str] = {k: (v or "").strip() for k, v in body.updates.items()}
             if "ark_base_url" in cleaned:
                 cleaned["ark_base_url"] = _normalize_base_url(
-                    cleaned["ark_base_url"], field="ARK Base URL",
+                    cleaned["ark_base_url"],
+                    field="ARK Base URL",
                 )
 
             if "ark_api_key" in cleaned and not cleaned["ark_api_key"]:
@@ -1719,7 +1764,9 @@ class Plugin(PluginBase):
                 if saved.get(k, "") != expected:
                     logger.error(
                         "settings.update mismatch key=%s expected_len=%d got_len=%d",
-                        k, len(expected), len(saved.get(k, "") or ""),
+                        k,
+                        len(expected),
+                        len(saved.get(k, "") or ""),
                     )
                     raise HTTPException(
                         status_code=500,
@@ -1733,7 +1780,8 @@ class Plugin(PluginBase):
                 # the key the user thinks they saved is actually saved".
                 logger.info(
                     "settings.update ark_api_key saved (len=%d, prefix=%s***)",
-                    len(key), key[:4],
+                    len(key),
+                    key[:4],
                 )
 
             endpoint_keys = {
@@ -1844,9 +1892,7 @@ class Plugin(PluginBase):
             offset: int = 0,
             limit: int = 50,
         ) -> dict:
-            assets, total = await self._tm.list_assets(
-                asset_type=type, offset=offset, limit=limit
-            )
+            assets, total = await self._tm.list_assets(asset_type=type, offset=offset, limit=limit)
             uploads_dir = (self._api.get_data_dir() / "uploads").resolve()
             for asset in assets:
                 file_path = Path(asset.get("file_path") or "")
@@ -1921,7 +1967,8 @@ class Plugin(PluginBase):
                             await self._poll_running_tasks()
                         elif status == "failed":
                             await self._tm.update_task(
-                                t["id"], status="failed",
+                                t["id"],
+                                status="failed",
                                 error_message=body.get("error", {}).get("message", ""),
                             )
                         self._broadcast_update(t["id"], status)
@@ -1946,7 +1993,10 @@ class Plugin(PluginBase):
             ]:
                 d = Path(config.get(key) or default)
                 report = await collect_storage_stats(
-                    d, max_files=20000, sample_paths=0, skip_hidden=True,
+                    d,
+                    max_files=20000,
+                    sample_paths=0,
+                    skip_hidden=True,
                 )
                 truncated_any = truncated_any or report.truncated
                 stats[key] = {
@@ -2003,7 +2053,7 @@ class Plugin(PluginBase):
                     raise HTTPException(status_code=400, detail=f"Unknown key: {key}")
                 config = await self._tm.get_all_config()
                 cfg_val = (config.get(key) or "").strip()
-                target = (Path(cfg_val).expanduser() if cfg_val else defaults[key])
+                target = Path(cfg_val).expanduser() if cfg_val else defaults[key]
 
             try:
                 target.mkdir(parents=True, exist_ok=True)
@@ -2015,6 +2065,7 @@ class Plugin(PluginBase):
 
             import subprocess
             import sys
+
             try:
                 if sys.platform == "win32":
                     subprocess.Popen(["explorer", str(target)])
@@ -2038,6 +2089,7 @@ class Plugin(PluginBase):
         @router.get("/storage/list-dir")
         async def list_dir(path: str = "") -> dict:
             import sys
+
             raw = (path or "").strip()
             # Empty path → return anchor list (Home, common subfolders,
             # and on Windows every available drive letter). The UI can
@@ -2045,36 +2097,57 @@ class Plugin(PluginBase):
             if not raw:
                 anchors: list[dict] = []
                 home = Path.home()
-                anchors.append({
-                    "name": "Home", "path": str(home), "is_dir": True, "kind": "home",
-                })
+                anchors.append(
+                    {
+                        "name": "Home",
+                        "path": str(home),
+                        "is_dir": True,
+                        "kind": "home",
+                    }
+                )
                 for sub in ("Desktop", "Documents", "Downloads", "Pictures", "Videos", "Movies"):
                     p = home / sub
                     if p.is_dir():
-                        anchors.append({
-                            "name": sub, "path": str(p), "is_dir": True, "kind": "shortcut",
-                        })
+                        anchors.append(
+                            {
+                                "name": sub,
+                                "path": str(p),
+                                "is_dir": True,
+                                "kind": "shortcut",
+                            }
+                        )
                 if sys.platform == "win32":
                     import string
+
                     for letter in string.ascii_uppercase:
                         drv = Path(f"{letter}:/")
                         try:
                             if drv.exists():
-                                anchors.append({
-                                    "name": f"{letter}:",
-                                    "path": str(drv),
-                                    "is_dir": True,
-                                    "kind": "drive",
-                                })
+                                anchors.append(
+                                    {
+                                        "name": f"{letter}:",
+                                        "path": str(drv),
+                                        "is_dir": True,
+                                        "kind": "drive",
+                                    }
+                                )
                         except OSError:
                             continue
                 else:
-                    anchors.append({
-                        "name": "/", "path": "/", "is_dir": True, "kind": "drive",
-                    })
+                    anchors.append(
+                        {
+                            "name": "/",
+                            "path": "/",
+                            "is_dir": True,
+                            "kind": "drive",
+                        }
+                    )
                 return {
-                    "ok": True, "path": "", "parent": None,
-                    "items": anchors, "is_anchor": True,
+                    "ok": True,
+                    "path": "",
+                    "parent": None,
+                    "items": anchors,
+                    "is_anchor": True,
                 }
 
             try:
@@ -2107,8 +2180,11 @@ class Plugin(PluginBase):
             items.sort(key=lambda it: it["name"].lower())
             parent_path = str(target.parent) if target.parent != target else None
             return {
-                "ok": True, "path": str(target), "parent": parent_path,
-                "items": items, "is_anchor": False,
+                "ok": True,
+                "path": str(target),
+                "parent": parent_path,
+                "items": items,
+                "is_anchor": False,
             }
 
         @router.post("/storage/mkdir")
@@ -2161,7 +2237,8 @@ class Plugin(PluginBase):
         async def system_install(dep_id: str, body: SystemInstallBody) -> dict:
             try:
                 result = await self._sysdeps.start_install(
-                    dep_id, method_index=body.method_index,
+                    dep_id,
+                    method_index=body.method_index,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2173,7 +2250,8 @@ class Plugin(PluginBase):
         async def system_uninstall(dep_id: str, body: SystemUninstallBody) -> dict:
             try:
                 result = await self._sysdeps.start_uninstall(
-                    dep_id, method_index=body.method_index,
+                    dep_id,
+                    method_index=body.method_index,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2201,7 +2279,7 @@ class Plugin(PluginBase):
             # Hard-coded list of permissions this plugin's user-facing
             # features actually exercise. Keep in sync with plugin.json.
             required = [
-                ("brain.access",   "AI 优化提示词 / 故事板分镜（需要主进程 LLM）"),
+                ("brain.access", "AI 优化提示词 / 故事板分镜（需要主进程 LLM）"),
                 ("routes.register", "插件 HTTP 接口（前端调用）"),
             ]
             checks = [
@@ -2312,15 +2390,17 @@ class Plugin(PluginBase):
             for gid, info in self._active_chains.items():
                 task = info.get("task")
                 done = isinstance(task, asyncio.Task) and task.done()
-                chains.append({
-                    "group_id": gid,
-                    "started_at": info.get("started_at"),
-                    "elapsed_sec": round(now - (info.get("started_at") or now), 1),
-                    "segments_total": info.get("segments_total"),
-                    "mode": info.get("mode"),
-                    "model": info.get("model"),
-                    "done": done,
-                })
+                chains.append(
+                    {
+                        "group_id": gid,
+                        "started_at": info.get("started_at"),
+                        "elapsed_sec": round(now - (info.get("started_at") or now), 1),
+                        "segments_total": info.get("segments_total"),
+                        "mode": info.get("mode"),
+                        "model": info.get("model"),
+                        "done": done,
+                    }
+                )
             return {"ok": True, "chains": chains}
 
         @router.post("/long-video/cancel/{group_id}")
@@ -2369,15 +2449,14 @@ class Plugin(PluginBase):
 
             try:
                 ok = await concat_videos(
-                    video_paths, output_path,
+                    video_paths,
+                    output_path,
                     transition=body.transition,
                     fade_duration=body.fade_duration,
                 )
             except Exception as exc:
                 logger.exception("ffmpeg concat raised")
-                raise HTTPException(
-                    status_code=500, detail=f"ffmpeg concat error: {exc}"
-                ) from exc
+                raise HTTPException(status_code=500, detail=f"ffmpeg concat error: {exc}") from exc
             if not ok:
                 raise HTTPException(status_code=500, detail="ffmpeg concat failed")
 
@@ -2394,9 +2473,9 @@ class Plugin(PluginBase):
             # if perf becomes a concern.
             tasks, _ = await self._tm.list_tasks(limit=500)
             chain = [
-                t for t in tasks
-                if isinstance(t.get("params"), dict)
-                and t["params"].get("chain_group") == group_id
+                t
+                for t in tasks
+                if isinstance(t.get("params"), dict) and t["params"].get("chain_group") == group_id
             ]
             chain.sort(key=lambda t: t.get("params", {}).get("segment_index", 0))
 
@@ -2413,10 +2492,7 @@ class Plugin(PluginBase):
 
             info = self._active_chains.get(group_id) or {}
             chain_task = info.get("task")
-            chain_done = (
-                not info
-                or (isinstance(chain_task, asyncio.Task) and chain_task.done())
-            )
+            chain_done = not info or (isinstance(chain_task, asyncio.Task) and chain_task.done())
             return {
                 "ok": True,
                 "group_id": group_id,

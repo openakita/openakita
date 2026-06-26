@@ -128,9 +128,7 @@ class TestReadyzFailurePaths:
         assert r.status_code == 503
         assert any(f["name"] == "event_loop" for f in r.json()["failing"])
 
-    def test_scheduler_failure(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_scheduler_failure(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
         _force_all_checks_pass(monkeypatch)
         monkeypatch.setattr(
             health_module,
@@ -201,9 +199,7 @@ class TestReadyzSanitization:
 
 
 class TestReadyzCache:
-    def test_cached_within_ttl(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_cached_within_ttl(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
         _force_all_checks_pass(monkeypatch)
         call_count = {"n": 0}
 

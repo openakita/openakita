@@ -58,7 +58,9 @@ async def test_wait_returns_immediately_when_task_succeeds() -> None:
     }
 
     await pl._wait_for_async_task(
-        task_id="local-1", api_task_id="ds-1", prompt="cyberpunk skyline",
+        task_id="local-1",
+        api_task_id="ds-1",
+        prompt="cyberpunk skyline",
     )
 
     pl._tm.update_task.assert_awaited_once()
@@ -81,7 +83,9 @@ async def test_wait_records_failure_when_task_fails() -> None:
     }
 
     await pl._wait_for_async_task(
-        task_id="local-2", api_task_id="ds-2", prompt="bad prompt",
+        task_id="local-2",
+        api_task_id="ds-2",
+        prompt="bad prompt",
     )
 
     pl._tm.update_task.assert_awaited_once()
@@ -110,7 +114,9 @@ async def test_wait_keeps_polling_through_running_state() -> None:
     ]
 
     await pl._wait_for_async_task(
-        task_id="local-3", api_task_id="ds-3", prompt="prompt",
+        task_id="local-3",
+        api_task_id="ds-3",
+        prompt="prompt",
     )
 
     assert pl._client.get_task.await_count == 3
@@ -134,7 +140,9 @@ async def test_wait_swallows_transient_dashscope_errors() -> None:
     ]
 
     await pl._wait_for_async_task(
-        task_id="local-4", api_task_id="ds-4", prompt="prompt",
+        task_id="local-4",
+        api_task_id="ds-4",
+        prompt="prompt",
     )
 
     # All three calls happened; the wait did NOT abort on transient errors.
@@ -153,7 +161,9 @@ async def test_wait_times_out_silently_when_task_keeps_running() -> None:
     # Should not raise; should not flip the task status. The background
     # _poll_loop will eventually pick it up.
     await pl._wait_for_async_task(
-        task_id="local-5", api_task_id="ds-5", prompt="prompt",
+        task_id="local-5",
+        api_task_id="ds-5",
+        prompt="prompt",
     )
 
     pl._tm.update_task.assert_not_awaited()
@@ -169,7 +179,9 @@ async def test_wait_no_op_when_client_missing() -> None:
     # method must return immediately and not blow up — this guards the
     # "user removed API key while a task was queued" edge case.
     await pl._wait_for_async_task(
-        task_id="local-6", api_task_id="ds-6", prompt="prompt",
+        task_id="local-6",
+        api_task_id="ds-6",
+        prompt="prompt",
     )
 
     pl._tm.update_task.assert_not_awaited()

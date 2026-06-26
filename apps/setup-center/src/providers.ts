@@ -65,6 +65,8 @@ export function inferCapabilities(modelName: string, _providerSlug?: string | nu
   if (["thinking", "r1", "qwq", "qvq", "o1", "deepseek-v4-pro"].some(kw => m.includes(kw))) caps.thinking = true;
   if (["qwen", "gpt", "claude", "deepseek", "kimi", "glm", "gemini", "moonshot", "minimax", "doubao"].some(kw => m.includes(kw))) caps.tools = true;
   if (m.includes("minimax") && m.includes("m2")) caps.thinking = true;
+  // MiniMax M3 起原生多模态（图像/视频），且支持 thinking
+  if (m.includes("minimax") && m.includes("m3")) { caps.thinking = true; caps.vision = true; caps.video = true; }
 
   return caps;
 }
@@ -250,50 +252,55 @@ export async function fetchModelsDirectly(params: {
     return longCatFallbackModels(providerSlug);
   }
 
-  if (apiType === "anthropic") {
-    if (isMiniMaxProvider(providerSlug, baseUrl)) {
-      return miniMaxFallbackModels(providerSlug);
-    }
+  // MiniMax 现已提供 /v1/models 列表端点：在线拉取失败时回退到内置候选
+  // （回退列表不含 M3，因此“列表里有没有 M3”可用于判断在线/内置来源）。
+  const isMiniMax = isMiniMaxProvider(providerSlug, baseUrl);
 
+  if (apiType === "anthropic") {
     const url = base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
-    const resp = await proxyFetch(url, {
-      headers: {
-        "x-api-key": apiKey,
-        Authorization: `Bearer ${apiKey}`,
-        "anthropic-version": "2023-06-01",
-      },
-      timeoutSecs: 30,
-    });
-    if (resp.status >= 400) {
-      if (resp.status === 404 && isMiniMaxProvider(providerSlug, baseUrl)) {
-        return miniMaxFallbackModels(providerSlug);
+    try {
+      const resp = await proxyFetch(url, {
+        headers: {
+          "x-api-key": apiKey,
+          Authorization: `Bearer ${apiKey}`,
+          "anthropic-version": "2023-06-01",
+        },
+        timeoutSecs: 30,
+      });
+      if (resp.status >= 400) {
+        if (isMiniMax) return miniMaxFallbackModels(providerSlug);
+        throw new Error(`Anthropic API ${resp.status}: ${resp.body.slice(0, 200)}`);
       }
-      throw new Error(`Anthropic API ${resp.status}: ${resp.body.slice(0, 200)}`);
+      const data = JSON.parse(resp.body);
+      const list = (data.data ?? [])
+        .map((m: any) => ({
+          id: String(m.id ?? "").trim(),
+          name: String(m.display_name ?? m.id ?? ""),
+          capabilities: inferCapabilities(String(m.id ?? ""), providerSlug),
+        }))
+        .filter((m: ListedModel) => m.id);
+      if (list.length === 0 && isMiniMax) return miniMaxFallbackModels(providerSlug);
+      return list;
+    } catch (e) {
+      if (isMiniMax) return miniMaxFallbackModels(providerSlug);
+      throw e;
     }
-    const data = JSON.parse(resp.body);
-    return (data.data ?? [])
-      .map((m: any) => ({
-        id: String(m.id ?? "").trim(),
-        name: String(m.display_name ?? m.id ?? ""),
-        capabilities: inferCapabilities(String(m.id ?? ""), providerSlug),
-      }))
-      .filter((m: ListedModel) => m.id);
   }
 
   // OpenAI-compatible: GET /models
-  if (isMiniMaxProvider(providerSlug, baseUrl)) {
-    return miniMaxFallbackModels(providerSlug);
-  }
-
   const url = `${base}/models`;
-  const resp = await proxyFetch(url, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-    timeoutSecs: 30,
-  });
+  let resp;
+  try {
+    resp = await proxyFetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeoutSecs: 30,
+    });
+  } catch (e) {
+    if (isMiniMax) return miniMaxFallbackModels(providerSlug);
+    throw e;
+  }
   if (resp.status >= 400) {
-    if (resp.status === 404 && isMiniMaxProvider(providerSlug, baseUrl)) {
-      return miniMaxFallbackModels(providerSlug);
-    }
+    if (isMiniMax) return miniMaxFallbackModels(providerSlug);
     throw new Error(`API ${resp.status}: ${resp.body.slice(0, 200)}`);
   }
   const data = JSON.parse(resp.body);
@@ -311,6 +318,7 @@ export async function fetchModelsDirectly(params: {
       return true;
     })
     .sort((a: ListedModel, b: ListedModel) => a.id.localeCompare(b.id));
+  if (apiModels.length === 0 && isMiniMax) return miniMaxFallbackModels(providerSlug);
   return [...routerModels, ...apiModels];
 }
 
@@ -330,6 +338,35 @@ export async function safeFetch(url: string, init?: RequestInit): Promise<Respon
   const res = useAuth
     ? await authFetch(url, effectiveInit, apiBase)
     : await fetch(url, effectiveInit);
+  // HTTP 428 Precondition Required is the signal from middleware_setup_gate
+  // saying "no web-access password set; complete the setup flow first".
+  // We surface this as a custom event so the App-level effect can switch the
+  // view to SetupView, and re-throw a sentinel error so the caller knows the
+  // current request was *not* fulfilled. The sentinel error message is a
+  // well-known string the caller can detect; the human-visible body is
+  // attached on the error so existing toast handlers won't render gibberish.
+  if (res.status === 428) {
+    let body: { error?: string; detail?: string; setup_url?: string } = {};
+    try {
+      const text = await res.clone().text();
+      if (text) body = JSON.parse(text);
+    } catch { /* ignore parse error */ }
+    if (body?.error === "setup_required") {
+      try {
+        window.dispatchEvent(
+          new CustomEvent("openakita:setup-required", { detail: body }),
+        );
+      } catch { /* ignore in non-browser env */ }
+      // The thrown error message may briefly surface in toast handlers
+      // before the App-level listener swaps to SetupView. Use the human
+      // detail from the backend so the user sees an actionable message
+      // ("Setup required…") instead of an internal sentinel.
+      const message = body.detail || "Setup required";
+      const err = new Error(message);
+      (err as Error & { setupRequired?: boolean }).setupRequired = true;
+      throw err;
+    }
+  }
   if (!res.ok) {
     let userMessage = res.statusText;
     try {

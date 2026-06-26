@@ -9,45 +9,105 @@ from __future__ import annotations
 from ecom_models import VIDEO_MODELS
 from ecom_prompt_optimizer import VIDEO_OPTIMIZE_SYSTEM_PROMPT
 
+
 # Common param builders
 def _p_prompt(required=True, placeholder="描述你想要的效果..."):
-    return {"id": "prompt", "type": "textarea", "label": "描述", "label_en": "Description",
-            "required": required, "placeholder": placeholder, "group": "basic", "order": 1}
+    return {
+        "id": "prompt",
+        "type": "textarea",
+        "label": "描述",
+        "label_en": "Description",
+        "required": required,
+        "placeholder": placeholder,
+        "group": "basic",
+        "order": 1,
+    }
+
 
 def _p_ref_image(label="参考图", required=False):
-    return {"id": "ref_image", "type": "image_upload", "label": label, "label_en": "Reference Image",
-            "required": required, "group": "basic", "order": 2}
+    return {
+        "id": "ref_image",
+        "type": "image_upload",
+        "label": label,
+        "label_en": "Reference Image",
+        "required": required,
+        "group": "basic",
+        "order": 2,
+    }
+
 
 def _p_product_name():
-    return {"id": "product_name", "type": "text", "label": "产品名称", "label_en": "Product Name",
-            "placeholder": "如: 智能手表 Pro Max", "group": "basic", "order": 0}
+    return {
+        "id": "product_name",
+        "type": "text",
+        "label": "产品名称",
+        "label_en": "Product Name",
+        "placeholder": "如: 智能手表 Pro Max",
+        "group": "basic",
+        "order": 0,
+    }
+
 
 def _p_selling_points():
-    return {"id": "selling_points", "type": "textarea", "label": "产品卖点", "label_en": "Selling Points",
-            "placeholder": "如: 防水、续航72小时、血氧监测", "group": "basic", "order": 3}
+    return {
+        "id": "selling_points",
+        "type": "textarea",
+        "label": "产品卖点",
+        "label_en": "Selling Points",
+        "placeholder": "如: 防水、续航72小时、血氧监测",
+        "group": "basic",
+        "order": 3,
+    }
+
 
 def _p_size(default="2K"):
-    return {"id": "size", "type": "select", "label": "清晰度", "label_en": "Resolution", "default": default,
-            "options": [
-                {"value": "1K", "label": "1K (标清)"},
-                {"value": "2K", "label": "2K (高清)"},
-                {"value": "4K", "label": "4K (超清·仅纯文生图)"},
-            ], "group": "advanced", "order": 10}
+    return {
+        "id": "size",
+        "type": "select",
+        "label": "清晰度",
+        "label_en": "Resolution",
+        "default": default,
+        "options": [
+            {"value": "1K", "label": "1K (标清)"},
+            {"value": "2K", "label": "2K (高清)"},
+            {"value": "4K", "label": "4K (超清·仅纯文生图)"},
+        ],
+        "group": "advanced",
+        "order": 10,
+    }
+
 
 def _p_ratio(default="1:1"):
-    return {"id": "ratio", "type": "select", "label": "尺寸比例", "label_en": "Aspect Ratio", "default": default,
-            "options": [
-                {"value": "1:1", "label": "1:1 正方形"},
-                {"value": "16:9", "label": "16:9 横版"},
-                {"value": "9:16", "label": "9:16 竖版"},
-                {"value": "4:3", "label": "4:3 横版"},
-                {"value": "3:4", "label": "3:4 竖版"},
-                {"value": "auto", "label": "自动 (跟随输入图)"},
-            ], "group": "advanced", "order": 9}
+    return {
+        "id": "ratio",
+        "type": "select",
+        "label": "尺寸比例",
+        "label_en": "Aspect Ratio",
+        "default": default,
+        "options": [
+            {"value": "1:1", "label": "1:1 正方形"},
+            {"value": "16:9", "label": "16:9 横版"},
+            {"value": "9:16", "label": "9:16 竖版"},
+            {"value": "4:3", "label": "4:3 横版"},
+            {"value": "3:4", "label": "3:4 竖版"},
+            {"value": "auto", "label": "自动 (跟随输入图)"},
+        ],
+        "group": "advanced",
+        "order": 9,
+    }
+
 
 def _p_quantity(max_n=4):
-    return {"id": "quantity", "type": "number", "label": "生成数量", "label_en": "Quantity",
-            "default": 1, "group": "advanced", "order": 11}
+    return {
+        "id": "quantity",
+        "type": "number",
+        "label": "生成数量",
+        "label_en": "Quantity",
+        "default": 1,
+        "group": "advanced",
+        "order": 11,
+    }
+
 
 _ALL_IMAGE_MODEL_OPTIONS = [
     {"value": "wan2.7-image-pro", "label": "万相 2.7 Pro (wan2.7-image-pro)"},
@@ -66,104 +126,212 @@ def _p_model_image(default="wan2.7-image-pro", edit_only=False):
     options = _EDIT_MODEL_OPTIONS if edit_only else _TEXT2IMG_MODEL_OPTIONS
     if not any(o["value"] == default for o in options):
         options = _ALL_IMAGE_MODEL_OPTIONS
-    return {"id": "model", "type": "select", "label": "模型", "label_en": "Model", "default": default,
-            "options": options, "group": "advanced", "order": 12}
+    return {
+        "id": "model",
+        "type": "select",
+        "label": "模型",
+        "label_en": "Model",
+        "default": default,
+        "options": options,
+        "group": "advanced",
+        "order": 12,
+    }
+
 
 def _p_style():
-    return {"id": "style", "type": "select", "label": "风格", "label_en": "Style", "default": "realistic",
-            "options": [
-                {"value": "realistic", "label": "写实"},
-                {"value": "anime", "label": "动漫"},
-                {"value": "3d_render", "label": "3D渲染"},
-                {"value": "flat", "label": "扁平"},
-                {"value": "watercolor", "label": "水彩"},
-                {"value": "minimalist", "label": "极简"},
-            ], "group": "advanced", "order": 13}
+    return {
+        "id": "style",
+        "type": "select",
+        "label": "风格",
+        "label_en": "Style",
+        "default": "realistic",
+        "options": [
+            {"value": "realistic", "label": "写实"},
+            {"value": "anime", "label": "动漫"},
+            {"value": "3d_render", "label": "3D渲染"},
+            {"value": "flat", "label": "扁平"},
+            {"value": "watercolor", "label": "水彩"},
+            {"value": "minimalist", "label": "极简"},
+        ],
+        "group": "advanced",
+        "order": 13,
+    }
+
 
 def _p_ratio_video(default="16:9"):
-    return {"id": "ratio", "type": "select", "label": "比例", "label_en": "Aspect Ratio", "default": default,
-            "options": [
-                {"value": "16:9", "label": "16:9 横版"},
-                {"value": "9:16", "label": "9:16 竖版"},
-                {"value": "1:1", "label": "1:1 方形"},
-                {"value": "4:3", "label": "4:3"},
-                {"value": "3:4", "label": "3:4"},
-                {"value": "21:9", "label": "21:9 电影宽屏"},
-            ], "group": "advanced", "order": 10}
+    return {
+        "id": "ratio",
+        "type": "select",
+        "label": "比例",
+        "label_en": "Aspect Ratio",
+        "default": default,
+        "options": [
+            {"value": "16:9", "label": "16:9 横版"},
+            {"value": "9:16", "label": "9:16 竖版"},
+            {"value": "1:1", "label": "1:1 方形"},
+            {"value": "4:3", "label": "4:3"},
+            {"value": "3:4", "label": "3:4"},
+            {"value": "21:9", "label": "21:9 电影宽屏"},
+        ],
+        "group": "advanced",
+        "order": 10,
+    }
+
 
 def _p_duration(default=5):
-    return {"id": "duration", "type": "select", "label": "时长(秒)", "label_en": "Duration",
-            "default": default,
-            "options": [
-                {"value": 4, "label": "4秒"},
-                {"value": 5, "label": "5秒"},
-                {"value": 8, "label": "8秒"},
-                {"value": 10, "label": "10秒"},
-                {"value": 12, "label": "12秒"},
-                {"value": 15, "label": "15秒 (仅 2.0)"},
-            ], "group": "advanced", "order": 11}
+    return {
+        "id": "duration",
+        "type": "select",
+        "label": "时长(秒)",
+        "label_en": "Duration",
+        "default": default,
+        "options": [
+            {"value": 4, "label": "4秒"},
+            {"value": 5, "label": "5秒"},
+            {"value": 8, "label": "8秒"},
+            {"value": 10, "label": "10秒"},
+            {"value": 12, "label": "12秒"},
+            {"value": 15, "label": "15秒 (仅 2.0)"},
+        ],
+        "group": "advanced",
+        "order": 11,
+    }
+
 
 def _p_model_video(default="seedance-2-0"):
     """Model dropdown auto-synced with VIDEO_MODELS in ecom_models.py."""
     options = [{"value": m["id"], "label": m["name"]} for m in VIDEO_MODELS]
-    return {"id": "model", "type": "select", "label": "模型", "label_en": "Model",
-            "default": default, "options": options,
-            "group": "advanced", "order": 12}
+    return {
+        "id": "model",
+        "type": "select",
+        "label": "模型",
+        "label_en": "Model",
+        "default": default,
+        "options": options,
+        "group": "advanced",
+        "order": 12,
+    }
+
 
 def _p_resolution(default="720p"):
-    return {"id": "resolution", "type": "select", "label": "分辨率", "label_en": "Resolution",
-            "default": default,
-            "options": [
-                {"value": "480p", "label": "480p (流畅)"},
-                {"value": "720p", "label": "720p (高清)"},
-                {"value": "1080p", "label": "1080p (仅 1.x Pro)"},
-            ], "group": "advanced", "order": 13}
+    return {
+        "id": "resolution",
+        "type": "select",
+        "label": "分辨率",
+        "label_en": "Resolution",
+        "default": default,
+        "options": [
+            {"value": "480p", "label": "480p (流畅)"},
+            {"value": "720p", "label": "720p (高清)"},
+            {"value": "1080p", "label": "1080p (仅 1.x Pro)"},
+        ],
+        "group": "advanced",
+        "order": 13,
+    }
+
 
 def _p_generate_audio(default=True):
-    return {"id": "generate_audio", "type": "boolean", "label": "生成原声",
-            "label_en": "Generate Audio", "default": default,
-            "group": "advanced", "order": 14}
+    return {
+        "id": "generate_audio",
+        "type": "boolean",
+        "label": "生成原声",
+        "label_en": "Generate Audio",
+        "default": default,
+        "group": "advanced",
+        "order": 14,
+    }
+
 
 def _p_camera_fixed(default=False):
-    return {"id": "camera_fixed", "type": "boolean", "label": "镜头固定",
-            "label_en": "Camera Fixed", "default": default,
-            "group": "advanced", "order": 15}
+    return {
+        "id": "camera_fixed",
+        "type": "boolean",
+        "label": "镜头固定",
+        "label_en": "Camera Fixed",
+        "default": default,
+        "group": "advanced",
+        "order": 15,
+    }
+
 
 def _p_seed(default=-1):
-    return {"id": "seed", "type": "number", "label": "随机种子 (-1=随机)",
-            "label_en": "Seed", "default": default,
-            "group": "advanced", "order": 16}
+    return {
+        "id": "seed",
+        "type": "number",
+        "label": "随机种子 (-1=随机)",
+        "label_en": "Seed",
+        "default": default,
+        "group": "advanced",
+        "order": 16,
+    }
+
 
 def _p_web_search(default=False):
-    return {"id": "web_search", "type": "boolean", "label": "联网搜索热点",
-            "label_en": "Web Search", "default": default,
-            "group": "advanced", "order": 17}
+    return {
+        "id": "web_search",
+        "type": "boolean",
+        "label": "联网搜索热点",
+        "label_en": "Web Search",
+        "default": default,
+        "group": "advanced",
+        "order": 17,
+    }
+
 
 def _p_draft_mode(default=False):
-    return {"id": "draft", "type": "boolean", "label": "草稿模式 (省费快出)",
-            "label_en": "Draft Mode", "default": default,
-            "group": "advanced", "order": 18}
+    return {
+        "id": "draft",
+        "type": "boolean",
+        "label": "草稿模式 (省费快出)",
+        "label_en": "Draft Mode",
+        "default": default,
+        "group": "advanced",
+        "order": 18,
+    }
+
 
 def _p_return_last_frame(default=False):
-    return {"id": "return_last_frame", "type": "boolean", "label": "返回尾帧 (用于续接)",
-            "label_en": "Return Last Frame", "default": default,
-            "group": "advanced", "order": 19}
+    return {
+        "id": "return_last_frame",
+        "type": "boolean",
+        "label": "返回尾帧 (用于续接)",
+        "label_en": "Return Last Frame",
+        "default": default,
+        "group": "advanced",
+        "order": 19,
+    }
+
 
 def _p_negative():
-    return {"id": "negative_prompt", "type": "textarea", "label": "反向提示词", "label_en": "Negative Prompt",
-            "placeholder": "不想出现的元素...", "group": "advanced", "order": 14}
+    return {
+        "id": "negative_prompt",
+        "type": "textarea",
+        "label": "反向提示词",
+        "label_en": "Negative Prompt",
+        "placeholder": "不想出现的元素...",
+        "group": "advanced",
+        "order": 14,
+    }
+
 
 def _p_color_scheme():
-    return {"id": "color_scheme", "type": "select", "label": "配色方案", "label_en": "Color Scheme",
-            "default": "auto",
-            "options": [
-                {"value": "auto", "label": "自动"},
-                {"value": "warm", "label": "暖色调"},
-                {"value": "cool", "label": "冷色调"},
-                {"value": "vibrant", "label": "鲜艳"},
-                {"value": "pastel", "label": "柔和"},
-                {"value": "dark", "label": "暗色"},
-            ], "group": "style", "order": 20}
+    return {
+        "id": "color_scheme",
+        "type": "select",
+        "label": "配色方案",
+        "label_en": "Color Scheme",
+        "default": "auto",
+        "options": [
+            {"value": "auto", "label": "自动"},
+            {"value": "warm", "label": "暖色调"},
+            {"value": "cool", "label": "冷色调"},
+            {"value": "vibrant", "label": "鲜艳"},
+            {"value": "pastel", "label": "柔和"},
+            {"value": "dark", "label": "暗色"},
+        ],
+        "group": "style",
+        "order": 20,
+    }
 
 
 # ===========================================================================
@@ -228,10 +396,28 @@ VIDEO_FEATURES = [
             _p_seed(),
         ],
         "examples": [
-            {"id": "vhr_1", "title": "美妆开箱", "description": "高转化美妆产品开箱视频风格",
-             "preset_params": {"product_name": "精华液套装", "prompt": "美妆博主开箱视频风格，柔和灯光，近景特写产品质地，配合手部展示使用方法", "ratio": "9:16", "duration": 5}},
-            {"id": "vhr_2", "title": "数码产品展示", "description": "科技感产品展示视频",
-             "preset_params": {"product_name": "无线耳机", "prompt": "科技感产品展示，深色背景，产品360度旋转，光线流动特效，突出金属质感", "ratio": "16:9", "duration": 5}},
+            {
+                "id": "vhr_1",
+                "title": "美妆开箱",
+                "description": "高转化美妆产品开箱视频风格",
+                "preset_params": {
+                    "product_name": "精华液套装",
+                    "prompt": "美妆博主开箱视频风格，柔和灯光，近景特写产品质地，配合手部展示使用方法",
+                    "ratio": "9:16",
+                    "duration": 5,
+                },
+            },
+            {
+                "id": "vhr_2",
+                "title": "数码产品展示",
+                "description": "科技感产品展示视频",
+                "preset_params": {
+                    "product_name": "无线耳机",
+                    "prompt": "科技感产品展示，深色背景，产品360度旋转，光线流动特效，突出金属质感",
+                    "ratio": "16:9",
+                    "duration": 5,
+                },
+            },
         ],
     },
     {
@@ -254,11 +440,25 @@ VIDEO_FEATURES = [
         "default_model": "seedance-2-0",
         "params": [
             _p_product_name(),
-            {"id": "storyboard_script", "type": "textarea", "label": "故事脚本", "label_en": "Script",
-             "required": True, "placeholder": "输入完整故事脚本，系统会自动拆分为多个分镜...",
-             "group": "basic", "order": 1},
-            {"id": "total_duration", "type": "number", "label": "总时长(秒)", "label_en": "Total Duration",
-             "default": 30, "group": "advanced", "order": 10},
+            {
+                "id": "storyboard_script",
+                "type": "textarea",
+                "label": "故事脚本",
+                "label_en": "Script",
+                "required": True,
+                "placeholder": "输入完整故事脚本，系统会自动拆分为多个分镜...",
+                "group": "basic",
+                "order": 1,
+            },
+            {
+                "id": "total_duration",
+                "type": "number",
+                "label": "总时长(秒)",
+                "label_en": "Total Duration",
+                "default": 30,
+                "group": "advanced",
+                "order": 10,
+            },
             _p_ratio_video(),
             _p_duration(),
             _p_model_video(),
@@ -268,8 +468,16 @@ VIDEO_FEATURES = [
             _p_seed(),
         ],
         "examples": [
-            {"id": "vsb_1", "title": "美食制作", "description": "3段分镜美食制作短视频",
-             "preset_params": {"product_name": "空气炸锅", "storyboard_script": "第一幕：在明亮的现代厨房中，展示新鲜食材摆放在桌面上。\n第二幕：空气炸锅开始工作，金黄色的鸡翅在篮中翻滚，热气腾腾。\n第三幕：成品装盘特写，撒上葱花点缀，家人围坐享用。", "total_duration": 15}},
+            {
+                "id": "vsb_1",
+                "title": "美食制作",
+                "description": "3段分镜美食制作短视频",
+                "preset_params": {
+                    "product_name": "空气炸锅",
+                    "storyboard_script": "第一幕：在明亮的现代厨房中，展示新鲜食材摆放在桌面上。\n第二幕：空气炸锅开始工作，金黄色的鸡翅在篮中翻滚，热气腾腾。\n第三幕：成品装盘特写，撒上葱花点缀，家人围坐享用。",
+                    "total_duration": 15,
+                },
+            },
         ],
     },
     {
@@ -332,8 +540,18 @@ VIDEO_FEATURES = [
             _p_seed(),
         ],
         "examples": [
-            {"id": "vao_1", "title": "智能手表广告", "description": "运动场景手表广告",
-             "preset_params": {"product_name": "智能运动手表", "selling_points": "50米防水、GPS轨迹、心率监测、7天续航", "prompt": "运动员佩戴手表跑步，汗水飞溅，动态数据界面叠加", "ratio": "9:16", "duration": 5}},
+            {
+                "id": "vao_1",
+                "title": "智能手表广告",
+                "description": "运动场景手表广告",
+                "preset_params": {
+                    "product_name": "智能运动手表",
+                    "selling_points": "50米防水、GPS轨迹、心率监测、7天续航",
+                    "prompt": "运动员佩戴手表跑步，汗水飞溅，动态数据界面叠加",
+                    "ratio": "9:16",
+                    "duration": 5,
+                },
+            },
         ],
     },
     {
@@ -377,9 +595,16 @@ VIDEO_FEATURES = [
         ),
         "params": [
             _p_prompt(placeholder="描述原始视频场景，如：时尚女性在咖啡厅品尝饮品..."),
-            {"id": "target_character", "type": "textarea", "label": "目标角色描述",
-             "label_en": "Target Character", "required": True,
-             "placeholder": "描述替换后的角色外观...", "group": "basic", "order": 2},
+            {
+                "id": "target_character",
+                "type": "textarea",
+                "label": "目标角色描述",
+                "label_en": "Target Character",
+                "required": True,
+                "placeholder": "描述替换后的角色外观...",
+                "group": "basic",
+                "order": 2,
+            },
             _p_ref_image("角色参考图"),
             _p_ratio_video(),
             _p_duration(),
@@ -389,8 +614,15 @@ VIDEO_FEATURES = [
             _p_seed(),
         ],
         "examples": [
-            {"id": "vcr_1", "title": "模特替换", "description": "替换广告视频中的模特形象",
-             "preset_params": {"prompt": "时尚女性在咖啡厅品尝饮品，温暖光线", "target_character": "亚洲男性，商务休闲风格，短发，微笑表情"}},
+            {
+                "id": "vcr_1",
+                "title": "模特替换",
+                "description": "替换广告视频中的模特形象",
+                "preset_params": {
+                    "prompt": "时尚女性在咖啡厅品尝饮品，温暖光线",
+                    "target_character": "亚洲男性，商务休闲风格，短发，微笑表情",
+                },
+            },
         ],
     },
 ]
@@ -449,8 +681,16 @@ IMAGE_FEATURES = [
             _p_quantity(),
         ],
         "examples": [
-            {"id": "imr_1", "title": "护肤品主图", "description": "参考竞品风格生成护肤品主图",
-             "preset_params": {"product_name": "玻尿酸精华液", "prompt": "保持同款简约白色背景风格，产品居中放大，添加水滴元素体现保湿", "style": "realistic"}},
+            {
+                "id": "imr_1",
+                "title": "护肤品主图",
+                "description": "参考竞品风格生成护肤品主图",
+                "preset_params": {
+                    "product_name": "玻尿酸精华液",
+                    "prompt": "保持同款简约白色背景风格，产品居中放大，添加水滴元素体现保湿",
+                    "style": "realistic",
+                },
+            },
         ],
     },
     {
@@ -479,21 +719,44 @@ IMAGE_FEATURES = [
         "batch_capable": True,
         "params": [
             _p_prompt(placeholder="描述需要的修改效果..."),
-            {"id": "images_list", "type": "multi_image", "label": "上传图片(多张)",
-             "label_en": "Upload Images", "required": True, "group": "basic", "order": 2},
-            {"id": "edit_type", "type": "select", "label": "编辑类型", "label_en": "Edit Type",
-             "default": "style", "options": [
-                {"value": "style", "label": "风格变换"},
-                {"value": "color", "label": "色调调整"},
-                {"value": "background", "label": "背景替换"},
-                {"value": "enhance", "label": "画质增强"},
-             ], "group": "basic", "order": 3},
+            {
+                "id": "images_list",
+                "type": "multi_image",
+                "label": "上传图片(多张)",
+                "label_en": "Upload Images",
+                "required": True,
+                "group": "basic",
+                "order": 2,
+            },
+            {
+                "id": "edit_type",
+                "type": "select",
+                "label": "编辑类型",
+                "label_en": "Edit Type",
+                "default": "style",
+                "options": [
+                    {"value": "style", "label": "风格变换"},
+                    {"value": "color", "label": "色调调整"},
+                    {"value": "background", "label": "背景替换"},
+                    {"value": "enhance", "label": "画质增强"},
+                ],
+                "group": "basic",
+                "order": 3,
+            },
             _p_style(),
             _p_model_image("wan2.6-image", edit_only=True),
         ],
         "examples": [
-            {"id": "ibe_1", "title": "批量风格统一", "description": "将多张产品图统一为日系清新风格",
-             "preset_params": {"prompt": "日系清新风格，柔和光线，淡雅色调", "edit_type": "style", "style": "minimalist"}},
+            {
+                "id": "ibe_1",
+                "title": "批量风格统一",
+                "description": "将多张产品图统一为日系清新风格",
+                "preset_params": {
+                    "prompt": "日系清新风格，柔和光线，淡雅色调",
+                    "edit_type": "style",
+                    "style": "minimalist",
+                },
+            },
         ],
     },
     {
@@ -522,18 +785,49 @@ IMAGE_FEATURES = [
         ),
         "batch_capable": True,
         "params": [
-            {"id": "images_list", "type": "multi_image", "label": "上传图片(多张)",
-             "label_en": "Upload Images", "required": True, "group": "basic", "order": 0},
-            {"id": "source_element", "type": "text", "label": "原始元素", "label_en": "Source Element",
-             "placeholder": "如: 白色背景", "required": True, "group": "basic", "order": 1},
-            {"id": "target_element", "type": "text", "label": "目标元素", "label_en": "Target Element",
-             "placeholder": "如: 渐变蓝色背景", "required": True, "group": "basic", "order": 2},
+            {
+                "id": "images_list",
+                "type": "multi_image",
+                "label": "上传图片(多张)",
+                "label_en": "Upload Images",
+                "required": True,
+                "group": "basic",
+                "order": 0,
+            },
+            {
+                "id": "source_element",
+                "type": "text",
+                "label": "原始元素",
+                "label_en": "Source Element",
+                "placeholder": "如: 白色背景",
+                "required": True,
+                "group": "basic",
+                "order": 1,
+            },
+            {
+                "id": "target_element",
+                "type": "text",
+                "label": "目标元素",
+                "label_en": "Target Element",
+                "placeholder": "如: 渐变蓝色背景",
+                "required": True,
+                "group": "basic",
+                "order": 2,
+            },
             _p_prompt(required=False, placeholder="补充替换细节..."),
             _p_model_image("wan2.6-image", edit_only=True),
         ],
         "examples": [
-            {"id": "ibr_1", "title": "背景批量替换", "description": "白底图批量替换为场景图",
-             "preset_params": {"source_element": "白色纯色背景", "target_element": "温馨客厅场景，柔和自然光", "prompt": "保持产品位置和大小不变"}},
+            {
+                "id": "ibr_1",
+                "title": "背景批量替换",
+                "description": "白底图批量替换为场景图",
+                "preset_params": {
+                    "source_element": "白色纯色背景",
+                    "target_element": "温馨客厅场景，柔和自然光",
+                    "prompt": "保持产品位置和大小不变",
+                },
+            },
         ],
     },
     {
@@ -568,8 +862,17 @@ IMAGE_FEATURES = [
             _p_negative(),
         ],
         "examples": [
-            {"id": "ibg_1", "title": "家居产品多图", "description": "一次生成4张不同角度家居产品图",
-             "preset_params": {"product_name": "北欧实木餐桌", "prompt": "自然光拍摄，温馨家居环境，不同角度展示", "style": "realistic", "quantity": 4}},
+            {
+                "id": "ibg_1",
+                "title": "家居产品多图",
+                "description": "一次生成4张不同角度家居产品图",
+                "preset_params": {
+                    "product_name": "北欧实木餐桌",
+                    "prompt": "自然光拍摄，温馨家居环境，不同角度展示",
+                    "style": "realistic",
+                    "quantity": 4,
+                },
+            },
         ],
     },
     {
@@ -599,7 +902,7 @@ IMAGE_FEATURES = [
                 "## 其他约束\n"
                 "- 每张图产品主体清晰完整可辨认\n"
                 "- 适合淘宝/天猫800x800主图规格\n\n"
-                "输出 JSON: {\"prompts\": [\"...\", ...]}，每条对应一张主图。"
+                '输出 JSON: {"prompts": ["...", ...]}，每条对应一张主图。'
             ),
             "fallback_to_template": True,
         },
@@ -620,16 +923,33 @@ IMAGE_FEATURES = [
             _p_selling_points(),
             _p_prompt(required=False, placeholder="整体风格描述..."),
             _p_ref_image(),
-            {"id": "suite_count", "type": "number", "label": "套图数量", "label_en": "Suite Count",
-             "default": 5, "group": "basic", "order": 5},
+            {
+                "id": "suite_count",
+                "type": "number",
+                "label": "套图数量",
+                "label_en": "Suite Count",
+                "default": 5,
+                "group": "basic",
+                "order": 5,
+            },
             _p_ratio(),
             _p_size(),
             _p_style(),
             _p_model_image(),
         ],
         "examples": [
-            {"id": "ims_1", "title": "手机壳套图", "description": "5张不同场景的手机壳展示套图",
-             "preset_params": {"product_name": "创意手机壳", "selling_points": "防摔、超薄、磨砂触感", "prompt": "简约时尚风格，统一的莫兰迪色调", "suite_count": 5, "style": "minimalist"}},
+            {
+                "id": "ims_1",
+                "title": "手机壳套图",
+                "description": "5张不同场景的手机壳展示套图",
+                "preset_params": {
+                    "product_name": "创意手机壳",
+                    "selling_points": "防摔、超薄、磨砂触感",
+                    "prompt": "简约时尚风格，统一的莫兰迪色调",
+                    "suite_count": 5,
+                    "style": "minimalist",
+                },
+            },
         ],
     },
     {
@@ -653,22 +973,37 @@ IMAGE_FEATURES = [
         "api_capability": "multimodal",
         "params": [
             _p_ref_image("原图", required=True),
-            {"id": "target_language", "type": "select", "label": "目标语言", "label_en": "Target Language",
-             "default": "en", "options": [
-                {"value": "zh", "label": "中文"},
-                {"value": "en", "label": "English"},
-                {"value": "ja", "label": "日本語"},
-                {"value": "ko", "label": "한국어"},
-                {"value": "es", "label": "Español"},
-                {"value": "fr", "label": "Français"},
-                {"value": "ar", "label": "العربية"},
-             ], "group": "basic", "order": 1},
+            {
+                "id": "target_language",
+                "type": "select",
+                "label": "目标语言",
+                "label_en": "Target Language",
+                "default": "en",
+                "options": [
+                    {"value": "zh", "label": "中文"},
+                    {"value": "en", "label": "English"},
+                    {"value": "ja", "label": "日本語"},
+                    {"value": "ko", "label": "한국어"},
+                    {"value": "es", "label": "Español"},
+                    {"value": "fr", "label": "Français"},
+                    {"value": "ar", "label": "العربية"},
+                ],
+                "group": "basic",
+                "order": 1,
+            },
             _p_prompt(required=False, placeholder="补充翻译要求..."),
             _p_model_image("wan2.7-image-pro"),
         ],
         "examples": [
-            {"id": "itr_1", "title": "中→英翻译", "description": "将中文电商图翻译为英文版",
-             "preset_params": {"target_language": "en", "prompt": "保持原始设计风格，替换所有中文为英文"}},
+            {
+                "id": "itr_1",
+                "title": "中→英翻译",
+                "description": "将中文电商图翻译为英文版",
+                "preset_params": {
+                    "target_language": "en",
+                    "prompt": "保持原始设计风格，替换所有中文为英文",
+                },
+            },
         ],
     },
     {
@@ -708,10 +1043,28 @@ IMAGE_FEATURES = [
             _p_negative(),
         ],
         "examples": [
-            {"id": "img_1", "title": "咖啡机主图", "description": "高端咖啡机产品主图",
-             "preset_params": {"product_name": "全自动意式咖啡机", "prompt": "现代厨房台面上，咖啡正在萃取，热气氤氲，温暖晨光透过窗户", "style": "realistic", "size": "1K"}},
-            {"id": "img_2", "title": "运动鞋主图", "description": "动感运动鞋展示",
-             "preset_params": {"product_name": "超轻跑步鞋", "prompt": "悬浮在空中的跑步鞋，彩色粒子爆发效果，深色背景突出产品", "style": "3d_render", "size": "1K"}},
+            {
+                "id": "img_1",
+                "title": "咖啡机主图",
+                "description": "高端咖啡机产品主图",
+                "preset_params": {
+                    "product_name": "全自动意式咖啡机",
+                    "prompt": "现代厨房台面上，咖啡正在萃取，热气氤氲，温暖晨光透过窗户",
+                    "style": "realistic",
+                    "size": "1K",
+                },
+            },
+            {
+                "id": "img_2",
+                "title": "运动鞋主图",
+                "description": "动感运动鞋展示",
+                "preset_params": {
+                    "product_name": "超轻跑步鞋",
+                    "prompt": "悬浮在空中的跑步鞋，彩色粒子爆发效果，深色背景突出产品",
+                    "style": "3d_render",
+                    "size": "1K",
+                },
+            },
         ],
     },
 ]
@@ -769,8 +1122,17 @@ DETAIL_FEATURES = [
             _p_model_image("wan2.7-image-pro"),
         ],
         "examples": [
-            {"id": "dr_1", "title": "护肤详情图", "description": "参考竞品护肤产品详情页风格",
-             "preset_params": {"product_name": "烟酰胺美白面霜", "selling_points": "烟酰胺5%、玻尿酸保湿、28天焕白", "prompt": "保留简约清新风格，增加成分图解", "size": "2K"}},
+            {
+                "id": "dr_1",
+                "title": "护肤详情图",
+                "description": "参考竞品护肤产品详情页风格",
+                "preset_params": {
+                    "product_name": "烟酰胺美白面霜",
+                    "selling_points": "烟酰胺5%、玻尿酸保湿、28天焕白",
+                    "prompt": "保留简约清新风格，增加成分图解",
+                    "size": "2K",
+                },
+            },
         ],
     },
     {
@@ -804,7 +1166,7 @@ DETAIL_FEATURES = [
                 "- 宽度标准750px（淘宝）/790px（天猫），竖版排列\n"
                 "- 每张图信息清晰，文字可读\n"
                 "- 视觉层次明确：标题 > 产品 > 说明文字\n\n"
-                "输出 JSON: {\"prompts\": [\"...\", ...]}，每条对应一张详情图。"
+                '输出 JSON: {"prompts": ["...", ...]}，每条对应一张详情图。'
             ),
             "fallback_to_template": True,
         },
@@ -824,16 +1186,33 @@ DETAIL_FEATURES = [
             _p_selling_points(),
             _p_prompt(required=False, placeholder="整体风格/色调要求..."),
             _p_ref_image(),
-            {"id": "detail_count", "type": "number", "label": "图片数量", "label_en": "Count",
-             "default": 5, "group": "basic", "order": 5},
+            {
+                "id": "detail_count",
+                "type": "number",
+                "label": "图片数量",
+                "label_en": "Count",
+                "default": 5,
+                "group": "basic",
+                "order": 5,
+            },
             _p_ratio(),
             _p_size("2K"),
             _p_style(),
             _p_model_image(),
         ],
         "examples": [
-            {"id": "ds_1", "title": "蓝牙耳机详情套图", "description": "5张完整详情页",
-             "preset_params": {"product_name": "降噪蓝牙耳机", "selling_points": "40dB主动降噪、30小时续航、IPX5防水", "prompt": "科技深色风格，蓝色渐变点缀", "detail_count": 5, "style": "minimalist"}},
+            {
+                "id": "ds_1",
+                "title": "蓝牙耳机详情套图",
+                "description": "5张完整详情页",
+                "preset_params": {
+                    "product_name": "降噪蓝牙耳机",
+                    "selling_points": "40dB主动降噪、30小时续航、IPX5防水",
+                    "prompt": "科技深色风格，蓝色渐变点缀",
+                    "detail_count": 5,
+                    "style": "minimalist",
+                },
+            },
         ],
     },
     {
@@ -847,9 +1226,14 @@ DETAIL_FEATURES = [
         "execution_mode": "pipeline",
         "execution_config": {
             "steps": [
-                {"action": "generate_image", "config": {
-                    "n": 4, "capability": "multimodal", "force_ratio": "3:4",
-                }},
+                {
+                    "action": "generate_image",
+                    "config": {
+                        "n": 4,
+                        "capability": "multimodal",
+                        "force_ratio": "3:4",
+                    },
+                },
                 {"action": "stitch_images", "config": {"direction": "vertical"}},
             ],
             "on_step_error": "abort",
@@ -872,15 +1256,31 @@ DETAIL_FEATURES = [
             _p_selling_points(),
             _p_prompt(placeholder="详情长图的整体风格..."),
             _p_ref_image(),
-            {"id": "section_count", "type": "number", "label": "分段数量", "label_en": "Sections",
-             "default": 4, "group": "basic", "order": 5},
+            {
+                "id": "section_count",
+                "type": "number",
+                "label": "分段数量",
+                "label_en": "Sections",
+                "default": 4,
+                "group": "basic",
+                "order": 5,
+            },
             _p_ratio(),
             _p_size("2K"),
             _p_model_image(),
         ],
         "examples": [
-            {"id": "dl_1", "title": "家电详情长图", "description": "4段拼接的家电详情长图",
-             "preset_params": {"product_name": "智能扫地机器人", "selling_points": "激光导航、自动集尘、App远程控制", "prompt": "简约科技风格，白色背景，功能图解清晰", "section_count": 4}},
+            {
+                "id": "dl_1",
+                "title": "家电详情长图",
+                "description": "4段拼接的家电详情长图",
+                "preset_params": {
+                    "product_name": "智能扫地机器人",
+                    "selling_points": "激光导航、自动集尘、App远程控制",
+                    "prompt": "简约科技风格，白色背景，功能图解清晰",
+                    "section_count": 4,
+                },
+            },
         ],
     },
     {
@@ -908,8 +1308,8 @@ DETAIL_FEATURES = [
                 "## 其他约束\n"
                 "- 产品在每张图中都保持一致的外观表现\n"
                 "- 发布海报需要预留文字排版空间\n\n"
-                "输出 JSON: {\"prompts\": [{\"type\": \"main\", \"prompt\": \"...\"}, "
-                "{\"type\": \"detail\", \"prompt\": \"...\"}, ...]}"
+                '输出 JSON: {"prompts": [{"type": "main", "prompt": "..."}, '
+                '{"type": "detail", "prompt": "..."}, ...]}'
             ),
             "fallback_to_template": True,
         },
@@ -929,10 +1329,24 @@ DETAIL_FEATURES = [
             _p_selling_points(),
             _p_prompt(placeholder="新品特色和发布主题..."),
             _p_ref_image("产品图"),
-            {"id": "launch_theme", "type": "text", "label": "发布主题", "label_en": "Launch Theme",
-             "placeholder": "如: 科技重新定义生活", "group": "basic", "order": 4},
-            {"id": "suite_count", "type": "number", "label": "素材数量", "label_en": "Material Count",
-             "default": 5, "group": "basic", "order": 5},
+            {
+                "id": "launch_theme",
+                "type": "text",
+                "label": "发布主题",
+                "label_en": "Launch Theme",
+                "placeholder": "如: 科技重新定义生活",
+                "group": "basic",
+                "order": 4,
+            },
+            {
+                "id": "suite_count",
+                "type": "number",
+                "label": "素材数量",
+                "label_en": "Material Count",
+                "default": 5,
+                "group": "basic",
+                "order": 5,
+            },
             _p_ratio(),
             _p_size(),
             _p_style(),
@@ -940,8 +1354,19 @@ DETAIL_FEATURES = [
             _p_model_image("wan2.7-image-pro"),
         ],
         "examples": [
-            {"id": "dnp_1", "title": "智能手表新品", "description": "新品发布全套素材",
-             "preset_params": {"product_name": "Galaxy Watch Ultra", "selling_points": "钛合金外壳、双频GPS、10ATM防水", "prompt": "高端科技质感，太空主题", "launch_theme": "探索无界", "suite_count": 5, "style": "3d_render"}},
+            {
+                "id": "dnp_1",
+                "title": "智能手表新品",
+                "description": "新品发布全套素材",
+                "preset_params": {
+                    "product_name": "Galaxy Watch Ultra",
+                    "selling_points": "钛合金外壳、双频GPS、10ATM防水",
+                    "prompt": "高端科技质感，太空主题",
+                    "launch_theme": "探索无界",
+                    "suite_count": 5,
+                    "style": "3d_render",
+                },
+            },
         ],
     },
 ]
@@ -978,13 +1403,21 @@ POSTER_FEATURES = [
         "params": [
             _p_product_name(),
             _p_prompt(placeholder="运营活动主题或卖点..."),
-            {"id": "channel", "type": "select", "label": "渠道", "label_en": "Channel",
-             "default": "wechat_moments", "options": [
-                {"value": "wechat_moments", "label": "朋友圈"},
-                {"value": "wechat_group", "label": "微信群"},
-                {"value": "mini_program", "label": "小程序"},
-                {"value": "community", "label": "社群"},
-             ], "group": "basic", "order": 3},
+            {
+                "id": "channel",
+                "type": "select",
+                "label": "渠道",
+                "label_en": "Channel",
+                "default": "wechat_moments",
+                "options": [
+                    {"value": "wechat_moments", "label": "朋友圈"},
+                    {"value": "wechat_group", "label": "微信群"},
+                    {"value": "mini_program", "label": "小程序"},
+                    {"value": "community", "label": "社群"},
+                ],
+                "group": "basic",
+                "order": 3,
+            },
             _p_ref_image(),
             _p_ratio(),
             _p_size("2K"),
@@ -994,8 +1427,18 @@ POSTER_FEATURES = [
             _p_quantity(),
         ],
         "examples": [
-            {"id": "ppd_1", "title": "社群专享优惠", "description": "微信群专享优惠海报",
-             "preset_params": {"product_name": "有机坚果礼盒", "prompt": "群友专享8折优惠，限量100份", "channel": "wechat_group", "style": "flat", "color_scheme": "warm"}},
+            {
+                "id": "ppd_1",
+                "title": "社群专享优惠",
+                "description": "微信群专享优惠海报",
+                "preset_params": {
+                    "product_name": "有机坚果礼盒",
+                    "prompt": "群友专享8折优惠，限量100份",
+                    "channel": "wechat_group",
+                    "style": "flat",
+                    "color_scheme": "warm",
+                },
+            },
         ],
     },
     {
@@ -1040,8 +1483,15 @@ POSTER_FEATURES = [
             _p_selling_points(),
             _p_prompt(required=False, placeholder="营销目标或活动信息..."),
             _p_ref_image(),
-            {"id": "cta_text", "type": "text", "label": "行动按钮文案", "label_en": "CTA Text",
-             "placeholder": "如: 立即购买、限时特惠", "group": "basic", "order": 4},
+            {
+                "id": "cta_text",
+                "type": "text",
+                "label": "行动按钮文案",
+                "label_en": "CTA Text",
+                "placeholder": "如: 立即购买、限时特惠",
+                "group": "basic",
+                "order": 4,
+            },
             _p_ratio(),
             _p_size(),
             _p_style(),
@@ -1050,8 +1500,19 @@ POSTER_FEATURES = [
             _p_quantity(),
         ],
         "examples": [
-            {"id": "ppm_1", "title": "新品推广海报", "description": "新款耳机推广营销海报",
-             "preset_params": {"product_name": "FreeBuds Pro 3", "selling_points": "空间音频、智能降噪、48小时续航", "prompt": "年轻潮流风格，吸引Z世代", "cta_text": "立即了解", "style": "3d_render", "color_scheme": "vibrant"}},
+            {
+                "id": "ppm_1",
+                "title": "新品推广海报",
+                "description": "新款耳机推广营销海报",
+                "preset_params": {
+                    "product_name": "FreeBuds Pro 3",
+                    "selling_points": "空间音频、智能降噪、48小时续航",
+                    "prompt": "年轻潮流风格，吸引Z世代",
+                    "cta_text": "立即了解",
+                    "style": "3d_render",
+                    "color_scheme": "vibrant",
+                },
+            },
         ],
     },
     {
@@ -1079,20 +1540,29 @@ POSTER_FEATURES = [
             "适合电商平台和社交媒体展示"
         ),
         "params": [
-            {"id": "holiday", "type": "select", "label": "节日", "label_en": "Holiday",
-             "required": True, "default": "spring_festival", "options": [
-                {"value": "spring_festival", "label": "春节"},
-                {"value": "valentines", "label": "情人节"},
-                {"value": "womens_day", "label": "妇女节/女神节"},
-                {"value": "618", "label": "618大促"},
-                {"value": "mid_autumn", "label": "中秋节"},
-                {"value": "national_day", "label": "国庆节"},
-                {"value": "double_11", "label": "双十一"},
-                {"value": "double_12", "label": "双十二"},
-                {"value": "christmas", "label": "圣诞节"},
-                {"value": "new_year", "label": "元旦"},
-                {"value": "custom", "label": "自定义"},
-             ], "group": "basic", "order": 0},
+            {
+                "id": "holiday",
+                "type": "select",
+                "label": "节日",
+                "label_en": "Holiday",
+                "required": True,
+                "default": "spring_festival",
+                "options": [
+                    {"value": "spring_festival", "label": "春节"},
+                    {"value": "valentines", "label": "情人节"},
+                    {"value": "womens_day", "label": "妇女节/女神节"},
+                    {"value": "618", "label": "618大促"},
+                    {"value": "mid_autumn", "label": "中秋节"},
+                    {"value": "national_day", "label": "国庆节"},
+                    {"value": "double_11", "label": "双十一"},
+                    {"value": "double_12", "label": "双十二"},
+                    {"value": "christmas", "label": "圣诞节"},
+                    {"value": "new_year", "label": "元旦"},
+                    {"value": "custom", "label": "自定义"},
+                ],
+                "group": "basic",
+                "order": 0,
+            },
             _p_product_name(),
             _p_prompt(required=False, placeholder="补充节日氛围描述..."),
             _p_ref_image(),
@@ -1104,10 +1574,30 @@ POSTER_FEATURES = [
             _p_quantity(),
         ],
         "examples": [
-            {"id": "ph_1", "title": "双十一海报", "description": "双十一电子产品促销海报",
-             "preset_params": {"holiday": "double_11", "product_name": "智能音箱", "prompt": "炫酷科技感，霓虹灯效果，大促氛围", "style": "3d_render", "color_scheme": "vibrant"}},
-            {"id": "ph_2", "title": "春节礼盒", "description": "春节年货礼盒海报",
-             "preset_params": {"holiday": "spring_festival", "product_name": "坚果礼盒", "prompt": "红色喜庆氛围，金色点缀，年味十足", "style": "realistic", "color_scheme": "warm"}},
+            {
+                "id": "ph_1",
+                "title": "双十一海报",
+                "description": "双十一电子产品促销海报",
+                "preset_params": {
+                    "holiday": "double_11",
+                    "product_name": "智能音箱",
+                    "prompt": "炫酷科技感，霓虹灯效果，大促氛围",
+                    "style": "3d_render",
+                    "color_scheme": "vibrant",
+                },
+            },
+            {
+                "id": "ph_2",
+                "title": "春节礼盒",
+                "description": "春节年货礼盒海报",
+                "preset_params": {
+                    "holiday": "spring_festival",
+                    "product_name": "坚果礼盒",
+                    "prompt": "红色喜庆氛围，金色点缀，年味十足",
+                    "style": "realistic",
+                    "color_scheme": "warm",
+                },
+            },
         ],
     },
     {
@@ -1150,14 +1640,36 @@ POSTER_FEATURES = [
             "适合电商大促氛围"
         ),
         "params": [
-            {"id": "campaign_name", "type": "text", "label": "活动名称", "label_en": "Campaign Name",
-             "required": True, "placeholder": "如: 年中大促、清仓特卖", "group": "basic", "order": 0},
+            {
+                "id": "campaign_name",
+                "type": "text",
+                "label": "活动名称",
+                "label_en": "Campaign Name",
+                "required": True,
+                "placeholder": "如: 年中大促、清仓特卖",
+                "group": "basic",
+                "order": 0,
+            },
             _p_product_name(),
             _p_prompt(required=False, placeholder="活动详情、优惠力度..."),
-            {"id": "discount_info", "type": "text", "label": "优惠信息", "label_en": "Discount Info",
-             "placeholder": "如: 满300减50、全场5折", "group": "basic", "order": 3},
-            {"id": "campaign_date", "type": "text", "label": "活动日期", "label_en": "Campaign Date",
-             "placeholder": "如: 6月1日-6月18日", "group": "basic", "order": 4},
+            {
+                "id": "discount_info",
+                "type": "text",
+                "label": "优惠信息",
+                "label_en": "Discount Info",
+                "placeholder": "如: 满300减50、全场5折",
+                "group": "basic",
+                "order": 3,
+            },
+            {
+                "id": "campaign_date",
+                "type": "text",
+                "label": "活动日期",
+                "label_en": "Campaign Date",
+                "placeholder": "如: 6月1日-6月18日",
+                "group": "basic",
+                "order": 4,
+            },
             _p_ref_image(),
             _p_ratio(),
             _p_size(),
@@ -1167,8 +1679,20 @@ POSTER_FEATURES = [
             _p_quantity(),
         ],
         "examples": [
-            {"id": "pc_1", "title": "618年中大促", "description": "618购物节活动宣传海报",
-             "preset_params": {"campaign_name": "618年中狂欢", "product_name": "全品类", "prompt": "限时抢购，全场低至5折", "discount_info": "满300减50，跨店满减", "campaign_date": "6月1日-6月18日", "style": "flat", "color_scheme": "vibrant"}},
+            {
+                "id": "pc_1",
+                "title": "618年中大促",
+                "description": "618购物节活动宣传海报",
+                "preset_params": {
+                    "campaign_name": "618年中狂欢",
+                    "product_name": "全品类",
+                    "prompt": "限时抢购，全场低至5折",
+                    "discount_info": "满300减50，跨店满减",
+                    "campaign_date": "6月1日-6月18日",
+                    "style": "flat",
+                    "color_scheme": "vibrant",
+                },
+            },
         ],
     },
 ]

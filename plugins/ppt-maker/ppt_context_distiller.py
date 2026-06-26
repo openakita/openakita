@@ -38,7 +38,9 @@ class ContextDistiller:
         if table_insights:
             findings = [str(item) for item in table_insights.get("key_findings", []) if item]
             key_facts.extend(findings[:8])
-            caveats.extend(str(item) for item in table_insights.get("risks_and_caveats", []) if item)
+            caveats.extend(
+                str(item) for item in table_insights.get("risks_and_caveats", []) if item
+            )
 
         if outline:
             for slide in outline.get("slides", [])[:12]:
@@ -69,4 +71,3 @@ class ContextDistiller:
         if not parts:
             parts = [normalized]
         return [item[:240] for item in parts[:limit]]
-

@@ -79,9 +79,7 @@ class PluginAPI(ABC):
     # --- Tool registration ---
 
     @abstractmethod
-    def register_tools(
-        self, definitions: list[dict], handler: Callable
-    ) -> None: ...
+    def register_tools(self, definitions: list[dict], handler: Callable) -> None: ...
 
     # --- Hook registration ---
 
@@ -198,7 +196,10 @@ class PluginAPI(ABC):
         """
 
     def register_ui_event_handler(
-        self, event_type: str, handler: Callable, **kwargs: Any,
+        self,
+        event_type: str,
+        handler: Callable,
+        **kwargs: Any,
     ) -> None:
         """Register a handler for events sent from the plugin's frontend UI.
 

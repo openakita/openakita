@@ -148,15 +148,19 @@ def load_channel_config(path: str | None) -> dict | None:
 def main():
     parser = argparse.ArgumentParser(description="Backfill historical version data")
     parser.add_argument("--repo", default=DEFAULT_REPO)
-    parser.add_argument("--output-dir", required=True, help="Output directory (e.g. ./backfill-out)")
+    parser.add_argument(
+        "--output-dir", required=True, help="Output directory (e.g. ./backfill-out)"
+    )
     parser.add_argument("--cdn-base-url", default=os.environ.get("CDN_BASE_URL", ""))
     parser.add_argument(
-        "--channel-config", default="",
-        help="Path to release-channels.json (auto-detected from repo root if omitted)"
+        "--channel-config",
+        default="",
+        help="Path to release-channels.json (auto-detected from repo root if omitted)",
     )
     parser.add_argument(
-        "--channel-override", default="",
-        help="Force all releases to a specific channel (for manual correction)"
+        "--channel-override",
+        default="",
+        help="Force all releases to a specific channel (for manual correction)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print plan without writing files")
     args = parser.parse_args()
@@ -167,8 +171,10 @@ def main():
 
     channel_config = load_channel_config(args.channel_config or None)
     if channel_config:
-        print(f"Channel config: release={channel_config.get('release')}, "
-              f"pre-release={channel_config.get('pre-release')}")
+        print(
+            f"Channel config: release={channel_config.get('release')}, "
+            f"pre-release={channel_config.get('pre-release')}"
+        )
     else:
         print("No channel config found, using heuristic detection only")
 
@@ -278,9 +284,11 @@ def main():
                         json.dump(compat, f, indent=2, ensure_ascii=False)
                     print(f"Written Tauri updater compat: {compat_file}")
 
-    print(f"\nSummary: release={stats.get('release',0)}, "
-          f"pre-release={stats.get('pre-release',0)}, dev={stats.get('dev',0)}, "
-          f"skipped={stats.get('skipped',0)}")
+    print(
+        f"\nSummary: release={stats.get('release', 0)}, "
+        f"pre-release={stats.get('pre-release', 0)}, dev={stats.get('dev', 0)}, "
+        f"skipped={stats.get('skipped', 0)}"
+    )
     if args.dry_run:
         print("(dry run — no files written)")
 

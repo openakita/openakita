@@ -127,11 +127,11 @@
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| **API_HOST** | string | 127.0.0.1 | API 监听地址 |
+| **API_HOST** | string | 自动检测：桌面/macOS/Windows = `127.0.0.1`；headless Linux = `0.0.0.0` | API 监听地址（显式设置覆盖自动检测） |
 | **API_PORT** | number | 18900 | API 监听端口 |
 | **TRUST_PROXY** | boolean | false | 信任反向代理 Headers |
 | **CORS_ORIGINS** | string | — | 允许跨域访问的源 |
-| **Web 访问密码** | password | — | Web 界面的访问密码 |
+| **Web 访问密码** | password | — | Web 界面的访问密码（首次非本机访问时强制设置） |
 | **环境变量** | key-value | — | 自定义环境变量 |
 | **数据备份** | button | — | 导出工作区数据 |
 | **数据还原** | button | — | 从备份恢复数据 |

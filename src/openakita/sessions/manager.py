@@ -19,7 +19,7 @@ from typing import Any
 
 from openakita.utils.atomic_io import atomic_json_write
 
-from .session import Session, SessionConfig, SessionState
+from .session import Session, SessionConfig, SessionState, is_duplicate_message
 from .user import UserManager
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,22 @@ import re as _re
 
 _SESSION_ID_SAFE_RE = _re.compile(r"^[A-Za-z0-9_\-:.|@/]{1,256}$")
 _SESSION_ID_FORBIDDEN_FRAGMENTS = (
-    "..", "\x00", "\r", "\n", "\t", "<", ">", '"', "'", "`",
-    "\\", "//", "%00", "<script", "${", "{{",
+    "..",
+    "\x00",
+    "\r",
+    "\n",
+    "\t",
+    "<",
+    ">",
+    '"',
+    "'",
+    "`",
+    "\\",
+    "//",
+    "%00",
+    "<script",
+    "${",
+    "{{",
 )
 
 
@@ -80,6 +94,7 @@ class SessionManager:
         # 活跃会话缓存 {session_key: Session}
         self._sessions: dict[str, Session] = {}
         self._sessions_lock = threading.RLock()
+        self._save_sessions_lock = threading.RLock()
 
         # 通道注册表：记录每个 IM 通道最后已知的 chat_id / user_id
         # 不受 session 过期清理影响，用于定时任务等场景回溯通道目标
@@ -156,17 +171,11 @@ class SessionManager:
                     try:
                         n = self.backfill_sessions_from_store()
                         if n:
-                            logger.info(
-                                f"[SessionManager] auto-backfill restored {n} turns"
-                            )
+                            logger.info(f"[SessionManager] auto-backfill restored {n} turns")
                     except Exception as exc:
-                        logger.warning(
-                            f"[SessionManager] auto-backfill failed: {exc}"
-                        )
+                        logger.warning(f"[SessionManager] auto-backfill failed: {exc}")
 
-                threading.Thread(
-                    target=_run, name="sm-backfill", daemon=True
-                ).start()
+                threading.Thread(target=_run, name="sm-backfill", daemon=True).start()
             except Exception as exc:
                 logger.debug(f"[SessionManager] auto-backfill spawn failed: {exc}")
 
@@ -187,7 +196,8 @@ class SessionManager:
         assistant 回复完成后调用。调用方无需关心 mark_dirty + flush 细节。
         """
         self._dirty = False
-        self._save_sessions()
+        if not self._save_sessions():
+            self._dirty = True
 
     def _dispatch_hook_fire_and_forget(self, hook_name: str, **kwargs) -> None:
         """Dispatch a plugin hook from sync context (best-effort, non-blocking)."""
@@ -219,7 +229,8 @@ class SessionManager:
         """
         if self._dirty:
             self._dirty = False
-            self._save_sessions()
+            if not self._save_sessions():
+                self._dirty = True
 
     def set_turn_loader(self, loader) -> None:
         """设置 turn_loader 回调（延迟绑定，Agent 初始化完成后调用）。
@@ -271,21 +282,23 @@ class SessionManager:
                 newer = [t for t in db_turns if t.get("timestamp", "") > last_ts] if last_ts else []
                 if not newer and not session.context.messages and db_turns:
                     newer = db_turns
+                appended = 0
                 for t in newer:
                     ts = t.get("timestamp", "")
                     msg = {"role": t["role"], "content": t.get("content", "")}
                     if ts:
                         msg["timestamp"] = ts
                     with session.context._msg_lock:
-                        last = session.context.messages[-1] if session.context.messages else None
-                        if last and last.get("role") == msg["role"] and last.get("content") == msg["content"]:
+                        if is_duplicate_message(session.context.messages, msg):
                             continue
                         session.context.messages.append(msg)
+                        appended += 1
                 if newer:
-                    total_backfilled += len(newer)
-                    logger.info(
-                        f"Backfilled {len(newer)} turns from SQLite for {session.session_key}"
-                    )
+                    total_backfilled += appended
+                    if appended:
+                        logger.info(
+                            f"Backfilled {appended} turns from SQLite for {session.session_key}"
+                        )
             except Exception as e:
                 logger.warning(f"Turn backfill failed for {session.session_key}: {e}")
         if total_backfilled:
@@ -354,7 +367,10 @@ class SessionManager:
             if session_key in self._sessions:
                 session = self._sessions[session_key]
                 self._attach_manager(session)
-                session.touch()
+                # 纯查询不改 last_active：真实活动由 add_message → touch 记账。
+                # 否则仪表盘轮询 / 拉历史等读取会把会话刷到"刚活跃"，导致
+                # 会话列表时间与排序失真（issue #628）。
+                session.reactivate()
                 return session
 
         # 磁盘恢复在锁外执行，避免 IO 阻塞其他线程
@@ -365,13 +381,13 @@ class SessionManager:
             if session_key in self._sessions:
                 session = self._sessions[session_key]
                 self._attach_manager(session)
-                session.touch()
+                session.reactivate()
                 return session
 
             if recovered is not None:
                 self._sessions[session_key] = recovered
                 self._attach_manager(recovered)
-                recovered.touch()
+                recovered.reactivate()
                 logger.info(
                     f"Recovered session from disk: {session_key} "
                     f"({len(recovered.context.messages)} messages)"
@@ -462,19 +478,13 @@ class SessionManager:
             return
 
         db_turns = list(db_turns)[-max_turns:]
-        existing_keys = {
-            (m.get("role"), m.get("content"), m.get("timestamp"))
-            for m in (session.context.messages or [])
-        }
         appended = 0
         for turn in db_turns:
             if not isinstance(turn, dict):
                 continue
-            key = (turn.get("role"), turn.get("content"), turn.get("timestamp"))
-            if key in existing_keys:
+            if is_duplicate_message(session.context.messages, turn):
                 continue
             session.context.messages.append(dict(turn))
-            existing_keys.add(key)
             appended += 1
         if appended:
             try:
@@ -696,9 +706,7 @@ class SessionManager:
             data = self._try_load_sessions_file(temp_file)
             if data is not None:
                 try:
-                    if sessions_file.exists():
-                        sessions_file.unlink()
-                    temp_file.rename(sessions_file)
+                    temp_file.replace(sessions_file)
                     logger.info("Recovered sessions.json from .tmp successfully")
                 except Exception as e:
                     logger.warning(f"Failed to promote .tmp to sessions.json: {e}")
@@ -773,9 +781,7 @@ class SessionManager:
         if skipped_error:
             parts.append(f"skipped {skipped_error} errors")
         if skipped_invalid_id:
-            parts.append(
-                f"skipped {skipped_invalid_id} invalid_id (samples={invalid_id_samples})"
-            )
+            parts.append(f"skipped {skipped_invalid_id} invalid_id (samples={invalid_id_samples})")
         logger.info(f"{parts[0]}" + (f" ({', '.join(parts[1:])})" if len(parts) > 1 else ""))
 
         self._sessions_loaded = True
@@ -986,41 +992,25 @@ class SessionManager:
         使用临时文件 + 重命名的方式，确保写入过程中断不会损坏原文件。
         返回 True 表示保存成功，False 表示失败（调用方应重试）。
         """
-        sessions_file = self.storage_path / "sessions.json"
-        temp_file = self.storage_path / "sessions.json.tmp"
-        backup_file = self.storage_path / "sessions.json.bak"
+        with self._save_sessions_lock:
+            sessions_file = self.storage_path / "sessions.json"
+            try:
+                with self._sessions_lock:
+                    sessions = list(self._sessions.values())
+                data = [session.to_dict() for session in sessions]
+                atomic_json_write(
+                    sessions_file,
+                    data,
+                    indent=None,
+                    fsync=True,
+                    allow_fallback=False,
+                )
+                logger.debug(f"Saved {len(data)} sessions to storage (atomic fsync)")
+                return True
 
-        try:
-            data = [session.to_dict() for session in self._sessions.values()]
-
-            # 1. 先写入临时文件
-            with open(temp_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            # 2. 验证临时文件可以正确解析
-            with open(temp_file, encoding="utf-8") as f:
-                json.load(f)  # 验证 JSON 格式正确
-
-            # 3. 备份旧文件（如果存在）
-            if sessions_file.exists():
-                try:
-                    sessions_file.replace(backup_file)
-                except Exception as e:
-                    logger.warning(f"Failed to backup sessions file: {e}")
-
-            # 4. 原子重命名临时文件为正式文件 (replace works on Windows too)
-            temp_file.replace(sessions_file)
-
-            logger.debug(f"Saved {len(data)} sessions to storage (atomic)")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to save sessions: {e}", exc_info=True)
-            # 清理临时文件
-            if temp_file.exists():
-                with contextlib.suppress(Exception):
-                    temp_file.unlink()
-            return False
+            except Exception as e:
+                logger.error(f"Failed to save sessions: {e}", exc_info=True)
+                return False
 
     async def _save_sessions_async(self) -> None:
         """异步保存会话（在线程池中执行同步 I/O）"""

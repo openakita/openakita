@@ -60,7 +60,7 @@ export function WecomQRModal({ venvDir, apiBaseUrl, onClose, onSuccess }: WecomQ
   const { t } = useTranslation();
   const [state, setState] = useState<OnboardState>("idle");
   const [qrUrl, setQrUrl] = useState("");
-  const [scode, setScode] = useState("");
+  const [, setScode] = useState("");
   const [error, setError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);

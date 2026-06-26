@@ -79,8 +79,7 @@ class TestR518ZeroConfigFirstInstall:
             _ctx(),
         )
         assert decision.action == DecisionAction.CONFIRM, (
-            f"Zero-config must not silently allow destructive ops; "
-            f"got {decision.action}"
+            f"Zero-config must not silently allow destructive ops; got {decision.action}"
         )
 
     def test_zero_config_unknown_tool_confirms(self):
@@ -129,9 +128,7 @@ class TestR518ZeroConfigFirstInstall:
                 Path,
             )
             engine = global_engine.get_engine_v2()
-            assert engine is not None, (
-                "get_engine_v2 must not return None even without YAML"
-            )
+            assert engine is not None, "get_engine_v2 must not return None even without YAML"
         finally:
             global_engine._engine = original
 
@@ -155,8 +152,7 @@ class TestR519CrossPlatformPaths:
             # Backslash variant (Windows-style even on POSIX)
             lambda: str(Path.cwd() / "identity" / "SOUL.md").replace("/", "\\"),
             # Mixed separators
-            lambda: str(Path.cwd()).replace("\\", "/")
-            + "\\identity/SOUL.md",
+            lambda: str(Path.cwd()).replace("\\", "/") + "\\identity/SOUL.md",
             # Lowercase variant (Windows case-insensitive)
             lambda: str(Path.cwd() / "identity" / "SOUL.md").lower(),
             # Multiple slashes (user typo / UNC normalisation edge)
@@ -164,9 +160,7 @@ class TestR519CrossPlatformPaths:
         ],
         ids=["canonical", "backslash", "mixed", "lower", "multi-slash"],
     )
-    def test_safety_immune_normalises_path_form(
-        self, engine_with_cwd_immune, raw_path
-    ):
+    def test_safety_immune_normalises_path_form(self, engine_with_cwd_immune, raw_path):
         """同一逻辑路径的 5 种形态都应命中 identity/SOUL.md immune."""
         path = raw_path()
         decision = engine_with_cwd_immune.evaluate_tool_call(
@@ -206,13 +200,10 @@ class TestR519CrossPlatformPaths:
             _ctx(confirmation_mode=ConfirmationMode.TRUST),
         )
         assert decision.action == DecisionAction.CONFIRM, (
-            f"/etc/* should match builtin OS-system immune even on Win, "
-            f"got {decision.action}"
+            f"/etc/* should match builtin OS-system immune even on Win, got {decision.action}"
         )
 
-    def test_windows_program_files_protected_on_any_os(
-        self, engine_with_cwd_immune
-    ):
+    def test_windows_program_files_protected_on_any_os(self, engine_with_cwd_immune):
         """``C:/Program Files/...`` 在 POSIX 上也应被识别."""
         decision = engine_with_cwd_immune.evaluate_tool_call(
             ToolCallEvent(

@@ -59,9 +59,7 @@ class TestApplyAutoConfirmFlag:
         _apply_auto_confirm_flag(enabled=False)
         assert "OPENAKITA_AUTO_CONFIRM" not in os.environ
 
-    def test_disabled_does_not_clear_pre_existing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_disabled_does_not_clear_pre_existing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """If the operator sets the ENV var directly and then runs
         without the flag, the ENV var must be preserved (the flag is
         additive, not authoritative)."""
@@ -85,16 +83,16 @@ class TestPhaseDFeedsPhaseC:
             cfg = PolicyConfigV2()
             new_cfg, report = eo.apply_env_overrides(cfg)
             assert new_cfg.confirmation.mode == "trust"
-            assert any(
-                o["env"] == "OPENAKITA_AUTO_CONFIRM" for o in report.applied
-            )
+            assert any(o["env"] == "OPENAKITA_AUTO_CONFIRM" for o in report.applied)
         finally:
             os.environ.pop("OPENAKITA_AUTO_CONFIRM", None)
 
     def test_flag_unset_overrides_no_op(self, clean_env: None) -> None:
         cfg = PolicyConfigV2()
         new_cfg, report = eo.apply_env_overrides(cfg, environ={})
-        assert new_cfg.confirmation.mode == "default"
+        # 没有任何 env override 时，apply_env_overrides 必须返回 schema 默认值。
+        # schema 默认从 v1.27.13 起 = trust，所以这里也要随之更新。
+        assert new_cfg.confirmation.mode == "trust"
         assert not report.has_any()
 
 
@@ -114,9 +112,7 @@ class TestCliInvocation:
 
         return runner.invoke(app, args)
 
-    def test_version_flag_short_circuits(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_version_flag_short_circuits(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Baseline: ``--version`` exits 0 cleanly so we know the CLI
         wiring is healthy before testing --auto-confirm."""
         runner = CliRunner()

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { IconRefresh, IconBrain } from "../icons";
+import { IconRefresh } from "../icons";
 import { safeFetch } from "../providers";
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -555,7 +555,6 @@ export function AgentDashboardView({
         }
 
         // animate radius + opacity (birth/death)
-        const age = t - n.birthT;
         if (n.deathT && t > n.deathT) {
           n.opacity = Math.max(0, n.opacity - 0.02);
           n.r = Math.max(0, n.r - 0.3);

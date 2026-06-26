@@ -17,10 +17,12 @@ def _creds():
     key = os.environ.get("ZHETAOKE_APP_KEY", "")
     sid = os.environ.get("ZHETAOKE_SID", "")
     if not key or not sid:
-        print(json.dumps(
-            {"error": "请设置环境变量 ZHETAOKE_APP_KEY 和 ZHETAOKE_SID"},
-            ensure_ascii=False,
-        ))
+        print(
+            json.dumps(
+                {"error": "请设置环境变量 ZHETAOKE_APP_KEY 和 ZHETAOKE_SID"},
+                ensure_ascii=False,
+            )
+        )
         sys.exit(1)
     return key, sid
 
@@ -92,14 +94,20 @@ def cmd_compare(args):
                 break
         if items:
             summary = []
-            for item in items[:args.top]:
-                summary.append({
-                    "title": item.get("tao_title", item.get("title", "")),
-                    "price": item.get("size", item.get("quanhou_jiage", "")),
-                    "shop": item.get("shop_title", ""),
-                    "sales": item.get("volume", ""),
-                })
-            print(json.dumps({"compare": summary, "count": len(summary)}, ensure_ascii=False, indent=2))
+            for item in items[: args.top]:
+                summary.append(
+                    {
+                        "title": item.get("tao_title", item.get("title", "")),
+                        "price": item.get("size", item.get("quanhou_jiage", "")),
+                        "shop": item.get("shop_title", ""),
+                        "sales": item.get("volume", ""),
+                    }
+                )
+            print(
+                json.dumps(
+                    {"compare": summary, "count": len(summary)}, ensure_ascii=False, indent=2
+                )
+            )
             return
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -133,4 +141,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

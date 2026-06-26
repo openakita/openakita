@@ -539,8 +539,9 @@ async def test_final_video_url_is_written_when_builder_provided(_build_pipeline)
 
     # Episode row update bundle includes both fields.
     final_ep_update = next(
-        upd for ep_id, upd in fakes["tm"].episode_updates if ep_id == "ep_url"
-        and "final_video_path" in upd
+        upd
+        for ep_id, upd in fakes["tm"].episode_updates
+        if ep_id == "ep_url" and "final_video_path" in upd
     )
     assert final_ep_update["final_video_url"] == (
         "/api/plugins/manga-studio/episode-files/ep_url/final.mp4"
@@ -563,8 +564,9 @@ async def test_final_video_url_omitted_when_builder_absent(_build_pipeline) -> N
     )
 
     final_ep_update = next(
-        upd for ep_id, upd in fakes["tm"].episode_updates if ep_id == "ep_legacy"
-        and "final_video_path" in upd
+        upd
+        for ep_id, upd in fakes["tm"].episode_updates
+        if ep_id == "ep_legacy" and "final_video_path" in upd
     )
     assert "final_video_url" not in final_ep_update
 

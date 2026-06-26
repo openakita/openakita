@@ -80,6 +80,7 @@ def intent_to_priority_categories(
                 seen.append(cat)
     return tuple(seen)
 
+
 # Token 估算常量
 CHARS_PER_TOKEN = 4  # 保守估计，中文约 1.5-2，英文约 4
 
@@ -454,4 +455,3 @@ def apply_budget_to_sections(
         )
 
     return results
-

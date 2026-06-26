@@ -217,9 +217,7 @@ class TestChangeDetection:
 
 
 class TestReloadOutcomes:
-    def test_valid_yaml_real_reload_swaps_engine(
-        self, policies_path: Path
-    ) -> None:
+    def test_valid_yaml_real_reload_swaps_engine(self, policies_path: Path) -> None:
         """End-to-end with the real ``rebuild_engine_v2``."""
         events: list[tuple[bool, str]] = []
         reloader = _make_reloader(policies_path, events)
@@ -228,18 +226,14 @@ class TestReloadOutcomes:
         old_engine = global_engine.rebuild_engine_v2(yaml_path=policies_path)
         assert global_engine._get_last_known_good() is not None
 
-        _touch_path_with_new_mtime(
-            policies_path, bytes_=_DIFFERENT_VALID_YAML.encode()
-        )
+        _touch_path_with_new_mtime(policies_path, bytes_=_DIFFERENT_VALID_YAML.encode())
         reloader._check_once()
 
         new_engine = global_engine.get_engine_v2()
         assert new_engine is not old_engine
         assert events == [(True, "engine rebuilt")]
 
-    def test_invalid_yaml_keeps_lkg_and_logs_failure(
-        self, policies_path: Path
-    ) -> None:
+    def test_invalid_yaml_keeps_lkg_and_logs_failure(self, policies_path: Path) -> None:
         """When new YAML fails validation, ``rebuild_engine_v2`` still
         builds a fresh engine object — but from the *same* LKG config.
         So the contract we promise the user is:
@@ -268,9 +262,7 @@ class TestReloadOutcomes:
         post_lkg = global_engine._get_last_known_good()
         assert post_lkg is good_lkg, "LKG must not change on failed validation"
         post_config = global_engine.get_config_v2()
-        assert post_config is good_config, (
-            "config identity must be preserved across failed reload"
-        )
+        assert post_config is good_config, "config identity must be preserved across failed reload"
 
         assert len(events) == 1
         ok, reason = events[0]
@@ -289,18 +281,14 @@ class TestAuditEmission:
         from openakita.core import audit_logger as al
 
         audit_path = tmp_path / "audit.jsonl"
-        fake_logger = al.AuditLogger(
-            path=str(audit_path), enabled=True, include_chain=False
-        )
+        fake_logger = al.AuditLogger(path=str(audit_path), enabled=True, include_chain=False)
         monkeypatch.setattr(al, "get_audit_logger", lambda: fake_logger)
 
         # Baseline + reload.
         events: list[tuple[bool, str]] = []
         reloader = _make_reloader(policies_path, events)
         global_engine.rebuild_engine_v2(yaml_path=policies_path)
-        _touch_path_with_new_mtime(
-            policies_path, bytes_=_DIFFERENT_VALID_YAML.encode()
-        )
+        _touch_path_with_new_mtime(policies_path, bytes_=_DIFFERENT_VALID_YAML.encode())
         reloader._check_once()
 
         assert audit_path.exists()
@@ -342,9 +330,7 @@ class TestSingletonAPI:
         assert result is None
         assert get_hot_reloader() is None
 
-    def test_start_with_force_bypasses_config(
-        self, policies_path: Path
-    ) -> None:
+    def test_start_with_force_bypasses_config(self, policies_path: Path) -> None:
         try:
             r = start_hot_reloader(
                 yaml_path=policies_path,
@@ -381,19 +367,13 @@ class TestSingletonAPI:
         stop_hot_reloader(timeout=0.1)
         stop_hot_reloader(timeout=0.1)
 
-    def test_start_returns_none_when_yaml_missing(
-        self, tmp_path: Path
-    ) -> None:
-        result = start_hot_reloader(
-            yaml_path=tmp_path / "does-not-exist.yaml", force=True
-        )
+    def test_start_returns_none_when_yaml_missing(self, tmp_path: Path) -> None:
+        result = start_hot_reloader(yaml_path=tmp_path / "does-not-exist.yaml", force=True)
         assert result is None
 
 
 class TestThreadLifecycle:
-    def test_thread_actually_polls_and_exits_cleanly(
-        self, policies_path: Path
-    ) -> None:
+    def test_thread_actually_polls_and_exits_cleanly(self, policies_path: Path) -> None:
         """Smoke test: real thread, short interval, content change is
         picked up within ~poll_interval."""
         observed: list[tuple[bool, str]] = []
@@ -409,9 +389,7 @@ class TestThreadLifecycle:
             reloader.start()
             assert reloader.is_running()
 
-            _touch_path_with_new_mtime(
-                policies_path, bytes_=_DIFFERENT_VALID_YAML.encode()
-            )
+            _touch_path_with_new_mtime(policies_path, bytes_=_DIFFERENT_VALID_YAML.encode())
             # Wait up to 2s for at least one event.
             deadline = time.monotonic() + 2.0
             while not observed and time.monotonic() < deadline:

@@ -12,6 +12,7 @@ budget ledgers.
 We mock the ``brain`` (LLM), ``ark_client`` and ``task_manager`` so the
 test suite stays hermetic and fast.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -52,10 +53,7 @@ class _FakeBrainChat:
 
 @pytest.mark.asyncio
 async def test_decompose_storyboard_parses_clean_json() -> None:
-    payload = (
-        '{"segments":[{"index":1,"duration":5,"prompt":"a"}],'
-        '"style_prefix":"cinematic"}'
-    )
+    payload = '{"segments":[{"index":1,"duration":5,"prompt":"a"}],"style_prefix":"cinematic"}'
     brain = _FakeBrainThink(payload)
     out = await decompose_storyboard(brain, story="story", total_duration=5)
     assert out["segments"][0]["index"] == 1
@@ -229,12 +227,19 @@ async def test_chain_parallel_max_parallel_respected_lower_bound() -> None:
 async def test_chain_serial_chains_last_frame_into_next_first_frame() -> None:
     """Validates the storyboard "chain" contract: segment N+1's content
     must include an ``image_url`` carrying segment N's ``last_frame_url``."""
-    cg, ark, tm = _make_chain_gen(create_task_returns={
-        "id": "ark", "last_frame_url": "https://cdn/last.png",
-    })
-    cg._wait_for_task = AsyncMock(side_effect=lambda tid: {
-        "id": tid, "status": "done", "last_frame_url": "https://cdn/last.png",
-    })
+    cg, ark, tm = _make_chain_gen(
+        create_task_returns={
+            "id": "ark",
+            "last_frame_url": "https://cdn/last.png",
+        }
+    )
+    cg._wait_for_task = AsyncMock(
+        side_effect=lambda tid: {
+            "id": tid,
+            "status": "done",
+            "last_frame_url": "https://cdn/last.png",
+        }
+    )
     await cg.generate_chain(
         segments=[_seg(1), _seg(2)],
         model_id="m",
@@ -251,15 +256,20 @@ async def test_chain_serial_chains_last_frame_into_next_first_frame() -> None:
 @pytest.mark.asyncio
 async def test_chain_serial_extend_uses_previous_video_url() -> None:
     """Cloud transition mode should use the previous video_url, not only ffmpeg concat."""
-    cg, ark, tm = _make_chain_gen(create_task_returns={
-        "id": "ark", "last_frame_url": "https://cdn/last.png",
-    })
-    cg._wait_for_task = AsyncMock(side_effect=lambda tid: {
-        "id": tid,
-        "status": "done",
-        "last_frame_url": "https://cdn/last.png",
-        "video_url": "https://cdn/video.mp4",
-    })
+    cg, ark, tm = _make_chain_gen(
+        create_task_returns={
+            "id": "ark",
+            "last_frame_url": "https://cdn/last.png",
+        }
+    )
+    cg._wait_for_task = AsyncMock(
+        side_effect=lambda tid: {
+            "id": tid,
+            "status": "done",
+            "last_frame_url": "https://cdn/last.png",
+            "video_url": "https://cdn/video.mp4",
+        }
+    )
     await cg.generate_chain(
         segments=[_seg(1), _seg(2)],
         model_id="m",

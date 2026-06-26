@@ -41,11 +41,28 @@ class _FakeCatalog:
 
 def test_inclusive_hides_non_selected_from_catalog():
     """INCLUSIVE mode: non-selected skills are catalog_hidden, not unregistered."""
-    registry = _FakeRegistry([
-        SimpleNamespace(skill_id="plugin-a@duplicate-skill", name="duplicate-skill", disabled=False, catalog_hidden=False),
-        SimpleNamespace(skill_id="plugin-b@duplicate-skill", name="duplicate-skill", disabled=False, catalog_hidden=False),
-        SimpleNamespace(skill_id="plugin-c@kept-skill", name="kept-skill", disabled=False, catalog_hidden=False),
-    ])
+    registry = _FakeRegistry(
+        [
+            SimpleNamespace(
+                skill_id="plugin-a@duplicate-skill",
+                name="duplicate-skill",
+                disabled=False,
+                catalog_hidden=False,
+            ),
+            SimpleNamespace(
+                skill_id="plugin-b@duplicate-skill",
+                name="duplicate-skill",
+                disabled=False,
+                catalog_hidden=False,
+            ),
+            SimpleNamespace(
+                skill_id="plugin-c@kept-skill",
+                name="kept-skill",
+                disabled=False,
+                catalog_hidden=False,
+            ),
+        ]
+    )
     catalog = _FakeCatalog()
     agent = SimpleNamespace(
         skill_registry=registry,
@@ -73,11 +90,22 @@ def test_inclusive_hides_non_selected_from_catalog():
 
 def test_inclusive_empty_skills_hides_all_non_essential():
     """INCLUSIVE with empty skills list: all non-essential skills are catalog_hidden."""
-    registry = _FakeRegistry([
-        SimpleNamespace(skill_id="list-skills", name="list-skills", disabled=False, catalog_hidden=False),
-        SimpleNamespace(skill_id="my-external-skill", name="my-external-skill", disabled=False, catalog_hidden=False),
-        SimpleNamespace(skill_id="another-skill", name="another-skill", disabled=False, catalog_hidden=False),
-    ])
+    registry = _FakeRegistry(
+        [
+            SimpleNamespace(
+                skill_id="list-skills", name="list-skills", disabled=False, catalog_hidden=False
+            ),
+            SimpleNamespace(
+                skill_id="my-external-skill",
+                name="my-external-skill",
+                disabled=False,
+                catalog_hidden=False,
+            ),
+            SimpleNamespace(
+                skill_id="another-skill", name="another-skill", disabled=False, catalog_hidden=False
+            ),
+        ]
+    )
     catalog = _FakeCatalog()
     agent = SimpleNamespace(
         skill_registry=registry,
@@ -105,11 +133,19 @@ def test_inclusive_empty_skills_hides_all_non_essential():
 
 def test_exclusive_unregisters_blacklisted_skills():
     """EXCLUSIVE mode: blacklisted skills are fully unregistered."""
-    registry = _FakeRegistry([
-        SimpleNamespace(skill_id="skill-a", name="skill-a", disabled=False, catalog_hidden=False),
-        SimpleNamespace(skill_id="skill-b", name="skill-b", disabled=False, catalog_hidden=False),
-        SimpleNamespace(skill_id="skill-c", name="skill-c", disabled=False, catalog_hidden=False),
-    ])
+    registry = _FakeRegistry(
+        [
+            SimpleNamespace(
+                skill_id="skill-a", name="skill-a", disabled=False, catalog_hidden=False
+            ),
+            SimpleNamespace(
+                skill_id="skill-b", name="skill-b", disabled=False, catalog_hidden=False
+            ),
+            SimpleNamespace(
+                skill_id="skill-c", name="skill-c", disabled=False, catalog_hidden=False
+            ),
+        ]
+    )
     catalog = _FakeCatalog()
     agent = SimpleNamespace(
         skill_registry=registry,

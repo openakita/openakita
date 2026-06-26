@@ -137,11 +137,7 @@ def recover_sessions(workspace_path: str, output_path: str | None = None):
 
         session_messages = jsonl_to_session_messages(jsonl_messages)
 
-        timestamps = [
-            m.get("timestamp")
-            for m in jsonl_messages
-            if m.get("timestamp")
-        ]
+        timestamps = [m.get("timestamp") for m in jsonl_messages if m.get("timestamp")]
         if timestamps:
             created_at = datetime.fromisoformat(min(timestamps))
             last_active = datetime.fromisoformat(max(timestamps))
@@ -176,9 +172,7 @@ def recover_sessions(workspace_path: str, output_path: str | None = None):
             f"preview: {preview}"
         )
 
-    existing_sessions.sort(
-        key=lambda s: s.get("last_active", ""), reverse=True
-    )
+    existing_sessions.sort(key=lambda s: s.get("last_active", ""), reverse=True)
 
     if output_path is None:
         output_path = str(workspace / "data" / "sessions" / "sessions_recovered.json")

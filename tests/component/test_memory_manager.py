@@ -1,9 +1,8 @@
 """L2 Component Tests: MemoryManager add/search/inject operations."""
 
 import pytest
-from pathlib import Path
 
-from openakita.memory.types import Memory, MemoryPriority, MemoryType
+from openakita.memory.types import Memory, MemoryType
 
 
 @pytest.fixture
@@ -19,6 +18,7 @@ def memory_dir(tmp_workspace):
 @pytest.fixture
 def memory_manager(memory_dir, mock_brain):
     from openakita.memory.manager import MemoryManager
+
     mem_dir, memory_md = memory_dir
     return MemoryManager(
         data_dir=mem_dir,
@@ -112,4 +112,3 @@ class TestMemoryManagerInjection:
         memory_manager.add_memory(Memory(content="User birthday is March 15"))
         ctx = memory_manager.get_injection_context(task_description="greeting")
         assert isinstance(ctx, str)
-

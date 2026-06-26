@@ -98,9 +98,7 @@ async def test_config_round_trip(tm: HappyhorseTaskManager):
 
 @pytest.mark.asyncio
 async def test_idempotency_via_client_request_id(tm: HappyhorseTaskManager):
-    task_id = await tm.create_task(
-        mode="t2v", prompt="x", client_request_id="cri_abc"
-    )
+    task_id = await tm.create_task(mode="t2v", prompt="x", client_request_id="cri_abc")
     found = await tm.get_task_by_client_request_id("cri_abc")
     assert found is not None
     assert found["id"] == task_id

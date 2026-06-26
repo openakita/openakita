@@ -144,7 +144,9 @@ class _S2VQueueSlot:
 
     __slots__ = ("_ctx", "_tm", "_emit", "_position", "_acquired")
 
-    def __init__(self, ctx: HappyhorsePipelineContext, tm: HappyhorseTaskManager, emit: EmitFn) -> None:
+    def __init__(
+        self, ctx: HappyhorsePipelineContext, tm: HappyhorseTaskManager, emit: EmitFn
+    ) -> None:
         self._ctx = ctx
         self._tm = tm
         self._emit = emit
@@ -164,19 +166,19 @@ class _S2VQueueSlot:
             # 前端拿到 queue_position > 0 时显示"队列位次 #N"。
             try:
                 await _emit(
-                    self._emit, "task_update",
+                    self._emit,
+                    "task_update",
                     _ctx_payload(
                         self._ctx,
                         progress=55,
                         queue_position=self._position,
-                        queue_label=(
-                            f"DashScope wan2.2-s2v 串行排队 #{self._position}"
-                        ),
+                        queue_label=(f"DashScope wan2.2-s2v 串行排队 #{self._position}"),
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
-                    "happyhorse-video[s2v-queue]: queued emit failed: %s", exc,
+                    "happyhorse-video[s2v-queue]: queued emit failed: %s",
+                    exc,
                 )
         await _S2V_SEMAPHORE.acquire()
         self._acquired = True
@@ -184,16 +186,19 @@ class _S2VQueueSlot:
         if self._position > 1:
             try:
                 await _emit(
-                    self._emit, "task_update",
+                    self._emit,
+                    "task_update",
                     _ctx_payload(
-                        self._ctx, progress=58,
+                        self._ctx,
+                        progress=58,
                         queue_position=0,
                         queue_label="DashScope wan2.2-s2v 已开始执行",
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
-                    "happyhorse-video[s2v-queue]: dequeued emit failed: %s", exc,
+                    "happyhorse-video[s2v-queue]: dequeued emit failed: %s",
+                    exc,
                 )
         return self
 
@@ -361,9 +366,7 @@ async def _step_setup_environment(
     ctx.model_entry = client.resolve_model(ctx.mode, ctx.model_id or None)
     if not ctx.model_id:
         ctx.model_id = ctx.model_entry.model_id
-    await tm.update_task_safe(
-        ctx.task_id, status="running", model_id=ctx.model_id
-    )
+    await tm.update_task_safe(ctx.task_id, status="running", model_id=ctx.model_id)
     await _emit(emit, "task_update", _ctx_payload(ctx, progress=2))
 
 
@@ -375,12 +378,8 @@ async def _step_estimate_cost(
     tm: HappyhorseTaskManager,
     emit: EmitFn,
 ) -> None:
-    audio_dur = ctx.tts_audio_duration_sec or _safe_float(
-        ctx.params.get("audio_duration_sec")
-    )
-    text_chars = _safe_int(ctx.params.get("text_chars")) or _len_text(
-        ctx.params.get("text")
-    )
+    audio_dur = ctx.tts_audio_duration_sec or _safe_float(ctx.params.get("audio_duration_sec"))
+    text_chars = _safe_int(ctx.params.get("text_chars")) or _len_text(ctx.params.get("text"))
     # Make sure ``model`` is set in params so estimate_cost reads it.
     p = dict(ctx.params)
     p.setdefault("model", ctx.model_id)
@@ -393,9 +392,7 @@ async def _step_estimate_cost(
     ctx.cost_breakdown = dict(preview)
     if preview["exceeds_threshold"] and not ctx.cost_approved:
         raise ApprovalRequired(ctx.cost_breakdown)
-    await tm.update_task_safe(
-        ctx.task_id, cost_breakdown_json=ctx.cost_breakdown
-    )
+    await tm.update_task_safe(ctx.task_id, cost_breakdown_json=ctx.cost_breakdown)
     await _emit(emit, "task_update", _ctx_payload(ctx, progress=8))
 
 
@@ -472,9 +469,7 @@ async def _step_prepare_assets(
         urls = val if isinstance(val, list) else [val]
         for u in urls:
             u_low = (u or "").lower()
-            if u_low.startswith(("/api/", "/")) and not u_low.startswith(
-                ("//", "/data:")
-            ):
+            if u_low.startswith(("/api/", "/")) and not u_low.startswith(("//", "/data:")):
                 raise VendorError(
                     f"asset {kind!r} is a local URL ({u!r}); "
                     "DashScope cannot fetch it. Open Settings → OSS and "
@@ -515,8 +510,7 @@ async def _step_prepare_assets(
     await tm.update_task_safe(
         ctx.task_id,
         asset_paths_json={
-            k: (v if isinstance(v, str) else ",".join(v))
-            for k, v in ctx.asset_urls.items()
+            k: (v if isinstance(v, str) else ",".join(v)) for k, v in ctx.asset_urls.items()
         },
     )
     await _emit(emit, "task_update", _ctx_payload(ctx, progress=15))
@@ -548,9 +542,7 @@ async def _step_tts_synth(
 
     # User uploaded their own audio — skip synth.
     if "audio_url" in ctx.asset_urls:
-        ctx.tts_audio_duration_sec = _safe_float(
-            ctx.params.get("audio_duration_sec")
-        )
+        ctx.tts_audio_duration_sec = _safe_float(ctx.params.get("audio_duration_sec"))
         await _emit(emit, "task_update", _ctx_payload(ctx, progress=25))
         return
 
@@ -582,11 +574,7 @@ async def _step_tts_synth(
     # actual synthesis never disagree on which engine billed which job.
     raw_pin = str(ctx.params.get("tts_engine") or "").strip().lower()
     if raw_pin:
-        engine = (
-            "cosyvoice"
-            if _normalize_tts_engine(raw_pin) == "cosyvoice-v2"
-            else "edge"
-        )
+        engine = "cosyvoice" if _normalize_tts_engine(raw_pin) == "cosyvoice-v2" else "edge"
     elif str(voice_id).startswith(("zh-CN", "zh-HK", "zh-TW")):
         engine = "edge"
     else:
@@ -687,8 +675,7 @@ async def _step_image_compose(
             refs = await ensure_safe(refs[:9])
         except Exception as e:  # noqa: BLE001
             logger.warning(
-                "happyhorse-video: ensure_images_safe failed (%s); "
-                "forwarding original URLs",
+                "happyhorse-video: ensure_images_safe failed (%s); forwarding original URLs",
                 e,
             )
 
@@ -708,9 +695,7 @@ async def _step_image_compose(
             model=image_model,
         )
 
-    res = await _poll_until_done(
-        client, i2i_task_id, poll, ctx, emit, progress_floor=35
-    )
+    res = await _poll_until_done(client, i2i_task_id, poll, ctx, emit, progress_floor=35)
     if not res.get("is_ok"):
         raise VendorError(
             f"image compose failed: {res.get('error_message') or 'unknown'}",
@@ -731,10 +716,7 @@ async def _step_image_compose(
     await tm.update_task_safe(
         ctx.task_id,
         asset_paths_json={
-            **{
-                k: (v if isinstance(v, str) else ",".join(v))
-                for k, v in ctx.asset_urls.items()
-            },
+            **{k: (v if isinstance(v, str) else ",".join(v)) for k, v in ctx.asset_urls.items()},
             "composed_image_url": composed_url,
         },
     )
@@ -784,8 +766,7 @@ async def _step_video_synth(
         # both spellings and forward as a single ``driving_audio_url``
         # since the client dispatches per ``input_protocol``.
         adv_audio_url = (
-            str(ctx.params.get("driving_audio_url") or ctx.params.get("audio_url") or "")
-            or None
+            str(ctx.params.get("driving_audio_url") or ctx.params.get("audio_url") or "") or None
         )
         adv_prompt_extend = ctx.params.get("prompt_extend")
         adv_negative_prompt = ctx.params.get("negative_prompt")
@@ -845,9 +826,7 @@ async def _step_video_synth(
         )
     elif ctx.mode == "avatar_compose":
         ctx.dashscope_endpoint = "wan2.2-s2v"
-        composed = ctx.composed_image_url or str(
-            ctx.asset_urls.get("composed_image_url") or ""
-        )
+        composed = ctx.composed_image_url or str(ctx.asset_urls.get("composed_image_url") or "")
         if not composed:
             raise VendorError(
                 "avatar_compose video_synth missing composed_image_url",
@@ -871,9 +850,7 @@ async def _step_video_synth(
     )
     await _emit(emit, "task_update", _ctx_payload(ctx, progress=60))
 
-    res = await _poll_until_done(
-        client, ctx.dashscope_id, poll, ctx, emit, progress_floor=60
-    )
+    res = await _poll_until_done(client, ctx.dashscope_id, poll, ctx, emit, progress_floor=60)
     if not res.get("is_ok"):
         raise VendorError(
             f"video synth failed: {res.get('error_message') or 'unknown'}",
@@ -907,9 +884,7 @@ async def _step_finalize(
     last_frame_local: Path | None = None
     if ctx.video_url:
         try:
-            output_local = await _download_url(
-                ctx.video_url, ctx.task_dir, fallback_ext="mp4"
-            )
+            output_local = await _download_url(ctx.video_url, ctx.task_dir, fallback_ext="mp4")
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "happyhorse-video: video download failed for task %s: %s",
@@ -1002,9 +977,7 @@ async def _step_finalize(
 
     # ── Persist metadata + DB row ────────────────────────────────────
     persistable_params = {
-        k: v
-        for k, v in ctx.params.items()
-        if not (isinstance(k, str) and k.startswith("_"))
+        k: v for k, v in ctx.params.items() if not (isinstance(k, str) and k.startswith("_"))
     }
     metadata = {
         "task_id": ctx.task_id,
@@ -1149,9 +1122,7 @@ def _relocate_output(
         n = 2
         while True:
             cand = (
-                target.parent / f"{stem}-{n}.{ext}"
-                if dot
-                else target.parent / f"{final_name}-{n}"
+                target.parent / f"{stem}-{n}.{ext}" if dot else target.parent / f"{final_name}-{n}"
             )
             if not cand.exists():
                 target = cand
@@ -1200,9 +1171,7 @@ async def _step_handle_exception(
             completed_at=time.time(),
         )
     except Exception:  # noqa: BLE001 — never let cleanup raise
-        logger.exception(
-            "happyhorse_pipeline: failed to persist error for %s", ctx.task_id
-        )
+        logger.exception("happyhorse_pipeline: failed to persist error for %s", ctx.task_id)
 
     await _emit(emit, "task_update", _ctx_payload(ctx, progress=100))
 
@@ -1230,8 +1199,7 @@ async def _poll_until_done(
         elapsed = time.time() - start
         if elapsed > poll.total_timeout_sec:
             raise VendorError(
-                f"DashScope task {dashscope_id} did not finish in "
-                f"{poll.total_timeout_sec:.0f}s",
+                f"DashScope task {dashscope_id} did not finish in {poll.total_timeout_sec:.0f}s",
                 retryable=False,
                 kind="timeout",
             )

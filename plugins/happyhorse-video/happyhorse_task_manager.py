@@ -352,9 +352,7 @@ class HappyhorseTaskManager:
     # ── Config ─────────────────────────────────────────────────────────
 
     async def get_config(self, key: str) -> str:
-        async with self._conn.execute(
-            "SELECT value FROM config WHERE key = ?", (key,)
-        ) as cur:
+        async with self._conn.execute("SELECT value FROM config WHERE key = ?", (key,)) as cur:
             row = await cur.fetchone()
         if row:
             return str(row[0])
@@ -436,9 +434,7 @@ class HappyhorseTaskManager:
         async with self._conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)) as cur:
             return _row_to_dict(await cur.fetchone())
 
-    async def get_task_by_client_request_id(
-        self, client_request_id: str
-    ) -> dict[str, Any] | None:
+    async def get_task_by_client_request_id(self, client_request_id: str) -> dict[str, Any] | None:
         """Return the latest task created by a given browser request id.
 
         Used as a post-reload safety net to absorb double-submits the
@@ -449,8 +445,7 @@ class HappyhorseTaskManager:
         if not client_request_id:
             return None
         async with self._conn.execute(
-            "SELECT * FROM tasks WHERE client_request_id = ? "
-            "ORDER BY created_at DESC LIMIT 1",
+            "SELECT * FROM tasks WHERE client_request_id = ? ORDER BY created_at DESC LIMIT 1",
             (client_request_id,),
         ) as cur:
             return _row_to_dict(await cur.fetchone())
@@ -478,10 +473,7 @@ class HappyhorseTaskManager:
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         # ``ROWID DESC`` is a tiebreaker for equal ``created_at`` (Windows
         # ``time.time()`` granularity is ~15ms and rapid inserts can collide).
-        sql = (
-            f"SELECT * FROM tasks {where} "
-            "ORDER BY created_at DESC, ROWID DESC LIMIT ? OFFSET ?"
-        )
+        sql = f"SELECT * FROM tasks {where} ORDER BY created_at DESC, ROWID DESC LIMIT ? OFFSET ?"
         binds.extend([max(1, min(200, int(limit))), max(0, int(offset))])
         async with self._conn.execute(sql, tuple(binds)) as cur:
             rows = await cur.fetchall()
@@ -519,8 +511,7 @@ class HappyhorseTaskManager:
             )
         if "status" in updates and updates["status"] not in _TASK_STATUSES:
             raise ValueError(
-                f"invalid status {updates['status']!r}; "
-                f"allowed={sorted(_TASK_STATUSES)}",
+                f"invalid status {updates['status']!r}; allowed={sorted(_TASK_STATUSES)}",
             )
 
         cols = list(updates)
@@ -532,10 +523,7 @@ class HappyhorseTaskManager:
             binds.append(v)
         binds.append(_now())
         binds.append(task_id)
-        sql = (
-            f"UPDATE tasks SET {', '.join(f'{c} = ?' for c in cols)}, "
-            "updated_at = ? WHERE id = ?"
-        )
+        sql = f"UPDATE tasks SET {', '.join(f'{c} = ?' for c in cols)}, updated_at = ? WHERE id = ?"
         cursor = await self._conn.execute(sql, tuple(binds))
         await self._conn.commit()
         return cursor.rowcount > 0
@@ -647,23 +635,18 @@ class HappyhorseTaskManager:
             clauses.append("task_id = ?")
             binds.append(task_id)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-        async with self._conn.execute(
-            f"SELECT COUNT(*) FROM assets {where}", tuple(binds)
-        ) as cur:
+        async with self._conn.execute(f"SELECT COUNT(*) FROM assets {where}", tuple(binds)) as cur:
             count_row = await cur.fetchone()
         total = int(count_row[0]) if count_row else 0
         async with self._conn.execute(
-            f"SELECT * FROM assets {where} "
-            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            f"SELECT * FROM assets {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
             (*binds, max(1, min(200, int(limit))), max(0, int(offset))),
         ) as cur:
             rows = await cur.fetchall()
         return [dict(r) for r in rows], total
 
     async def get_asset(self, asset_id: str) -> dict[str, Any] | None:
-        async with self._conn.execute(
-            "SELECT * FROM assets WHERE id = ?", (asset_id,)
-        ) as cur:
+        async with self._conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,)) as cur:
             row = await cur.fetchone()
         return dict(row) if row else None
 
@@ -738,9 +721,7 @@ class HappyhorseTaskManager:
     # ── Figures ───────────────────────────────────────────────────────
 
     async def list_figures(self) -> list[dict[str, Any]]:
-        async with self._conn.execute(
-            "SELECT * FROM figures ORDER BY created_at DESC"
-        ) as cur:
+        async with self._conn.execute("SELECT * FROM figures ORDER BY created_at DESC") as cur:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
@@ -784,9 +765,7 @@ class HappyhorseTaskManager:
         return fig_id
 
     async def get_figure(self, fig_id: str) -> dict[str, Any] | None:
-        async with self._conn.execute(
-            "SELECT * FROM figures WHERE id = ?", (fig_id,)
-        ) as cur:
+        async with self._conn.execute("SELECT * FROM figures WHERE id = ?", (fig_id,)) as cur:
             row = await cur.fetchone()
         return dict(row) if row else None
 

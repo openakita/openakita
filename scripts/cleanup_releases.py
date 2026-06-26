@@ -117,7 +117,9 @@ def main():
         tag = r.get("tag_name", "?")
         url = f"{GITHUB_API}/repos/{args.repo}/releases/{release_id}"
         result = api_request(url, method="DELETE", token=token)
-        if result is None:  # 204 No Content = success, or api_request returns None on delete success
+        if (
+            result is None
+        ):  # 204 No Content = success, or api_request returns None on delete success
             print(f"  已删除: [{tag}]")
             deleted += 1
         else:
@@ -128,4 +130,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

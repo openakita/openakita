@@ -40,6 +40,19 @@ class RepairTokenRequest(BaseModel):
     confirmation_token: str
 
 
+class QuarantineRequest(BaseModel):
+    """Body for ``POST /api/memory/repair/quarantine``.
+
+    The ``subsystem`` field is constrained to the set we know how to
+    quiesce + relocate. We intentionally don't accept an arbitrary
+    string so a misnamed subsystem can't cause us to ``shutil.move``
+    something unexpected on disk.
+    """
+
+    subsystem: str
+    confirmation_token: str
+
+
 def _memory_dir() -> Path:
     return Path(settings.data_dir) / "memory"
 
@@ -226,7 +239,9 @@ def _recover_method() -> str:
     if os.environ.get("OPENAKITA_SQLITE3_EXE"):
         candidates.append(Path(os.environ["OPENAKITA_SQLITE3_EXE"]))
     if os.environ.get("LOCALAPPDATA"):
-        candidates.append(Path(os.environ["LOCALAPPDATA"]) / "Programs" / "OpenAkita" / "sqlite3.exe")
+        candidates.append(
+            Path(os.environ["LOCALAPPDATA"]) / "Programs" / "OpenAkita" / "sqlite3.exe"
+        )
     if os.environ.get("PROGRAMFILES"):
         candidates.append(Path(os.environ["PROGRAMFILES"]) / "OpenAkita" / "sqlite3.exe")
     if any(p.exists() for p in candidates):
@@ -237,7 +252,10 @@ def _recover_method() -> str:
 
 
 def _sqlite3_executable() -> str | None:
-    if os.environ.get("OPENAKITA_SQLITE3_EXE") and Path(os.environ["OPENAKITA_SQLITE3_EXE"]).exists():
+    if (
+        os.environ.get("OPENAKITA_SQLITE3_EXE")
+        and Path(os.environ["OPENAKITA_SQLITE3_EXE"]).exists()
+    ):
         return os.environ["OPENAKITA_SQLITE3_EXE"]
     for env_name in ("LOCALAPPDATA", "PROGRAMFILES"):
         root = os.environ.get(env_name)
@@ -374,3 +392,163 @@ async def run_recover(payload: RepairTokenRequest, request: Request):
         return {"ok": True, "status": "repair_completed_restart_required"}
 
     return await _run_repair(request, "run_recover", payload.confirmation_token, work)
+
+
+# ---------------------------------------------------------------------------
+# Generic subsystem quarantine — v1.29 boot fault tolerance
+# ---------------------------------------------------------------------------
+#
+# This block extends the existing memory-repair endpoint set with two
+# new operations so the new "degraded subsystem" banner has a fix path:
+#
+#   GET  /api/memory/repair/degraded   -> snapshot + fresh confirmation token
+#   POST /api/memory/repair/quarantine -> quiesce + rename one subsystem
+#
+# Authentication intentionally mirrors the existing memory_repair
+# convention: both ``X-OpenAkita-Desktop-Token`` (Tauri-injected) AND a
+# single-use ``confirmation_token`` (issued by the GET endpoint, expires
+# in 5 minutes). We deliberately do NOT downgrade to ``is_trusted_local``
+# because this operation renames .db files — equivalent to ``rm -rf``
+# from the user's perspective.
+
+
+_SUBSYSTEM_PATHS: dict[str, str] = {
+    # subsystem name → relative path under ``data/``
+    # Token tracking shares the agent.db file with the rest of the legacy
+    # storage facade. Quarantining it forces token_stats endpoints to
+    # 503 until restart.
+    "token_tracking": "agent.db",
+    "feedback": "feedback.db",
+    "asset_bus": "asset_bus.db",
+}
+
+
+def _data_dir() -> Path:
+    return Path(settings.data_dir)
+
+
+async def _quiesce_subsystem(request: Request, subsystem: str) -> None:
+    """Close any long-lived handle to the subsystem's DB.
+
+    On Windows the rename in ``_move_triplet`` would otherwise fail with
+    a sharing violation. Best-effort: a subsystem whose quiesce raises
+    is logged but not blocked, because the user explicitly opted in to
+    quarantining.
+    """
+    import logging as _logging
+
+    log = _logging.getLogger(__name__)
+    try:
+        if subsystem == "token_tracking":
+            from openakita.core.token_tracking import shutdown_token_tracking
+
+            shutdown_token_tracking(timeout=5.0)
+        elif subsystem == "asset_bus":
+            bus = getattr(request.app.state, "asset_bus", None)
+            if bus is not None and hasattr(bus, "quiesce"):
+                await bus.quiesce()
+        elif subsystem == "feedback":
+            # feedback_store opens connections per call; nothing to close.
+            return
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "[memory_repair] quiesce(%s) raised but continuing: %s",
+            subsystem,
+            exc,
+        )
+
+
+@router.get("/degraded")
+async def degraded_subsystems(request: Request):
+    """Return the degraded-subsystem snapshot plus a fresh confirmation token.
+
+    Read-only; no auth required. The confirmation token is single-use
+    and expires after 5 minutes — the UI presents it back to
+    ``POST /quarantine`` so a stale browser tab can't accidentally
+    re-trigger destructive operations.
+    """
+    from openakita.storage.degraded import registry as _registry
+
+    return {
+        "subsystems": _registry.snapshot(),
+        "desktop_token_required": bool(_desktop_token_expected()),
+        "confirmation_token": _issue_confirmation_token(),
+    }
+
+
+@router.post("/quarantine")
+async def quarantine_subsystem(payload: QuarantineRequest, request: Request):
+    """Quiesce + relocate one subsystem's DB triplet to ``data/.quarantine.{ts}/``.
+
+    Flow:
+
+    1. Validate the subsystem is one we know how to handle.
+    2. Verify desktop_token + consume confirmation_token (audited).
+    3. Acquire the global ``_repair_lock`` + the on-disk repair lock so
+       concurrent quarantines can't race.
+    4. Call the subsystem-specific ``quiesce()`` so file handles are
+       released (Windows correctness).
+    5. ``shutil.move`` the ``.db`` + ``-wal`` + ``-shm`` triplet.
+    6. Unregister from :mod:`openakita.storage.degraded` so the UI banner
+       clears.
+    7. Return ``restart_required=True`` — the subsystem cannot recover
+       in-process; the user must restart backend (Tauri auto-respawn,
+       standalone ``openakita serve`` must restart manually).
+    """
+    from openakita.storage.degraded import registry as _registry
+
+    subsystem = payload.subsystem
+    if subsystem not in _SUBSYSTEM_PATHS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown subsystem: {subsystem}",
+        )
+
+    _verify_desktop_token(request)
+    token_hash = _consume_confirmation_token(payload.confirmation_token)
+
+    if _repair_lock.locked():
+        raise HTTPException(status_code=409, detail="repair_in_progress")
+
+    async with _repair_lock:
+        with _file_repair_lock():
+            await _quiesce_subsystem(request, subsystem)
+
+            db_path = _data_dir() / _SUBSYSTEM_PATHS[subsystem]
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            quarantine_dir = _data_dir() / f".quarantine.{stamp}"
+
+            moved_paths: list[str] = []
+            if db_path.exists():
+                try:
+                    moved = await asyncio.to_thread(_move_triplet, db_path, quarantine_dir)
+                    moved_paths = [str(target) for _, target in moved]
+                except Exception as e:
+                    _audit(
+                        "quarantine",
+                        "failed",
+                        subsystem=subsystem,
+                        token_hash=token_hash,
+                        error=str(e)[:200],
+                    )
+                    raise HTTPException(status_code=500, detail=str(e)) from e
+
+            _registry.unregister(subsystem)
+            _audit(
+                "quarantine",
+                "success",
+                subsystem=subsystem,
+                token_hash=token_hash,
+                quarantined=moved_paths,
+            )
+            emit_memory_health_event(
+                "quarantine",
+                {"subsystem": subsystem, "quarantined": moved_paths},
+            )
+            mark_memory_repair_completed_restart_required()
+            return {
+                "ok": True,
+                "subsystem": subsystem,
+                "quarantined": moved_paths,
+                "restart_required": True,
+            }

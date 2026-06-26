@@ -173,7 +173,9 @@ def test_user_subprocess_environment_empty_overrides_inherit_host(monkeypatch, t
     monkeypatch.setattr("openakita.runtime_env.get_agent_python_executable", lambda: None)
     monkeypatch.setattr("openakita.runtime_env.get_app_python_executable", lambda: None)
     monkeypatch.setattr("openakita.runtime_env.get_managed_node_seed", lambda: None)
-    monkeypatch.setattr("openakita.runtime_env.get_workspace_dependency_cache_root", lambda: tmp_path / "cache")
+    monkeypatch.setattr(
+        "openakita.runtime_env.get_workspace_dependency_cache_root", lambda: tmp_path / "cache"
+    )
 
     env = build_user_subprocess_environment({})
 
@@ -190,7 +192,9 @@ def test_user_subprocess_environment_overrides_host_after_merge(monkeypatch, tmp
     monkeypatch.setattr("openakita.runtime_env.get_agent_python_executable", lambda: None)
     monkeypatch.setattr("openakita.runtime_env.get_app_python_executable", lambda: None)
     monkeypatch.setattr("openakita.runtime_env.get_managed_node_seed", lambda: None)
-    monkeypatch.setattr("openakita.runtime_env.get_workspace_dependency_cache_root", lambda: tmp_path / "cache")
+    monkeypatch.setattr(
+        "openakita.runtime_env.get_workspace_dependency_cache_root", lambda: tmp_path / "cache"
+    )
 
     env = build_user_subprocess_environment(
         {"PATH": "override-path", "HTTPS_PROXY": "http://override.invalid:8080"}
@@ -214,7 +218,9 @@ def test_managed_toolchain_seed_resolvers(monkeypatch, tmp_path):
     node.write_text("", encoding="utf-8")
 
     monkeypatch.setattr("openakita.runtime_env.get_bootstrap_manifest_path", lambda: manifest)
-    monkeypatch.setattr("openakita.runtime_env.verify_python_executable", lambda path: path == str(py))
+    monkeypatch.setattr(
+        "openakita.runtime_env.verify_python_executable", lambda path: path == str(py)
+    )
 
     assert get_managed_python_seed() == str(py)
     assert get_managed_node_seed() == str(node)
@@ -252,7 +258,9 @@ def test_managed_node_environment_uses_runtime_cache(monkeypatch, tmp_path):
     node.parent.mkdir()
     node.write_text("", encoding="utf-8")
     monkeypatch.setattr("openakita.runtime_env.get_managed_node_seed", lambda: str(node))
-    monkeypatch.setattr("openakita.runtime_env.get_workspace_dependency_cache_root", lambda: tmp_path / "cache")
+    monkeypatch.setattr(
+        "openakita.runtime_env.get_workspace_dependency_cache_root", lambda: tmp_path / "cache"
+    )
 
     env = apply_managed_node_environment({"PATH": "base"})
 
@@ -278,6 +286,63 @@ def test_readonly_seed_roots_and_node_command(monkeypatch, tmp_path):
     assert resolve_toolchain_command("node") == str(node.resolve())
 
 
+def test_mcp_command_resolution_uses_managed_npx(monkeypatch, tmp_path):
+    from openakita.tools.mcp import MCPClient, MCPServerConfig
+
+    node_dir = tmp_path / "managed-node"
+    node_dir.mkdir()
+    node = node_dir / ("node.exe" if sys.platform == "win32" else "node")
+    npx = node_dir / ("npx.cmd" if sys.platform == "win32" else "npx")
+    node.write_text("", encoding="utf-8")
+    npx.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("openakita.runtime_env.get_managed_node_seed", lambda: str(node))
+    monkeypatch.setattr(
+        "openakita.runtime_env.get_workspace_dependency_cache_root", lambda: tmp_path / "cache"
+    )
+    monkeypatch.setattr("shutil.which", lambda command, path=None: None)
+
+    resolved = MCPClient._resolve_command(MCPServerConfig(name="chrome-devtools", command="npx"))
+
+    assert resolved == str(npx)
+
+
+def test_mcp_command_resolution_falls_back_to_host_path(monkeypatch, tmp_path):
+    """When no managed Node is present, _resolve_command must still find npx via PATH.
+
+    This guards the chrome-devtools MCP path for users who installed Node via the host
+    package manager (apt, brew, nvm, scoop, etc.) and do not have OpenAkita-managed Node.
+    """
+    from openakita.tools.mcp import MCPClient, MCPServerConfig
+
+    host_npx = tmp_path / "host-bin" / ("npx.cmd" if sys.platform == "win32" else "npx")
+    host_npx.parent.mkdir()
+    host_npx.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("openakita.runtime_env.get_managed_node_seed", lambda: None)
+    monkeypatch.setattr("openakita.runtime_env.get_bootstrap_manifest_path", lambda: None)
+    monkeypatch.setattr("openakita.runtime_env.get_readonly_seed_roots", list)
+    monkeypatch.setattr("shutil.which", lambda command, path=None: str(host_npx))
+
+    resolved = MCPClient._resolve_command(MCPServerConfig(name="chrome-devtools", command="npx"))
+
+    assert resolved == str(host_npx)
+
+
+def test_mcp_command_resolution_returns_none_when_npx_missing(monkeypatch, tmp_path):
+    """When neither managed Node nor host PATH expose npx, resolution returns None
+    so the MCP pre-check can surface a clear error to the user."""
+    from openakita.tools.mcp import MCPClient, MCPServerConfig
+
+    monkeypatch.setattr("openakita.runtime_env.get_managed_node_seed", lambda: None)
+    monkeypatch.setattr("openakita.runtime_env.get_bootstrap_manifest_path", lambda: None)
+    monkeypatch.setattr("openakita.runtime_env.get_readonly_seed_roots", list)
+    monkeypatch.setattr("shutil.which", lambda command, path=None: None)
+
+    resolved = MCPClient._resolve_command(MCPServerConfig(name="chrome-devtools", command="npx"))
+
+    assert resolved is None
+
+
 def test_runtime_manager_facade_exposes_runtime_report():
     assert callable(manager_runtime_report)
-

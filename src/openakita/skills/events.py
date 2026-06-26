@@ -82,7 +82,8 @@ def notify_skills_changed(action: str | SkillEvent = SkillEvent.RELOAD) -> int:
         if dropped:
             logger.debug(
                 "skills change action=%s invalidated %d parse-cache entries",
-                action_str, dropped,
+                action_str,
+                dropped,
             )
     except Exception:
         logger.debug(

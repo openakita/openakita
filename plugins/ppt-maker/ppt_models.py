@@ -269,4 +269,3 @@ class TemplateRecord(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: float
     updated_at: float
-

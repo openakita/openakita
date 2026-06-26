@@ -137,9 +137,7 @@ async def optimize_prompt(
 
     if hasattr(brain, "think_lightweight"):
         try:
-            result = await brain.think_lightweight(
-                prompt=user_msg, system=OPTIMIZE_SYSTEM_PROMPT
-            )
+            result = await brain.think_lightweight(prompt=user_msg, system=OPTIMIZE_SYSTEM_PROMPT)
             text = _extract_text(result)
             if text.strip():
                 return text
@@ -418,138 +416,138 @@ MODE_FORMULAS = {
 # --- Short keywords: bilingual entries, no locale switching needed ---------
 
 _STYLE_KEYWORDS_I18N: dict[str, list[dict[str, str]]] = {
-    "realistic":   [
+    "realistic": [
         {"zh": "写实摄影", "en": "Photorealistic"},
-        {"zh": "超写实",   "en": "Hyperrealistic"},
-        {"zh": "照片级",   "en": "Photographic"},
+        {"zh": "超写实", "en": "Hyperrealistic"},
+        {"zh": "照片级", "en": "Photographic"},
         {"zh": "电影画质", "en": "Cinematic"},
         {"zh": "高清细腻", "en": "High detail"},
     ],
-    "watercolor":  [
-        {"zh": "水彩",       "en": "Watercolor"},
-        {"zh": "水彩风格",   "en": "Watercolor style"},
-        {"zh": "透明水彩",   "en": "Transparent watercolor"},
-        {"zh": "湿画法",     "en": "Wet-on-wet"},
-        {"zh": "晕染效果",   "en": "Wash gradient"},
+    "watercolor": [
+        {"zh": "水彩", "en": "Watercolor"},
+        {"zh": "水彩风格", "en": "Watercolor style"},
+        {"zh": "透明水彩", "en": "Transparent watercolor"},
+        {"zh": "湿画法", "en": "Wet-on-wet"},
+        {"zh": "晕染效果", "en": "Wash gradient"},
     ],
     "oil_painting": [
-        {"zh": "油画",       "en": "Oil painting"},
-        {"zh": "厚涂油画",   "en": "Impasto oil"},
-        {"zh": "印象派",     "en": "Impressionist"},
-        {"zh": "古典油画",   "en": "Classical oil"},
-        {"zh": "笔触质感",   "en": "Visible brushstrokes"},
+        {"zh": "油画", "en": "Oil painting"},
+        {"zh": "厚涂油画", "en": "Impasto oil"},
+        {"zh": "印象派", "en": "Impressionist"},
+        {"zh": "古典油画", "en": "Classical oil"},
+        {"zh": "笔触质感", "en": "Visible brushstrokes"},
     ],
-    "3d_cartoon":  [
-        {"zh": "3D卡通",       "en": "3D cartoon"},
-        {"zh": "皮克斯风格",   "en": "Pixar-style"},
-        {"zh": "迪士尼风格",   "en": "Disney-style"},
-        {"zh": "Blender渲染",  "en": "Blender render"},
-        {"zh": "C4D风格",      "en": "Cinema 4D style"},
+    "3d_cartoon": [
+        {"zh": "3D卡通", "en": "3D cartoon"},
+        {"zh": "皮克斯风格", "en": "Pixar-style"},
+        {"zh": "迪士尼风格", "en": "Disney-style"},
+        {"zh": "Blender渲染", "en": "Blender render"},
+        {"zh": "C4D风格", "en": "Cinema 4D style"},
     ],
     "chinese_ink": [
-        {"zh": "水墨",       "en": "Ink wash"},
-        {"zh": "写意水墨",   "en": "Freehand ink"},
-        {"zh": "工笔画",     "en": "Gongbi (fine brush)"},
-        {"zh": "国画",       "en": "Chinese painting"},
-        {"zh": "宣纸质感",   "en": "Xuan paper texture"},
+        {"zh": "水墨", "en": "Ink wash"},
+        {"zh": "写意水墨", "en": "Freehand ink"},
+        {"zh": "工笔画", "en": "Gongbi (fine brush)"},
+        {"zh": "国画", "en": "Chinese painting"},
+        {"zh": "宣纸质感", "en": "Xuan paper texture"},
     ],
-    "anime":       [
-        {"zh": "二次元",       "en": "Anime"},
-        {"zh": "日系动漫",     "en": "Japanese anime"},
-        {"zh": "赛璐珞",       "en": "Cel-shaded"},
-        {"zh": "轻小说插画",   "en": "Light-novel illustration"},
-        {"zh": "动漫风格",     "en": "Anime style"},
+    "anime": [
+        {"zh": "二次元", "en": "Anime"},
+        {"zh": "日系动漫", "en": "Japanese anime"},
+        {"zh": "赛璐珞", "en": "Cel-shaded"},
+        {"zh": "轻小说插画", "en": "Light-novel illustration"},
+        {"zh": "动漫风格", "en": "Anime style"},
     ],
     "flat_vector": [
-        {"zh": "扁平插画",   "en": "Flat illustration"},
-        {"zh": "矢量插画",   "en": "Vector illustration"},
-        {"zh": "几何图形",   "en": "Geometric shapes"},
-        {"zh": "极简主义",   "en": "Minimalism"},
-        {"zh": "图形设计",   "en": "Graphic design"},
+        {"zh": "扁平插画", "en": "Flat illustration"},
+        {"zh": "矢量插画", "en": "Vector illustration"},
+        {"zh": "几何图形", "en": "Geometric shapes"},
+        {"zh": "极简主义", "en": "Minimalism"},
+        {"zh": "图形设计", "en": "Graphic design"},
     ],
-    "surreal":     [
+    "surreal": [
         {"zh": "超现实主义", "en": "Surrealism"},
-        {"zh": "梦幻",       "en": "Dreamlike"},
-        {"zh": "达利风格",   "en": "Dalí-style"},
-        {"zh": "魔幻现实",   "en": "Magical realism"},
-        {"zh": "意识流",     "en": "Stream of consciousness"},
+        {"zh": "梦幻", "en": "Dreamlike"},
+        {"zh": "达利风格", "en": "Dalí-style"},
+        {"zh": "魔幻现实", "en": "Magical realism"},
+        {"zh": "意识流", "en": "Stream of consciousness"},
     ],
-    "cyberpunk":   [
-        {"zh": "赛博朋克",   "en": "Cyberpunk"},
-        {"zh": "蒸汽朋克",   "en": "Steampunk"},
-        {"zh": "复古未来",   "en": "Retro-futurism"},
-        {"zh": "霓虹",       "en": "Neon-lit"},
-        {"zh": "数字艺术",   "en": "Digital art"},
+    "cyberpunk": [
+        {"zh": "赛博朋克", "en": "Cyberpunk"},
+        {"zh": "蒸汽朋克", "en": "Steampunk"},
+        {"zh": "复古未来", "en": "Retro-futurism"},
+        {"zh": "霓虹", "en": "Neon-lit"},
+        {"zh": "数字艺术", "en": "Digital art"},
     ],
-    "origami":     [
-        {"zh": "折纸",       "en": "Origami"},
-        {"zh": "纸艺",       "en": "Paper craft"},
-        {"zh": "剪纸",       "en": "Papercut"},
-        {"zh": "立体纸雕",   "en": "3D paper sculpture"},
-        {"zh": "纸质感",     "en": "Paper texture"},
+    "origami": [
+        {"zh": "折纸", "en": "Origami"},
+        {"zh": "纸艺", "en": "Paper craft"},
+        {"zh": "剪纸", "en": "Papercut"},
+        {"zh": "立体纸雕", "en": "3D paper sculpture"},
+        {"zh": "纸质感", "en": "Paper texture"},
     ],
-    "clay":        [
-        {"zh": "粘土",       "en": "Clay"},
-        {"zh": "定格动画",   "en": "Stop-motion"},
-        {"zh": "手办",       "en": "Figurine"},
-        {"zh": "微缩模型",   "en": "Diorama miniature"},
-        {"zh": "黏土质感",   "en": "Clay texture"},
+    "clay": [
+        {"zh": "粘土", "en": "Clay"},
+        {"zh": "定格动画", "en": "Stop-motion"},
+        {"zh": "手办", "en": "Figurine"},
+        {"zh": "微缩模型", "en": "Diorama miniature"},
+        {"zh": "黏土质感", "en": "Clay texture"},
     ],
-    "pixel":       [
-        {"zh": "像素画",     "en": "Pixel art"},
-        {"zh": "8bit风格",   "en": "8-bit style"},
-        {"zh": "复古游戏",   "en": "Retro game"},
-        {"zh": "点阵风格",   "en": "Dot-matrix style"},
+    "pixel": [
+        {"zh": "像素画", "en": "Pixel art"},
+        {"zh": "8bit风格", "en": "8-bit style"},
+        {"zh": "复古游戏", "en": "Retro game"},
+        {"zh": "点阵风格", "en": "Dot-matrix style"},
     ],
 }
 
 _LIGHTING_KEYWORDS_I18N: dict[str, list[dict[str, str]]] = {
-    "natural":     [
-        {"zh": "自然光",         "en": "Natural light"},
-        {"zh": "窗光",           "en": "Window light"},
-        {"zh": "柔和日光",       "en": "Soft daylight"},
-        {"zh": "正午阳光",       "en": "Noon sunlight"},
-        {"zh": "多云天漫射光",   "en": "Overcast diffuse light"},
+    "natural": [
+        {"zh": "自然光", "en": "Natural light"},
+        {"zh": "窗光", "en": "Window light"},
+        {"zh": "柔和日光", "en": "Soft daylight"},
+        {"zh": "正午阳光", "en": "Noon sunlight"},
+        {"zh": "多云天漫射光", "en": "Overcast diffuse light"},
     ],
-    "dramatic":    [
-        {"zh": "逆光",       "en": "Backlight"},
-        {"zh": "侧逆光",     "en": "Rim back-light"},
-        {"zh": "轮廓光",     "en": "Rim light"},
-        {"zh": "伦勃朗光",   "en": "Rembrandt lighting"},
-        {"zh": "分割光",     "en": "Split lighting"},
+    "dramatic": [
+        {"zh": "逆光", "en": "Backlight"},
+        {"zh": "侧逆光", "en": "Rim back-light"},
+        {"zh": "轮廓光", "en": "Rim light"},
+        {"zh": "伦勃朗光", "en": "Rembrandt lighting"},
+        {"zh": "分割光", "en": "Split lighting"},
     ],
     "atmospheric": [
         {"zh": "丁达尔效应", "en": "Tyndall effect"},
-        {"zh": "体积光",     "en": "Volumetric light"},
-        {"zh": "氛围光",     "en": "Ambient light"},
-        {"zh": "雾气光线",   "en": "Misty light shafts"},
-        {"zh": "光束穿透",   "en": "God rays"},
+        {"zh": "体积光", "en": "Volumetric light"},
+        {"zh": "氛围光", "en": "Ambient light"},
+        {"zh": "雾气光线", "en": "Misty light shafts"},
+        {"zh": "光束穿透", "en": "God rays"},
     ],
-    "artificial":  [
-        {"zh": "霓虹灯",     "en": "Neon lights"},
-        {"zh": "聚光灯",     "en": "Spotlight"},
-        {"zh": "环形灯",     "en": "Ring light"},
-        {"zh": "LED灯带",    "en": "LED strip"},
-        {"zh": "烛光",       "en": "Candlelight"},
+    "artificial": [
+        {"zh": "霓虹灯", "en": "Neon lights"},
+        {"zh": "聚光灯", "en": "Spotlight"},
+        {"zh": "环形灯", "en": "Ring light"},
+        {"zh": "LED灯带", "en": "LED strip"},
+        {"zh": "烛光", "en": "Candlelight"},
     ],
     "golden_hour": [
-        {"zh": "金色时刻",   "en": "Golden hour"},
-        {"zh": "日落光线",   "en": "Sunset light"},
-        {"zh": "暖色调光",   "en": "Warm tone lighting"},
-        {"zh": "夕阳余晖",   "en": "Afterglow"},
+        {"zh": "金色时刻", "en": "Golden hour"},
+        {"zh": "日落光线", "en": "Sunset light"},
+        {"zh": "暖色调光", "en": "Warm tone lighting"},
+        {"zh": "夕阳余晖", "en": "Afterglow"},
     ],
-    "blue_hour":   [
-        {"zh": "蓝调时刻",   "en": "Blue hour"},
-        {"zh": "冷色调光",   "en": "Cool tone lighting"},
-        {"zh": "月光",       "en": "Moonlight"},
-        {"zh": "星光",       "en": "Starlight"},
+    "blue_hour": [
+        {"zh": "蓝调时刻", "en": "Blue hour"},
+        {"zh": "冷色调光", "en": "Cool tone lighting"},
+        {"zh": "月光", "en": "Moonlight"},
+        {"zh": "星光", "en": "Starlight"},
     ],
-    "studio":      [
-        {"zh": "摄影棚光",   "en": "Studio lighting"},
-        {"zh": "柔光箱",     "en": "Softbox"},
-        {"zh": "反光板",     "en": "Reflector"},
-        {"zh": "蝴蝶光",     "en": "Butterfly lighting"},
-        {"zh": "美人光",     "en": "Beauty lighting"},
+    "studio": [
+        {"zh": "摄影棚光", "en": "Studio lighting"},
+        {"zh": "柔光箱", "en": "Softbox"},
+        {"zh": "反光板", "en": "Reflector"},
+        {"zh": "蝴蝶光", "en": "Butterfly lighting"},
+        {"zh": "美人光", "en": "Beauty lighting"},
     ],
 }
 
@@ -557,34 +555,34 @@ _LIGHTING_KEYWORDS_I18N: dict[str, list[dict[str, str]]] = {
 
 _COMPOSITION_LABELS_I18N: dict[str, dict[str, str]] = {
     "distance": {"zh": "景别", "en": "Shot size"},
-    "angle":    {"zh": "视角", "en": "Camera angle"},
-    "lens":     {"zh": "镜头", "en": "Lens"},
+    "angle": {"zh": "视角", "en": "Camera angle"},
+    "lens": {"zh": "镜头", "en": "Lens"},
 }
 
 # Keyed by zh so we can look up the EN tooltip without changing COMPOSITION_KEYWORDS.
 _COMPOSITION_DESC_EN: dict[str, str] = {
-    "特写":         "Tight focus on a small detail",
-    "近景":         "From the chest up",
-    "中景":         "From the waist up",
-    "全景":         "Whole subject in frame",
-    "远景":         "Subject small within environment",
-    "平视":         "Eye-level perspective",
-    "俯视":         "Looking down from above",
-    "仰视":         "Looking up from below; conveys grandeur",
-    "航拍":         "Bird's-eye / aerial view",
-    "虫眼视角":     "Extreme low angle",
-    "微距":         "Macro close-up of fine detail",
-    "广角":         "Wide field of view, exaggerated perspective",
-    "长焦":         "Compressed depth of field",
-    "鱼眼":         "Spherical fisheye distortion",
-    "移轴":         "Tilt-shift miniature effect",
+    "特写": "Tight focus on a small detail",
+    "近景": "From the chest up",
+    "中景": "From the waist up",
+    "全景": "Whole subject in frame",
+    "远景": "Subject small within environment",
+    "平视": "Eye-level perspective",
+    "俯视": "Looking down from above",
+    "仰视": "Looking up from below; conveys grandeur",
+    "航拍": "Bird's-eye / aerial view",
+    "虫眼视角": "Extreme low angle",
+    "微距": "Macro close-up of fine detail",
+    "广角": "Wide field of view, exaggerated perspective",
+    "长焦": "Compressed depth of field",
+    "鱼眼": "Spherical fisheye distortion",
+    "移轴": "Tilt-shift miniature effect",
 }
 
 # --- Long-form: full localized copies (one shot per locale) ----------------
 
 _MODE_FORMULAS_EN: dict[str, dict] = {
     "text2img": {
-        "basic":    "Subject + Scene/Background + Style",
+        "basic": "Subject + Scene/Background + Style",
         "advanced": "Subject + Scene/Background + Camera language + Lighting/Mood + Style + Detail modifiers",
         "tips": [
             "Subject first: describe the focal point of the image up front.",
@@ -594,7 +592,7 @@ _MODE_FORMULAS_EN: dict[str, dict] = {
         ],
     },
     "img_edit": {
-        "basic":    "Reference image + Edit instruction",
+        "basic": "Reference image + Edit instruction",
         "advanced": "Reference image + Specific edit instruction + Elements to preserve + Output style",
         "tips": [
             "Be specific about WHAT to change.",
@@ -635,7 +633,7 @@ _MODE_FORMULAS_EN: dict[str, dict] = {
         ],
     },
     "ecommerce": {
-        "basic":    "Product name/description + Pick scene types",
+        "basic": "Product name/description + Pick scene types",
         "advanced": "Product name/description + Product image (optional) + Choose scenes to generate",
         "tips": [
             "Upload a transparent-background product photo to swap backgrounds automatically.",
@@ -723,8 +721,8 @@ _PROMPT_TEMPLATES_EN: list[dict] = [
 ]
 
 _NEGATIVE_PROMPT_PRESETS_EN: dict[str, str] = {
-    "general":   "low quality, blurry, deformed, ugly, watermark, text, logo, lowres, bad quality",
-    "portrait":  "deformed hands, extra fingers, distorted face, asymmetric eyes, blurry face, bad anatomy, deformed body proportions",
+    "general": "low quality, blurry, deformed, ugly, watermark, text, logo, lowres, bad quality",
+    "portrait": "deformed hands, extra fingers, distorted face, asymmetric eyes, blurry face, bad anatomy, deformed body proportions",
     "landscape": "people, text, watermark, deformed buildings, unnatural colors, oversaturated",
 }
 
@@ -812,9 +810,7 @@ _ECOMMERCE_SCENE_PROMPTS: dict[str, str] = {
         "商业产品摄影，高清锐利，8K"
     ),
     "bg_white": (
-        "{product}，纯白背景，居中摆放，"
-        "均匀柔光无阴影，电商上架标准白底图，"
-        "产品摄影，超高清"
+        "{product}，纯白背景，居中摆放，均匀柔光无阴影，电商上架标准白底图，产品摄影，超高清"
     ),
     "bg_scene": (
         "{product}的使用场景，{product}放置在精心布置的桌面上，"

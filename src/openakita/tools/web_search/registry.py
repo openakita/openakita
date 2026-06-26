@@ -63,8 +63,7 @@ def get_provider(provider_id: str) -> WebSearchProvider:
         return _PROVIDERS[provider_id]
     except KeyError as exc:
         raise KeyError(
-            f"Unknown web_search provider {provider_id!r}; "
-            f"available: {sorted(_PROVIDERS)}"
+            f"Unknown web_search provider {provider_id!r}; available: {sorted(_PROVIDERS)}"
         ) from exc
 
 

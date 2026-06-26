@@ -49,9 +49,7 @@ class SearXNGProvider:
         timeout_seconds: float = 0.0,
     ) -> list[SearchResult]:
         if not self.is_available():
-            raise MissingCredentialError(
-                "SEARXNG_BASE_URL not configured", provider_id=self.id
-            )
+            raise MissingCredentialError("SEARXNG_BASE_URL not configured", provider_id=self.id)
 
         params = {
             "q": query,

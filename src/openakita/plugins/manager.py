@@ -163,9 +163,7 @@ class PluginManager:
         # external dict，并通过 ``_LiveFilteredHostRefs`` 在 PluginAPI 边界上
         # 实施白名单过滤，保证 (a) live-binding 生效；(b) plugin 仍然只能看到
         # ``_ALLOWED_HOST_REFS`` 列出的字段。
-        external_host_refs: dict[str, Any] = (
-            host_refs if host_refs is not None else {}
-        )
+        external_host_refs: dict[str, Any] = host_refs if host_refs is not None else {}
         external_host_refs.setdefault("asset_bus", self._asset_bus)
         self._external_host_refs = external_host_refs
         self._host_refs = _LiveFilteredHostRefs(external_host_refs, _ALLOWED_HOST_REFS)
@@ -215,9 +213,7 @@ class PluginManager:
         try:
             return await self._asset_bus.sweep_owner(plugin_id)
         except Exception as e:
-            logger.warning(
-                "purge_plugin_assets failed for '%s': %s", plugin_id, e
-            )
+            logger.warning("purge_plugin_assets failed for '%s': %s", plugin_id, e)
             return 0
 
     @property
@@ -271,9 +267,7 @@ class PluginManager:
     def state(self) -> PluginState:
         return self._state
 
-    def get_tool_class(
-        self, tool_name: str
-    ) -> tuple[Any, Any] | None:
+    def get_tool_class(self, tool_name: str) -> tuple[Any, Any] | None:
         """C10：插件工具 → ApprovalClass 查表（PolicyEngineV2 ``plugin_lookup``）。
 
         遍历**已加载且未禁用**的插件，匹配 ``manifest.tool_classes`` 里
@@ -540,13 +534,11 @@ class PluginManager:
                 ):
                     msg = (
                         "openakita_plugin_sdk is not installed. "
-                        "Run `pip install \"openakita[plugins]\"` (production) or "
+                        'Run `pip install "openakita[plugins]"` (production) or '
                         "`pip install -e ./openakita-plugin-sdk` (monorepo dev), "
                         "then reload this plugin."
                     )
-                    logger.error(
-                        "Plugin '%s' failed to load: %s", manifest.id, msg
-                    )
+                    logger.error("Plugin '%s' failed to load: %s", manifest.id, msg)
                 elif isinstance(e, ModuleNotFoundError):
                     msg = self._format_missing_module_error(manifest, plugin_dir, e)
                     logger.error(
@@ -569,9 +561,8 @@ class PluginManager:
                 # PR-P1: 把失败原因 + traceback 落到 jsonl，便于事后排查回放，
                 # 也让前端 PluginManagerView 能展示"上次加载失败 N 个，原因..."。
                 import traceback as _tb
-                self._record_failure_jsonl(
-                    manifest.id, type(e).__name__, msg, _tb.format_exc()
-                )
+
+                self._record_failure_jsonl(manifest.id, type(e).__name__, msg, _tb.format_exc())
 
         self._refresh_skill_catalog()
         self._reload_llm_registries()
@@ -749,9 +740,7 @@ class PluginManager:
         if manifest.has_ui:
             self._mount_plugin_ui(manifest, plugin_dir)
 
-    def _mount_plugin_ui(
-        self, manifest: PluginManifest, plugin_dir: Path
-    ) -> None:
+    def _mount_plugin_ui(self, manifest: PluginManifest, plugin_dir: Path) -> None:
         """Mount plugin UI static files to the FastAPI app."""
         assert manifest.ui is not None
         ui_entry = manifest.ui.entry
@@ -759,14 +748,16 @@ class PluginManager:
         if not ui_dist_dir.is_dir():
             logger.warning(
                 "Plugin '%s' declares UI but dist dir '%s' not found, skipping UI mount",
-                manifest.id, ui_dist_dir,
+                manifest.id,
+                ui_dist_dir,
             )
             return
         index_file = plugin_dir / ui_entry
         if not index_file.is_file():
             logger.warning(
                 "Plugin '%s' UI entry '%s' not found, skipping UI mount",
-                manifest.id, ui_entry,
+                manifest.id,
+                ui_entry,
             )
             return
 
@@ -880,11 +871,7 @@ class PluginManager:
         plugin_local_names: set[str] = set()
         try:
             for child in plugin_dir.iterdir():
-                if (
-                    child.is_file()
-                    and child.suffix == ".py"
-                    and child.stem != "__init__"
-                ):
+                if child.is_file() and child.suffix == ".py" and child.stem != "__init__":
                     plugin_local_names.add(child.stem)
                 elif child.is_dir() and (child / "__init__.py").is_file():
                     plugin_local_names.add(child.name)
@@ -901,16 +888,13 @@ class PluginManager:
                 # they don't belong to this plugin and leave them alone.
                 continue
             try:
-                belongs = Path(mod_file).resolve().is_relative_to(
-                    plugin_dir_resolved
-                )
+                belongs = Path(mod_file).resolve().is_relative_to(plugin_dir_resolved)
             except (OSError, ValueError):
                 belongs = False
             if not belongs:
                 sys.modules.pop(name, None)
                 logger.debug(
-                    "Plugin '%s' shadowing top-level module '%s' "
-                    "previously from %s",
+                    "Plugin '%s' shadowing top-level module '%s' previously from %s",
                     manifest.id,
                     name,
                     mod_file,
@@ -1399,9 +1383,7 @@ class PluginManager:
         return True
 
     @staticmethod
-    async def _cancel_stray_plugin_tasks(
-        plugin_id: str, loaded: _LoadedPlugin
-    ) -> None:
+    async def _cancel_stray_plugin_tasks(plugin_id: str, loaded: _LoadedPlugin) -> None:
         """Cancel & await any task whose coroutine lives in a plugin module.
 
         This is a safety net for plugins that bypass ``api.spawn_task`` and
@@ -1439,9 +1421,7 @@ class PluginManager:
                 continue
             # Match exact module name or ``<plugin>.<sub>`` prefix; avoid
             # over-collecting siblings like ``foo_bar`` when plugin is ``foo``.
-            if mod in plugin_modules or any(
-                mod.startswith(pm + ".") for pm in plugin_modules
-            ):
+            if mod in plugin_modules or any(mod.startswith(pm + ".") for pm in plugin_modules):
                 stray.append(t)
 
         if not stray:
@@ -1458,9 +1438,7 @@ class PluginManager:
         try:
             await asyncio.wait(stray, timeout=UNLOAD_TIMEOUT)
         except Exception as e:
-            logger.debug(
-                "Plugin '%s' awaiting stray task cancellation: %s", plugin_id, e
-            )
+            logger.debug("Plugin '%s' awaiting stray task cancellation: %s", plugin_id, e)
 
     async def disable_plugin(self, plugin_id: str, reason: str = "user") -> None:
         self._state.disable(plugin_id, reason)
@@ -1661,8 +1639,7 @@ class PluginManager:
         mount_name = f"plugin-ui-{plugin_id}"
         try:
             app.routes[:] = [
-                r for r in app.routes
-                if not (hasattr(r, "name") and r.name == mount_name)
+                r for r in app.routes if not (hasattr(r, "name") and r.name == mount_name)
             ]
             logger.debug("Unmounted plugin UI '%s' at %s", plugin_id, mount_path)
         except Exception as e:
@@ -1685,16 +1662,18 @@ class PluginManager:
                 except OSError:
                     version = ""
                 icon_url = f"/api/plugins/{lp.manifest.id}/ui/{ui.icon}{version}"
-            result.append({
-                "id": lp.manifest.id,
-                "title": ui.title or lp.manifest.name,
-                "title_i18n": dict(ui.title_i18n) if ui.title_i18n else {},
-                "icon_url": icon_url,
-                "sidebar_group": ui.sidebar_group,
-                "sandbox": ui.sandbox,
-                "enabled": True,
-                "status": "loaded",
-            })
+            result.append(
+                {
+                    "id": lp.manifest.id,
+                    "title": ui.title or lp.manifest.name,
+                    "title_i18n": dict(ui.title_i18n) if ui.title_i18n else {},
+                    "icon_url": icon_url,
+                    "sidebar_group": ui.sidebar_group,
+                    "sandbox": ui.sandbox,
+                    "enabled": True,
+                    "status": "loaded",
+                }
+            )
         return result
 
     def list_failed(self) -> dict[str, str]:

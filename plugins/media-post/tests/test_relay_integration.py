@@ -29,6 +29,7 @@ class _StubError(Exception):
 
 def _install_stub_relay(monkeypatch, refs):
     pkg = SimpleNamespace()
+
     def apply(settings, *, default_base_url="", required_capability="", plugin_name=""):
         out = dict(settings)
         name = str(out.pop("relay_endpoint", "") or "").strip()
@@ -44,6 +45,7 @@ def _install_stub_relay(monkeypatch, refs):
         if ref.get("api_key"):
             out["api_key"] = ref["api_key"]
         return out
+
     pkg.apply_relay_override = apply
     pkg.SettingsRelayResolutionError = _StubError
     monkeypatch.setitem(sys.modules, "openakita", SimpleNamespace(relay=pkg))

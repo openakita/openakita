@@ -154,8 +154,10 @@ def _run_ffprobe(path: str | Path, *select_streams: str) -> dict[str, str]:
         return {}
     args = [
         bin_path,
-        "-v", "error",
-        "-print_format", "default=noprint_wrappers=1",
+        "-v",
+        "error",
+        "-print_format",
+        "default=noprint_wrappers=1",
         "-show_entries",
         # Pull format-level duration AND any stream-level fields the
         # caller asked for in one ffprobe invocation (cheaper than two).
@@ -225,9 +227,7 @@ _MB = 1024 * 1024
 
 def _check_ext(fmt: str, allowed: set[str], label: str) -> None:
     if fmt and fmt not in allowed:
-        raise AssetSpecError(
-            f"{label} 格式不支持：当前 {fmt!r}，仅允许 {sorted(allowed)}"
-        )
+        raise AssetSpecError(f"{label} 格式不支持：当前 {fmt!r}，仅允许 {sorted(allowed)}")
 
 
 def assert_videoretalk_audio(path: str | Path) -> AudioProbe:
@@ -243,13 +243,9 @@ def assert_videoretalk_audio(path: str | Path) -> AudioProbe:
         )
     if probe.duration_sec:
         if probe.duration_sec < 2.0:
-            raise AssetSpecError(
-                f"videoretalk 音频时长 {probe.duration_sec:.2f}s 短于下限 2.00s"
-            )
+            raise AssetSpecError(f"videoretalk 音频时长 {probe.duration_sec:.2f}s 短于下限 2.00s")
         if probe.duration_sec > 120.0:
-            raise AssetSpecError(
-                f"videoretalk 音频时长 {probe.duration_sec:.2f}s 超过上限 120.00s"
-            )
+            raise AssetSpecError(f"videoretalk 音频时长 {probe.duration_sec:.2f}s 超过上限 120.00s")
     return probe
 
 
@@ -260,13 +256,11 @@ def assert_s2v_image(path: str | Path) -> ImageProbe:
     if probe.width and probe.height:
         if min(probe.width, probe.height) < 400:
             raise AssetSpecError(
-                f"wan2.2-s2v 图像短边 {min(probe.width, probe.height)}px"
-                " 小于 400px 下限"
+                f"wan2.2-s2v 图像短边 {min(probe.width, probe.height)}px 小于 400px 下限"
             )
         if max(probe.width, probe.height) > 7000:
             raise AssetSpecError(
-                f"wan2.2-s2v 图像长边 {max(probe.width, probe.height)}px"
-                " 超过 7000px 上限"
+                f"wan2.2-s2v 图像长边 {max(probe.width, probe.height)}px 超过 7000px 上限"
             )
     return probe
 
@@ -276,18 +270,12 @@ def assert_s2v_audio(path: str | Path) -> AudioProbe:
     probe = probe_audio(path)
     _check_ext(probe.fmt, _S2V_AUDIO_EXTS, "wan2.2-s2v 音频")
     if probe.size_bytes > 15 * _MB:
-        raise AssetSpecError(
-            f"wan2.2-s2v 音频大小 {probe.size_bytes / _MB:.1f} MB 超过 15 MB 上限"
-        )
+        raise AssetSpecError(f"wan2.2-s2v 音频大小 {probe.size_bytes / _MB:.1f} MB 超过 15 MB 上限")
     if probe.duration_sec:
         if probe.duration_sec < 2.0:
-            raise AssetSpecError(
-                f"wan2.2-s2v 音频时长 {probe.duration_sec:.2f}s 短于下限 2.00s"
-            )
+            raise AssetSpecError(f"wan2.2-s2v 音频时长 {probe.duration_sec:.2f}s 短于下限 2.00s")
         if probe.duration_sec > 20.0:
-            raise AssetSpecError(
-                f"wan2.2-s2v 音频时长 {probe.duration_sec:.2f}s 超过上限 20.00s"
-            )
+            raise AssetSpecError(f"wan2.2-s2v 音频时长 {probe.duration_sec:.2f}s 超过上限 20.00s")
     return probe
 
 
@@ -302,13 +290,11 @@ def assert_animate_image(path: str | Path) -> ImageProbe:
     if probe.width and probe.height:
         if min(probe.width, probe.height) < 200:
             raise AssetSpecError(
-                f"wan2.2-animate 图像短边 {min(probe.width, probe.height)}px"
-                " 小于 200px 下限"
+                f"wan2.2-animate 图像短边 {min(probe.width, probe.height)}px 小于 200px 下限"
             )
         if max(probe.width, probe.height) > 4096:
             raise AssetSpecError(
-                f"wan2.2-animate 图像长边 {max(probe.width, probe.height)}px"
-                " 超过 4096px 上限"
+                f"wan2.2-animate 图像长边 {max(probe.width, probe.height)}px 超过 4096px 上限"
             )
     return probe
 
@@ -333,13 +319,11 @@ def assert_animate_video(path: str | Path) -> VideoProbe:
     if probe.width and probe.height:
         if min(probe.width, probe.height) < 200:
             raise AssetSpecError(
-                f"wan2.2-animate 视频短边 {min(probe.width, probe.height)}px"
-                " 小于 200px 下限"
+                f"wan2.2-animate 视频短边 {min(probe.width, probe.height)}px 小于 200px 下限"
             )
         if max(probe.width, probe.height) > 2048:
             raise AssetSpecError(
-                f"wan2.2-animate 视频长边 {max(probe.width, probe.height)}px"
-                " 超过 2048px 上限"
+                f"wan2.2-animate 视频长边 {max(probe.width, probe.height)}px 超过 2048px 上限"
             )
     return probe
 

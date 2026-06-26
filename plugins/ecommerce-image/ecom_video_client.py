@@ -65,6 +65,7 @@ class EcomVideoClient:
         # plugin runtime owns an event loop and on_unload reaps any
         # remaining httpx clients during shutdown anyway.
         import asyncio
+
         try:
             loop = asyncio.get_event_loop()
             loop.create_task(old_client.aclose())
@@ -101,21 +102,26 @@ class EcomVideoClient:
                 if not asset:
                     continue
                 if asset.get("base64"):
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{asset['base64']}"},
-                    })
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{asset['base64']}"},
+                        }
+                    )
                 elif asset.get("url"):
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {"url": asset["url"]},
-                    })
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": asset["url"]},
+                        }
+                    )
         if prompt:
             content.append({"type": "text", "text": prompt})
         if not content:
             content.append({"type": "text", "text": ""})
 
         from ecom_models import get_video_model_id
+
         model_id = get_video_model_id(model)
 
         body: dict[str, Any] = {
@@ -178,8 +184,7 @@ class EcomVideoClient:
                 )
             if "model" in lower and ("not exist" in lower or "not found" in lower or "无权" in msg):
                 raise RuntimeError(
-                    f"Ark 模型 '{model_id}' 不可用，请确认账号已开通该模型；"
-                    f"原始错误：{msg}"
+                    f"Ark 模型 '{model_id}' 不可用，请确认账号已开通该模型；原始错误：{msg}"
                 )
             raise RuntimeError(f"Ark API error ({resp.status_code}): {msg}")
 

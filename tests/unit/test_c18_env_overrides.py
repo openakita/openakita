@@ -91,9 +91,7 @@ class TestApplyOverrides:
 
     def test_auto_confirm_flips_mode_to_trust(self) -> None:
         cfg = PolicyConfigV2()
-        new_cfg, report = eo.apply_env_overrides(
-            cfg, environ={"OPENAKITA_AUTO_CONFIRM": "1"}
-        )
+        new_cfg, report = eo.apply_env_overrides(cfg, environ={"OPENAKITA_AUTO_CONFIRM": "1"})
         # "trust" is the v2 enum value for auto-allow (v1: "yolo").
         assert new_cfg.confirmation.mode == "trust"
         assert len(report.applied) == 1
@@ -101,9 +99,7 @@ class TestApplyOverrides:
 
     def test_auto_confirm_false_resets_to_default(self) -> None:
         cfg = PolicyConfigV2.model_validate({"confirmation": {"mode": "trust"}})
-        new_cfg, report = eo.apply_env_overrides(
-            cfg, environ={"OPENAKITA_AUTO_CONFIRM": "false"}
-        )
+        new_cfg, report = eo.apply_env_overrides(cfg, environ={"OPENAKITA_AUTO_CONFIRM": "false"})
         assert new_cfg.confirmation.mode == "default"
 
     def test_unattended_strategy(self) -> None:
@@ -116,9 +112,7 @@ class TestApplyOverrides:
     def test_audit_log_path(self, tmp_path: Path) -> None:
         cfg = PolicyConfigV2()
         custom = str(tmp_path / "audit.jsonl")
-        new_cfg, report = eo.apply_env_overrides(
-            cfg, environ={"OPENAKITA_AUDIT_LOG_PATH": custom}
-        )
+        new_cfg, report = eo.apply_env_overrides(cfg, environ={"OPENAKITA_AUDIT_LOG_PATH": custom})
         # Note schema._validate_safe_path normalizes; only assert it isn't
         # the default.
         assert new_cfg.audit.log_path != cfg.audit.log_path
@@ -205,9 +199,7 @@ class TestResolveYamlPath:
         monkeypatch.setenv("OPENAKITA_POLICY_FILE", str(custom))
         assert global_engine._resolve_yaml_path() == custom
 
-    def test_env_var_empty_string_ignored(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_var_empty_string_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OPENAKITA_POLICY_FILE", "   ")
         # Falls through to settings/fallback; just verify it didn't return
         # the empty path.
@@ -257,9 +249,7 @@ class TestLoadIntegration:
 
 
 class TestAuditEmission:
-    def test_apply_writes_audit_row(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_apply_writes_audit_row(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # C18 二轮 audit (BUG-C2) 修复后，``_audit_env_overrides`` 用
         # cfg.audit.log_path 直接构造 ephemeral logger（绕开单例避免
         # 死锁）。所以我们通过 YAML 指定 audit 路径来捕获 audit 行，
@@ -285,9 +275,7 @@ class TestAuditEmission:
             for line in audit_path.read_text(encoding="utf-8").strip().splitlines()
             if line.strip()
         ]
-        applied_rows = [
-            r for r in rows if r.get("decision") == "env_override_applied"
-        ]
+        applied_rows = [r for r in rows if r.get("decision") == "env_override_applied"]
         assert applied_rows, "audit chain must contain env_override_applied row"
         assert applied_rows[-1]["policy"] == "policy_env_override"
 
@@ -314,12 +302,9 @@ class TestAuditEmission:
             for line in audit_path.read_text(encoding="utf-8").strip().splitlines()
             if line.strip()
         ]
-        invalid_rows = [
-            r for r in rows if r.get("decision") == "env_override_invalid"
-        ]
+        invalid_rows = [r for r in rows if r.get("decision") == "env_override_invalid"]
         assert invalid_rows, (
-            "audit chain must contain env_override_invalid row when ENV value "
-            "fails coerce"
+            "audit chain must contain env_override_invalid row when ENV value fails coerce"
         )
 
 

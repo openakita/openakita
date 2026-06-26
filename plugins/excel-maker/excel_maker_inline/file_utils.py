@@ -80,4 +80,3 @@ def write_probe(directory: str | Path) -> Path:
     probe.write_text("ok", encoding="utf-8")
     probe.unlink(missing_ok=True)
     return path
-

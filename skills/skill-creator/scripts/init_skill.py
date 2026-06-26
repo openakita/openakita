@@ -206,7 +206,7 @@ def normalize_skill_name(skill_name):
 
 def title_case_skill_name(skill_name):
     """Convert hyphenated skill name to Title Case for display."""
-    return ' '.join(word.capitalize() for word in skill_name.split('-'))
+    return " ".join(word.capitalize() for word in skill_name.split("-"))
 
 
 def yaml_quote(value):
@@ -248,13 +248,15 @@ def write_openai_yaml(skill_dir, skill_name, display_name=None, short_descriptio
     ]
 
     if OPENAKITA_ENV:
-        lines.extend([
-            "",
-            "i18n:",
-            "  zh:",
-            '    name: "[TODO: 中文技能名（2-6个字）]"',
-            '    description: "[TODO: 技能功能的中文描述]"',
-        ])
+        lines.extend(
+            [
+                "",
+                "i18n:",
+                "  zh:",
+                '    name: "[TODO: 中文技能名（2-6个字）]"',
+                '    description: "[TODO: 技能功能的中文描述]"',
+            ]
+        )
 
     agents_dir = skill_dir / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
@@ -335,12 +337,9 @@ def init_skill(skill_name, path, resources=None, include_examples=False):
         return None
 
     skill_title = title_case_skill_name(skill_name)
-    skill_content = SKILL_TEMPLATE.format(
-        skill_name=skill_name,
-        skill_title=skill_title
-    )
+    skill_content = SKILL_TEMPLATE.format(skill_name=skill_name, skill_title=skill_title)
 
-    skill_md_path = skill_dir / 'SKILL.md'
+    skill_md_path = skill_dir / "SKILL.md"
     try:
         skill_md_path.write_text(skill_content)
         print("[OK] Created SKILL.md")
@@ -364,8 +363,10 @@ def init_skill(skill_name, path, resources=None, include_examples=False):
     print(f"\n[OK] Skill '{skill_name}' initialized successfully at {skill_dir}")
     print("\nNext steps:")
     print("1. Edit SKILL.md to complete the TODO items and update the description")
-    print("2. Update agents/openai.yaml with display metadata" + (
-        " and i18n" if OPENAKITA_ENV else ""))
+    print(
+        "2. Update agents/openai.yaml with display metadata"
+        + (" and i18n" if OPENAKITA_ENV else "")
+    )
     if resources:
         if include_examples:
             print("3. Customize or delete the example files in resource directories")
@@ -385,11 +386,13 @@ def main():
     parser.add_argument("skill_name", help="Skill name (normalized to hyphen-case)")
     parser.add_argument("--path", required=True, help="Output directory for the skill")
     parser.add_argument(
-        "--resources", default="",
+        "--resources",
+        default="",
         help="Comma-separated list: scripts,references,assets",
     )
     parser.add_argument(
-        "--examples", action="store_true",
+        "--examples",
+        action="store_true",
         help="Create example files inside the selected resource directories",
     )
     args = parser.parse_args()
@@ -435,4 +438,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -195,4 +195,3 @@ class StreamEvent:
             )
 
         return cls(type="ping")
-

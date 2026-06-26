@@ -468,7 +468,7 @@ DEFAULT_MODEL=claude-opus-4-5-20251101-thinking
 MAX_TOKENS=8192
 
 # Agent 配置
-AGENT_NAME=OpenAkita
+# 显示名称由「Agents」菜单的 Agent Profile 管理，环境变量不再控制 Agent 名称。
 MAX_ITERATIONS=100
 AUTO_CONFIRM=false
 

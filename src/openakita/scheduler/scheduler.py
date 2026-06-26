@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from ..utils.atomic_io import safe_json_write, safe_write
+from ..utils.atomic_io import atomic_json_write, safe_write
 from ._naming import quarantine_invalid_task_name, validate_task_name
 from .locks import (
     HEARTBEAT_INTERVAL_SECONDS,
@@ -37,6 +37,7 @@ from .task import ScheduledTask, TaskDurability, TaskExecution, TaskStatus, Trig
 from .triggers import Trigger
 
 logger = logging.getLogger(__name__)
+CHANNEL_UNAVAILABLE_MARKER = "[channel_unavailable]"
 
 # 执行器类型定义
 TaskExecutorFunc = Callable[[ScheduledTask], Awaitable[tuple[bool, str]]]
@@ -271,14 +272,14 @@ class TaskScheduler:
         ``PendingApprovalsStore`` 是独立模块；这里 lazy import 避免循环。
         """
         awaiting_ids = [
-            tid for tid, t in self._tasks.items()
-            if t.status == TaskStatus.AWAITING_APPROVAL
+            tid for tid, t in self._tasks.items() if t.status == TaskStatus.AWAITING_APPROVAL
         ]
         if not awaiting_ids:
             return
 
         try:
             from ..core.pending_approvals import get_pending_approvals_store
+
             store = get_pending_approvals_store()
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -296,9 +297,7 @@ class TaskScheduler:
                 continue
             entries: list[Any] = []
             try:
-                entries = [
-                    e for e in store.list_pending() if getattr(e, "task_id", None) == tid
-                ]
+                entries = [e for e in store.list_pending() if getattr(e, "task_id", None) == tid]
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
                     "[scheduler] reconcile: list_pending(%s) failed: %s",
@@ -324,9 +323,7 @@ class TaskScheduler:
             if keep:
                 continue
 
-            reason = (
-                "approval_orphaned" if not entries else "approval_expired"
-            )
+            reason = "approval_orphaned" if not entries else "approval_expired"
             try:
                 # mark_failed expects status==RUNNING; force-transition first
                 # so we don't tear up the state machine on the corrupted row.
@@ -361,9 +358,7 @@ class TaskScheduler:
                 reason,
             )
 
-    def _stagger_missed_tasks(
-        self, missed_tasks: list[ScheduledTask], now: datetime
-    ) -> None:
+    def _stagger_missed_tasks(self, missed_tasks: list[ScheduledTask], now: datetime) -> None:
         """Spread missed tasks beyond MAX_MISSED_PER_RESTART out in time.
 
         借鉴 openclaw ``planStartupCatchup``：第 N (N >= MAX) 个 missed 任务
@@ -376,9 +371,7 @@ class TaskScheduler:
             try:
                 task.next_run = now + timedelta(seconds=idx * self.STAGGER_INTERVAL_S)
             except Exception as exc:  # noqa: BLE001
-                logger.debug(
-                    "[scheduler] stagger(%s) failed: %s", task.id, exc
-                )
+                logger.debug("[scheduler] stagger(%s) failed: %s", task.id, exc)
         logger.info(
             "[scheduler] staggered %d missed tasks (cap=%d, interval=%ds)",
             len(missed_tasks) - self.MAX_MISSED_PER_RESTART,
@@ -671,9 +664,7 @@ class TaskScheduler:
             logger.warning(f"trigger_in_background: task {task_id} is disabled, skipping")
             return None
         if task_id in self._running_tasks:
-            logger.warning(
-                f"trigger_in_background: task {task_id} is already running, skipping"
-            )
+            logger.warning(f"trigger_in_background: task {task_id} is already running, skipping")
             return None
 
         # 同步占位 _running_tasks，避免快速连按在 create_task 调度到之前
@@ -814,7 +805,9 @@ class TaskScheduler:
                 )
 
         # C17 Phase A.2 §3：cross-process exec lock。
-        expected_runtime = task.metadata.get("timeout_seconds") if isinstance(task.metadata, dict) else None
+        expected_runtime = (
+            task.metadata.get("timeout_seconds") if isinstance(task.metadata, dict) else None
+        )
         if not isinstance(expected_runtime, (int, float)) or expected_runtime <= 0:
             expected_runtime = 300
         exec_lock: ExecLock | None = acquire_exec_lock(
@@ -911,6 +904,9 @@ class TaskScheduler:
             _is_deferred = isinstance(_err_or_res, str) and _err_or_res.startswith(
                 "[awaiting_approval]"
             )
+            _is_channel_unavailable = isinstance(_err_or_res, str) and _err_or_res.startswith(
+                CHANNEL_UNAVAILABLE_MARKER
+            )
 
             if execution.status == "success":
                 # Fix: 使用"实际预定时间"而非 datetime.now() 作为基准。
@@ -947,6 +943,11 @@ class TaskScheduler:
                     task.id,
                     _err_or_res,
                 )
+            elif _is_channel_unavailable:
+                execution.error = (
+                    _err_or_res.removeprefix(CHANNEL_UNAVAILABLE_MARKER).strip() or _err_or_res
+                )
+                self._handle_channel_unavailable(task, _err_or_res)
             else:
                 self._handle_task_failure(task, execution.error or "Unknown error")
 
@@ -977,9 +978,7 @@ class TaskScheduler:
             try:
                 release_exec_lock(exec_lock)
             except Exception as exc:  # noqa: BLE001
-                logger.debug(
-                    "[scheduler] release_exec_lock(%s) raised %s", task.id, exc
-                )
+                logger.debug("[scheduler] release_exec_lock(%s) raised %s", task.id, exc)
             reset_current_scheduled_task_id(ctx_token)
 
         async with self._lock:
@@ -999,6 +998,27 @@ class TaskScheduler:
         # 检测是否刚被自动禁用（mark_failed 内部会在 fail_count>=5 时禁用）
         if was_enabled and not task.enabled and self.on_task_auto_disabled:
             asyncio.ensure_future(self._notify_auto_disabled(task))
+
+    def _handle_channel_unavailable(self, task: ScheduledTask, marker: str) -> None:
+        """Skip this run without counting it as task logic failure."""
+        if task.status != TaskStatus.RUNNING:
+            logger.warning(
+                "Task %s: channel-unavailable skip from %s, expected RUNNING",
+                task.id,
+                task.status.value,
+            )
+            return
+
+        message = marker.removeprefix(CHANNEL_UNAVAILABLE_MARKER).strip() or marker
+        task.last_run = datetime.now()
+        task.updated_at = task.last_run
+        if not task.metadata:
+            task.metadata = {}
+        task.metadata["last_channel_unavailable"] = message
+        task.metadata["last_channel_unavailable_at"] = task.last_run.isoformat()
+        task.status = TaskStatus.SCHEDULED
+        self._advance_next_run(task)
+        logger.warning("Task %s skipped because IM channel is unavailable: %s", task.id, message)
 
     async def _notify_auto_disabled(self, task: ScheduledTask) -> None:
         """安全调用 on_task_auto_disabled 回调"""
@@ -1240,7 +1260,7 @@ class TaskScheduler:
                 for task in self._tasks.values()
                 if task.durability != TaskDurability.SESSION
             ]
-            safe_json_write(tasks_file, data, fsync=True)
+            atomic_json_write(tasks_file, data, fsync=True)
 
         except Exception as e:
             logger.error(f"Failed to save tasks: {e}")

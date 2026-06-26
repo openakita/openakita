@@ -10,7 +10,9 @@ from openakita.runtime_channel_deps import (
 
 def test_channel_deps_no_enabled_channels_is_ok(monkeypatch):
     monkeypatch.setattr("openakita.runtime_channel_deps.inject_module_paths_runtime", lambda: None)
-    monkeypatch.setattr("openakita.runtime_channel_deps.patch_simplejson_jsondecodeerror", lambda logger=None: False)
+    monkeypatch.setattr(
+        "openakita.runtime_channel_deps.patch_simplejson_jsondecodeerror", lambda logger=None: False
+    )
 
     result = ensure_channel_dependencies(workspace_env={})
 
@@ -20,10 +22,14 @@ def test_channel_deps_no_enabled_channels_is_ok(monkeypatch):
 
 def test_channel_deps_packaged_mode_rejects_frozen_sys_executable(monkeypatch):
     monkeypatch.setattr("openakita.runtime_channel_deps.inject_module_paths_runtime", lambda: None)
-    monkeypatch.setattr("openakita.runtime_channel_deps.patch_simplejson_jsondecodeerror", lambda logger=None: False)
+    monkeypatch.setattr(
+        "openakita.runtime_channel_deps.patch_simplejson_jsondecodeerror", lambda logger=None: False
+    )
     monkeypatch.setattr("openakita.runtime_channel_deps.IS_FROZEN", True)
     monkeypatch.setattr("openakita.runtime_channel_deps.get_app_python_executable", lambda: None)
-    monkeypatch.setattr("openakita.runtime_channel_deps.get_python_executable", lambda: sys.executable)
+    monkeypatch.setattr(
+        "openakita.runtime_channel_deps.get_python_executable", lambda: sys.executable
+    )
     monkeypatch.setattr(
         "openakita.runtime_channel_deps.CHANNEL_DEPS",
         {"feishu": [("definitely_missing_openakita_dep", "definitely-missing-openakita-dep")]},
@@ -74,8 +80,12 @@ def test_ensure_channel_deps_returns_install_errors(monkeypatch, tmp_path):
         lambda logger=None: False,
     )
     monkeypatch.setattr("openakita.runtime_channel_deps.IS_FROZEN", False)
-    monkeypatch.setattr("openakita.runtime_channel_deps.get_app_python_executable", lambda: sys.executable)
-    monkeypatch.setattr("openakita.runtime_channel_deps.get_python_executable", lambda: sys.executable)
+    monkeypatch.setattr(
+        "openakita.runtime_channel_deps.get_app_python_executable", lambda: sys.executable
+    )
+    monkeypatch.setattr(
+        "openakita.runtime_channel_deps.get_python_executable", lambda: sys.executable
+    )
     monkeypatch.setattr("openakita.runtime_channel_deps.get_channel_deps_dir", lambda: tmp_path)
     monkeypatch.setattr(
         "openakita.runtime_channel_deps.apply_runtime_pip_environment",
@@ -91,7 +101,14 @@ def test_ensure_channel_deps_returns_install_errors(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "openakita.runtime_channel_deps.CHANNEL_DEPS",
-        {"feishu": [("definitely_missing_openakita_dep_for_test", "definitely-missing-openakita-dep-for-test")]},
+        {
+            "feishu": [
+                (
+                    "definitely_missing_openakita_dep_for_test",
+                    "definitely-missing-openakita-dep-for-test",
+                )
+            ]
+        },
     )
 
     import subprocess as _sp
@@ -106,7 +123,9 @@ def test_ensure_channel_deps_returns_install_errors(monkeypatch, tmp_path):
         lambda *a, **kw: _Result(),
     )
     # 让 TimeoutExpired 仍可被 except 捕获
-    monkeypatch.setattr("openakita.runtime_channel_deps.subprocess.TimeoutExpired", _sp.TimeoutExpired)
+    monkeypatch.setattr(
+        "openakita.runtime_channel_deps.subprocess.TimeoutExpired", _sp.TimeoutExpired
+    )
 
     result = ensure_channel_dependencies(workspace_env={"FEISHU_ENABLED": "true"})
 
@@ -114,4 +133,6 @@ def test_ensure_channel_deps_returns_install_errors(monkeypatch, tmp_path):
     assert result["missing"] == ["definitely-missing-openakita-dep-for-test"]
     assert "errors" in result
     assert "definitely-missing-openakita-dep-for-test" in result["errors"]
-    assert "Could not find a version" in result["errors"]["definitely-missing-openakita-dep-for-test"]
+    assert (
+        "Could not find a version" in result["errors"]["definitely-missing-openakita-dep-for-test"]
+    )

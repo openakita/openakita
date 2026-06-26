@@ -35,37 +35,6 @@ def _project_root() -> Path:
         return Path.cwd()
 
 
-def _enabled_chat_endpoints_count(endpoints: list[Any]) -> int:
-    """Treat ``enabled: false`` as excluded; unset ``enabled`` means on."""
-    n = 0
-    for raw in endpoints:
-        if not isinstance(raw, dict):
-            continue
-        if raw.get("enabled") is False:
-            continue
-        n += 1
-    return n
-
-
-def _two_chat_endpoints_denial_reason(candidate_list: list[Any], endpoint_type: str) -> str | None:
-    """Require ≥2 usable chat endpoints when ``llm_view_min_endpoints_v1`` on."""
-    if endpoint_type != "endpoints":
-        return None
-    try:
-        from openakita.core.feature_flags import is_enabled as _ff_enabled
-    except Exception:
-        return None
-    if not _ff_enabled("llm_view_min_endpoints_v1"):
-        return None
-    if _enabled_chat_endpoints_count(candidate_list) >= 2:
-        return None
-    return (
-        "至少需要 2 个处于启用状态的聊天模型端点（主 + 备用，便于故障切换）。"
-        "请再添加或启用一条端点；若在开发环境只需单端点，可在 FEATURE_FLAGS "
-        "中将 llm_view_min_endpoints_v1 设为 false。"
-    )
-
-
 def _read_endpoints_safe(ep_path: Path) -> dict | None:
     """Read llm_endpoints.json with .bak fallback."""
     from openakita.utils.atomic_io import read_json_safe
@@ -324,7 +293,13 @@ _SECURITY_PROFILE_OFF_ACK = "确认风险同意关闭"
 
 
 def _normalize_security_profile(profile: str) -> str:
-    value = (profile or "protect").strip().lower()
+    # 出厂默认从 ``policy_v2/defaults.py::FACTORY_DEFAULT_PROFILE`` 取——
+    # 单一真源，与 schema 默认 + ``_apply_security_profile_defaults`` 共享，
+    # 改默认 profile 时只需改 defaults.py 一处。空字符串 / 未知值的兜底也
+    # 指向出厂默认，让 setup-center 的"刷新全部"在 YAML 仍为空时不会误显示。
+    from openakita.core.policy_v2.defaults import FACTORY_DEFAULT_PROFILE
+
+    value = (profile or FACTORY_DEFAULT_PROFILE).strip().lower()
     aliases = {
         "yolo": "trust",
         "smart": "protect",
@@ -332,7 +307,7 @@ def _normalize_security_profile(profile: str) -> str:
     }
     value = aliases.get(value, value)
     if value not in ("trust", "protect", "strict", "off", "custom"):
-        value = "protect"
+        value = FACTORY_DEFAULT_PROFILE
     return value
 
 
@@ -354,46 +329,35 @@ def _write_profile_event(profile: str, *, previous: str | None = None) -> None:
 
 
 def _apply_security_profile_defaults(sec: dict[str, Any], profile: str) -> None:
+    """把 baked profile 套餐写到 raw ``security`` dict 上。
+
+    Bundle 真源 = ``policy_v2/defaults.py::PROFILE_BUNDLES``。本函数只做两件
+    事：(1) 写 ``profile.current`` / ``profile.base`` 元数据；(2) 把
+    bundle 的原子字段 deep-merge 到现有 ``sec`` 上（保留用户已设过的
+    ``timeout_seconds`` / ``custom_critical`` 等非 bundle 字段）。
+
+    ``custom`` 不在 PROFILE_BUNDLES 里——它表示"用户自己拼"，本函数只更新
+    ``profile.current``，原子字段一动不动。
+    """
+    from openakita.core.policy_v2.defaults import PROFILE_BUNDLES, profile_bundle
+
     profile = _normalize_security_profile(profile)
     prev = (sec.get("profile") or {}).get("current")
     sec["profile"] = {"current": profile, "base": None if profile != "custom" else prev}
-    conf = sec.setdefault("confirmation", {})
-    sandbox = sec.setdefault("sandbox", {})
-    shell_risk = sec.setdefault("shell_risk", {})
-    death_switch = sec.setdefault("death_switch", {})
-    checkpoint = sec.setdefault("checkpoint", {})
-    if profile == "trust":
-        sec["enabled"] = True
-        conf["mode"] = "trust"
-        sandbox["enabled"] = False
-        shell_risk["enabled"] = True
-        death_switch["enabled"] = True
-        checkpoint["enabled"] = True
-    elif profile == "protect":
-        sec["enabled"] = True
-        conf["mode"] = "default"
-        sandbox["enabled"] = True
-        shell_risk["enabled"] = True
-        death_switch["enabled"] = True
-        checkpoint["enabled"] = True
-    elif profile == "strict":
-        sec["enabled"] = True
-        conf["mode"] = "strict"
-        sandbox["enabled"] = True
-        shell_risk["enabled"] = True
-        death_switch["enabled"] = True
-        checkpoint["enabled"] = True
-    elif profile == "off":
-        # off 同时把 security.enabled 关掉，使二者保持单一语义：
-        # "整套策略停摆"。engine.preflight 任一为关都会短路 ALLOW，
-        # 但只有这里二者同时被写下，未来导出/迁移/审计才不会出现
-        # "enabled=True 但 profile=off" 这种荒谬组合。
-        sec["enabled"] = False
-        conf["mode"] = "trust"
-        sandbox["enabled"] = False
-        shell_risk["enabled"] = False
-        death_switch["enabled"] = False
-        checkpoint["enabled"] = False
+
+    if profile not in PROFILE_BUNDLES:
+        # custom（或未来新增的非 baked profile）：保留原子字段不动，
+        # 只让 profile.current 跟随调用方意图。
+        return
+
+    # profile_bundle() 返回 fresh deep-copy，下面直接 mutate sec 也不会污染
+    # PROFILE_BUNDLES 真源（即便未来 bundle 里加 list/dict 子字段也安全）。
+    bundle = profile_bundle(profile)
+    sec["enabled"] = bundle["enabled"]
+    for block, fields in bundle.items():
+        if block == "enabled":
+            continue
+        sec.setdefault(block, {}).update(fields)
 
 
 def _mark_security_profile_custom(sec: dict[str, Any]) -> None:
@@ -408,7 +372,12 @@ def _mark_security_profile_custom(sec: dict[str, Any]) -> None:
     prev = profile.get("current")
     leaving_off = prev == "off"
     if prev != "custom":
-        profile["base"] = prev or "protect"
+        # base 兜底走 ``defaults.FACTORY_DEFAULT_PROFILE``——用户从 custom 还
+        # 原时回到出厂方案（当前 = trust）。这条与 schema 默认 + 出厂体验保持
+        # 单一真源。
+        from openakita.core.policy_v2.defaults import FACTORY_DEFAULT_PROFILE
+
+        profile["base"] = prev or FACTORY_DEFAULT_PROFILE
         profile["current"] = "custom"
     # custom 模式下 security.enabled 永远应该是 True（否则不存在意义）。
     sec["enabled"] = True
@@ -417,13 +386,20 @@ def _mark_security_profile_custom(sec: dict[str, Any]) -> None:
 
 
 def _mode_from_security(sec: dict[str, Any] | None) -> str:
+    # 出厂默认 = yolo（= trust）：与 PolicyConfigV2 schema 默认 +
+    # ``policy_v2/defaults.py::FACTORY_DEFAULT_PROFILE`` 单一真源对齐。
+    # 即便 raw dict 里没有 confirmation 块，也按"信任模式"汇报，保持
+    # /security/options 与运行时引擎的一致性。两条真源之间的契约由
+    # ``tests/unit/test_security_permission_mode_api.py::
+    # test_schema_default_and_trust_bundle_agree_on_confirmation_mode``
+    # 钉死。
     conf = (sec or {}).get("confirmation", {})
     mode = conf.get("mode")
     if mode:
         return _normalize_permission_mode(str(mode))
     if conf.get("auto_confirm") is True:
         return "yolo"
-    return "smart" if sec else "yolo"
+    return "yolo"
 
 
 def _normalize_confirmation_mode(mode: Any) -> str:
@@ -481,43 +457,6 @@ def _sanitize_path(full_path: Path, workspace_root: Path) -> str:
         return str(full_path.relative_to(workspace_root))
     except ValueError:
         return full_path.name
-
-
-_SENSITIVE_KEY_PATTERNS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL")
-
-# NOTE: 修改本块（_mask_value / _mask_raw_env / read_env 的 mask 行为）时，
-# 务必同步检查以下三处防御，避免再次回归 v1.26.6 已修复的
-# "编辑端点时遮蔽 API Key 被回写覆盖真实密钥" 缺陷：
-#   1. write_env: 对敏感键过滤含 *** 的值（safe_entries）
-#   2. save_endpoint: body.api_key 含 *** 时降级为 None
-#   3. apps/setup-center/src/views/LLMView.tsx: editDraft.apiKeyDirty 标记
-# 参考 v1.26.x 提交：8ab550fa（前后端 dirty + save_endpoint 防御）
-# 与 d3ea9814（write_env *** 防御）。曾被 main 6439b342 误回退。
-
-
-def _mask_value(key: str, value: str) -> str:
-    """Redact values whose key name suggests a secret (API keys, tokens, etc.)."""
-    if any(p in key.upper() for p in _SENSITIVE_KEY_PATTERNS):
-        if len(value) <= 8:
-            return "****"
-        return value[:4] + "****" + value[-4:]
-    return value
-
-
-def _mask_raw_env(raw: str) -> str:
-    """Mask sensitive values inside the raw .env text."""
-    import re
-
-    def _replace(m: re.Match) -> str:
-        key, sep, val = m.group("key"), m.group("sep"), m.group("val")
-        return f"{key}{sep}{_mask_value(key, val)}"
-
-    return re.sub(
-        r"^(?P<key>[A-Za-z_]\w*)(?P<sep>\s*=\s*)(?P<val>.+)$",
-        _replace,
-        raw,
-        flags=re.MULTILINE,
-    )
 
 
 def _runtime_env_key_map() -> dict[str, str]:
@@ -594,12 +533,10 @@ def _sync_runtime_agent_settings(request: Request, changed_fields: set[str]) -> 
 async def read_env():
     """Read .env file content as key-value pairs.
 
-    Sensitive values (keys containing TOKEN/SECRET/PASSWORD/KEY/CREDENTIAL)
-    are masked before being returned. The ``has_value`` map tells the
-    frontend which keys actually have a non-empty value without leaking
-    the real secret — this lets the editor distinguish "已配置 / 未配置"
-    while still requiring the user to explicitly retype to update a key
-    (see apiKeyDirty in LLMView.tsx).
+    Returns plain-text values (no masking). The desktop app runs on
+    localhost and the user already has read access to the .env file,
+    so redaction would only create write-back hazards (masked values
+    accidentally overwriting real secrets — the v1.26.6 regression).
     """
     env_path = _project_root() / ".env"
     content = ""
@@ -608,10 +545,8 @@ async def read_env():
     env = _parse_env(content)
     for env_key, field_name in _runtime_env_key_map().items():
         env[env_key] = _runtime_env_value(field_name)
-    masked_env = {k: _mask_value(k, v) for k, v in env.items()}
     has_value = {k: bool(v and v.strip()) for k, v in env.items()}
-    masked_raw = _mask_raw_env(content)
-    return {"env": masked_env, "has_value": has_value, "raw": masked_raw}
+    return {"env": env, "has_value": has_value, "raw": content}
 
 
 @router.post("/api/config/env")
@@ -630,22 +565,10 @@ async def write_env(body: EnvUpdateRequest, request: Request):
     if env_path.exists():
         existing = env_path.read_bytes().decode("utf-8", errors="replace")
 
-    # Defense: drop masked sentinel values for sensitive keys to prevent the
-    # frontend's saveEnvKeys path from accidentally overwriting real secrets
-    # with the *** display values returned by GET /api/config/env.
-    # See v1.26.x commit d3ea9814.
-    import re as _re
-
-    _sensitive_key_re = _re.compile(
-        r"(TOKEN|SECRET|PASSWORD|KEY|APIKEY|CREDENTIAL)", _re.IGNORECASE
-    )
     runtime_key_map = _runtime_env_key_map()
     safe_entries: dict[str, str] = {}
     runtime_entries: dict[str, str] = {}
     for key, value in body.entries.items():
-        if value and "***" in value and _sensitive_key_re.search(key):
-            logger.warning("[Config API] write_env: dropping masked value for %s", key)
-            continue
         field_name = runtime_key_map.get(key.upper())
         if field_name:
             runtime_entries[key.upper()] = value
@@ -849,6 +772,22 @@ class DeleteEndpointRequest(BaseModel):
     clean_env: bool = True
 
 
+class DeleteEndpointsRequest(BaseModel):
+    names: list[str]
+    endpoint_type: str = "endpoints"
+    clean_env: bool = True
+
+
+def _normalize_endpoint_api_key(api_key: str | None) -> str | None:
+    """Treat UI-masked secrets as an unchanged value, not a new API key."""
+    if api_key is None:
+        return None
+    stripped = api_key.strip()
+    if "****" in stripped:
+        return None
+    return api_key
+
+
 @router.post("/api/config/save-endpoint")
 async def save_endpoint(body: SaveEndpointRequest, request: Request):
     """Save or update an LLM endpoint atomically.
@@ -858,20 +797,7 @@ async def save_endpoint(body: SaveEndpointRequest, request: Request):
     """
     from openakita.llm.endpoint_manager import ConflictError
 
-    # Defense: if the frontend echoed back the masked sentinel from
-    # GET /api/config/env (e.g. "sk-d****ab53"), treat it as "unchanged"
-    # rather than overwriting the real key on disk. The frontend should
-    # already gate this via apiKeyDirty (LLMView.tsx) but we keep this
-    # belt-and-suspenders to prevent regressions like main 6439b342.
-    # See v1.26.x commit 8ab550fa.
-    api_key = body.api_key
-    if api_key and "***" in api_key:
-        logger.warning(
-            "[Config API] save-endpoint: ignoring masked API key (len=%d), treating as unchanged",
-            len(api_key),
-        )
-        api_key = None
-
+    api_key = _normalize_endpoint_api_key(body.api_key)
     mgr = _get_endpoint_manager()
     existing_endpoint = None
     lookup_name = (body.original_name or body.endpoint.get("name") or "").strip()
@@ -956,18 +882,7 @@ async def save_endpoints(body: SaveEndpointsRequest, request: Request):
     """Save multiple LLM endpoints in one import operation."""
     from openakita.llm.endpoint_manager import ConflictError
 
-    api_key = body.api_key
-    if api_key and "***" in api_key:
-        logger.warning(
-            "[Config API] save-endpoints: ignoring masked API key (len=%d)",
-            len(api_key),
-        )
-        api_key = None
-
-    deny_two = _two_chat_endpoints_denial_reason(body.endpoints, body.endpoint_type)
-    if deny_two:
-        return {"status": "error", "error": deny_two}
-
+    api_key = _normalize_endpoint_api_key(body.api_key)
     mgr = _get_endpoint_manager()
     existing_by_name: dict[str, dict] = {}
     try:
@@ -1037,6 +952,36 @@ async def save_endpoints(body: SaveEndpointsRequest, request: Request):
     return response
 
 
+@router.delete("/api/config/endpoints")
+async def delete_endpoints(body: DeleteEndpointsRequest, request: Request):
+    """Delete multiple LLM endpoints by name and reload running clients once."""
+    mgr = _get_endpoint_manager()
+    try:
+        removed = mgr.delete_endpoints(
+            body.names,
+            endpoint_type=body.endpoint_type,
+            clean_env=body.clean_env,
+        )
+    except (ValueError, Exception) as e:
+        logger.error("[Config API] delete-endpoints failed: %s", e, exc_info=True)
+        return {"status": "error", "error": str(e)}
+
+    removed_names = {str(ep.get("name") or "") for ep in removed}
+    requested_names = [str(name).strip() for name in body.names if str(name).strip()]
+    not_found = [name for name in requested_names if name not in removed_names]
+    reload_result = (
+        _trigger_reload(request) if removed else {"status": "skipped", "reason": "no_match"}
+    )
+    return {
+        "status": "ok",
+        "removed": removed,
+        "removed_count": len(removed),
+        "not_found": not_found,
+        "version": mgr.get_version(),
+        "reload": reload_result,
+    }
+
+
 @router.delete("/api/config/endpoint/{name:path}")
 async def delete_endpoint_by_name(
     name: str, request: Request, endpoint_type: str = "endpoints", clean_env: bool = True
@@ -1077,6 +1022,164 @@ class UpdateSettingsRequest(BaseModel):
     settings: dict
 
 
+class ContextLengthRequest(BaseModel):
+    endpoint: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    endpoint_type: str = "endpoints"
+    context_length: int = Field(
+        validation_alias=AliasChoices("context_length", "context_limit", "contextLimit")
+    )
+    expected_version: str | None = None
+
+
+def _runtime_current_endpoint_name(request: Request) -> str:
+    agent = getattr(request.app.state, "agent", None)
+    actual = getattr(agent, "_local_agent", agent) if agent else None
+    brain = getattr(actual, "_brain", None) or getattr(actual, "brain", None)
+    if brain is None:
+        re = getattr(actual, "reasoning_engine", None)
+        ctx_mgr = getattr(actual, "context_manager", None) or getattr(re, "_context_manager", None)
+        brain = getattr(ctx_mgr, "_brain", None)
+    if brain is None or not hasattr(brain, "get_current_model_info"):
+        return ""
+    try:
+        info = brain.get_current_model_info()
+    except Exception:
+        return ""
+    if not isinstance(info, dict):
+        return ""
+    return str(info.get("name") or info.get("endpoint_name") or "").strip()
+
+
+def _select_context_endpoint(
+    request: Request,
+    endpoints: list[dict],
+    *,
+    endpoint: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict | None:
+    endpoint = (endpoint or "").strip()
+    provider = (provider or "").strip()
+    model = (model or "").strip()
+    if endpoint:
+        return next((ep for ep in endpoints if str(ep.get("name") or "") == endpoint), None)
+    if provider or model:
+        for ep in endpoints:
+            if provider and str(ep.get("provider") or "") != provider:
+                continue
+            if model and str(ep.get("model") or "") != model:
+                continue
+            return ep
+    runtime_name = _runtime_current_endpoint_name(request)
+    if runtime_name:
+        found = next((ep for ep in endpoints if str(ep.get("name") or "") == runtime_name), None)
+        if found:
+            return found
+    return next((ep for ep in endpoints if ep.get("enabled", True) is not False), None)
+
+
+def _context_length_payload(endpoint: dict) -> dict[str, Any]:
+    from openakita.config import settings
+    from openakita.llm.types import DEFAULT_CONTEXT_WINDOW
+
+    raw_window = int(endpoint.get("context_window") or 0)
+    if raw_window <= 0:
+        raw_window = int(DEFAULT_CONTEXT_WINDOW)
+    global_cap = int(settings.context_max_window or 0)
+    effective_window = min(raw_window, global_cap) if global_cap > 0 else raw_window
+    output_reserve = int(endpoint.get("max_tokens") or 4096)
+    output_reserve = min(output_reserve, max(effective_window // 3, 0))
+    context_limit = int((effective_window - output_reserve) * 0.95)
+    if context_limit < 1024:
+        context_limit = max(int(effective_window * 0.5), 1024)
+
+    return {
+        "endpoint": endpoint.get("name"),
+        "endpoint_name": endpoint.get("name"),
+        "provider": endpoint.get("provider"),
+        "model": endpoint.get("model"),
+        "context_length": raw_window,
+        "context_window": raw_window,
+        "context_limit": context_limit,
+        "effective_context_window": effective_window,
+        "global_context_max_window": global_cap,
+        "output_reserve": output_reserve,
+    }
+
+
+@router.get("/api/config/context-length")
+async def get_context_length(
+    request: Request,
+    endpoint: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    endpoint_type: str = "endpoints",
+):
+    """Return endpoint-level context window and effective runtime limit."""
+    mgr = _get_endpoint_manager()
+    try:
+        endpoints = mgr.list_endpoints(endpoint_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    selected = _select_context_endpoint(
+        request,
+        endpoints,
+        endpoint=endpoint,
+        provider=provider,
+        model=model,
+    )
+    if selected is None:
+        raise HTTPException(status_code=404, detail="context endpoint not found")
+    return _context_length_payload(selected)
+
+
+@router.put("/api/config/context-length")
+async def update_context_length(body: ContextLengthRequest, request: Request):
+    """Update an endpoint's context_window and hot-reload the running LLM config."""
+    if body.context_length < 1000:
+        raise HTTPException(status_code=400, detail="context_length must be >= 1000")
+
+    mgr = _get_endpoint_manager()
+    try:
+        endpoints = mgr.list_endpoints(body.endpoint_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    selected = _select_context_endpoint(
+        request,
+        endpoints,
+        endpoint=body.endpoint,
+        provider=body.provider,
+        model=body.model,
+    )
+    if selected is None:
+        raise HTTPException(status_code=404, detail="context endpoint not found")
+
+    updated = dict(selected)
+    updated["context_window"] = int(body.context_length)
+    try:
+        saved = mgr.save_endpoint(
+            updated,
+            api_key=None,
+            endpoint_type=body.endpoint_type,
+            expected_version=body.expected_version,
+            original_name=str(selected.get("name") or ""),
+        )
+    except Exception as e:
+        logger.error("[Config API] context-length update failed: %s", e, exc_info=True)
+        return {"status": "error", "error": str(e)}
+
+    reload_result = _trigger_reload(request)
+    return {
+        "status": "ok",
+        **_context_length_payload(saved),
+        "endpoint_config": saved,
+        "version": mgr.get_version(),
+        "reload": reload_result,
+    }
+
+
 @router.post("/api/config/toggle-endpoint")
 async def toggle_endpoint(body: ToggleEndpointRequest, request: Request):
     """Toggle an endpoint's enabled/disabled state via EndpointManager."""
@@ -1086,19 +1189,6 @@ async def toggle_endpoint(body: ToggleEndpointRequest, request: Request):
     except (ValueError, Exception) as e:
         logger.error("[Config API] toggle-endpoint failed: %s", e, exc_info=True)
         return {"status": "error", "error": str(e)}
-    deny_tgl = None
-    if body.endpoint_type == "endpoints" and mgr.list_endpoints(body.endpoint_type):
-        deny_tgl = _two_chat_endpoints_denial_reason(
-            mgr.list_endpoints(body.endpoint_type),
-            body.endpoint_type,
-        )
-    if deny_tgl:
-        try:
-            mgr.toggle_endpoint(body.name, endpoint_type=body.endpoint_type)
-        except Exception:
-            pass
-        return {"status": "error", "error": deny_tgl}
-
     reload_result = _trigger_reload(request)
     return {
         "status": "ok",
@@ -1300,16 +1390,18 @@ async def write_skills_config(body: SkillsWriteRequest, request: Request):
     content = body.content if isinstance(body.content, dict) else {}
     al = content.get("external_allowlist") if isinstance(content, dict) else None
 
-    # 优先走唯一写入点；若 payload 不是标准 allowlist 结构，回退到旧的整文件覆盖，
+    # 优先走唯一写入点；若 payload 不是标准 allowlist 结构，回退到原子整文件覆盖，
     # 以保持前端「原样写入」的兼容（例如把非 allowlist 字段写进去）。
     if isinstance(al, list):
         set_skill_external_allowlist([str(x).strip() for x in al if str(x).strip()])
     else:
+        from openakita.utils.atomic_io import atomic_json_write
+
         sk_path = _project_root() / "data" / "skills.json"
-        sk_path.parent.mkdir(parents=True, exist_ok=True)
-        sk_path.write_text(
-            json.dumps(content, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
+        atomic_json_write(sk_path, content)
+        logger.warning(
+            "[Config API] skills.json written via non-standard payload — "
+            "consider using set_skill_external_allowlist or allowlist_io APIs"
         )
 
     # 触发统一刷新（rescan=False：仅重算 allowlist+catalog+pool，无需再扫盘）
@@ -1337,25 +1429,22 @@ async def write_skill_external_allowlist(body: dict, request: Request):
 @router.get("/api/config/disabled-views")
 async def read_disabled_views():
     """Read the list of disabled module views."""
+    from openakita.utils.atomic_io import read_json_safe
+
     dv_path = _project_root() / "data" / "disabled_views.json"
-    if not dv_path.exists():
-        return {"disabled_views": []}
-    try:
-        data = json.loads(dv_path.read_text(encoding="utf-8"))
+    data = read_json_safe(dv_path)
+    if isinstance(data, dict):
         return {"disabled_views": data.get("disabled_views", [])}
-    except Exception as e:
-        return {"error": str(e), "disabled_views": []}
+    return {"disabled_views": []}
 
 
 @router.post("/api/config/disabled-views")
 async def write_disabled_views(body: DisabledViewsRequest):
     """Update the list of disabled module views."""
+    from openakita.utils.atomic_io import atomic_json_write
+
     dv_path = _project_root() / "data" / "disabled_views.json"
-    dv_path.parent.mkdir(parents=True, exist_ok=True)
-    dv_path.write_text(
-        json.dumps({"disabled_views": body.views}, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_json_write(dv_path, {"disabled_views": body.views})
     logger.info(f"[Config API] Updated disabled_views: {body.views}")
     return {"status": "ok", "disabled_views": body.views}
 
@@ -1795,40 +1884,44 @@ async def preview_security_config(body: dict | None = None):
         try:
             d = engine.evaluate_tool_call(ToolCallEvent(tool=tool, params=params), ctx)
             params_preview = ", ".join(f"{k}={v!s}"[:80] for k, v in params.items())
-            decisions.append({
-                "tool": tool,
-                "tool_label_key": f"security.tool.{tool}",
-                "params_preview": params_preview,
-                "decision": d.action.value,
-                "decision_label_key": f"security.decision.{d.action.value}",
-                "reason": d.reason,
-                "reason_code": (d.chain[-1].name if d.chain else "unknown"),
-                "approval_class": d.approval_class.value if d.approval_class else None,
-                "approval_class_label_key": (
-                    f"security.approvalClass.{d.approval_class.value}"
-                    if d.approval_class
-                    else None
-                ),
-                "risk_level": d.shell_risk_level or "",
-                "safety_immune_match": d.safety_immune_match,
-                "flags": {
-                    "safety_immune": bool(d.safety_immune_match),
-                    "needs_sandbox": bool(d.needs_sandbox),
-                    "needs_checkpoint": bool(d.needs_checkpoint),
-                },
-                "effective_confirmation_mode": ctx.confirmation_mode.value,
-                "security_profile": cfg.profile.current,
-            })
+            decisions.append(
+                {
+                    "tool": tool,
+                    "tool_label_key": f"security.tool.{tool}",
+                    "params_preview": params_preview,
+                    "decision": d.action.value,
+                    "decision_label_key": f"security.decision.{d.action.value}",
+                    "reason": d.reason,
+                    "reason_code": (d.chain[-1].name if d.chain else "unknown"),
+                    "approval_class": d.approval_class.value if d.approval_class else None,
+                    "approval_class_label_key": (
+                        f"security.approvalClass.{d.approval_class.value}"
+                        if d.approval_class
+                        else None
+                    ),
+                    "risk_level": d.shell_risk_level or "",
+                    "safety_immune_match": d.safety_immune_match,
+                    "flags": {
+                        "safety_immune": bool(d.safety_immune_match),
+                        "needs_sandbox": bool(d.needs_sandbox),
+                        "needs_checkpoint": bool(d.needs_checkpoint),
+                    },
+                    "effective_confirmation_mode": ctx.confirmation_mode.value,
+                    "security_profile": cfg.profile.current,
+                }
+            )
         except Exception as exc:
-            decisions.append({
-                "tool": tool,
-                "params_preview": "",
-                "decision": "error",
-                "reason": f"engine error: {exc}",
-                "approval_class": None,
-                "risk_level": "",
-                "safety_immune_match": None,
-            })
+            decisions.append(
+                {
+                    "tool": tool,
+                    "params_preview": "",
+                    "decision": "error",
+                    "reason": f"engine error: {exc}",
+                    "approval_class": None,
+                    "risk_level": "",
+                    "safety_immune_match": None,
+                }
+            )
     return {"decisions": decisions, "preview_uses_proposed": proposed_security is not None}
 
 
@@ -1841,8 +1934,7 @@ async def read_security_approval_matrix():
     for role in SessionRole:
         for klass in ApprovalClass:
             cells = {
-                mode.value: lookup_matrix(role, mode, klass).value
-                for mode in ConfirmationMode
+                mode.value: lookup_matrix(role, mode, klass).value for mode in ConfirmationMode
             }
             rows.append({"role": role.value, "approval_class": klass.value, "decisions": cells})
     return {
@@ -1860,11 +1952,7 @@ async def read_security_zones():
     data = _read_policies_yaml() or {}
     sec = data.get("security", {})
     workspace = sec.get("workspace", {}) if isinstance(sec.get("workspace"), dict) else {}
-    immune = (
-        sec.get("safety_immune", {})
-        if isinstance(sec.get("safety_immune"), dict)
-        else {}
-    )
+    immune = sec.get("safety_immune", {}) if isinstance(sec.get("safety_immune"), dict) else {}
     return {
         "workspace": workspace.get("paths", ["${CWD}"]),
         "controlled": [],
@@ -1902,11 +1990,7 @@ async def read_security_path_policy():
     data = _read_policies_yaml() or {}
     sec = data.get("security", {})
     workspace = sec.get("workspace", {}) if isinstance(sec.get("workspace"), dict) else {}
-    immune = (
-        sec.get("safety_immune", {})
-        if isinstance(sec.get("safety_immune"), dict)
-        else {}
-    )
+    immune = sec.get("safety_immune", {}) if isinstance(sec.get("safety_immune"), dict) else {}
     internal_roots: list[str] = []
     try:
         from openakita.config import settings
@@ -1932,7 +2016,11 @@ async def write_security_path_policy(body: SecurityPathPolicyUpdate):
     sec.pop("zones", None)
     profile = sec.setdefault("profile", {})
     if profile.get("current") != "custom":
-        profile["base"] = profile.get("current") or "protect"
+        # base 兜底与 _mark_security_profile_custom 保持一致：走单一真源
+        # ``defaults.FACTORY_DEFAULT_PROFILE``。
+        from openakita.core.policy_v2.defaults import FACTORY_DEFAULT_PROFILE
+
+        profile["base"] = profile.get("current") or FACTORY_DEFAULT_PROFILE
         profile["current"] = "custom"
     _write_policies_yaml(data)
     try:
@@ -2107,7 +2195,9 @@ async def read_security_profile():
     data = _read_policies_yaml() or {}
     sec = data.get("security", {})
     profile = sec.get("profile") or {}
-    current = _normalize_security_profile(str(profile.get("current") or _permission_label(_mode_from_security(sec))))
+    current = _normalize_security_profile(
+        str(profile.get("current") or _permission_label(_mode_from_security(sec)))
+    )
     return {
         "current": current,
         "base": profile.get("base"),
@@ -2260,9 +2350,7 @@ async def security_confirm_batch(body: SecurityConfirmBatchRequest):
         # 被收紧到配置值——避免恶意客户端用超大窗"清空整个 session 的所
         # 有等待 confirm"。
         try:
-            cfg_window = float(
-                get_config_v2().confirmation.aggregation_window_seconds
-            )
+            cfg_window = float(get_config_v2().confirmation.aggregation_window_seconds)
         except Exception:
             cfg_window = 0.0
 
@@ -2277,12 +2365,9 @@ async def security_confirm_batch(body: SecurityConfirmBatchRequest):
             # UI 路径在 enabled=false 时根本不会调这个端点。
             effective_window = body.within_seconds
 
-        candidates = bus.list_batch_candidates(
-            body.session_id, within_seconds=effective_window
-        )
+        candidates = bus.list_batch_candidates(body.session_id, within_seconds=effective_window)
         logger.info(
-            "[Security] Batch confirm session=%s decision=%s window=%s "
-            "candidates=%d",
+            "[Security] Batch confirm session=%s decision=%s window=%s candidates=%d",
             body.session_id[:12] if body.session_id else "",
             decision,
             effective_window,
@@ -2299,9 +2384,7 @@ async def security_confirm_batch(body: SecurityConfirmBatchRequest):
                 else:
                     missing_ids.append(cid)
             except Exception as e:
-                logger.warning(
-                    "[Security] Batch confirm failed for id=%s: %s", cid, e
-                )
+                logger.warning("[Security] Batch confirm failed for id=%s: %s", cid, e)
                 missing_ids.append(cid)
 
         return {
@@ -2459,7 +2542,9 @@ async def read_self_protection():
     audit_cfg = sec.get("audit", {}) if isinstance(sec.get("audit"), dict) else {}
     immune = sec.get("safety_immune", {}) if isinstance(sec.get("safety_immune"), dict) else {}
     # legacy fallback —— 仅读，写路径不再触碰
-    legacy_sp = sec.get("self_protection", {}) if isinstance(sec.get("self_protection"), dict) else {}
+    legacy_sp = (
+        sec.get("self_protection", {}) if isinstance(sec.get("self_protection"), dict) else {}
+    )
     try:
         from openakita.core.policy_v2 import get_death_switch_tracker
 
@@ -2468,10 +2553,10 @@ async def read_self_protection():
         readonly = False
     return {
         "enabled": ds.get("enabled", legacy_sp.get("enabled", True)),
-        "protected_dirs": immune.get("paths", legacy_sp.get("protected_dirs", _DEFAULT_PROTECTED_DIRS)),
-        "death_switch_threshold": ds.get(
-            "threshold", legacy_sp.get("death_switch_threshold", 3)
+        "protected_dirs": immune.get(
+            "paths", legacy_sp.get("protected_dirs", _DEFAULT_PROTECTED_DIRS)
         ),
+        "death_switch_threshold": ds.get("threshold", legacy_sp.get("death_switch_threshold", 3)),
         "death_switch_total_multiplier": ds.get(
             "total_multiplier", legacy_sp.get("death_switch_total_multiplier", 3)
         ),

@@ -198,9 +198,7 @@ def _robust_rmtree(path: Path, *, attempts: int = _RMTREE_ATTEMPTS) -> bool:
             return True
         time.sleep(_RMTREE_BASE_DELAY * (2**i))
     if last_err is not None:
-        logger.warning(
-            "Could not remove %s after %d attempts: %s", path, attempts, last_err
-        )
+        logger.warning("Could not remove %s after %d attempts: %s", path, attempts, last_err)
     return False
 
 
@@ -559,8 +557,7 @@ def deps_appear_installed(plugin_dir: Path, manifest_requires: dict) -> bool:
     if not deps_dir.is_dir():
         return False
     expected = {
-        name for spec in _parse_pip_specs(manifest_requires)
-        if (name := _dist_name_from_spec(spec))
+        name for spec in _parse_pip_specs(manifest_requires) if (name := _dist_name_from_spec(spec))
     }
     if not expected:
         return True
@@ -882,9 +879,7 @@ def install_from_path(
         if backup.exists():
             _robust_rmtree(backup)
         if not _robust_rename(dest, backup):
-            raise PluginInstallError(
-                f"Cannot upgrade: failed to backup existing plugin at {dest}"
-            )
+            raise PluginInstallError(f"Cannot upgrade: failed to backup existing plugin at {dest}")
 
     linked = False
     if dev_mode:
@@ -997,9 +992,7 @@ def uninstall(
             if locked:
                 preview = ", ".join(locked[:5])
                 more = f" (+{len(locked) - 5} 更多)" if len(locked) > 5 else ""
-                out["warnings"].append(
-                    f"以下文件仍被占用: {preview}{more}"
-                )
+                out["warnings"].append(f"以下文件仍被占用: {preview}{more}")
             # Graceful degradation: clear DB files so the next install isn't
             # blocked by a still-locked SQLite file inside the leftover dir.
             if _force_remove_db_files(target):
@@ -1017,17 +1010,13 @@ def uninstall(
         try:
             data_dir.relative_to(data_root_resolved)
         except ValueError:
-            out["warnings"].append(
-                "data path traversal check failed; skipping purge_data"
-            )
+            out["warnings"].append("data path traversal check failed; skipping purge_data")
         else:
             if data_dir.exists():
                 if _robust_rmtree(data_dir):
                     out["purged_data"] = True
                 else:
-                    out["warnings"].append(
-                        f"plugin_data {data_dir} 无法完全删除"
-                    )
+                    out["warnings"].append(f"plugin_data {data_dir} 无法完全删除")
             else:
                 out["purged_data"] = True  # nothing to purge → success
 

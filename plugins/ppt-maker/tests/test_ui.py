@@ -83,4 +83,3 @@ def test_ui_assets_are_self_contained_for_host_bridge() -> None:
     assert "#e84d2a" in css.lower()
     assert "#7c3aed" not in css.lower()
     assert "width: 23px" in css
-

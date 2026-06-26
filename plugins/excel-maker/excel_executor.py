@@ -35,10 +35,16 @@ class ExcelOperationExecutor:
         for operation in operations:
             if operation.op not in SUPPORTED_OPERATIONS:
                 raise OperationExecutionError(f"Unsupported operation: {operation.op}")
-            if "code" in operation.params or "script" in operation.params or "sql" in operation.params:
+            if (
+                "code" in operation.params
+                or "script" in operation.params
+                or "sql" in operation.params
+            ):
                 raise OperationExecutionError(f"Operation {operation.op} contains executable code")
 
-    def apply_plan(self, plan: WorkbookPlan, profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    def apply_plan(
+        self, plan: WorkbookPlan, profile: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         self.validate_operations(plan.operations)
         return {
             "applied": [
@@ -52,6 +58,7 @@ class ExcelOperationExecutor:
                 for operation in plan.operations
             ],
             "profile_workbook_id": (profile or {}).get("workbook_id"),
-            "notes": ["MVP validates operation safety and delegates materialization to workbook builder."],
+            "notes": [
+                "MVP validates operation safety and delegates materialization to workbook builder."
+            ],
         }
-

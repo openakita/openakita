@@ -37,7 +37,10 @@ def cleanup():
     print(f"  找到 {len(garbage_skills)} 条垃圾 skill")
     for row in garbage_skills:
         cur.execute("DELETE FROM memories WHERE id = ?", (row["id"],))
-        cur.execute("DELETE FROM memories_fts WHERE rowid IN (SELECT rowid FROM memories_fts WHERE content MATCH ?)", (row["id"],))
+        cur.execute(
+            "DELETE FROM memories_fts WHERE rowid IN (SELECT rowid FROM memories_fts WHERE content MATCH ?)",
+            (row["id"],),
+        )
     total_deleted += len(garbage_skills)
 
     # ── 2. persona_trait 同 dimension 去重 ──
@@ -59,7 +62,9 @@ def cleanup():
         else:
             seen_dims[dim] = row["id"]
 
-    print(f"  总计 {len(traits)} 条 persona_trait，去重后保留 {len(seen_dims)} 条，删除 {len(dup_ids)} 条")
+    print(
+        f"  总计 {len(traits)} 条 persona_trait，去重后保留 {len(seen_dims)} 条，删除 {len(dup_ids)} 条"
+    )
     for dup_id in dup_ids:
         cur.execute("DELETE FROM memories WHERE id = ?", (dup_id,))
     total_deleted += len(dup_ids)
@@ -94,7 +99,9 @@ def cleanup():
         else:
             kept_contents.append(content)
 
-    print(f"  总计 {len(facts)} 条 fact，去重后保留 {len(facts) - len(fact_dup_ids)} 条，删除 {len(fact_dup_ids)} 条")
+    print(
+        f"  总计 {len(facts)} 条 fact，去重后保留 {len(facts) - len(fact_dup_ids)} 条，删除 {len(fact_dup_ids)} 条"
+    )
     for dup_id in fact_dup_ids:
         cur.execute("DELETE FROM memories WHERE id = ?", (dup_id,))
     total_deleted += len(fact_dup_ids)
@@ -119,4 +126,3 @@ def cleanup():
 
 if __name__ == "__main__":
     cleanup()
-

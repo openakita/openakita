@@ -48,9 +48,8 @@ class RelayNotFound(KeyError):
         self.available = list(available)
 
     def __str__(self) -> str:
-        return (
-            f"relay endpoint {self.name!r} not found"
-            + (f" (available: {', '.join(self.available)})" if self.available else "")
+        return f"relay endpoint {self.name!r} not found" + (
+            f" (available: {', '.join(self.available)})" if self.available else ""
         )
 
 

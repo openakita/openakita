@@ -86,9 +86,15 @@ def _wrap_pcm_as_wav(
     data_len = len(pcm)
     riff_len = 36 + data_len
     header = (
-        b"RIFF" + struct.pack("<I", riff_len) + b"WAVE"
-        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, channels, sample_rate, byte_rate, block_align, bits_per_sample)
-        + b"data" + struct.pack("<I", data_len)
+        b"RIFF"
+        + struct.pack("<I", riff_len)
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack(
+            "<IHHIIHH", 16, 1, channels, sample_rate, byte_rate, block_align, bits_per_sample
+        )
+        + b"data"
+        + struct.pack("<I", data_len)
     )
     return header + pcm
 
@@ -353,7 +359,7 @@ class AvatarDashScopeClient(BaseVendorClient):
         except ImportError as e:
             return {"ok": False, "status": None, "message": f"httpx missing: {e}"}
 
-        key = (api_key if api_key is not None else self._settings().get("api_key") or "")
+        key = api_key if api_key is not None else self._settings().get("api_key") or ""
         key = str(key).strip()
         if not key:
             return {"ok": False, "status": None, "message": "API Key is empty"}
@@ -450,7 +456,9 @@ class AvatarDashScopeClient(BaseVendorClient):
             ]
 
         async def _probe_one(
-            client: httpx.AsyncClient, model_id: str, path: str,
+            client: httpx.AsyncClient,
+            model_id: str,
+            path: str,
         ) -> dict[str, Any]:
             # cosyvoice-v2 uses the WebSocket SDK (no HTTP probe path).
             # We instead look it up in the OpenAI-compat /v1/models list,
@@ -484,14 +492,26 @@ class AvatarDashScopeClient(BaseVendorClient):
                         headers={"Authorization": f"Bearer {api_key}"},
                     )
                 except (httpx.TimeoutException, httpx.NetworkError) as e:
-                    return {"model": model_id, "status": "unknown", "http": None,
-                            "message": f"网络错误: {e!s}"}
+                    return {
+                        "model": model_id,
+                        "status": "unknown",
+                        "http": None,
+                        "message": f"网络错误: {e!s}",
+                    }
                 if r.status_code in (401, 403):
-                    return {"model": model_id, "status": "denied", "http": r.status_code,
-                            "message": "API Key 鉴权失败，cosyvoice-v2 无法使用"}
+                    return {
+                        "model": model_id,
+                        "status": "denied",
+                        "http": r.status_code,
+                        "message": "API Key 鉴权失败，cosyvoice-v2 无法使用",
+                    }
                 if r.status_code != 200:
-                    return {"model": model_id, "status": "unknown", "http": r.status_code,
-                            "message": f"compatible-mode/models 返回 HTTP {r.status_code}"}
+                    return {
+                        "model": model_id,
+                        "status": "unknown",
+                        "http": r.status_code,
+                        "message": f"compatible-mode/models 返回 HTTP {r.status_code}",
+                    }
                 # Credentials accepted — cosyvoice-v2 needs no separate
                 # 「开通」 step on Bailian, so an authenticated key is a
                 # strong-enough signal to call it 「可用」 in the panel.
@@ -503,7 +523,7 @@ class AvatarDashScopeClient(BaseVendorClient):
                     "status": "available",
                     "http": 200,
                     "message": "凭证已通过鉴权（cosyvoice-v2 走 WebSocket，"
-                               "无法预探测；点击「试听」可做端到端验证）",
+                    "无法预探测；点击「试听」可做端到端验证）",
                     "inferred": True,
                 }
 
@@ -517,11 +537,14 @@ class AvatarDashScopeClient(BaseVendorClient):
             try:
                 r = await client.post(url, headers=headers, json=body)
             except httpx.TimeoutException:
-                return {"model": model_id, "status": "unknown", "http": None,
-                        "message": "请求超时"}
+                return {"model": model_id, "status": "unknown", "http": None, "message": "请求超时"}
             except httpx.NetworkError as e:
-                return {"model": model_id, "status": "unknown", "http": None,
-                        "message": f"网络错误: {e!s}"}
+                return {
+                    "model": model_id,
+                    "status": "unknown",
+                    "http": None,
+                    "message": f"网络错误: {e!s}",
+                }
             code = r.status_code
             try:
                 payload = r.json()
@@ -544,28 +567,52 @@ class AvatarDashScopeClient(BaseVendorClient):
                         )
                     except (httpx.TimeoutException, httpx.NetworkError):
                         pass
-                return {"model": model_id, "status": "available", "http": 200,
-                        "message": "可用（探测时意外创建了任务，已自动取消）"}
+                return {
+                    "model": model_id,
+                    "status": "available",
+                    "http": 200,
+                    "message": "可用（探测时意外创建了任务，已自动取消）",
+                }
             if code == 400:
                 # The interesting case: DashScope reached its parameter
                 # validator, which means the key *can* invoke this
                 # endpoint — the request just wouldn't have been a real
                 # one. That's exactly what we want to know.
-                return {"model": model_id, "status": "available", "http": 400,
-                        "message": err_msg or "可用（参数校验拒绝了空输入，符合预期）"}
+                return {
+                    "model": model_id,
+                    "status": "available",
+                    "http": 400,
+                    "message": err_msg or "可用（参数校验拒绝了空输入，符合预期）",
+                }
             if code in (401, 403):
-                return {"model": model_id, "status": "denied", "http": code,
-                        "message": err_msg or f"未授权 (HTTP {code})；请到百炼控制台开通该模型"}
+                return {
+                    "model": model_id,
+                    "status": "denied",
+                    "http": code,
+                    "message": err_msg or f"未授权 (HTTP {code})；请到百炼控制台开通该模型",
+                }
             if code == 404:
-                return {"model": model_id, "status": "denied", "http": 404,
-                        "message": err_msg or "该地域/账号下未提供此模型 (HTTP 404)"}
+                return {
+                    "model": model_id,
+                    "status": "denied",
+                    "http": 404,
+                    "message": err_msg or "该地域/账号下未提供此模型 (HTTP 404)",
+                }
             if code == 429:
                 # We probably hit a rate limit — the key is valid but we
                 # can't tell about the model. Don't mis-classify.
-                return {"model": model_id, "status": "unknown", "http": 429,
-                        "message": err_msg or "限流，请稍后重试 (HTTP 429)"}
-            return {"model": model_id, "status": "unknown", "http": code,
-                    "message": err_msg or f"未知响应 (HTTP {code} {err_code})"}
+                return {
+                    "model": model_id,
+                    "status": "unknown",
+                    "http": 429,
+                    "message": err_msg or "限流，请稍后重试 (HTTP 429)",
+                }
+            return {
+                "model": model_id,
+                "status": "unknown",
+                "http": code,
+                "message": err_msg or f"未知响应 (HTTP {code} {err_code})",
+            }
 
         async with httpx.AsyncClient(timeout=12.0) as client:
             results = await asyncio.gather(
@@ -575,8 +622,9 @@ class AvatarDashScopeClient(BaseVendorClient):
         out: list[dict[str, Any]] = []
         for (m, _p), res in zip(models, results, strict=True):
             if isinstance(res, BaseException):
-                out.append({"model": m, "status": "unknown", "http": None,
-                            "message": f"探测异常: {res!s}"})
+                out.append(
+                    {"model": m, "status": "unknown", "http": None, "message": f"探测异常: {res!s}"}
+                )
             else:
                 out.append(res)
         return out
@@ -904,10 +952,13 @@ class AvatarDashScopeClient(BaseVendorClient):
         # default codec) which we wrote to a ``.mp3`` file — the browser
         # then refused to decode, giving the 0:00/0:00 progress bar.
         fmt_candidates = {
-            "mp3": ("MP3_22050HZ_MONO_256KBPS", "MP3_24000HZ_MONO_256KBPS",
-                    "MP3_44100HZ_MONO_256KBPS", "MP3_16000HZ_MONO_128KBPS"),
-            "wav": ("WAV_22050HZ_MONO_16BIT", "WAV_24000HZ_MONO_16BIT",
-                    "WAV_16000HZ_MONO_16BIT"),
+            "mp3": (
+                "MP3_22050HZ_MONO_256KBPS",
+                "MP3_24000HZ_MONO_256KBPS",
+                "MP3_44100HZ_MONO_256KBPS",
+                "MP3_16000HZ_MONO_128KBPS",
+            ),
+            "wav": ("WAV_22050HZ_MONO_16BIT", "WAV_24000HZ_MONO_16BIT", "WAV_16000HZ_MONO_16BIT"),
             "pcm": ("PCM_22050HZ_MONO_16BIT", "PCM_24000HZ_MONO_16BIT"),
         }
         fmt_const = None
@@ -950,7 +1001,8 @@ class AvatarDashScopeClient(BaseVendorClient):
         head_hex = head.hex(" ")
         logger.info(
             "cosyvoice-v2 returned %d bytes for voice=%s fmt=%s magic=[%s]",
-            len(audio_bytes), voice_id,
+            len(audio_bytes),
+            voice_id,
             getattr(fmt_const, "name", str(fmt_const)),
             head_hex,
         )
@@ -960,7 +1012,9 @@ class AvatarDashScopeClient(BaseVendorClient):
         # our format request (which is the most common "silent player"
         # failure mode in production).
         detected: str | None = None
-        if head.startswith(b"ID3") or (len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0):
+        if head.startswith(b"ID3") or (
+            len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0
+        ):
             detected = "mp3"
         elif head.startswith(b"RIFF") and audio_bytes[8:12] == b"WAVE":
             detected = "wav"
@@ -985,13 +1039,18 @@ class AvatarDashScopeClient(BaseVendorClient):
             except (TypeError, ValueError):
                 pass
             audio_bytes = _wrap_pcm_as_wav(
-                audio_bytes, sample_rate=sample_rate, channels=channels, bits_per_sample=bits,
+                audio_bytes,
+                sample_rate=sample_rate,
+                channels=channels,
+                bits_per_sample=bits,
             )
             detected = "wav"
             logger.warning(
                 "cosyvoice-v2 returned headerless audio (%d bytes); "
                 "wrapped as WAV %dHz mono %dbit so the browser can play it",
-                len(audio_bytes), sample_rate, bits,
+                len(audio_bytes),
+                sample_rate,
+                bits,
             )
 
         return {
@@ -1035,8 +1094,7 @@ class AvatarDashScopeClient(BaseVendorClient):
             )
         except ImportError as e:  # pragma: no cover
             raise VendorError(
-                "未安装 cosyvoice-v2 所需的 dashscope SDK；"
-                "请到插件目录运行 pip install dashscope",
+                "未安装 cosyvoice-v2 所需的 dashscope SDK；请到插件目录运行 pip install dashscope",
                 status=500,
                 retryable=False,
                 kind="dependency",
@@ -1149,7 +1207,9 @@ class AvatarDashScopeClient(BaseVendorClient):
         async with self._submit_lock:
             try:
                 resp = await self.post_json(
-                    path, json_body=body, timeout=60.0,
+                    path,
+                    json_body=body,
+                    timeout=60.0,
                     extra_headers=self._ASYNC_HEADER,
                 )
             except VendorError as e:
@@ -1205,4 +1265,3 @@ class AvatarDashScopeClient(BaseVendorClient):
     @staticmethod
     def _coerce_dict(v: Any) -> dict[str, Any]:
         return v if isinstance(v, dict) else {}
-

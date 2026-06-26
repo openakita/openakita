@@ -77,6 +77,7 @@ class ChannelAdapter(ABC):
         """
         try:
             from openakita.channels.types import OutgoingMessage
+
             return await self.send_message(OutgoingMessage.text(chat_id, text, **kwargs))
         except ImportError:
             raise NotImplementedError(
@@ -148,9 +149,7 @@ class ChannelAdapter(ABC):
         """Delete a message. Return True on success."""
         return False
 
-    async def edit_message(
-        self, chat_id: str, message_id: str, new_text: str
-    ) -> bool:
+    async def edit_message(self, chat_id: str, message_id: str, new_text: str) -> bool:
         """Edit a message. Return True on success."""
         return False
 
@@ -164,9 +163,7 @@ class ChannelAdapter(ABC):
         """Return user metadata, or None if not supported."""
         return None
 
-    def format_final_footer(
-        self, chat_id: str, thread_id: str | None = None
-    ) -> str | None:
+    def format_final_footer(self, chat_id: str, thread_id: str | None = None) -> str | None:
         """Optional footer appended to the last text chunk before send."""
         return None
 
@@ -198,4 +195,3 @@ class ChannelPluginMixin:
         if not self.channel_type:
             raise ValueError("Set channel_type before calling register()")
         api.register_channel(self.channel_type, factory)
-

@@ -147,6 +147,7 @@ class TestJudgeCallable:
     async def test_callable_returns_judge_result(self, judge):
         def custom(x):
             return JudgeResult(passed=True, reason="Custom", score=0.9)
+
         result = await judge.evaluate(42, custom)
         assert result.passed is True
         assert result.score == 0.9
@@ -158,4 +159,3 @@ class TestJudgeResult:
         assert r.reason == ""
         assert r.score == 0
         assert r.details is None
-

@@ -204,21 +204,15 @@ class TestEdge:
         assert classify_shell_command("   \t  \n  ") == ShellRiskLevel.LOW
 
     def test_extra_critical_pattern_user_supplied(self) -> None:
-        result = classify_shell_command(
-            "deploy_to_prod", extra_critical=[r"deploy_to_prod"]
-        )
+        result = classify_shell_command("deploy_to_prod", extra_critical=[r"deploy_to_prod"])
         assert result == ShellRiskLevel.CRITICAL
 
     def test_extra_high_pattern_overrides_low(self) -> None:
-        result = classify_shell_command(
-            "echo hello", extra_high=[r"echo\s+hello"]
-        )
+        result = classify_shell_command("echo hello", extra_high=[r"echo\s+hello"])
         assert result == ShellRiskLevel.HIGH
 
     def test_extra_medium_pattern(self) -> None:
-        result = classify_shell_command(
-            "myinstall foo", extra_medium=[r"myinstall"]
-        )
+        result = classify_shell_command("myinstall foo", extra_medium=[r"myinstall"])
         assert result == ShellRiskLevel.MEDIUM
 
     def test_excluded_pattern_forces_low(self) -> None:

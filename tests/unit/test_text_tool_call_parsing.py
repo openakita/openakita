@@ -148,8 +148,7 @@ E:\\Data_Store\\OpenAkita\\workspaces\\default\\data\\plugins\\qiushi-plugin
             "list_directory",
             {
                 "path": (
-                    "E:\\Data_Store\\OpenAkita\\workspaces\\default\\data\\plugins"
-                    "\\qiushi-plugin"
+                    "E:\\Data_Store\\OpenAkita\\workspaces\\default\\data\\plugins\\qiushi-plugin"
                 )
             },
         ),

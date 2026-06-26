@@ -26,8 +26,7 @@ def get_mcp_url() -> str:
     return MCP_URL_TEMPLATE.format(key=key)
 
 
-def jsonrpc_call(url: str, method: str, params: dict | None = None,
-                 req_id: int = 1) -> dict:
+def jsonrpc_call(url: str, method: str, params: dict | None = None, req_id: int = 1) -> dict:
     payload = {
         "jsonrpc": "2.0",
         "method": method,
@@ -47,18 +46,27 @@ def jsonrpc_call(url: str, method: str, params: dict | None = None,
 
 
 def mcp_initialize(url: str) -> dict:
-    return jsonrpc_call(url, "initialize", {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "openakita-xiaodu", "version": "1.0.0"},
-    }, req_id=0)
+    return jsonrpc_call(
+        url,
+        "initialize",
+        {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "openakita-xiaodu", "version": "1.0.0"},
+        },
+        req_id=0,
+    )
 
 
 def mcp_tool_call(url: str, tool_name: str, arguments: dict) -> dict:
-    return jsonrpc_call(url, "tools/call", {
-        "name": tool_name,
-        "arguments": arguments,
-    })
+    return jsonrpc_call(
+        url,
+        "tools/call",
+        {
+            "name": tool_name,
+            "arguments": arguments,
+        },
+    )
 
 
 def cmd_devices(args):
@@ -94,7 +102,8 @@ def cmd_scene(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="小度设备控制 MCP 客户端 (env: XIAODU_MCP_KEY, XIAODU_MCP_URL[可选])")
+        description="小度设备控制 MCP 客户端 (env: XIAODU_MCP_KEY, XIAODU_MCP_URL[可选])"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("devices", help="列出设备")
@@ -108,10 +117,8 @@ def main():
     p_scene.add_argument("--name", required=True, help="场景名称")
 
     args = parser.parse_args()
-    {"devices": cmd_devices, "control": cmd_control,
-     "scene": cmd_scene}[args.command](args)
+    {"devices": cmd_devices, "control": cmd_control, "scene": cmd_scene}[args.command](args)
 
 
 if __name__ == "__main__":
     main()
-

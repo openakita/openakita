@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import type { ChatAskUser, ChatAskQuestion } from "../utils/chatTypes";
-import { formatAskUserAnswer } from "../utils/chatHelpers";
+import { AskUserSummary } from "./AskUserSummary";
 
 function AskQuestionItem({
   question,
@@ -193,14 +193,11 @@ export function AskUserBlock({ ask, onAnswer }: { ask: ChatAskUser; onAnswer: (a
     onAnswer(JSON.stringify(result));
   }, [isSingle, normalizedQuestions, selections, otherTexts, onAnswer]);
 
+  // Answered prompts render the read-only summary (the single answered-state
+  // renderer). MessageParts already routes answered asks straight to
+  // AskUserSummary; this stays as a safe fallback for any other caller.
   if (ask.answered) {
-    const displayAnswer = formatAskUserAnswer(ask.answer || "", ask);
-    return (
-      <div style={{ margin: "8px 0", padding: "10px 14px", borderRadius: 10, background: "rgba(37,99,235,0.06)", border: "1px solid rgba(37,99,235,0.15)" }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{ask.question}</div>
-        <div style={{ fontSize: 13, opacity: 0.7 }}>{t("chat.answered")}{displayAnswer}</div>
-      </div>
-    );
+    return <AskUserSummary ask={ask} />;
   }
 
   const canSubmit = normalizedQuestions.some((q) => {

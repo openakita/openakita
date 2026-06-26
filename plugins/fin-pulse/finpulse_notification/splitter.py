@@ -85,9 +85,7 @@ def split_by_lines(
                 out.append(cur.rstrip("\n") + ("\n" + footer if footer else ""))
                 cur = ""
         else:
-            out.append(
-                line_with_nl.rstrip("\n") + ("\n" + footer if footer else "")
-            )
+            out.append(line_with_nl.rstrip("\n") + ("\n" + footer if footer else ""))
             cur = ""
 
     if cur.strip():

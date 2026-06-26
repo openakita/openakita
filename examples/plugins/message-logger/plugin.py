@@ -33,7 +33,9 @@ def _serialize_outgoing(**kwargs: Any) -> dict[str, Any]:
     for key in ("message", "outgoing", "text", "chat_id", "channel"):
         if key in kwargs:
             val = kwargs[key]
-            if hasattr(val, "__dict__") and not isinstance(val, (str, int, float, bool, type(None))):
+            if hasattr(val, "__dict__") and not isinstance(
+                val, (str, int, float, bool, type(None))
+            ):
                 safe[key] = repr(val)[:2000]
             else:
                 safe[key] = val
@@ -66,7 +68,9 @@ class Plugin(PluginBase):
         self._log_path.parent.mkdir(parents=True, exist_ok=True)
         with self._log_path.open("a", encoding="utf-8") as f:
             f.write(line)
-        self._api.log(f"message-logger: {record.get('direction', 'event')} {record.get('ts', '')}", "info")
+        self._api.log(
+            f"message-logger: {record.get('direction', 'event')} {record.get('ts', '')}", "info"
+        )
 
     async def _on_message_received(self, message: Any = None, **kwargs: Any) -> None:
         rec = {
@@ -83,4 +87,3 @@ class Plugin(PluginBase):
             "payload": _serialize_outgoing(**kwargs),
         }
         self._append_line(rec)
-

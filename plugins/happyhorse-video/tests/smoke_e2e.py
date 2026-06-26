@@ -90,16 +90,22 @@ class Report:
         self.items: list[dict[str, Any]] = []
         self.t0 = time.time()
 
-    def step(self, name: str, status: str, detail: str, extra: dict[str, Any] | None = None) -> None:
-        emoji = {"ok": "[OK]", "fail": "[FAIL]", "skip": "[SKIP]", "warn": "[WARN]"}.get(status, "[--]")
+    def step(
+        self, name: str, status: str, detail: str, extra: dict[str, Any] | None = None
+    ) -> None:
+        emoji = {"ok": "[OK]", "fail": "[FAIL]", "skip": "[SKIP]", "warn": "[WARN]"}.get(
+            status, "[--]"
+        )
         print(f"{emoji} {name}: {detail}")
-        self.items.append({
-            "name": name,
-            "status": status,
-            "detail": detail,
-            "at_ms": int((time.time() - self.t0) * 1000),
-            **(extra or {}),
-        })
+        self.items.append(
+            {
+                "name": name,
+                "status": status,
+                "detail": detail,
+                "at_ms": int((time.time() - self.t0) * 1000),
+                **(extra or {}),
+            }
+        )
 
     def write(self) -> None:
         summary = {
@@ -135,7 +141,9 @@ def _err(payload: Any) -> str:
     return str(payload)[:300]
 
 
-def _poll_task(c: Client, task_id: str, *, label: str, timeout_s: float = 300.0) -> tuple[bool, dict[str, Any] | str]:
+def _poll_task(
+    c: Client, task_id: str, *, label: str, timeout_s: float = 300.0
+) -> tuple[bool, dict[str, Any] | str]:
     deadline = time.time() + timeout_s
     last: dict[str, Any] | str = ""
     while time.time() < deadline:
@@ -162,12 +170,25 @@ def check_zero_cost(c: Client, r: Report) -> None:
     print("\n=== Phase 1: zero-cost reads ===")
 
     s, p = c.call("GET", "/healthz")
-    r.step("GET /healthz", "ok" if _is_ok(s, p) else "fail", json.dumps(p)[:200] if isinstance(p, (dict, list)) else str(p)[:200])
+    r.step(
+        "GET /healthz",
+        "ok" if _is_ok(s, p) else "fail",
+        json.dumps(p)[:200] if isinstance(p, (dict, list)) else str(p)[:200],
+    )
 
     s, p = c.call("GET", "/catalog")
     if _is_ok(s, p):
         modes = len(p["catalog"]["modes"]) if isinstance(p, dict) else 0
-        r.step("GET /catalog", "ok", f"{modes} modes", {"sample_mode_ids": [m.get("id") for m in p["catalog"]["modes"][:3]] if isinstance(p, dict) else []})
+        r.step(
+            "GET /catalog",
+            "ok",
+            f"{modes} modes",
+            {
+                "sample_mode_ids": [m.get("id") for m in p["catalog"]["modes"][:3]]
+                if isinstance(p, dict)
+                else []
+            },
+        )
     else:
         r.step("GET /catalog", "fail", _err(p))
 
@@ -190,13 +211,25 @@ def check_zero_cost(c: Client, r: Report) -> None:
     r.step("GET /storage/stats", "ok" if _is_ok(s, p) else "fail", json.dumps(p)[:200])
 
     s, p = c.call("GET", "/voices")
-    r.step("GET /voices", "ok" if _is_ok(s, p) else "fail", f"count={len(p.get('voices', [])) if isinstance(p, dict) else 0}")
+    r.step(
+        "GET /voices",
+        "ok" if _is_ok(s, p) else "fail",
+        f"count={len(p.get('voices', [])) if isinstance(p, dict) else 0}",
+    )
 
     s, p = c.call("GET", "/figures")
-    r.step("GET /figures", "ok" if _is_ok(s, p) else "fail", f"count={len(p.get('figures', [])) if isinstance(p, dict) else 0}")
+    r.step(
+        "GET /figures",
+        "ok" if _is_ok(s, p) else "fail",
+        f"count={len(p.get('figures', [])) if isinstance(p, dict) else 0}",
+    )
 
     s, p = c.call("GET", "/tasks?limit=5")
-    r.step("GET /tasks", "ok" if _is_ok(s, p) else "fail", f"total={p.get('total') if isinstance(p, dict) else '?'}")
+    r.step(
+        "GET /tasks",
+        "ok" if _is_ok(s, p) else "fail",
+        f"total={p.get('total') if isinstance(p, dict) else '?'}",
+    )
 
     s, p = c.call("GET", "/prompt-guide")
     r.step("GET /prompt-guide", "ok" if _is_ok(s, p) else "fail", "")
@@ -242,7 +275,10 @@ def check_cost_preview(c: Client, r: Report) -> None:
         chosen = None
         wanted = defaults.get(mode_id)
         if wanted:
-            chosen = next((m for m in candidates if m.get("model_id") == wanted or m.get("id") == wanted), None)
+            chosen = next(
+                (m for m in candidates if m.get("model_id") == wanted or m.get("id") == wanted),
+                None,
+            )
         chosen = chosen or (candidates[0] if candidates else None)
         if not chosen:
             r.step(f"cost-preview {mode_id}", "warn", "no model registered")
@@ -311,7 +347,11 @@ def check_edge_tts(c: Client, r: Report) -> None:
     s, p = c.call(
         "POST",
         "/voices/preview",
-        {"text": "你好，这是边缘 T T S 测试。", "engine": "edge", "voice_id": "zh-CN-XiaoxiaoNeural"},
+        {
+            "text": "你好，这是边缘 T T S 测试。",
+            "engine": "edge",
+            "voice_id": "zh-CN-XiaoxiaoNeural",
+        },
         timeout=60,
     )
     if _is_ok(s, p):
@@ -352,11 +392,7 @@ def check_image_cheap(c: Client, r: Report, *, do_paid: bool) -> dict[str, str] 
         r.step("poll image task", "fail", _err(payload), {"task_id": tid})
         return None
     task = (payload.get("task") if isinstance(payload, dict) else None) or {}
-    urls = (
-        task.get("image_urls")
-        or (task.get("asset_paths") or {}).get("image_urls")
-        or []
-    )
+    urls = task.get("image_urls") or (task.get("asset_paths") or {}).get("image_urls") or []
     if not urls:
         r.step("poll image task", "warn", "succeeded but no image_urls", {"task": task})
         return None
@@ -429,7 +465,12 @@ def check_r2v_cheap(c: Client, r: Report, image_url: str, *, do_paid: bool) -> N
     ok, payload = _poll_task(c, tid, label="r2v", timeout_s=420)
     task = (payload.get("task") if isinstance(payload, dict) else None) or {}
     url = task.get("video_url") or ""
-    r.step("poll r2v task", "ok" if (ok and url) else "fail", url[:120] if url else _err(payload), {"task_id": tid})
+    r.step(
+        "poll r2v task",
+        "ok" if (ok and url) else "fail",
+        url[:120] if url else _err(payload),
+        {"task_id": tid},
+    )
 
 
 def check_chain_concat(c: Client, r: Report, task_ids: list[str], *, do_paid: bool) -> None:

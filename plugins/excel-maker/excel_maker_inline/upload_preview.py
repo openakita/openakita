@@ -27,4 +27,3 @@ def register_upload_preview_routes(
         if target.stat().st_size > 50 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="Upload is too large to preview")
         return FileResponse(target)
-

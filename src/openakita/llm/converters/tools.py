@@ -694,14 +694,17 @@ def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
                     params[key] = json.loads(val)
                 except json.JSONDecodeError:
                     params[key] = val
-            tool_calls.append(ToolUseBlock(
-                id=f"glm_call_{uuid.uuid4().hex[:8]}",
-                name=tool_name,
-                input=params,
-            ))
+            tool_calls.append(
+                ToolUseBlock(
+                    id=f"glm_call_{uuid.uuid4().hex[:8]}",
+                    name=tool_name,
+                    input=params,
+                )
+            )
             logger.info(
                 "[GLM_TOOL_PARSE] Extracted tool call: %s with params: %s",
-                tool_name, list(params.keys()),
+                tool_name,
+                list(params.keys()),
             )
             continue
 
@@ -1373,12 +1376,75 @@ def _parse_fenced_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
     return "".join(parts).strip(), tool_calls
 
 
+# ── DSML 格式解析器 ──────────────────────────────────────
+#
+# 部分模型（如 mimo-v2.5-pro）以 DSML 标签输出工具调用，标签内含全角管道符
+# ｜（U+FF5C）或半角 |：
+#   <｜DSML｜function_calls> / <｜DSML｜invoke name="..."> / <｜DSML｜parameter ...>
+# 策略：检测到 DSML 标签后，将它们规范化为标准 XML 标签，再复用 _parse_invoke_blocks。
+
+_DSML_PIPE = r"[｜|]"
+_DSML_DETECT_RE = re.compile(
+    rf"<{_DSML_PIPE}DSML{_DSML_PIPE}function_calls>",
+    re.IGNORECASE,
+)
+_DSML_TAG_RE = re.compile(
+    rf"<(/?)(?:{_DSML_PIPE}DSML{_DSML_PIPE})([\w_]+)",
+    re.IGNORECASE,
+)
+_DSML_PARAM_EXTRA_ATTRS_RE = re.compile(
+    r'(<parameter\s+name=["\'][^"\']+["\'])(\s+\w+=["\'][^"\']*["\'])+',
+)
+
+
+def _parse_dsml(text: str) -> tuple[str, list[ToolUseBlock]]:
+    """Parse DSML-tagged tool calls by normalizing to standard XML, then delegating."""
+    open_re = re.compile(
+        rf"<{_DSML_PIPE}DSML{_DSML_PIPE}function_calls\s*>",
+        re.IGNORECASE,
+    )
+    close_re = re.compile(
+        rf"</{_DSML_PIPE}DSML{_DSML_PIPE}function_calls\s*>",
+        re.IGNORECASE,
+    )
+
+    blocks = []
+    for m_open in open_re.finditer(text):
+        m_close = close_re.search(text, m_open.end())
+        if m_close:
+            blocks.append(text[m_open.start() : m_close.end()])
+        else:
+            blocks.append(text[m_open.start() :])
+
+    if not blocks:
+        return text, []
+
+    tool_calls: list[ToolUseBlock] = []
+    for block in blocks:
+        normalized = _DSML_TAG_RE.sub(r"<\1\2", block)
+        normalized = _DSML_PARAM_EXTRA_ATTRS_RE.sub(r"\1", normalized)
+        tool_calls.extend(_parse_invoke_blocks(normalized))
+
+    if not tool_calls:
+        return text, []
+
+    clean = text
+    for block in blocks:
+        clean = clean.replace(block, "")
+    return clean.strip(), tool_calls
+
+
 # ── 格式注册表 + 公开 API ─────────────────────────────
 #
 # 顺序有意义：JSON 放最后，因为其检测 pattern 最宽泛。
 # 前面的格式使用精确的 XML 标签匹配，不会误报。
 
 _TEXT_TOOL_FORMATS: list[_TextToolFormat] = [
+    _TextToolFormat(
+        "dsml",
+        _DSML_DETECT_RE,
+        _parse_dsml,
+    ),
     _TextToolFormat(
         "function_calls",
         re.compile(r"<function_calls>", re.IGNORECASE),

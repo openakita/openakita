@@ -109,6 +109,18 @@ pip install pre-commit
 pre-commit install
 ```
 
+### Project-level git hooks (opt-in)
+
+The repository ships a small set of opt-in git hooks under `.githooks/`. The one currently included strips AI co-author trailers (such as `Co-authored-by: Cursor <cursoragent@cursor.com>`) that some AI coding tools auto-inject, so the git history attribution stays with the human contributor's `git config` rather than the assisting tool.
+
+To enable for this clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+See [`.githooks/README.md`](.githooks/README.md) for the full rationale, which tools/situations make this hook useful, and how to disable it. The hook is per-clone and intentionally not auto-installed — you choose whether to trust and run it.
+
 ### Running Tests
 
 ```bash

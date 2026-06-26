@@ -170,6 +170,7 @@ class TestRegisterChannel:
         mock_registry = MagicMock()
         granted = list(BASIC_PERMISSIONS) + ["channel.register"]
         api = _make_api(tmp_path, granted=granted, host_refs={"channel_registry": mock_registry})
+
         def factory():
             return None
 
@@ -186,6 +187,7 @@ class TestRegisterLlmProvider:
         api = _make_api(tmp_path, granted=list(BASIC_PERMISSIONS))
         api.register_llm_provider("custom", type)
         from openakita.plugins import PLUGIN_PROVIDER_MAP
+
         assert "custom" not in PLUGIN_PROVIDER_MAP, (
             "LLM provider should be silently skipped when permission not granted"
         )
@@ -356,6 +358,7 @@ class TestEdgeCases:
         api = _make_api(tmp_path, granted=["llm.register"])
         api.register_llm_provider("test_type", "not_a_class")  # type: ignore[arg-type]
         from openakita.plugins import PLUGIN_PROVIDER_MAP
+
         assert "test_type" not in PLUGIN_PROVIDER_MAP
 
     def test_register_channel_empty_name_rejected(self, tmp_path):
@@ -379,4 +382,3 @@ class TestEdgeCases:
         )
         api.register_tools([{"name": "t1"}], lambda: None)
         assert "t1" in api._registered_tools
-

@@ -59,9 +59,7 @@ def build_mock_prompt(feature: Any, params: dict) -> str:
     text_params, _ = split_params(feature, params)
     prompt = safe_format(feature.prompt_template or "", text_params).strip()
     if not prompt:
-        prompt = (
-            str(params.get("prompt") or params.get("storyboard_script") or "").strip()
-        )
+        prompt = str(params.get("prompt") or params.get("storyboard_script") or "").strip()
     if not prompt:
         prompt = "【演示】未填写描述 — 这是本地模拟生成，配置真实 API Key 后可关闭演示模式。"
     return f"{prompt}\n\n[演示数据 · mock · 可一键清除]"

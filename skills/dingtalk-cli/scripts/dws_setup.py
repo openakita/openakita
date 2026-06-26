@@ -47,24 +47,38 @@ def cmd_install(args):
 
     if method == "npm":
         r = _run(["npm", "install", "-g", "dingtalk-workspace-cli"])
-        result = {"method": "npm", "status": "ok" if r.returncode == 0 else "failed", "code": r.returncode}
+        result = {
+            "method": "npm",
+            "status": "ok" if r.returncode == 0 else "failed",
+            "code": r.returncode,
+        }
         if r.stderr.strip():
             result["stderr"] = r.stderr.strip()
     elif _is_windows():
         shell = shutil.which("powershell") or shutil.which("pwsh")
         if shell:
             cmd = [
-                shell, "-NoProfile", "-Command",
+                shell,
+                "-NoProfile",
+                "-Command",
                 "irm https://dtapp-pub.dingtalk.com/dws/install.ps1 | iex",
             ]
             r = subprocess.run(cmd, text=True)
-            result = {"method": "powershell", "status": "ok" if r.returncode == 0 else "failed", "code": r.returncode}
+            result = {
+                "method": "powershell",
+                "status": "ok" if r.returncode == 0 else "failed",
+                "code": r.returncode,
+            }
         else:
             result = {"method": "script", "status": "skipped", "reason": "PowerShell not found"}
     else:
         cmd = ["sh", "-c", "curl -fsSL https://dtapp-pub.dingtalk.com/dws/install.sh | sh"]
         r = subprocess.run(cmd, text=True)
-        result = {"method": "curl", "status": "ok" if r.returncode == 0 else "failed", "code": r.returncode}
+        result = {
+            "method": "curl",
+            "status": "ok" if r.returncode == 0 else "failed",
+            "code": r.returncode,
+        }
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
@@ -85,8 +99,12 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("install", help="安装 dws CLI")
-    p.add_argument("--method", choices=["auto", "npm", "script"], default="auto",
-                    help="安装方式 (default: auto)")
+    p.add_argument(
+        "--method",
+        choices=["auto", "npm", "script"],
+        default="auto",
+        help="安装方式 (default: auto)",
+    )
     p.add_argument("--force", action="store_true", help="强制重新安装")
 
     sub.add_parser("auth", help="登录钉钉账号")
@@ -103,4 +121,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

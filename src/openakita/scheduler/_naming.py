@@ -41,7 +41,7 @@ FORBIDDEN_TOKENS: tuple[str, ...] = (
     ":",
     "*",
     "?",
-    "\"",
+    '"',
 )
 
 QUARANTINE_PREFIX = "__quarantine__/"

@@ -257,6 +257,7 @@ async def test_async_init_failure_surfaces_through_healthz(tmp_path: Path, monke
         raise RuntimeError("simulated DB corruption")
 
     p_orig_load = p.on_load
+
     def patched_load(api):
         p_orig_load(api)
         # Replace the task manager init AFTER on_load registered the
@@ -265,6 +266,7 @@ async def test_async_init_failure_surfaces_through_healthz(tmp_path: Path, monke
 
         async def init_fail(self) -> None:
             raise RuntimeError("simulated DB corruption")
+
         monkeypatch.setattr(MangaTaskManager, "init", init_fail, raising=True)
 
     # Easier — patch BEFORE on_load.
@@ -303,9 +305,7 @@ async def test_render_panel_tool_rejects_bad_args(tmp_path: Path) -> None:
 
     msg = await api.tool_handler("manga_render_panel", {})
     assert msg.startswith("error:"), msg
-    msg = await api.tool_handler(
-        "manga_render_panel", {"episode_id": "nope", "panel_index": 0}
-    )
+    msg = await api.tool_handler("manga_render_panel", {"episode_id": "nope", "panel_index": 0})
     assert msg.startswith("error:") and "not found" in msg
     await p.on_unload()
 

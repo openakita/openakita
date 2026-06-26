@@ -779,9 +779,7 @@ class EndpointConfig:
             models_synced_at=data.get("models_synced_at"),
             models_sync_error=data.get("models_sync_error"),
             fallback_endpoint=(
-                str(data["fallback_endpoint"]).strip()
-                if data.get("fallback_endpoint")
-                else None
+                str(data["fallback_endpoint"]).strip() if data.get("fallback_endpoint") else None
             ),
             fallback_enabled=bool(data.get("fallback_enabled", False)),
         )
@@ -857,9 +855,16 @@ class UnsupportedMediaError(LLMError):
 class AllEndpointsFailedError(LLMError):
     """所有端点都失败"""
 
-    def __init__(self, message: str, *, is_structural: bool = False):
+    def __init__(
+        self,
+        message: str,
+        *,
+        is_structural: bool = False,
+        error_categories: "set[str] | None" = None,
+    ):
         super().__init__(message)
         self.is_structural = is_structural
+        self.error_categories: set[str] = error_categories or set()
 
 
 class ConfigurationError(LLMError):

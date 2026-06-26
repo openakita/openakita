@@ -10,20 +10,24 @@ from openakita.tools.catalog import ToolCatalog
 
 
 def _make_org_only_catalog() -> ToolCatalog:
-    return ToolCatalog([
-        {"name": "org_delegate_task", "description": "Delegate task"},
-        {"name": "org_send_message", "description": "Send msg"},
-        {"name": "org_submit_deliverable", "description": "Submit"},
-        {"name": "org_request_tools", "description": "Request"},
-    ])
+    return ToolCatalog(
+        [
+            {"name": "org_delegate_task", "description": "Delegate task"},
+            {"name": "org_send_message", "description": "Send msg"},
+            {"name": "org_submit_deliverable", "description": "Submit"},
+            {"name": "org_request_tools", "description": "Request"},
+        ]
+    )
 
 
 def _make_mixed_catalog() -> ToolCatalog:
-    return ToolCatalog([
-        {"name": "write_file_v2", "description": "Write v2"},
-        {"name": "read_file", "description": "Read"},
-        {"name": "org_delegate_task", "description": "Delegate"},
-    ])
+    return ToolCatalog(
+        [
+            {"name": "write_file_v2", "description": "Write v2"},
+            {"name": "read_file", "description": "Read"},
+            {"name": "org_delegate_task", "description": "Delegate"},
+        ]
+    )
 
 
 class TestNotFoundSuggestion:
@@ -58,4 +62,3 @@ class TestNotFoundSuggestion:
         msg = catalog.get_tool_info_formatted("read_file")
         assert "Tool: read_file" in msg
         assert "Tool not found" not in msg
-

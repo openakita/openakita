@@ -84,7 +84,9 @@ def main():
             ]
             if original_file:
                 validators.append(
-                    RedliningValidator(unpacked_dir, original_file, verbose=args.verbose, author=args.author)  
+                    RedliningValidator(
+                        unpacked_dir, original_file, verbose=args.verbose, author=args.author
+                    )
                 )
         case ".pptx":
             validators = [
@@ -109,4 +111,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -193,9 +193,7 @@ class TestSmartRecompose:
         async def _fake_scene(video: Path, threshold: float) -> list[float]:
             return [0.0, 1.5, 3.0]
 
-        async def _fake_extract(
-            video: Path, out_dir: Path, fps: float, scale: str
-        ) -> None:
+        async def _fake_extract(video: Path, out_dir: Path, fps: float, scale: str) -> None:
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / "frame_00001.png").write_bytes(b"a")
             (out_dir / "frame_00002.png").write_bytes(b"b")
@@ -245,9 +243,7 @@ class TestSmartRecompose:
         async def _fake_scene(video: Path, threshold: float) -> list[float]:
             return [0.0, 1.0]
 
-        async def _fake_extract(
-            video: Path, out_dir: Path, fps: float, scale: str
-        ) -> None:
+        async def _fake_extract(video: Path, out_dir: Path, fps: float, scale: str) -> None:
             out_dir.mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setattr("mediapost_recompose.detect_scene_cuts", _fake_scene)

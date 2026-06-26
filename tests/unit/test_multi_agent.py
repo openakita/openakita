@@ -40,6 +40,7 @@ from openakita.sessions.session import Session, SessionConfig, SessionContext
 # Helpers
 # ================================================================
 
+
 def _make_session(
     session_id: str = "test-session-1",
     agent_profile_id: str = "default",
@@ -68,6 +69,7 @@ def _make_profile(
 # ================================================================
 # AgentProfile Tests
 # ================================================================
+
 
 class TestAgentProfile:
     def test_default_values(self):
@@ -192,10 +194,99 @@ class TestAgentProfile:
         assert derived.runtime_env_mode == "agent"
         assert derived.runtime_env_dependencies == ["requests"]
 
+    # ---- name_i18n invariant: __post_init__ default ----
+
+    def test_post_init_mirrors_name_into_zh_when_missing(self):
+        # Direct construction with no name_i18n - common path for
+        # tools/handlers/agent.py:create_agent and ad-hoc tests.
+        p = AgentProfile(id="x", name="中秋")
+        assert p.name_i18n.get("zh") == "中秋"
+        assert p.get_display_name("zh") == "中秋"
+
+    def test_post_init_respects_explicit_zh_in_name_i18n(self):
+        # Caller wants different Chinese display name than the primary name.
+        p = AgentProfile(id="x", name="Alice", name_i18n={"zh": "艾莉丝"})
+        assert p.name_i18n.get("zh") == "艾莉丝"
+        assert p.get_display_name("zh") == "艾莉丝"
+        # Other langs untouched
+        assert "en" not in p.name_i18n
+
+    def test_post_init_mirrors_description_into_zh_when_missing(self):
+        p = AgentProfile(id="x", name="X", description="一个测试代理")
+        assert p.description_i18n.get("zh") == "一个测试代理"
+
+    def test_post_init_does_not_touch_empty_name(self):
+        # If name is empty, do not write empty string into name_i18n[zh].
+        p = AgentProfile(id="x", name="")
+        assert p.name_i18n.get("zh") in (None, "")
+        # The dict may be empty or absent; the invariant only fires for truthy name.
+        assert not p.name_i18n.get("zh")
+
+    def test_from_dict_applies_name_invariant(self):
+        # JSON missing name_i18n entirely (legacy on-disk profile).
+        p = AgentProfile.from_dict({"id": "x", "name": "小秋"})
+        assert p.name_i18n.get("zh") == "小秋"
+
+    # ---- derive() mirror on name override ----
+
+    def test_derive_mirrors_new_name_into_zh(self):
+        base = _make_profile(
+            "base",
+            "OldName",
+            name_i18n={"zh": "老名", "en": "OldName"},
+        )
+        derived = base.derive(
+            id="d1",
+            name="NewName",
+            created_by="test",
+        )
+        # zh must follow the new name, but other langs stay
+        assert derived.name == "NewName"
+        assert derived.name_i18n["zh"] == "NewName"
+        assert derived.name_i18n["en"] == "OldName"
+
+    def test_derive_respects_overrides_name_i18n(self):
+        # Caller explicitly passes name_i18n - mirror logic must not clobber it.
+        base = _make_profile("base", "Old", name_i18n={"zh": "老", "en": "Old"})
+        derived = base.derive(
+            id="d2",
+            name="NewEn",
+            name_i18n={"zh": "完全自定义", "en": "NewEn"},
+            created_by="test",
+        )
+        assert derived.name_i18n["zh"] == "完全自定义"
+        assert derived.name_i18n["en"] == "NewEn"
+
+    def test_derive_preserves_parent_i18n_when_name_not_overridden(self):
+        base = _make_profile("base", "Old", name_i18n={"zh": "老", "en": "Old"})
+        derived = base.derive(
+            id="d3",
+            created_by="test",
+        )
+        assert derived.name == "Old"
+        assert derived.name_i18n == {"zh": "老", "en": "Old"}
+
+    def test_derive_mirrors_new_description_into_zh(self):
+        base = _make_profile(
+            "base",
+            "Base",
+            description="原描述",
+            description_i18n={"zh": "原描述", "en": "Original"},
+        )
+        derived = base.derive(
+            id="d4",
+            description="新描述",
+            created_by="test",
+        )
+        assert derived.description == "新描述"
+        assert derived.description_i18n["zh"] == "新描述"
+        assert derived.description_i18n["en"] == "Original"
+
 
 # ================================================================
 # ProfileStore Tests
 # ================================================================
+
 
 class TestProfileStore:
     @pytest.fixture
@@ -278,11 +369,14 @@ class TestProfileStore:
     def test_update_system_blocks_immutable_fields(self, store: ProfileStore):
         sys_profile = _make_profile("sys", "System", agent_type=AgentType.SYSTEM)
         store.save(sys_profile)
-        updated = store.update("sys", {
-            "description": "New desc",
-            "id": "changed-id",
-            "skills": ["new-skill"],
-        })
+        updated = store.update(
+            "sys",
+            {
+                "description": "New desc",
+                "id": "changed-id",
+                "skills": ["new-skill"],
+            },
+        )
         assert updated.description == "New desc"
         assert updated.id == "sys"  # immutable, not changed
         assert updated.skills == ["new-skill"]  # skills is now a customizable field
@@ -290,6 +384,150 @@ class TestProfileStore:
     def test_update_nonexistent_raises(self, store: ProfileStore):
         with pytest.raises(KeyError):
             store.update("ghost", {"name": "Ghost"})
+
+    def test_update_name_mirrors_to_name_i18n_zh(self, store: ProfileStore):
+        """改 name 时应自动镜像到 name_i18n['zh']，避免 UI 显示双名漂移。
+
+        Regression: UI 通过 PUT /api/agents/profiles/{id} 只传 {name: "中秋"}
+        而不传 name_i18n 时，旧 name_i18n.zh "小秋" 会残留，造成 system prompt
+        显示 "中秋" 但 IM/像素办公室/日志显示 "小秋" 的精神分裂状态。
+        """
+        store.save(
+            _make_profile(name="Old Name", name_i18n={"zh": "旧名", "en": "Old Name"}),
+        )
+        updated = store.update("test-agent", {"name": "新名"})
+        assert updated.name == "新名"
+        assert updated.name_i18n["zh"] == "新名"
+        # 其它语种不应被改名兜底覆盖，保持向后兼容
+        assert updated.name_i18n["en"] == "Old Name"
+
+    def test_update_name_with_explicit_i18n_respects_caller(self, store: ProfileStore):
+        """同时传 name 和 name_i18n 时，调用方显式提供的 i18n 应优先。"""
+        store.save(_make_profile(name_i18n={"zh": "旧", "en": "Old"}))
+        updated = store.update(
+            "test-agent",
+            {"name": "中文名", "name_i18n": {"zh": "显式中文", "en": "Explicit"}},
+        )
+        assert updated.name == "中文名"
+        assert updated.name_i18n["zh"] == "显式中文"
+        assert updated.name_i18n["en"] == "Explicit"
+
+    def test_update_description_mirrors_to_description_i18n_zh(self, store: ProfileStore):
+        """description 字段也应有同样的 i18n 镜像兜底。"""
+        store.save(
+            _make_profile(description_i18n={"zh": "旧描述", "en": "Old desc"}),
+        )
+        updated = store.update("test-agent", {"description": "新描述"})
+        assert updated.description == "新描述"
+        assert updated.description_i18n["zh"] == "新描述"
+        assert updated.description_i18n["en"] == "Old desc"
+
+    def test_update_empty_name_does_not_mirror(self, store: ProfileStore):
+        """空字符串 / 全空白 name 不触发镜像，避免把 name_i18n 写空。"""
+        store.save(_make_profile(name_i18n={"zh": "保留", "en": "Keep"}))
+        updated = store.update("test-agent", {"name": "   "})
+        assert updated.name_i18n["zh"] == "保留"
+
+    def test_load_self_heals_system_profile_with_stale_name_i18n_zh(self, tmp_path: Path):
+        """SYSTEM Profile 加载时若 name 与 name_i18n['zh'] 漂移，应自动镜像并落盘。
+
+        Regression: 老版本 ProfileStore.update 不同步 name 到 name_i18n['zh']，
+        升级到新版本的用户磁盘上仍残留 `name="中秋", name_i18n.zh="小秋"`
+        这种内部不自洽状态。新 __post_init__ 兜底规则只在 name_i18n.zh 为空时
+        才填值，无法修这种已有非空但漂移的情况。
+        ProfileStore._load_all 现在对 SYSTEM 型 profile 做额外自愈，确保
+        Agent._resolve_agent_voice() 读到的中文名跟 UI 显示的 name 一致。
+        """
+        import json as _json
+
+        profiles_dir = tmp_path / "agents" / "profiles"
+        profiles_dir.mkdir(parents=True, exist_ok=True)
+        stale_path = profiles_dir / "default.json"
+        stale_payload = {
+            "id": "default",
+            "name": "中秋",
+            "description": "新描述",
+            "type": "system",
+            "name_i18n": {"zh": "小秋", "en": "Akita"},
+            "description_i18n": {"zh": "旧描述", "en": "Stale"},
+        }
+        stale_path.write_text(_json.dumps(stale_payload, ensure_ascii=False), encoding="utf-8")
+
+        store = ProfileStore(tmp_path / "agents")
+        healed = store.get("default")
+        assert healed is not None
+        # 内存对象按 name 兜底回正
+        assert healed.name == "中秋"
+        assert healed.name_i18n["zh"] == "中秋"
+        # `en` 译名属于合法独立本地化，必须保留
+        assert healed.name_i18n["en"] == "Akita"
+        assert healed.description_i18n["zh"] == "新描述"
+        # 落盘也应回正，避免下次加载时再走一遍 heal
+        on_disk = _json.loads(stale_path.read_text(encoding="utf-8"))
+        assert on_disk["name_i18n"]["zh"] == "中秋"
+        assert on_disk["name_i18n"]["en"] == "Akita"
+        assert on_disk["description_i18n"]["zh"] == "新描述"
+
+    def test_load_does_not_heal_custom_profile_with_diverged_name_i18n_zh(
+        self, tmp_path: Path, caplog
+    ):
+        """CUSTOM Profile 的 name_i18n.zh 漂移可能是 Hub 发布者的合法独立译名，
+        加载时只记 WARNING，绝不写盘覆盖发布者意图。
+        """
+        import json as _json
+        import logging
+
+        profiles_dir = tmp_path / "agents" / "profiles"
+        profiles_dir.mkdir(parents=True, exist_ok=True)
+        path = profiles_dir / "alice.json"
+        payload = {
+            "id": "alice",
+            "name": "Alice",
+            "description": "Assistant",
+            "type": "custom",
+            "name_i18n": {"zh": "艾莉丝", "en": "Alice"},
+        }
+        path.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="openakita.agents.profile"):
+            store = ProfileStore(tmp_path / "agents")
+
+        profile = store.get("alice")
+        assert profile is not None
+        # CUSTOM 型保留原始独立译名，不被自动覆盖
+        assert profile.name == "Alice"
+        assert profile.name_i18n["zh"] == "艾莉丝"
+        # 磁盘上的 JSON 也未被改写
+        on_disk = _json.loads(path.read_text(encoding="utf-8"))
+        assert on_disk["name_i18n"]["zh"] == "艾莉丝"
+        # 但应在日志里提醒维护者人工对齐
+        assert any(
+            "alice" in record.message and "name_i18n" in record.message for record in caplog.records
+        )
+
+    def test_load_leaves_aligned_system_profile_untouched(self, tmp_path: Path):
+        """SYSTEM Profile 的 name 与 name_i18n.zh 已一致时，加载不应改写文件。"""
+        import json as _json
+
+        profiles_dir = tmp_path / "agents" / "profiles"
+        profiles_dir.mkdir(parents=True, exist_ok=True)
+        path = profiles_dir / "default.json"
+        payload = {
+            "id": "default",
+            "name": "小秋",
+            "type": "system",
+            "name_i18n": {"zh": "小秋", "en": "Akita"},
+        }
+        raw_before = _json.dumps(payload, ensure_ascii=False)
+        path.write_text(raw_before, encoding="utf-8")
+        mtime_before = path.stat().st_mtime_ns
+
+        # Sleep a tick so a rewrite would actually bump mtime on filesystems
+        # whose resolution is coarse (FAT, some networked FS); then re-stat.
+        time.sleep(0.01)
+        ProfileStore(tmp_path / "agents")
+        mtime_after = path.stat().st_mtime_ns
+        assert mtime_after == mtime_before, "aligned profile must not be rewritten"
 
     def test_ephemeral_profile_memory_only(self, store: ProfileStore):
         eph = _make_profile("eph-1", "Ephemeral", ephemeral=True)
@@ -367,6 +605,7 @@ class TestProfileStore:
 # ================================================================
 # FallbackResolver Tests
 # ================================================================
+
 
 class TestFallbackResolver:
     @pytest.fixture
@@ -455,6 +694,7 @@ class TestFallbackResolver:
 # AgentMailbox Tests
 # ================================================================
 
+
 class TestAgentMailbox:
     @pytest.mark.asyncio
     async def test_send_receive(self):
@@ -485,6 +725,7 @@ class TestAgentMailbox:
 # AgentHealth Tests
 # ================================================================
 
+
 class TestAgentHealth:
     def test_initial_metrics(self):
         h = AgentHealth(agent_id="a1")
@@ -512,6 +753,7 @@ class TestAgentHealth:
 # DelegationRequest Tests
 # ================================================================
 
+
 class TestDelegationRequest:
     def test_fields(self):
         req = DelegationRequest(
@@ -531,10 +773,12 @@ class TestDelegationRequest:
 # AgentFactory Tests
 # ================================================================
 
+
 class TestAgentFactory:
     @pytest.mark.asyncio
     async def test_create_sets_preferred_endpoint(self):
         from openakita.agents.factory import AgentFactory
+
         factory = AgentFactory()
         profile = _make_profile("ep-agent", "EP Agent", preferred_endpoint="my-endpoint")
         with patch("openakita.core._agent_legacy.Agent") as MockAgent:
@@ -544,7 +788,9 @@ class TestAgentFactory:
             mock_instance._custom_prompt_suffix = ""
             mock_instance._preferred_endpoint = None
             mock_instance.skill_catalog = MagicMock()
-            mock_instance.skill_catalog.get_registry.return_value = MagicMock(list_skills=MagicMock(return_value=[]))
+            mock_instance.skill_catalog.get_registry.return_value = MagicMock(
+                list_skills=MagicMock(return_value=[])
+            )
             MockAgent.return_value = mock_instance
             agent = await factory.create(profile)
             assert agent._preferred_endpoint == "my-endpoint"
@@ -552,6 +798,7 @@ class TestAgentFactory:
     @pytest.mark.asyncio
     async def test_create_no_preferred_endpoint(self):
         from openakita.agents.factory import AgentFactory
+
         factory = AgentFactory()
         profile = _make_profile("plain-agent", "Plain Agent")
         with patch("openakita.core._agent_legacy.Agent") as MockAgent:
@@ -561,7 +808,9 @@ class TestAgentFactory:
             mock_instance._custom_prompt_suffix = ""
             mock_instance._preferred_endpoint = None
             mock_instance.skill_catalog = MagicMock()
-            mock_instance.skill_catalog.get_registry.return_value = MagicMock(list_skills=MagicMock(return_value=[]))
+            mock_instance.skill_catalog.get_registry.return_value = MagicMock(
+                list_skills=MagicMock(return_value=[])
+            )
             MockAgent.return_value = mock_instance
             agent = await factory.create(profile)
             assert agent._preferred_endpoint is None
@@ -570,6 +819,7 @@ class TestAgentFactory:
 # ================================================================
 # AgentInstancePool Tests
 # ================================================================
+
 
 class TestAgentInstancePool:
     @pytest.fixture
@@ -583,6 +833,7 @@ class TestAgentInstancePool:
     @pytest.fixture
     def pool(self, mock_factory):
         from openakita.agents.factory import AgentInstancePool
+
         return AgentInstancePool(factory=mock_factory, idle_timeout=5.0)
 
     @pytest.mark.asyncio
@@ -622,6 +873,7 @@ class TestAgentInstancePool:
 
     def test_get_existing(self, pool):
         from openakita.agents.factory import _PoolEntry
+
         mock_agent = MagicMock()
         entry = _PoolEntry(mock_agent, "agent-a", "session-1")
         pool._pool["session-1::agent-a"] = entry
@@ -631,6 +883,7 @@ class TestAgentInstancePool:
 
     def test_get_existing_without_profile(self, pool):
         from openakita.agents.factory import _PoolEntry
+
         mock_agent = MagicMock()
         entry = _PoolEntry(mock_agent, "agent-a", "session-1")
         pool._pool["session-1::agent-a"] = entry
@@ -638,6 +891,7 @@ class TestAgentInstancePool:
 
     def test_release(self, pool):
         from openakita.agents.factory import _PoolEntry
+
         mock_agent = MagicMock()
         entry = _PoolEntry(mock_agent, "agent-a", "session-1")
         old_time = entry.last_used
@@ -651,6 +905,7 @@ class TestAgentInstancePool:
 
     def test_reap_idle(self, pool):
         from openakita.agents.factory import _PoolEntry
+
         mock_agent = MagicMock()
         mock_agent.shutdown = AsyncMock()
         entry = _PoolEntry(mock_agent, "agent-a", "session-1")
@@ -661,6 +916,7 @@ class TestAgentInstancePool:
 
     def test_reap_keeps_active(self, pool):
         from openakita.agents.factory import _PoolEntry
+
         mock_agent = MagicMock()
         entry = _PoolEntry(mock_agent, "agent-a", "session-1")
         pool._pool["session-1::agent-a"] = entry
@@ -669,6 +925,7 @@ class TestAgentInstancePool:
 
     def test_get_stats(self, pool):
         from openakita.agents.factory import _PoolEntry
+
         pool._pool["s1::a1"] = _PoolEntry(MagicMock(), "a1", "s1")
         pool._pool["s1::a2"] = _PoolEntry(MagicMock(), "a2", "s1")
         pool._pool["s2::a1"] = _PoolEntry(MagicMock(), "a1", "s2")
@@ -678,6 +935,7 @@ class TestAgentInstancePool:
 
     def test_get_all_for_session(self, pool):
         from openakita.agents.factory import _PoolEntry
+
         pool._pool["s1::a1"] = _PoolEntry(MagicMock(), "a1", "s1")
         pool._pool["s1::a2"] = _PoolEntry(MagicMock(), "a2", "s1")
         pool._pool["s2::a1"] = _PoolEntry(MagicMock(), "a1", "s2")
@@ -710,16 +968,20 @@ class TestAgentInstancePool:
 # AgentOrchestrator Tests
 # ================================================================
 
+
 class TestAgentOrchestrator:
     @pytest.fixture
     def mock_profile_store(self, tmp_path: Path):
         store = ProfileStore(tmp_path / "agents")
         store.save(_make_profile("default", "Default Agent"))
         store.save(_make_profile("helper", "Helper Agent"))
-        store.save(_make_profile(
-            "fragile", "Fragile Agent",
-            fallback_profile_id="default",
-        ))
+        store.save(
+            _make_profile(
+                "fragile",
+                "Fragile Agent",
+                fallback_profile_id="default",
+            )
+        )
         return store
 
     @pytest.fixture
@@ -754,11 +1016,27 @@ class TestAgentOrchestrator:
     async def test_handle_message_routes_correctly(self, orchestrator, mock_pool):
         session = _make_session(agent_profile_id="default")
         result = await orchestrator.handle_message(session, "Hello")
-        # orchestrator 现在通过 ``DelegationResult.to_tool_response`` 给响应加结构化 header
-        # （``[任务完成通知] Agent: ... | 状态: ... | 耗时: ...`` + ``工具调用:`` 一行 + 原文）
-        # ，所以这里改为 substring 断言。
-        assert "Agent response" in result
+        assert result == "Agent response"
+        assert "任务完成通知" not in result
+        assert "工具调用:" not in result
         mock_pool.get_or_create.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_sub_agent_dispatch_keeps_structured_tool_response(self, orchestrator):
+        session = _make_session()
+
+        result = await orchestrator._dispatch(
+            session,
+            "sub task",
+            "helper",
+            depth=1,
+            from_agent="default",
+        )
+
+        assert "Agent response" in result
+        assert "任务完成通知" in result
+        assert "Agent:" in result
+        assert "工具调用: 0 次" in result
 
     @pytest.mark.asyncio
     async def test_handle_message_resets_delegation_chain(self, orchestrator):
@@ -778,9 +1056,7 @@ class TestAgentOrchestrator:
     @pytest.mark.asyncio
     async def test_delegation_records_chain(self, orchestrator):
         session = _make_session()
-        await orchestrator._dispatch(
-            session, "task", "helper", depth=1, from_agent="default"
-        )
+        await orchestrator._dispatch(session, "task", "helper", depth=1, from_agent="default")
         chain = session.context.delegation_chain
         assert len(chain) == 1
         assert chain[0]["from"] == "default"
@@ -845,9 +1121,7 @@ class TestAgentOrchestrator:
         mock_agent.chat_with_session = slow_agent
         orchestrator._pool.get_or_create = AsyncMock(return_value=mock_agent)
 
-        task = asyncio.create_task(
-            orchestrator.handle_message(session, "slow task")
-        )
+        task = asyncio.create_task(orchestrator.handle_message(session, "slow task"))
         await asyncio.sleep(0.1)
         assert orchestrator.cancel_request("cancel-sess") is True
         result = await task
@@ -946,6 +1220,7 @@ class TestAgentOrchestrator:
     def test_delegation_logging(self, orchestrator, tmp_path):
         orchestrator._log_delegation({"event": "test", "data": "hello"})
         from datetime import datetime
+
         today = datetime.now().strftime("%Y%m%d")
         log_path = orchestrator._log_dir / f"{today}.jsonl"
         assert log_path.exists()
@@ -971,6 +1246,7 @@ class TestAgentOrchestrator:
 # AgentToolHandler Tests
 # ================================================================
 
+
 class TestAgentToolHandler:
     @pytest.fixture
     def mock_agent(self):
@@ -983,6 +1259,7 @@ class TestAgentToolHandler:
     @pytest.fixture
     def handler(self, mock_agent):
         from openakita.tools.handlers.agent import AgentToolHandler
+
         return AgentToolHandler(mock_agent)
 
     @pytest.mark.asyncio
@@ -995,65 +1272,74 @@ class TestAgentToolHandler:
 
     @pytest.mark.asyncio
     async def test_delegate_missing_agent_id(self, handler):
-        with patch.object(handler, '_get_orchestrator', return_value=MagicMock()):
+        with patch.object(handler, "_get_orchestrator", return_value=MagicMock()):
             result = await handler.handle("delegate_to_agent", {"message": "task"})
             assert "agent_id is required" in result
 
     @pytest.mark.asyncio
     async def test_delegate_missing_message(self, handler):
-        with patch.object(handler, '_get_orchestrator', return_value=MagicMock()):
+        with patch.object(handler, "_get_orchestrator", return_value=MagicMock()):
             result = await handler.handle("delegate_to_agent", {"agent_id": "helper"})
             assert "message is required" in result
 
     @pytest.mark.asyncio
     async def test_delegate_no_orchestrator(self, handler):
-        with patch.object(handler, '_get_orchestrator', return_value=None):
-            result = await handler.handle("delegate_to_agent", {
-                "agent_id": "helper",
-                "message": "do task",
-            })
+        with patch.object(handler, "_get_orchestrator", return_value=None):
+            result = await handler.handle(
+                "delegate_to_agent",
+                {
+                    "agent_id": "helper",
+                    "message": "do task",
+                },
+            )
             assert "Orchestrator not available" in result
 
     @pytest.mark.asyncio
     async def test_delegate_no_session(self, handler):
         handler.agent._current_session = None
-        with patch.object(handler, '_get_orchestrator', return_value=MagicMock()):
-            result = await handler.handle("delegate_to_agent", {
-                "agent_id": "helper",
-                "message": "do task",
-            })
+        with patch.object(handler, "_get_orchestrator", return_value=MagicMock()):
+            result = await handler.handle(
+                "delegate_to_agent",
+                {
+                    "agent_id": "helper",
+                    "message": "do task",
+                },
+            )
             assert "No active session" in result
 
     @pytest.mark.asyncio
     async def test_delegate_parallel_too_few_tasks(self, handler):
-        with patch.object(handler, '_get_orchestrator', return_value=MagicMock()):
-            result = await handler.handle("delegate_parallel", {
-                "tasks": [{"agent_id": "a", "message": "m"}],
-            })
+        with patch.object(handler, "_get_orchestrator", return_value=MagicMock()):
+            result = await handler.handle(
+                "delegate_parallel",
+                {
+                    "tasks": [{"agent_id": "a", "message": "m"}],
+                },
+            )
             assert "at least 2 tasks" in result
 
     @pytest.mark.asyncio
     async def test_delegate_parallel_too_many_tasks(self, handler):
-        with patch.object(handler, '_get_orchestrator', return_value=MagicMock()):
+        with patch.object(handler, "_get_orchestrator", return_value=MagicMock()):
             tasks = [{"agent_id": f"a{i}", "message": f"m{i}"} for i in range(6)]
             result = await handler.handle("delegate_parallel", {"tasks": tasks})
             assert "Maximum 5" in result
 
     @pytest.mark.asyncio
     async def test_delegate_parallel_invalid_tasks(self, handler):
-        with patch.object(handler, '_get_orchestrator', return_value=MagicMock()):
+        with patch.object(handler, "_get_orchestrator", return_value=MagicMock()):
             result = await handler.handle("delegate_parallel", {"tasks": "not a list"})
             assert "must be a list" in result
 
     @pytest.mark.asyncio
     async def test_spawn_missing_inherit_from(self, handler):
-        with patch.object(handler, '_get_orchestrator', return_value=MagicMock()):
+        with patch.object(handler, "_get_orchestrator", return_value=MagicMock()):
             result = await handler.handle("spawn_agent", {"message": "task"})
             assert "inherit_from is required" in result
 
     @pytest.mark.asyncio
     async def test_spawn_missing_message(self, handler):
-        with patch.object(handler, '_get_orchestrator', return_value=MagicMock()):
+        with patch.object(handler, "_get_orchestrator", return_value=MagicMock()):
             result = await handler.handle("spawn_agent", {"inherit_from": "base"})
             assert "message is required" in result
 
@@ -1072,10 +1358,13 @@ class TestAgentToolHandler:
         handler.agent._current_session.context.agent_switch_history = [
             {"type": "dynamic_create"} for _ in range(5)
         ]
-        result = await handler.handle("create_agent", {
-            "name": "Extra",
-            "description": "One too many",
-        })
+        result = await handler.handle(
+            "create_agent",
+            {
+                "name": "Extra",
+                "description": "One too many",
+            },
+        )
         assert "Maximum dynamic agents" in result
 
     @pytest.mark.asyncio
@@ -1089,13 +1378,18 @@ class TestAgentToolHandler:
         mock_orch = MagicMock()
         mock_orch._ensure_deps = MagicMock()
         mock_orch._profile_store = mock_store
-        with patch.object(handler, '_get_orchestrator', return_value=mock_orch), \
-             patch.object(handler, '_get_profile_store', return_value=mock_store):
-            result = await handler.handle("create_agent", {
-                "name": "SQL Expert",
-                "description": "Handles SQL optimization",
-                "force": True,
-            })
+        with (
+            patch.object(handler, "_get_orchestrator", return_value=mock_orch),
+            patch.object(handler, "_get_profile_store", return_value=mock_store),
+        ):
+            result = await handler.handle(
+                "create_agent",
+                {
+                    "name": "SQL Expert",
+                    "description": "Handles SQL optimization",
+                    "force": True,
+                },
+            )
             assert "Agent created" in result
             assert "ephemeral" in result.lower()
 
@@ -1105,14 +1399,19 @@ class TestAgentToolHandler:
         mock_orch = MagicMock()
         mock_orch._ensure_deps = MagicMock()
         mock_orch._profile_store = mock_store
-        with patch.object(handler, '_get_orchestrator', return_value=mock_orch), \
-             patch.object(handler, '_get_profile_store', return_value=mock_store):
-            result = await handler.handle("create_agent", {
-                "name": "Persistent Bot",
-                "description": "A lasting agent",
-                "persistent": True,
-                "force": True,
-            })
+        with (
+            patch.object(handler, "_get_orchestrator", return_value=mock_orch),
+            patch.object(handler, "_get_profile_store", return_value=mock_store),
+        ):
+            result = await handler.handle(
+                "create_agent",
+                {
+                    "name": "Persistent Bot",
+                    "description": "A lasting agent",
+                    "persistent": True,
+                    "force": True,
+                },
+            )
             assert "persistent" in result.lower()
             assert "will be saved" in result
 
@@ -1123,19 +1422,25 @@ class TestAgentToolHandler:
         mock_orch._ensure_deps = MagicMock()
         mock_orch._profile_store = mock_store
         mock_orch.delegate = AsyncMock(return_value="spawned result")
-        with patch.object(handler, '_get_orchestrator', return_value=mock_orch), \
-             patch.object(handler, '_get_profile_store', return_value=mock_store):
-            result = await handler.handle("spawn_agent", {
-                "inherit_from": "nonexistent-base",
-                "message": "do task",
-            })
+        with (
+            patch.object(handler, "_get_orchestrator", return_value=mock_orch),
+            patch.object(handler, "_get_profile_store", return_value=mock_store),
+        ):
+            result = await handler.handle(
+                "spawn_agent",
+                {
+                    "inherit_from": "nonexistent-base",
+                    "message": "do task",
+                },
+            )
             assert "not found" in result
 
     @pytest.mark.asyncio
     async def test_spawn_success(self, handler, tmp_path):
         mock_store = ProfileStore(tmp_path / "agents")
         base = _make_profile(
-            "browser-agent", "Browser",
+            "browser-agent",
+            "Browser",
             skills=["web_search"],
             custom_prompt="Browse the web",
         )
@@ -1144,14 +1449,19 @@ class TestAgentToolHandler:
         mock_orch._ensure_deps = MagicMock()
         mock_orch._profile_store = mock_store
         mock_orch.delegate = AsyncMock(return_value="spawned result")
-        with patch.object(handler, '_get_orchestrator', return_value=mock_orch), \
-             patch.object(handler, '_get_profile_store', return_value=mock_store):
-            result = await handler.handle("spawn_agent", {
-                "inherit_from": "browser-agent",
-                "message": "search for React 19",
-                "extra_skills": ["web_scrape"],
-                "custom_prompt_overlay": "Focus on performance",
-            })
+        with (
+            patch.object(handler, "_get_orchestrator", return_value=mock_orch),
+            patch.object(handler, "_get_profile_store", return_value=mock_store),
+        ):
+            result = await handler.handle(
+                "spawn_agent",
+                {
+                    "inherit_from": "browser-agent",
+                    "message": "search for React 19",
+                    "extra_skills": ["web_scrape"],
+                    "custom_prompt_overlay": "Focus on performance",
+                },
+            )
             # C16: spawn_agent return is wrapped with EXTERNAL_CONTENT_*
             # markers so the sub-agent's text cannot inject instructions
             # into the parent's transcript. The payload itself stays
@@ -1172,6 +1482,7 @@ class TestAgentToolHandler:
 # Integration: Full Delegation Flow
 # ================================================================
 
+
 class TestDelegationFlow:
     """Integration tests simulating realistic multi-agent workflows."""
 
@@ -1181,10 +1492,13 @@ class TestDelegationFlow:
         store.save(_make_profile("coordinator", "Coordinator"))
         store.save(_make_profile("researcher", "Researcher"))
         store.save(_make_profile("coder", "Coder"))
-        store.save(_make_profile(
-            "weak-agent", "Weak Agent",
-            fallback_profile_id="coordinator",
-        ))
+        store.save(
+            _make_profile(
+                "weak-agent",
+                "Weak Agent",
+                fallback_profile_id="coordinator",
+            )
+        )
 
         pool = MagicMock()
         agents = {}
@@ -1197,9 +1511,7 @@ class TestDelegationFlow:
                 agent._agent_profile = profile
                 agent._last_finalized_trace = []
                 agent.agent_state = None
-                agent.chat_with_session = AsyncMock(
-                    return_value=f"Response from {profile.id}"
-                )
+                agent.chat_with_session = AsyncMock(return_value=f"Response from {profile.id}")
                 agents[key] = agent
             return agents[key]
 
@@ -1223,8 +1535,7 @@ class TestDelegationFlow:
         orch, store, pool = setup
         session = _make_session(agent_profile_id="coordinator")
         result = await orch.delegate(
-            session, "coordinator", "researcher",
-            "Research Python 3.13 features"
+            session, "coordinator", "researcher", "Research Python 3.13 features"
         )
         assert "researcher" in result
         assert len(session.context.handoff_events) == 1
@@ -1234,12 +1545,8 @@ class TestDelegationFlow:
         orch, store, pool = setup
         session = _make_session(agent_profile_id="coordinator")
 
-        r1 = await orch.delegate(
-            session, "coordinator", "researcher", "Research topic A"
-        )
-        r2 = await orch.delegate(
-            session, "coordinator", "coder", "Code feature B"
-        )
+        r1 = await orch.delegate(session, "coordinator", "researcher", "Research topic A")
+        r2 = await orch.delegate(session, "coordinator", "coder", "Code feature B")
 
         assert "researcher" in r1
         assert "coder" in r2
@@ -1291,9 +1598,7 @@ class TestDelegationFlow:
 
                 agent.chat_with_session = fail
             else:
-                agent.chat_with_session = AsyncMock(
-                    return_value=f"Fallback handled: {profile.id}"
-                )
+                agent.chat_with_session = AsyncMock(return_value=f"Fallback handled: {profile.id}")
             return agent
 
         pool.get_or_create = AsyncMock(side_effect=get_agent)
@@ -1323,6 +1628,7 @@ class TestDelegationFlow:
 # ================================================================
 # Edge Cases and Bug Detection
 # ================================================================
+
 
 class TestEdgeCasesAndBugs:
     """Tests targeting potential bugs and edge cases."""
@@ -1436,7 +1742,8 @@ class TestEdgeCasesAndBugs:
         store.save(sys_profile)
 
         mutated = _make_profile(
-            "sys", "System",
+            "sys",
+            "System",
             agent_type=AgentType.CUSTOM,  # type is immutable on SYSTEM profiles
         )
         with pytest.raises(PermissionError):
@@ -1455,6 +1762,7 @@ class TestEdgeCasesAndBugs:
     def test_pool_entry_idle_seconds(self):
         """Verify _PoolEntry.idle_seconds grows over time."""
         from openakita.agents.factory import _PoolEntry
+
         agent = MagicMock()
         entry = _PoolEntry(agent, "p1", "s1")
         time.sleep(0.05)
@@ -1462,6 +1770,7 @@ class TestEdgeCasesAndBugs:
 
     def test_pool_entry_touch_resets_idle(self):
         from openakita.agents.factory import _PoolEntry
+
         agent = MagicMock()
         entry = _PoolEntry(agent, "p1", "s1")
         time.sleep(0.05)
@@ -1514,6 +1823,7 @@ class TestEdgeCasesAndBugs:
         even though last_failure_time defaults to 0.0 (falsy).
         """
         from openakita.agents.fallback import _HealthEntry
+
         entry = _HealthEntry(profile_id="test")
         entry.record_failure()
         assert entry.consecutive_failures == 1
@@ -1565,14 +1875,19 @@ class TestEdgeCasesAndBugs:
 
         handler = AgentToolHandler(agent)
 
-        with patch.object(handler, '_get_orchestrator', return_value=mock_orch), \
-             patch.object(handler, '_get_profile_store', return_value=store):
-            result = await handler.handle("delegate_parallel", {
-                "tasks": [
-                    {"agent_id": "browser-agent", "message": "Research topic A"},
-                    {"agent_id": "browser-agent", "message": "Research topic B"},
-                ],
-            })
+        with (
+            patch.object(handler, "_get_orchestrator", return_value=mock_orch),
+            patch.object(handler, "_get_profile_store", return_value=store),
+        ):
+            result = await handler.handle(
+                "delegate_parallel",
+                {
+                    "tasks": [
+                        {"agent_id": "browser-agent", "message": "Research topic A"},
+                        {"agent_id": "browser-agent", "message": "Research topic B"},
+                    ],
+                },
+            )
             assert "Agent: browser-agent" in result
             assert mock_orch.delegate.await_count == 2
 
@@ -1641,8 +1956,10 @@ class TestEdgeCasesAndBugs:
         mock_orch = MagicMock()
         mock_orch.delegate = AsyncMock(return_value="ok")
 
-        with patch.object(handler, "_get_profile_store", return_value=store), \
-             patch.object(handler, "_get_orchestrator", return_value=mock_orch):
+        with (
+            patch.object(handler, "_get_profile_store", return_value=store),
+            patch.object(handler, "_get_orchestrator", return_value=mock_orch),
+        ):
             result = await handler.handle(
                 "spawn_agent",
                 {
@@ -1719,6 +2036,7 @@ class TestEdgeCasesAndBugs:
 # Concurrency Stress Tests
 # ================================================================
 
+
 class TestConcurrency:
     @pytest.mark.asyncio
     async def test_pool_concurrent_get_or_create(self, tmp_path):
@@ -1741,10 +2059,7 @@ class TestConcurrency:
         pool = AgentInstancePool(factory=factory)
 
         profile = _make_profile("agent-a", "A")
-        tasks = [
-            pool.get_or_create("session-1", profile)
-            for _ in range(10)
-        ]
+        tasks = [pool.get_or_create("session-1", profile) for _ in range(10)]
         results = await asyncio.gather(*tasks)
         assert create_count == 1
         assert all(r is results[0] for r in results)
@@ -1813,10 +2128,7 @@ class TestConcurrency:
         orch._log_dir.mkdir()
 
         session = _make_session()
-        tasks = [
-            orch.delegate(session, "coordinator", f"agent-{i}", f"task-{i}")
-            for i in range(5)
-        ]
+        tasks = [orch.delegate(session, "coordinator", f"agent-{i}", f"task-{i}") for i in range(5)]
         results = await asyncio.gather(*tasks)
         assert len(results) == 5
         for i, r in enumerate(results):

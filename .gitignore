@@ -80,6 +80,8 @@ pnpm-debug.log*
 dist/
 dist-cli/
 .vite/
+src/openakita/web/
+src/openakita/docs_dist/
 # Plugins ship their built UI as part of the distributable source —
 # exempt plugins/*/ui/dist/ from the global `dist/` rule above.
 !plugins/*/ui/dist/
@@ -365,12 +367,14 @@ plugins/subtitle-craft/validation_scripts/
 
 # 本地 QA / 探针（exploratory_report、explore_runs 等）
 _qa/
-tools-tmp/
+tools-tmp/*
+!tools-tmp/README.md
 # tests/e2e/ 下以下划线开头的探针（pytest 不收集，但容易被 git status 污染）
 tests/e2e/_*.py
 
 # pytest / api 临时 dump
 .pytest_out.txt
+_diff_*.txt
 _agents.json
 _endpoints.json
 _openapi.json
@@ -379,6 +383,7 @@ route_stats.md
 
 # 反馈下载（含 LLM 请求/响应、PII，二进制 zip）
 .feedback-downloads/
+feedback-downloads/
 
 # 误打包的插件 zip（plugins/<name>/ui/dist/ 仍走白名单保留）
 plugins/plugins.zip
@@ -435,3 +440,6 @@ _*_log.jsonl
 # 取消跟踪后再移入此处，磁盘文件完整保留。
 # ─────────────────────────────────────────────────────────────
 _archive/
+
+# Local tao patch working directory
+.patches/

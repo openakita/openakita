@@ -85,8 +85,7 @@ class TestAppendBatchChainIntegrity:
         path_a = tmp_path / "by_one" / "audit.jsonl"
         path_b = tmp_path / "by_batch" / "audit.jsonl"
         records = [
-            {"ts": 1.0 + i, "tool": "test_tool", "decision": "allow", "i": i}
-            for i in range(5)
+            {"ts": 1.0 + i, "tool": "test_tool", "decision": "allow", "i": i} for i in range(5)
         ]
 
         reset_writers_for_testing()
@@ -264,9 +263,7 @@ class TestBatching:
     async def test_batches_to_max_size(self, audit_path: Path) -> None:
         """Flooding the queue with >max_batch records should pack a
         full batch in one append_batch call, not 1 append per record."""
-        w = AsyncBatchAuditWriter(
-            str(audit_path), max_batch_size=10, max_batch_delay_ms=200
-        )
+        w = AsyncBatchAuditWriter(str(audit_path), max_batch_size=10, max_batch_delay_ms=200)
         await w.start()
         try:
             for i in range(25):
@@ -275,8 +272,7 @@ class TestBatching:
             # Expect roughly ceil(25/10) = 3 batches; allow ≤4 to absorb
             # scheduler racing on small inputs.
             assert 2 <= w.stats["batches"] <= 4, (
-                f"expected 2-4 batches for 25 records with max=10, "
-                f"got {w.stats['batches']}"
+                f"expected 2-4 batches for 25 records with max=10, got {w.stats['batches']}"
             )
             assert w.stats["written"] == 25
         finally:
@@ -287,9 +283,7 @@ class TestBatching:
         """One record with a long max_delay should still flush within
         max_delay even though the batch hasn't filled. This is the
         latency upper bound."""
-        w = AsyncBatchAuditWriter(
-            str(audit_path), max_batch_size=100, max_batch_delay_ms=30
-        )
+        w = AsyncBatchAuditWriter(str(audit_path), max_batch_size=100, max_batch_delay_ms=30)
         await w.start()
         try:
             w.enqueue({"ts": 1.0, "tool": "lonely"})
@@ -307,9 +301,7 @@ class TestBatching:
 
 class TestBackpressure:
     @pytest.mark.asyncio
-    async def test_queue_full_falls_back_to_sync_record_preserved(
-        self, audit_path: Path
-    ) -> None:
+    async def test_queue_full_falls_back_to_sync_record_preserved(self, audit_path: Path) -> None:
         """Tiny queue + fast producer → queue saturates → enqueue must
         sync-write the overflow record (NOT drop it)."""
         w = AsyncBatchAuditWriter(
@@ -345,9 +337,7 @@ class TestStopDrain:
     @pytest.mark.asyncio
     async def test_stop_drains_in_flight_records(self, audit_path: Path) -> None:
         """Records enqueued just before stop() must reach disk."""
-        w = AsyncBatchAuditWriter(
-            str(audit_path), max_batch_size=4, max_batch_delay_ms=100
-        )
+        w = AsyncBatchAuditWriter(str(audit_path), max_batch_size=4, max_batch_delay_ms=100)
         await w.start()
         for i in range(8):
             w.enqueue({"ts": float(i), "tool": f"drain_{i}"})
@@ -365,9 +355,7 @@ class TestStopDrain:
 
 class TestAuditLoggerIntegration:
     @pytest.mark.asyncio
-    async def test_log_routes_through_async_writer_when_running(
-        self, audit_path: Path
-    ) -> None:
+    async def test_log_routes_through_async_writer_when_running(self, audit_path: Path) -> None:
         from openakita.core.audit_logger import AuditLogger
 
         await start_global_audit_writer(str(audit_path))
@@ -513,18 +501,13 @@ class TestPathNormalization:
         )
 
     @pytest.mark.asyncio
-    async def test_singleton_lookup_resilient_to_separator(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_singleton_lookup_resilient_to_separator(self, tmp_path: Path) -> None:
         """``get_async_audit_writer`` accepts either slash form."""
         path_str = str(tmp_path / "x.jsonl")
         await start_global_audit_writer(path_str)
         try:
             assert aw_mod.get_async_audit_writer(path_str) is not None
-            assert (
-                aw_mod.get_async_audit_writer(path_str.replace("\\", "/"))
-                is not None
-            ), (
+            assert aw_mod.get_async_audit_writer(path_str.replace("\\", "/")) is not None, (
                 "After F1/F3 fix, callers passing the slash-flipped form "
                 "must still get the singleton — that's the whole point "
                 "of normalising in __init__."
@@ -549,9 +532,7 @@ class TestStopHangPrevention:
     """
 
     @pytest.mark.asyncio
-    async def test_stop_with_blocked_worker_does_not_hang_forever(
-        self, audit_path: Path
-    ) -> None:
+    async def test_stop_with_blocked_worker_does_not_hang_forever(self, audit_path: Path) -> None:
         """The originally-broken case: queue full + worker blocked in
         an ``await``. Without the F2 fix, ``stop()`` did
         ``await queue.put(None)`` with no timeout and hung indefinitely
@@ -640,9 +621,7 @@ class TestStopHangPrevention:
         # All 5 should have been flushed before stop returned
         result = verify_chain(audit_path)
         assert result.ok
-        assert result.total == 5, (
-            f"Normal stop should drain queued records; got {result.total}/5."
-        )
+        assert result.total == 5, f"Normal stop should drain queued records; got {result.total}/5."
 
 
 class TestServerLifecycleWiring:
@@ -684,9 +663,7 @@ class TestServerLifecycleWiring:
         src = inspect.getsource(srv_mod)
         # Must reference DEFAULT_AUDIT_PATH or cfg.log_path so the
         # singleton is registered under the AuditLogger-canonical path.
-        assert (
-            "DEFAULT_AUDIT_PATH" in src or "cfg.log_path" in src
-        ), (
+        assert "DEFAULT_AUDIT_PATH" in src or "cfg.log_path" in src, (
             "Startup hook must use DEFAULT_AUDIT_PATH (or v2 cfg.log_path) "
             "so AuditLogger.log() finds the singleton. Hard-coding a "
             "different path here would silently disable the optimisation."

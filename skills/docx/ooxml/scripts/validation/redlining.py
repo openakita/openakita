@@ -15,9 +15,7 @@ class RedliningValidator:
         self.unpacked_dir = Path(unpacked_dir)
         self.original_docx = Path(original_docx)
         self.verbose = verbose
-        self.namespaces = {
-            "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-        }
+        self.namespaces = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
     def validate(self):
         """Main validation method that returns True if valid, False otherwise."""
@@ -74,9 +72,7 @@ class RedliningValidator:
 
             original_file = temp_path / "word" / "document.xml"
             if not original_file.exists():
-                print(
-                    f"FAILED - Original document.xml not found in {self.original_docx}"
-                )
+                print(f"FAILED - Original document.xml not found in {self.original_docx}")
                 return False
 
             # Parse both XML files using xml.etree.ElementTree for redlining validation
@@ -101,9 +97,7 @@ class RedliningValidator:
 
             if modified_text != original_text:
                 # Show detailed character-level differences for each paragraph
-                error_message = self._generate_detailed_diff(
-                    original_text, modified_text
-                )
+                error_message = self._generate_detailed_diff(original_text, modified_text)
                 print(error_message)
                 return False
 
@@ -277,4 +271,3 @@ class RedliningValidator:
 
 if __name__ == "__main__":
     raise RuntimeError("This module should not be run directly.")
-

@@ -314,11 +314,17 @@ export type UpdateInfo = {
   ) => Promise<void>;
 };
 
-export async function checkForUpdate(): Promise<UpdateInfo | null> {
+export async function checkForUpdate(options?: {
+  apiBaseUrl?: string;
+  channel?: string;
+}): Promise<UpdateInfo | null> {
   if (!IS_TAURI) return null;
   try {
     const { check } = await import("@tauri-apps/plugin-updater");
-    const update = await check();
+    const headers = await buildUpdaterHeaders(options?.apiBaseUrl);
+    if (options?.channel) headers.set("X-OpenAkita-Channel", options.channel);
+    const hasHeaders = Array.from(headers.keys()).length > 0;
+    const update = await check(hasHeaders ? { headers } : undefined);
     if (!update) return null;
     return {
       version: update.version,
@@ -328,6 +334,27 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
   } catch {
     return null;
   }
+}
+
+async function buildUpdaterHeaders(apiBaseUrl?: string): Promise<Headers> {
+  const headers = new Headers();
+  const base = apiBaseUrl || "http://127.0.0.1:18900";
+  try {
+    const res = await fetch(`${base}/api/inbox/diagnostics`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!res.ok) return headers;
+    const data = await res.json();
+    if (typeof data.install_id_hash === "string" && data.install_id_hash) {
+      headers.set("X-Client-ID", data.install_id_hash);
+    }
+    if (typeof data.channel === "string" && data.channel) {
+      headers.set("X-OpenAkita-Channel", data.channel);
+    }
+  } catch {
+    // The updater can still fall back to the public CDN manifest.
+  }
+  return headers;
 }
 
 // ---------------------------------------------------------------------------
@@ -380,6 +407,17 @@ export async function relaunchApp(): Promise<void> {
   if (!IS_TAURI) {
     window.location.reload();
     return;
+  }
+  // Tell the native shell this is an intentional restart BEFORE asking the
+  // process plugin to relaunch. `app.restart()` exits via process::exit and
+  // never fires RunEvent::Exit, so without this the crash-recovery watchdog
+  // would mistake the update restart for a hard crash and spawn a duplicate.
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("prepare_relaunch");
+  } catch {
+    // Non-fatal: worst case the watchdog spawns a duplicate that
+    // single-instance immediately dedups to "focus existing window".
   }
   const { relaunch } = await import("@tauri-apps/plugin-process");
   await relaunch();
@@ -447,58 +485,6 @@ export async function openPopupWindow(
 /** Whether popup windows are available on the current platform. */
 export function canOpenPopupWindow(): boolean {
   return !IS_CAPACITOR;
-}
-
-// ---------------------------------------------------------------------------
-// Global Shortcut
-// ---------------------------------------------------------------------------
-
-/**
- * Register a global shortcut (desktop only).
- * Returns an unregister function. No-op in web mode.
- */
-export async function registerGlobalShortcut(
-  shortcut: string,
-  handler: () => void,
-): Promise<() => void> {
-  if (!IS_TAURI) return () => {};
-  try {
-    const mod = await import("@tauri-apps/plugin-global-shortcut");
-    await mod.register(shortcut, handler);
-    return () => { mod.unregister(shortcut).catch(() => {}); };
-  } catch (e) {
-    console.warn("[GlobalShortcut] Failed to register:", e);
-    return () => {};
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Notification
-// ---------------------------------------------------------------------------
-
-/**
- * Send a desktop notification (Tauri plugin-notification).
- * No-op in web mode.
- */
-export async function sendNotification(options: {
-  title: string;
-  body?: string;
-  icon?: string;
-}): Promise<void> {
-  if (!IS_TAURI) return;
-  try {
-    const mod = await import("@tauri-apps/plugin-notification");
-    let granted = await mod.isPermissionGranted();
-    if (!granted) {
-      const perm = await mod.requestPermission();
-      granted = perm === "granted";
-    }
-    if (granted) {
-      mod.sendNotification(options);
-    }
-  } catch (e) {
-    console.warn("[Notification] Failed:", e);
-  }
 }
 
 // ---------------------------------------------------------------------------

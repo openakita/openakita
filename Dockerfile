@@ -5,6 +5,7 @@ WORKDIR /app/apps/setup-center
 COPY apps/setup-center/package.json apps/setup-center/package-lock.json ./
 RUN npm ci
 COPY apps/setup-center/ ./
+COPY src/openakita/llm/registries/providers.json /app/src/openakita/llm/registries/providers.json
 RUN npm run build:web
 
 # ── Stage 2: Build Python package ──
@@ -62,7 +63,7 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 18900
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:18900/health || exit 1
+    CMD curl -f http://localhost:18900/api/health || exit 1
 
 ENTRYPOINT ["openakita"]
-CMD ["serve", "--host", "0.0.0.0", "--port", "18900"]
+CMD ["serve"]

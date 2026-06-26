@@ -12,6 +12,7 @@
 - plan/ask 模式规则在 policy 调用前就 deny
 - 引擎只调用一次（防止 dual-check 回潮）
 """
+
 from __future__ import annotations
 
 import inspect
@@ -344,8 +345,7 @@ def test_reset_policy_v2_layer_clears_singleton():
     reset_policy_v2_layer()
 
     assert not is_initialized(), (
-        "reset_policy_v2_layer() 没有清 v2 单例 —— "
-        "UI 配置 hot-reload 后 v2 仍按旧 YAML 评估"
+        "reset_policy_v2_layer() 没有清 v2 单例 —— UI 配置 hot-reload 后 v2 仍按旧 YAML 评估"
     )
 
     eng_after = get_engine_v2()

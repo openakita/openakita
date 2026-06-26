@@ -93,13 +93,9 @@ class TestDeepMergeUnit:
         assert target == {"mode": None}
 
     def test_nested_three_levels(self) -> None:
-        target = {
-            "audit": {"rotation": {"mode": "daily", "size_mb": 100}, "enabled": True}
-        }
+        target = {"audit": {"rotation": {"mode": "daily", "size_mb": 100}, "enabled": True}}
         _deep_merge_security(target, {"audit": {"rotation": {"size_mb": 200}}})
-        assert target == {
-            "audit": {"rotation": {"mode": "daily", "size_mb": 200}, "enabled": True}
-        }
+        assert target == {"audit": {"rotation": {"mode": "daily", "size_mb": 200}, "enabled": True}}
 
     def test_returns_same_target_reference(self) -> None:
         target: dict = {"a": 1}
@@ -307,9 +303,7 @@ class TestEdgeCases:
         assert result["identity"] == {"name": "Akita"}
         assert result["security"] == {"confirmation_mode": "strict"}
 
-    def test_empty_body_security_no_op(
-        self, api_client: TestClient, isolated_yaml: Path
-    ) -> None:
+    def test_empty_body_security_no_op(self, api_client: TestClient, isolated_yaml: Path) -> None:
         """POST {security: {}} is a no-op on existing fields."""
         _seed_yaml(
             isolated_yaml,

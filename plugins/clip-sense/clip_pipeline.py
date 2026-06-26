@@ -91,33 +91,42 @@ async def run_pipeline(
         if step_name in skip:
             continue
 
-        emit("task_update", {
-            "task_id": ctx.task_id,
-            "step": step_name,
-            "status": "running",
-        })
+        emit(
+            "task_update",
+            {
+                "task_id": ctx.task_id,
+                "step": step_name,
+                "status": "running",
+            },
+        )
         await tm.update_task(ctx.task_id, pipeline_step=step_name, status="running")
 
         try:
             await step_fn(ctx, tm, asr, ffmpeg, emit)
         except PipelineError as e:
             await _set_error(ctx, tm, e.kind, str(e))
-            emit("task_update", {
-                "task_id": ctx.task_id,
-                "status": "failed",
-                "error_kind": e.kind,
-                "error_message": str(e),
-            })
+            emit(
+                "task_update",
+                {
+                    "task_id": ctx.task_id,
+                    "status": "failed",
+                    "error_kind": e.kind,
+                    "error_message": str(e),
+                },
+            )
             return
         except Exception as e:
             kind = _classify_error(e)
             await _set_error(ctx, tm, kind, str(e))
-            emit("task_update", {
-                "task_id": ctx.task_id,
-                "status": "failed",
-                "error_kind": kind,
-                "error_message": str(e),
-            })
+            emit(
+                "task_update",
+                {
+                    "task_id": ctx.task_id,
+                    "status": "failed",
+                    "error_kind": kind,
+                    "error_message": str(e),
+                },
+            )
             return
 
     await tm.update_task(ctx.task_id, status="succeeded", pipeline_step="done")
@@ -128,15 +137,14 @@ async def run_pipeline(
 # Step implementations
 # ======================================================================
 
+
 async def _step_setup(
     ctx: ClipPipelineContext, tm: Any, asr: Any, ffmpeg: Any, emit: EmitFn
 ) -> None:
     ctx.task_dir.mkdir(parents=True, exist_ok=True)
 
     if not ctx.source_video_path.exists():
-        raise PipelineError(
-            f"Source video not found: {ctx.source_video_path}", kind="format"
-        )
+        raise PipelineError(f"Source video not found: {ctx.source_video_path}", kind="format")
 
     ctx.source_duration_sec = await ffmpeg.get_duration(ctx.source_video_path)
     if ctx.source_duration_sec <= 0:
@@ -164,9 +172,7 @@ async def _step_check_deps(
 
     mode_def = MODES_BY_ID.get(ctx.mode)
     if mode_def and mode_def.requires_api_key and asr is None:
-        raise PipelineError(
-            "DashScope API Key not configured. Go to Settings.", kind="auth"
-        )
+        raise PipelineError("DashScope API Key not configured. Go to Settings.", kind="auth")
 
 
 async def _step_transcribe(
@@ -199,32 +205,38 @@ async def _step_transcribe(
     effective_url = (ctx.source_url or "").strip()
     if not effective_url or not paraformer_file_url_is_public(effective_url):
         if asr is None:
-            raise PipelineError(
-                "DashScope API Key not configured. Go to Settings.", kind="auth"
-            )
-        emit("task_update", {
-            "task_id": ctx.task_id,
-            "step": "transcribe",
-            "status": "running",
-            "detail": "dashscope_upload",
-        })
+            raise PipelineError("DashScope API Key not configured. Go to Settings.", kind="auth")
+        emit(
+            "task_update",
+            {
+                "task_id": ctx.task_id,
+                "step": "transcribe",
+                "status": "running",
+                "detail": "dashscope_upload",
+            },
+        )
         try:
             effective_url = await asr.upload_local_source(ctx.source_video_path)
         except DashScopeUploadError as e:
             await tm.update_transcript(
-                transcript_rec["id"], status="failed", error_message=str(e),
+                transcript_rec["id"],
+                status="failed",
+                error_message=str(e),
             )
             raise PipelineError(
                 f"DashScope temp upload failed: {e}",
                 kind=getattr(e, "kind", "config"),
             ) from e
 
-    emit("task_update", {
-        "task_id": ctx.task_id,
-        "step": "transcribe",
-        "status": "running",
-        "detail": "paraformer",
-    })
+    emit(
+        "task_update",
+        {
+            "task_id": ctx.task_id,
+            "step": "transcribe",
+            "status": "running",
+            "detail": "paraformer",
+        },
+    )
     try:
         result = await asr.transcribe(effective_url)
     except AsrError as e:
@@ -311,15 +323,14 @@ async def _step_execute(
             ctx.silence_segments = silence
             logger.info(
                 "silence_clean [%s]: detected %d silence segments (threshold_db=%.1f)",
-                ctx.task_id, len(silence),
+                ctx.task_id,
+                len(silence),
                 ctx.params.get("threshold_db", -40.0),
             )
 
             if not silence:
                 out_file = output_dir / f"cleaned_{ctx.task_id}.{ext}"
-                await asyncio.to_thread(
-                    shutil.copy2, str(ctx.source_video_path), str(out_file)
-                )
+                await asyncio.to_thread(shutil.copy2, str(ctx.source_video_path), str(out_file))
                 ctx.output_path = out_file
                 ctx.output_duration_sec = ctx.source_duration_sec
                 ctx.params["_no_silence_detected"] = True
@@ -328,12 +339,15 @@ async def _step_execute(
             total_silence_sec = sum(s.get("duration", 0) for s in silence)
             logger.info(
                 "silence_clean [%s]: total silence %.1fs, removing...",
-                ctx.task_id, total_silence_sec,
+                ctx.task_id,
+                total_silence_sec,
             )
 
             out_file = output_dir / f"cleaned_{ctx.task_id}.{ext}"
             await ffmpeg.remove_segments(
-                ctx.source_video_path, silence, out_file,
+                ctx.source_video_path,
+                silence,
+                out_file,
                 total_duration=ctx.source_duration_sec,
             )
             ctx.output_path = out_file
@@ -362,6 +376,7 @@ async def _step_execute(
                 ctx.output_path = outputs[0]
             if len(outputs) > 1:
                 import zipfile
+
                 zip_path = output_dir / f"topics_{ctx.task_id}.zip"
                 with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
                     for p in outputs:
@@ -376,12 +391,9 @@ async def _step_execute(
                 # Accept both snake_case (Pydantic alias) and camelCase
                 # (raw frontend payload via extra="allow") for resilience.
                 p = ctx.params
-                allow_filler = p.get("remove_filler",
-                                     p.get("removeFiller", True))
-                allow_stutter = p.get("remove_stutter",
-                                      p.get("removeStutter", True))
-                allow_repetition = p.get("remove_repetition",
-                                         p.get("removeRepetition", True))
+                allow_filler = p.get("remove_filler", p.get("removeFiller", True))
+                allow_stutter = p.get("remove_stutter", p.get("removeStutter", True))
+                allow_repetition = p.get("remove_repetition", p.get("removeRepetition", True))
                 allowed_types: set[str] = set()
                 if allow_filler:
                     allowed_types.add("filler")
@@ -394,10 +406,12 @@ async def _step_execute(
                     seg_type = (seg.get("type") or "filler").lower()
                     if seg_type not in allowed_types:
                         continue
-                    remove_list.append({
-                        "start": seg.get("start_sec", 0),
-                        "end": seg.get("end_sec", 0),
-                    })
+                    remove_list.append(
+                        {
+                            "start": seg.get("start_sec", 0),
+                            "end": seg.get("end_sec", 0),
+                        }
+                    )
 
             audio_path = ctx.task_dir / "audio.wav"
             await ffmpeg.extract_audio(ctx.source_video_path, audio_path)
@@ -419,7 +433,9 @@ async def _step_execute(
 
             out_file = output_dir / f"polished_{ctx.task_id}.{ext}"
             await ffmpeg.remove_segments(
-                ctx.source_video_path, merged, out_file,
+                ctx.source_video_path,
+                merged,
+                out_file,
                 total_duration=ctx.source_duration_sec,
             )
             ctx.output_path = out_file
@@ -444,10 +460,12 @@ async def _step_subtitle(
     if ctx.segments and ctx.mode != "talking_polish":
         normalized_segments = []
         for seg in ctx.segments:
-            normalized_segments.append({
-                "start": seg.get("start", seg.get("start_sec", 0)),
-                "end": seg.get("end", seg.get("end_sec", 0)),
-            })
+            normalized_segments.append(
+                {
+                    "start": seg.get("start", seg.get("start_sec", 0)),
+                    "end": seg.get("end", seg.get("end_sec", 0)),
+                }
+            )
 
     srt_content = FFmpegOps.generate_srt(
         ctx.transcript_sentences,
@@ -465,6 +483,7 @@ async def _step_subtitle(
 
     if ctx.params.get("burn_subtitle") and ctx.output_path and ctx.output_path.exists():
         from clip_ffmpeg_ops import FFmpegError
+
         sub_ext = ctx.params.get("output_format", "mp4")
         if sub_ext not in ("mp4", "mkv"):
             sub_ext = "mp4"
@@ -492,8 +511,11 @@ async def _step_finalize(
     if ctx.cost_items:
         cost = estimate_cost(ctx.mode, ctx.source_duration_sec or 0)
         updates["cost"] = {"total_cny": cost.total_cny, "items": cost.items}
-    if (ctx.params.get("_topics_zip") or ctx.params.get("_topic_files")
-            or ctx.params.get("_no_silence_detected")):
+    if (
+        ctx.params.get("_topics_zip")
+        or ctx.params.get("_topic_files")
+        or ctx.params.get("_no_silence_detected")
+    ):
         updates["params"] = ctx.params
 
     if updates:
@@ -504,20 +526,21 @@ async def _step_finalize(
 # Helpers
 # ======================================================================
 
+
 async def _compute_file_hash(path: Path, chunk_size: int = 1024 * 1024) -> str:
     """SHA256 of the whole file to avoid transcript cache collisions."""
+
     def _hash_sync() -> str:
         h = hashlib.sha256()
         with open(path, "rb") as f:
             while data := f.read(chunk_size):
                 h.update(data)
         return h.hexdigest()
+
     return await asyncio.to_thread(_hash_sync)
 
 
-async def _set_error(
-    ctx: ClipPipelineContext, tm: Any, kind: str, message: str
-) -> None:
+async def _set_error(ctx: ClipPipelineContext, tm: Any, kind: str, message: str) -> None:
     hints = get_error_hints(kind)
     ctx.error_kind = kind
     ctx.error_message = message

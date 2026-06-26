@@ -164,4 +164,3 @@ def test_exporter_rejects_empty_deck(tmp_path) -> None:
 
     with pytest.raises(PptxExportError):
         PptxExporter().export({"slides": []}, tmp_path / "empty.pptx")
-

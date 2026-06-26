@@ -61,7 +61,5 @@ def test_normalize_report_plan_defaults_pre_ingest_when_unset() -> None:
 
 
 def test_normalize_report_plan_respects_explicit_false() -> None:
-    normalized = _normalize_report_plan(
-        None, {"id": "morning", "preIngest": False}
-    )
+    normalized = _normalize_report_plan(None, {"id": "morning", "preIngest": False})
     assert normalized["preIngest"] is False

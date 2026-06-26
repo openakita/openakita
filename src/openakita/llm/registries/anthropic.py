@@ -68,4 +68,3 @@ class AnthropicRegistry(ProviderRegistry):
             )
             for model_id in preset
         ]
-

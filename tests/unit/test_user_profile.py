@@ -28,16 +28,21 @@ class TestUserProfileState:
 class TestUserProfileItem:
     def test_uncollected_item(self):
         item = UserProfileItem(
-            key="name", name="姓名",
-            description="用户姓名", question="你叫什么名字？",
+            key="name",
+            name="姓名",
+            description="用户姓名",
+            question="你叫什么名字？",
         )
         assert item.is_collected is False
 
     def test_collected_item(self):
         item = UserProfileItem(
-            key="name", name="姓名",
-            description="用户姓名", question="你叫什么？",
-            value="小明", collected_at="2026-01-01",
+            key="name",
+            name="姓名",
+            description="用户姓名",
+            question="你叫什么？",
+            value="小明",
+            collected_at="2026-01-01",
         )
         assert item.is_collected is True
 
@@ -74,4 +79,3 @@ class TestUserProfileManager:
     def test_get_available_keys(self, pm):
         keys = pm.get_available_keys()
         assert isinstance(keys, list)
-

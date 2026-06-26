@@ -184,12 +184,7 @@ def _find_bundled_chromium() -> tuple[str | None, Path | None]:
                     )
                 elif is_mac:
                     candidates.extend(
-                        chromium_dir
-                        / mac_dir
-                        / "Chromium.app"
-                        / "Contents"
-                        / "MacOS"
-                        / "Chromium"
+                        chromium_dir / mac_dir / "Chromium.app" / "Contents" / "MacOS" / "Chromium"
                         for mac_dir in ("chrome-mac-arm64", "chrome-mac")
                     )
                 else:
@@ -262,7 +257,9 @@ class DispatchService:
         * ``header`` is prepended to every follow-up chunk to make
           mid-stream batches self-identify.
         """
-        result = DispatchResult(ok=False, channel=channel, chat_id=chat_id, content_kind=content_kind)
+        result = DispatchResult(
+            ok=False, channel=channel, chat_id=chat_id, content_kind=content_kind
+        )
 
         text = content or ""
         if not text.strip():
@@ -321,9 +318,7 @@ class DispatchService:
 
         max_bytes = self._batch_bytes.get(channel, self._batch_bytes["default"])
         try:
-            chunks = split_by_lines(
-                text, footer="", max_bytes=max_bytes, base_header=header
-            )
+            chunks = split_by_lines(text, footer="", max_bytes=max_bytes, base_header=header)
         except ValueError as exc:
             logger.warning("splitter rejected payload for %s: %s", channel, exc)
             result.errors.append(f"splitter:{exc}")
@@ -451,9 +446,7 @@ class DispatchService:
             try:
                 if hasattr(adapter, "send_text"):
                     await adapter.send_text(chat_id, caption)
-                elif hasattr(adapter, "send_message") and hasattr(
-                    adapter, "channel_name"
-                ):
+                elif hasattr(adapter, "send_message") and hasattr(adapter, "channel_name"):
                     self._api.send_message(
                         channel=getattr(adapter, "channel_name", ""),
                         chat_id=chat_id,

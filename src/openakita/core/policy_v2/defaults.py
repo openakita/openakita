@@ -34,6 +34,10 @@ zone 时返回这些；shell_risk classifier 在用户未自定义 ``blocked_com
 from __future__ import annotations
 
 import platform
+from copy import deepcopy
+from typing import Any
+
+from .enums import ConfirmationMode
 
 
 def default_protected_paths() -> list[str]:
@@ -41,7 +45,10 @@ def default_protected_paths() -> list[str]:
 
     v1 ``_default_protected_paths`` 完全等价（C8b-1 audit 验证）。
     """
-    paths: list[str] = []
+    paths: list[str] = [
+        "${CWD}/identity/**",
+        "${CWD}/data/**",
+    ]
     if platform.system() == "Windows":
         paths.extend(
             [
@@ -146,10 +153,119 @@ def default_blocked_commands() -> list[str]:
     return list(DEFAULT_BLOCKED_COMMANDS)
 
 
+# ---------------------------------------------------------------------------
+# Security profile bundles (single source of truth for "trust / protect /
+# strict / off" presets)
+# ---------------------------------------------------------------------------
+#
+# 历史上"出厂默认 = trust"的语义并行散落在三个位置：
+#   1. ``policy_v2/schema.py`` 字段默认（``SecurityProfileConfig.current``、
+#      ``ConfirmationConfig.mode``）
+#   2. ``api/routes/config.py::_apply_security_profile_defaults`` 用户点
+#      "信任 / 保护 / 严格 / 关闭"卡片时套用的 bundle
+#   3. ``apps/setup-center/src/views/SecurityView.tsx`` loading 占位
+#
+# 三处任意一处偏移，都会出现"UI 显示 trust、引擎按 protect 运行"这类隐式
+# 不一致（v1.27.12 → v1.27.13 默认值切换时就栽过这个坑）。本节把
+# bundle 收成单一真源：schema 默认字段通过 ``factory_default_*`` helper
+# 取出，``_apply_security_profile_defaults`` 直接 deep-copy ``PROFILE_BUNDLES``。
+#
+# bundle 的字段集与 ``POLICIES.yaml`` 的 raw dict 结构对齐——``security.enabled``
+# / ``security.confirmation.mode`` / ``security.sandbox.enabled`` 等——所以
+# 路由层套用 bundle 时只需 ``deep_merge`` 不需要 schema mapping。
+#
+# ``PolicyConfigV2`` 的字段级 schema 默认与 bundle 在以下字段**有意保留差异**：
+# - ``sandbox.enabled``：schema 默认 ``True`` 作 belt-and-suspenders；
+#   bundle ``trust`` 设 ``False`` 是 UI 套餐承诺"信任方案下不进沙箱"。
+# 也就是 fresh install（走 schema 默认）= TRUST 模式 + sandbox 仍开；用户
+# 主动点"信任方案"按钮（走 bundle）= TRUST 模式 + sandbox 关。这条非对称
+# 由 ``PolicyConfigV2`` docstring 显式记录，本模块不强行抹平。
+
+FACTORY_DEFAULT_PROFILE: str = "trust"
+"""出厂默认 profile 名。fresh install / lenient fallback / 未知输入 兜底
+都应落到这个值。改这里前请同步 ``docs/release-notes/``。"""
+
+PROFILE_BUNDLES: dict[str, dict[str, Any]] = {
+    "trust": {
+        "enabled": True,
+        "confirmation": {"mode": "trust"},
+        "sandbox": {"enabled": False},
+        "shell_risk": {"enabled": True},
+        "death_switch": {"enabled": True},
+        "checkpoint": {"enabled": True},
+    },
+    "protect": {
+        "enabled": True,
+        "confirmation": {"mode": "default"},
+        "sandbox": {"enabled": True},
+        "shell_risk": {"enabled": True},
+        "death_switch": {"enabled": True},
+        "checkpoint": {"enabled": True},
+    },
+    "strict": {
+        "enabled": True,
+        "confirmation": {"mode": "strict"},
+        "sandbox": {"enabled": True},
+        "shell_risk": {"enabled": True},
+        "death_switch": {"enabled": True},
+        "checkpoint": {"enabled": True},
+    },
+    "off": {
+        # off 同时把 security.enabled 关掉，使二者保持单一语义：
+        # "整套策略停摆"。engine.preflight 任一为关都会短路 ALLOW，
+        # 但只有这里二者同时被写下，未来导出/迁移/审计才不会出现
+        # "enabled=True 但 profile=off" 这种荒谬组合。
+        "enabled": False,
+        "confirmation": {"mode": "trust"},
+        "sandbox": {"enabled": False},
+        "shell_risk": {"enabled": False},
+        "death_switch": {"enabled": False},
+        "checkpoint": {"enabled": False},
+    },
+}
+"""profile name → raw YAML-shape bundle。``custom`` 不在表中，因为它表示
+"用户自己拼"，没有 baked bundle。"""
+
+
+def profile_bundle(profile: str) -> dict[str, Any]:
+    """返回 ``profile`` 对应 bundle 的 fresh deep-copy（caller 可放心 mutate）。
+
+    Raises:
+        KeyError: ``profile`` 不是 baked 名称之一。``custom`` 也会抛——它没有
+            预制 bundle，调用方应该单独处理。
+    """
+    if profile not in PROFILE_BUNDLES:
+        raise KeyError(
+            f"unknown profile {profile!r}; "
+            f"valid: {sorted(PROFILE_BUNDLES.keys())} (note: 'custom' has no bundle)"
+        )
+    return deepcopy(PROFILE_BUNDLES[profile])
+
+
+def factory_default_confirmation_mode() -> ConfirmationMode:
+    """schema ``ConfirmationConfig.mode`` 的工厂默认。
+
+    单一真源从 ``PROFILE_BUNDLES[FACTORY_DEFAULT_PROFILE]`` 取，保证
+    "schema 默认引擎模式" = "出厂 profile 套餐写下的引擎模式"。
+    """
+    raw = PROFILE_BUNDLES[FACTORY_DEFAULT_PROFILE]["confirmation"]["mode"]
+    return ConfirmationMode(raw)
+
+
+def factory_default_profile_current() -> str:
+    """schema ``SecurityProfileConfig.current`` 的工厂默认。"""
+    return FACTORY_DEFAULT_PROFILE
+
+
 __all__ = [
     "DEFAULT_BLOCKED_COMMANDS",
+    "FACTORY_DEFAULT_PROFILE",
+    "PROFILE_BUNDLES",
     "default_blocked_commands",
     "default_controlled_paths",
     "default_forbidden_paths",
     "default_protected_paths",
+    "factory_default_confirmation_mode",
+    "factory_default_profile_current",
+    "profile_bundle",
 ]

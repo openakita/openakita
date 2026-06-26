@@ -35,6 +35,7 @@ class StreamEventType(StrEnum):
     # ── Tool execution ──
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_END = "tool_call_end"
+    CONFIG_HINT = "config_hint"
     SOURCE_USED = "source_used"
     MCP_CALL = "mcp_call"
 
@@ -81,6 +82,15 @@ def normalize_stream_event(event: dict | None) -> dict:
     if event_type in (StreamEventType.TOOL_CALL_START.value, StreamEventType.TOOL_CALL_END.value):
         payload.setdefault("tool_name", payload.get("tool", ""))
         payload.setdefault("call_id", payload.get("id", ""))
+
+    if event_type == StreamEventType.CONFIG_HINT.value:
+        payload.setdefault("tool_use_id", payload.get("id", payload.get("call_id", "")))
+        payload.setdefault("scope", "")
+        payload.setdefault("error_code", "unknown")
+        payload.setdefault("title", "")
+        payload.setdefault("message", "")
+        if not isinstance(payload.get("actions"), list):
+            payload["actions"] = []
 
     if event_type == StreamEventType.SOURCE_USED.value:
         payload.setdefault("tool_name", payload.get("tool", payload.get("tool_name", "")))

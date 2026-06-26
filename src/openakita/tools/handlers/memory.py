@@ -270,7 +270,7 @@ class MemoryHandler:
                 current_owner,
                 tags,
                 "未识别为长期偏好，已先保存在当前会话。"
-                "如需跨会话持久化，请改传 scope=\"global\" 重试。",
+                '如需跨会话持久化，请改传 scope="global" 重试。',
             )
 
         return "user", "", tags, None
@@ -294,8 +294,12 @@ class MemoryHandler:
             return 0
 
         try:
-            owner_getter = getattr(getattr(self.agent, "memory_manager", None), "_current_owner", None)
-            user_id, workspace_id = owner_getter() if callable(owner_getter) else ("default", "default")
+            owner_getter = getattr(
+                getattr(self.agent, "memory_manager", None), "_current_owner", None
+            )
+            user_id, workspace_id = (
+                owner_getter() if callable(owner_getter) else ("default", "default")
+            )
             hits = store.search_semantic(
                 content,
                 limit=10,
@@ -327,8 +331,7 @@ class MemoryHandler:
             if t not in {"取消", "不要", "不再", "改用", "改成", "规则", "偏好"}
         }
         terms_right = {
-            t.lower()
-            for t in re.findall(r"[A-Za-z0-9_\-\u4e00-\u9fff]{2,}", right or "")
+            t.lower() for t in re.findall(r"[A-Za-z0-9_\-\u4e00-\u9fff]{2,}", right or "")
         }
         if terms_left and terms_left.intersection(terms_right):
             return True
@@ -514,7 +517,9 @@ class MemoryHandler:
         try:
             store = self.agent.memory_manager.store
             owner_getter = getattr(self.agent.memory_manager, "_current_owner", None)
-            user_id, workspace_id = owner_getter() if callable(owner_getter) else ("default", "default")
+            user_id, workspace_id = (
+                owner_getter() if callable(owner_getter) else ("default", "default")
+            )
             existing_hits = store.search_semantic(
                 content.strip(),
                 limit=3,
@@ -537,9 +542,7 @@ class MemoryHandler:
                 self.agent, "user_profile", None
             )
             if profile_mgr is not None:
-                if hasattr(profile_mgr, "state") and hasattr(
-                    profile_mgr.state, "collected_items"
-                ):
+                if hasattr(profile_mgr, "state") and hasattr(profile_mgr.state, "collected_items"):
                     profile_text = str(profile_mgr.state.collected_items).lower()
                 elif hasattr(profile_mgr, "to_dict"):
                     profile_text = str(profile_mgr.to_dict()).lower()
@@ -765,9 +768,7 @@ class MemoryHandler:
         # 出存在其它用户。把 stats 收敛到当前 owner 视角。desktop 单用户场景
         # owner 是 default/default，行为不变。
         owner_uid, owner_wsid = self._current_owner_pair()
-        stats = self.agent.memory_manager.get_stats(
-            user_id=owner_uid, workspace_id=owner_wsid
-        )
+        stats = self.agent.memory_manager.get_stats(user_id=owner_uid, workspace_id=owner_wsid)
 
         output = f"""记忆系统统计:
 
@@ -927,9 +928,7 @@ class MemoryHandler:
                     ):
                         allowed_session_ids.add(session_id_filter)
             except Exception as e:
-                logger.debug(
-                    "[SearchTraces] failed to build allowed_session_ids: %s", e
-                )
+                logger.debug("[SearchTraces] failed to build allowed_session_ids: %s", e)
                 allowed_session_ids = None
 
         # === 数据源 2: react_traces（补充工具调用细节） ===
@@ -1017,22 +1016,26 @@ class MemoryHandler:
                 ts = getattr(msg, "timestamp", "")
                 tool_calls = getattr(msg, "tool_calls", []) or []
                 tool_results = getattr(msg, "tool_results", []) or []
-            hay = " ".join([
-                content,
-                json.dumps(tool_calls, ensure_ascii=False, default=str),
-                json.dumps(tool_results, ensure_ascii=False, default=str),
-            ]).lower()
+            hay = " ".join(
+                [
+                    content,
+                    json.dumps(tool_calls, ensure_ascii=False, default=str),
+                    json.dumps(tool_results, ensure_ascii=False, default=str),
+                ]
+            ).lower()
             if keyword.lower() not in hay and not any(k in hay for k in lowered_keywords):
                 continue
-            results.append({
-                "source": "current_session",
-                "session_id": sid,
-                "timestamp": str(ts),
-                "role": str(role),
-                "content": content[:500],
-                "tool_calls": tool_calls,
-                "tool_results": tool_results,
-            })
+            results.append(
+                {
+                    "source": "current_session",
+                    "session_id": sid,
+                    "timestamp": str(ts),
+                    "role": str(role),
+                    "content": content[:500],
+                    "tool_calls": tool_calls,
+                    "tool_results": tool_results,
+                }
+            )
 
     def _trace_memory(self, params: dict) -> str:
         """跨层导航：从记忆→情节→对话，或从情节→记忆+对话"""
@@ -1655,10 +1658,7 @@ class MemoryHandler:
             return f"❌ 搜索候选记忆失败: {exc}"
 
         if source:
-            candidates = [
-                m for m in candidates
-                if str(getattr(m, "source", "") or "") == source
-            ]
+            candidates = [m for m in candidates if str(getattr(m, "source", "") or "") == source]
 
         candidates = candidates[:max_delete]
         if not candidates:
@@ -1687,7 +1687,7 @@ class MemoryHandler:
             preview_lines.append("")
             preview_lines.append(
                 "（这只是预览，未执行删除。如确认无误，请用相同参数 + "
-                f"`dry_run=False` 且 `confirm_token=\"{expected_token}\"` 再调一次。）"
+                f'`dry_run=False` 且 `confirm_token="{expected_token}"` 再调一次。）'
             )
             return "\n".join(preview_lines)
 
@@ -1734,10 +1734,7 @@ class MemoryHandler:
         except Exception:
             pass
 
-        return (
-            f"✅ 已删除 {deleted}/{len(candidates)} 条记忆。\n"
-            f"前 5 条预览见上一步 dry_run 输出。"
-        )
+        return f"✅ 已删除 {deleted}/{len(candidates)} 条记忆。\n前 5 条预览见上一步 dry_run 输出。"
 
 
 def create_handler(agent: "Agent"):

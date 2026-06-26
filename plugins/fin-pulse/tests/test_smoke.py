@@ -67,14 +67,21 @@ def test_sidebar_icon_present() -> None:
     Also served from ui/dist/finpulse-finance.svg so ``ui.icon`` can
     change URL when the visual mark changes.
     """
-    for candidate in (PLUGIN_DIR / "icon.svg", UI_DIR / "icon.svg", UI_DIR / "finpulse-finance.svg", UI_DIR / "finpulse-brand.svg"):
+    for candidate in (
+        PLUGIN_DIR / "icon.svg",
+        UI_DIR / "icon.svg",
+        UI_DIR / "finpulse-finance.svg",
+        UI_DIR / "finpulse-brand.svg",
+    ):
         assert candidate.exists(), f"icon.svg missing: {candidate}"
         blob = candidate.read_text("utf-8")
         assert "<svg" in blob and "viewBox" in blob, f"{candidate} is not a valid SVG"
         assert len(blob) > 256, f"{candidate} seems too small / empty"
     manifest = json.loads(MANIFEST.read_text("utf-8"))
     assert manifest["icon"] == "icon.svg"
-    assert manifest["ui"]["icon"] == "finpulse-brand.svg", "plugin.json ui.icon should cache-bust via named SVG"
+    assert manifest["ui"]["icon"] == "finpulse-brand.svg", (
+        "plugin.json ui.icon should cache-bust via named SVG"
+    )
 
 
 def test_index_html_exists_and_nonempty() -> None:
@@ -88,7 +95,7 @@ def test_rate_limited_renders_as_cooldown_not_error() -> None:
     html = INDEX_HTML.read_text("utf-8")
     assert 'row.error_kind === "rate_limited") return "fp-pill fp-pill--cooldown"' in html
     assert '"today.drawer.status.cooldown": "冷却中 · {s}s 后可重试"' in html
-    assert 'const hasError = !!(row.error || row.error_kind) && !isCooldown;' in html
+    assert "const hasError = !!(row.error || row.error_kind) && !isCooldown;" in html
 
 
 def test_ui_hard_contracts() -> None:
@@ -101,51 +108,51 @@ def test_ui_hard_contracts() -> None:
         r'<script\s+src="_assets/i18n\.js"',
         r'<script\s+src="_assets/markdown-mini\.js"',
         r'data-theme="dark"',
-        r'@media\s*\(prefers-color-scheme:\s*dark\)',
+        r"@media\s*\(prefers-color-scheme:\s*dark\)",
         r'const\s+TAB_IDS\s*=\s*\[\s*"today"\s*,\s*"digests"\s*,\s*"radar"\s*,\s*"settings"\s*\]',
-        r'const\s+TAB_ICONS\s*=',
-        r'class\s+PluginErrorBoundary\s+extends\s+React\.Component',
+        r"const\s+TAB_ICONS\s*=",
+        r"class\s+PluginErrorBoundary\s+extends\s+React\.Component",
         r'ReactDOM\.createRoot\(document\.getElementById\("root"\)\)',
-        r'window\.OpenAkitaI18n\.register\(I18N_DICT\)',
+        r"window\.OpenAkitaI18n\.register\(I18N_DICT\)",
         r'"tabs\.today"',
         r'"tabs\.digests"',
         r'"tabs\.radar"',
         r'"tabs\.settings"',
-        r'oa-config-banner',
-        r'oa-hero-title',
-        r'oa-section-title',
-        r'stack-layout',
-        r'seg-group',
-        r'seg-btn',
-        r'filter-bar',
-        r'oa-hint',
-        r'BrandMark',
-        r'api-pill',
-        r'ConfirmHost',
+        r"oa-config-banner",
+        r"oa-hero-title",
+        r"oa-section-title",
+        r"stack-layout",
+        r"seg-group",
+        r"seg-btn",
+        r"filter-bar",
+        r"oa-hint",
+        r"BrandMark",
+        r"api-pill",
+        r"ConfirmHost",
         # P0 — api() must unwrap Bridge {ok,status,body} envelopes.
         r'"body"\s+in\s+res',
         # P0 — oaToast must send {type, body} for the host notify API.
-        r'type:\s*level',
-        r'body:\s*message',
+        r"type:\s*level",
+        r"body:\s*message",
         # P1 — radar editor is kept compact; hit preview grows.
-        r'card--compact',
+        r"card--compact",
         # P1 — templated schedule buttons exist instead of window.prompt.
-        r'SCHEDULE_TEMPLATES',
-        r'ScheduleDialog',
+        r"SCHEDULE_TEMPLATES",
+        r"ScheduleDialog",
         # P2 — CodeBlock component for NewsNow docker snippet.
-        r'fp-codeblock',
+        r"fp-codeblock",
         # P2 — Darker muted / dim tokens.
-        r'--text-muted:\s*#5E3540',
-        r'--text-dim:\s*#7A4E59',
+        r"--text-muted:\s*#5E3540",
+        r"--text-dim:\s*#7A4E59",
     ]
     for pat in required:
         assert re.search(pat, html), f"hard contract missing: {pat}"
 
     forbidden = [
-        r'/api/plugins/_sdk/',
+        r"/api/plugins/_sdk/",
         r"classList\.toggle\('dark-mode'\)",
         # Raw ReactDOM.render is forbidden; createRoot is required.
-        r'ReactDOM\.render\(',
+        r"ReactDOM\.render\(",
         # The fin-pulse custom event names never fired — we must not
         # register listeners for them any more.
         r'onEvent\("plugin:fin-pulse:',
@@ -212,11 +219,10 @@ def test_ui_tabs_are_hydrated() -> None:
     # the same code path covers both bulk and single-source runs. We
     # still require either the literal POST string or the path-shaped
     # call to prove the wiring is present.
-    assert (
-        'api("POST", "/ingest"' in html
-        or 'api("POST", path' in html
-    ), "Today tab missing POST /ingest call"
-    assert '/ingest/source/' in html, (
+    assert 'api("POST", "/ingest"' in html or 'api("POST", path' in html, (
+        "Today tab missing POST /ingest call"
+    )
+    assert "/ingest/source/" in html, (
         "Today tab must expose the single-source /ingest/source/{id} call"
     )
     assert 'api("GET", "/sources"' in html
@@ -224,42 +230,38 @@ def test_ui_tabs_are_hydrated() -> None:
     # Digests workbench lists + runs + iframes html blobs.
     assert 'api("GET", "/digests' in html
     assert 'api("POST", "/digest/run"' in html
-    assert '/digests/' in html and '/html' in html
-    assert 'HTML 报表即时预览' in html
-    assert 'digest-workbench' in html
-    assert 'srcDoc={previewHtml' in html
+    assert "/digests/" in html and "/html" in html
+    assert "HTML 报表即时预览" in html
+    assert "digest-workbench" in html
+    assert "srcDoc={previewHtml" in html
     assert 'api("DELETE", "/digests/"' in html
-    assert '强制先抓取最新资讯' in html
+    assert "强制先抓取最新资讯" in html
     # Built-in morning / noon / evening report cards must default to
     # pre-ingest = on so a fresh install never publishes a stale brief.
-    assert 'preIngest: true' in html, (
-        "default reportConfigs / customDraft must opt into preIngest"
-    )
+    assert "preIngest: true" in html, "default reportConfigs / customDraft must opt into preIngest"
     # Radar tab: forceRefresh useState must default to true so the
     # first run after install pulls fresh hot-list articles.
-    assert 'useState(true)' in html, (
-        "RadarTab.forceRefresh initial state must default to true"
-    )
-    assert '自定义报表工作台' in html
-    assert '自定义报表计划' in html
+    assert "useState(true)" in html, "RadarTab.forceRefresh initial state must default to true"
+    assert "自定义报表工作台" in html
+    assert "自定义报表计划" in html
     assert 'api("GET", "/report-plans"' in html
     assert 'api("PUT", "/report-plans/"' in html
     assert 'api("POST", "/report-plans/"' in html
     assert 'api("DELETE", "/report-plans/"' in html
-    assert 'source_ids' in html
-    assert 'morning:' in html and 'noonIcon:' in html and 'eveningIcon:' in html
+    assert "source_ids" in html
+    assert "morning:" in html and "noonIcon:" in html and "eveningIcon:" in html
 
     # Radar workbench exercises evaluate + config save + alert execution paths.
     assert 'api("POST", "/radar/evaluate"' in html
-    assert 'radar_rules' in html
+    assert "radar_rules" in html
     assert 'api("POST", "/hot_radar/run"' in html
-    assert '雷达预警工作台' in html
-    assert 'radar-workbench' in html
-    assert '通知通道' in html
-    assert 'radar-rule-help' in html
-    assert 'radar-report-hero' in html
-    assert '雷达命中报表' in html
-    assert '按匹配度优先 · 按资讯类型分组' in html
+    assert "雷达预警工作台" in html
+    assert "radar-workbench" in html
+    assert "通知通道" in html
+    assert "radar-rule-help" in html
+    assert "radar-report-hero" in html
+    assert "雷达命中报表" in html
+    assert "按匹配度优先 · 按资讯类型分组" in html
     # Phase 6b — AI optimise + template + history + naming-save tokens.
     assert 'api("POST", "/radar/ai-suggest"' in html
     assert 'api("GET", "/radar/library"' in html
@@ -291,19 +293,19 @@ def test_ui_tabs_are_hydrated() -> None:
     assert 'api("GET", "/scheduler/channels"' in html
     assert 'api("GET", "/available-channels"' in html
     assert 'api("POST", "/schedules"' in html
-    assert 'IM Channels' not in html and '═══════ IM Channels' not in html
-    assert 'Scheduled Tasks' not in html and '═══════ Scheduled Tasks' not in html
+    assert "IM Channels" not in html and "═══════ IM Channels" not in html
+    assert "Scheduled Tasks" not in html and "═══════ Scheduled Tasks" not in html
     assert "function scheduleCronFromForm" in html
     assert "定时任务模板" not in html
     assert "已配置定时任务" not in html
-    assert 'chat_id for ' not in html
-    assert 'newsnow.mode' in html and 'newsnow.api_url' in html
-    assert 'settings.newsnow.step1' in html
-    assert 'settings.newsnow.step2' in html
-    assert 'settings.newsnow.step3' in html
+    assert "chat_id for " not in html
+    assert "newsnow.mode" in html and "newsnow.api_url" in html
+    assert "settings.newsnow.step1" in html
+    assert "settings.newsnow.step2" in html
+    assert "settings.newsnow.step3" in html
     # P1 — schedule templates (morning / noon / evening / radar).
     for tpl in ("morning", "noon", "evening", "radar"):
-        assert f'settings.schedules.tpl.{tpl}' in html, f"schedule tpl i18n missing: {tpl}"
+        assert f"settings.schedules.tpl.{tpl}" in html, f"schedule tpl i18n missing: {tpl}"
 
     # Digest plans are owned by fin-pulse now; only radar still uses the host schedule dialog.
     assert '/schedules/" + s.id + "/trigger' not in html
@@ -311,19 +313,17 @@ def test_ui_tabs_are_hydrated() -> None:
     assert '"DELETE", "/schedules/" + s.id' not in html
     # P2 — the redirect-to-host button and read-only banner must have
     # been removed now that the in-page dialog is authoritative.
-    assert 'settings.schedules.open_host' not in html, (
+    assert "settings.schedules.open_host" not in html, (
         "open_host redirect affordance should be gone"
     )
-    assert 'settings.schedules.read_only' not in html, (
-        "read-only preview banner should be gone"
-    )
-    assert 'settings.channels.desc' not in html
+    assert "settings.schedules.read_only" not in html, "read-only preview banner should be gone"
+    assert "settings.channels.desc" not in html
     # P2 — NewsNow defaults to the public aggregator: the pre-filled
     # upstream URL and the 300-second rate-limit floor ship embedded in
     # the HTML bundle.
-    assert 'https://newsnow.busiyi.world/api/s' in html
-    assert 'NEWSNOW_PUBLIC_MIN_INTERVAL_S' in html
-    assert 'newsnow.min_interval_s' in html
+    assert "https://newsnow.busiyi.world/api/s" in html
+    assert "NEWSNOW_PUBLIC_MIN_INTERVAL_S" in html
+    assert "newsnow.min_interval_s" in html
 
     # P1 — global "no IM channel" banner must only live inside the
     # Settings IM-channels card, not at the App shell level.
@@ -344,19 +344,17 @@ def test_ui_tabs_are_hydrated() -> None:
     ):
         assert key in html, f"hybrid Today i18n missing: {key}"
     # The drawer component + split-button dropdown markup.
-    assert 'IngestDrawer' in html
-    assert 'ingest-split' in html
-    assert 'api("POST", "/ingest/source/"' not in html or (
-        '"/ingest/source/"' in html
-    ), "single-source endpoint wiring expected"
-    assert '/ingest/source/' in html, (
+    assert "IngestDrawer" in html
+    assert "ingest-split" in html
+    assert 'api("POST", "/ingest/source/"' not in html or ('"/ingest/source/"' in html), (
+        "single-source endpoint wiring expected"
+    )
+    assert "/ingest/source/" in html, (
         "Today tab must expose the single-source /ingest/source/{id} call"
     )
     # Spinner + indeterminate progress styling tokens.
-    assert 'fp-spin' in html
-    assert 'fp-progress' in html
+    assert "fp-spin" in html
+    assert "fp-progress" in html
     # The old 8-second poll MUST be gone (a plain comment about it is
     # allowed; an actual ``setInterval(load`` invocation is not).
-    assert 'setInterval(load' not in html, (
-        "the legacy 8s ingest poll should have been removed"
-    )
+    assert "setInterval(load" not in html, "the legacy 8s ingest poll should have been removed"

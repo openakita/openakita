@@ -240,11 +240,7 @@ def _stale_module_prefixes(import_name: str) -> tuple[str, ...]:
 
 def _clear_stale_modules(import_name: str) -> None:
     prefixes = _stale_module_prefixes(import_name)
-    for stale in [
-        m
-        for m in sys.modules
-        if any(m == p or m.startswith(p + ".") for p in prefixes)
-    ]:
+    for stale in [m for m in sys.modules if any(m == p or m.startswith(p + ".") for p in prefixes)]:
         sys.modules.pop(stale, None)
 
 
@@ -345,11 +341,16 @@ def _pip_install(specs: list[str], target: Path) -> tuple[bool, str]:
     last_err = ""
     for url, trusted in _PIP_MIRRORS:
         cmd = [
-            py, "-m", "pip", "install",
+            py,
+            "-m",
+            "pip",
+            "install",
             "--upgrade",
             "--prefer-binary",
-            "--target", str(target),
-            "-i", url,
+            "--target",
+            str(target),
+            "-i",
+            url,
         ]
         if trusted:
             cmd.extend(["--trusted-host", trusted])
@@ -608,7 +609,8 @@ def preinstall_async(
             except Exception as e:  # noqa: BLE001 - background, log only
                 logger.info(
                     "avatar-studio preinstall %s skipped: %s",
-                    import_name, e,
+                    import_name,
+                    e,
                 )
 
     t = threading.Thread(

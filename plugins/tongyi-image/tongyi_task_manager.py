@@ -252,9 +252,7 @@ class TaskManager:
 
     async def get_running_tasks(self) -> list[dict]:
         assert self._db
-        cur = await self._db.execute(
-            "SELECT * FROM tasks WHERE status IN ('pending', 'running')"
-        )
+        cur = await self._db.execute("SELECT * FROM tasks WHERE status IN ('pending', 'running')")
         rows = await cur.fetchall()
         return [self._row_to_dict(r) for r in rows]
 
@@ -267,8 +265,10 @@ class TaskManager:
             if key == "params_json":
                 key = "params"
             try:
-                d[key] = json.loads(val) if val else (
-                    [] if ("urls" in jf or "paths" in jf or jf == "asset_ids") else {}
+                d[key] = (
+                    json.loads(val)
+                    if val
+                    else ([] if ("urls" in jf or "paths" in jf or jf == "asset_ids") else {})
                 )
             except (json.JSONDecodeError, TypeError):
                 d[key] = {} if "json" in jf else []

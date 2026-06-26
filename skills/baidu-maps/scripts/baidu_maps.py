@@ -33,39 +33,50 @@ def _get(path: str, params: dict) -> dict:
 
 
 def geocode(ak: str, address: str) -> dict:
-    return _get("/geocoding/v3/", {
-        "address": address,
-        "output": "json",
-        "ak": ak,
-    })
+    return _get(
+        "/geocoding/v3/",
+        {
+            "address": address,
+            "output": "json",
+            "ak": ak,
+        },
+    )
 
 
 def reverse_geocode(ak: str, lat: float, lng: float) -> dict:
-    return _get("/reverse_geocoding/v3/", {
-        "ak": ak,
-        "output": "json",
-        "location": f"{lat},{lng}",
-    })
+    return _get(
+        "/reverse_geocoding/v3/",
+        {
+            "ak": ak,
+            "output": "json",
+            "location": f"{lat},{lng}",
+        },
+    )
 
 
-def poi_search(ak: str, query: str, region: str, page_size: int = 10,
-               page_num: int = 0) -> dict:
-    return _get("/place/v2/search", {
-        "query": query,
-        "region": region,
-        "output": "json",
-        "ak": ak,
-        "page_size": page_size,
-        "page_num": page_num,
-    })
+def poi_search(ak: str, query: str, region: str, page_size: int = 10, page_num: int = 0) -> dict:
+    return _get(
+        "/place/v2/search",
+        {
+            "query": query,
+            "region": region,
+            "output": "json",
+            "ak": ak,
+            "page_size": page_size,
+            "page_num": page_num,
+        },
+    )
 
 
 def route_driving(ak: str, origin: str, destination: str) -> dict:
-    return _get("/direction/v2/driving", {
-        "origin": origin,
-        "destination": destination,
-        "ak": ak,
-    })
+    return _get(
+        "/direction/v2/driving",
+        {
+            "origin": origin,
+            "destination": destination,
+            "ak": ak,
+        },
+    )
 
 
 def main():
@@ -73,10 +84,10 @@ def main():
         description="百度地图 Web 服务 API CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例:\n"
-               "  python3 baidu_maps.py geocode \"北京市海淀区上地十街10号\"\n"
-               "  python3 baidu_maps.py reverse 39.9042 116.4074\n"
-               "  python3 baidu_maps.py poi \"咖啡\" --region 北京\n"
-               "  python3 baidu_maps.py route 39.915,116.404 31.230,121.474",
+        '  python3 baidu_maps.py geocode "北京市海淀区上地十街10号"\n'
+        "  python3 baidu_maps.py reverse 39.9042 116.4074\n"
+        '  python3 baidu_maps.py poi "咖啡" --region 北京\n'
+        "  python3 baidu_maps.py route 39.915,116.404 31.230,121.474",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -114,8 +125,7 @@ def main():
         elif args.command == "reverse":
             result = reverse_geocode(ak, args.lat, args.lng)
         elif args.command == "poi":
-            result = poi_search(ak, args.query, args.region,
-                                args.page_size, args.page_num)
+            result = poi_search(ak, args.query, args.region, args.page_size, args.page_num)
         elif args.command == "route":
             result = route_driving(ak, args.origin, args.destination)
         else:
@@ -125,8 +135,10 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except urllib.error.HTTPError as e:
         body = e.read().decode() if e.fp else ""
-        print(json.dumps({"error": str(e), "detail": body}, ensure_ascii=False, indent=2),
-              file=sys.stderr)
+        print(
+            json.dumps({"error": str(e), "detail": body}, ensure_ascii=False, indent=2),
+            file=sys.stderr,
+        )
         sys.exit(1)
     except Exception as e:
         print(json.dumps({"error": str(e)}, ensure_ascii=False, indent=2), file=sys.stderr)
@@ -135,4 +147,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

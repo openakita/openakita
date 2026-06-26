@@ -58,7 +58,9 @@ def missing_api_key_message(endpoint: dict[str, Any]) -> str:
     return "远程模型端点需要 API Key；本地 Ollama/LM Studio 才可以留空。"
 
 
-def validate_endpoint_model_usage(endpoint: dict[str, Any], endpoint_type: str = "endpoints") -> str | None:
+def validate_endpoint_model_usage(
+    endpoint: dict[str, Any], endpoint_type: str = "endpoints"
+) -> str | None:
     """Return a friendly error when a model is saved to an incompatible endpoint list."""
     if endpoint_type not in _CHAT_ENDPOINT_TYPES:
         return None
@@ -73,10 +75,7 @@ def validate_endpoint_model_usage(endpoint: dict[str, Any], endpoint_type: str =
         next_step = "请把 DashScope API Key 配置为 DASHSCOPE_API_KEY，然后在对话中使用内置 generate_image 工具生成图片。"
     else:
         next_step = "请使用该服务商的专用图片生成配置或图片生成工具，不要把它作为主聊天模型保存。"
-    return (
-        f"{model} 是图片生成模型，不是聊天模型端点。"
-        f"{next_step}"
-    )
+    return f"{model} 是图片生成模型，不是聊天模型端点。{next_step}"
 
 
 def validate_endpoint_api_key(

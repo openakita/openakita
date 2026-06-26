@@ -78,12 +78,16 @@ async def decompose_storyboard(
     try:
         if hasattr(brain, "think"):
             result = await brain.think(prompt=user_msg, system=system)
-            text = getattr(result, "content", "") or (result.get("content", "") if isinstance(result, dict) else str(result))
+            text = getattr(result, "content", "") or (
+                result.get("content", "") if isinstance(result, dict) else str(result)
+            )
         elif hasattr(brain, "chat"):
-            result = await brain.chat(messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_msg},
-            ])
+            result = await brain.chat(
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_msg},
+                ]
+            )
             text = result.get("content", "") if isinstance(result, dict) else str(result)
         else:
             return {"error": "No LLM available"}
@@ -137,6 +141,7 @@ async def concat_videos(
     if len(video_paths) < 2:
         if video_paths:
             import shutil as _shutil
+
             _shutil.copy2(video_paths[0], output_path)
             return True
         return False
@@ -159,12 +164,19 @@ async def _concat_lossless(video_paths: list[str], output_path: str) -> bool:
             list_file = f.name
 
         cmd = [
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-            "-i", list_file, "-c", "copy", output_path,
+            "ffmpeg",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            list_file,
+            "-c",
+            "copy",
+            output_path,
         ]
-        result = await asyncio.to_thread(
-            subprocess.run, cmd, capture_output=True, timeout=120
-        )
+        result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, timeout=120)
 
         Path(list_file).unlink(missing_ok=True)
 
@@ -179,7 +191,9 @@ async def _concat_lossless(video_paths: list[str], output_path: str) -> bool:
 
 
 async def _concat_crossfade(
-    video_paths: list[str], output_path: str, fade_dur: float,
+    video_paths: list[str],
+    output_path: str,
+    fade_dur: float,
 ) -> bool:
     """Crossfade concat using ffmpeg xfade filter (requires re-encoding)."""
     if len(video_paths) == 2:
@@ -196,39 +210,55 @@ async def _concat_crossfade(
             current = temp_out
 
         import shutil as _shutil
+
         _shutil.copy2(current, output_path)
         return True
     finally:
         import shutil as _shutil
+
         _shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 async def _xfade_two(
-    path_a: str, path_b: str, output: str, fade_dur: float,
+    path_a: str,
+    path_b: str,
+    output: str,
+    fade_dur: float,
 ) -> bool:
     """Apply xfade between two videos."""
     try:
         probe_cmd = [
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", path_a,
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path_a,
         ]
-        probe = await asyncio.to_thread(
-            subprocess.run, probe_cmd, capture_output=True, timeout=10
-        )
+        probe = await asyncio.to_thread(subprocess.run, probe_cmd, capture_output=True, timeout=10)
         dur_a = float(probe.stdout.decode().strip()) if probe.returncode == 0 else 5.0
         offset = max(0, dur_a - fade_dur)
 
         cmd = [
-            "ffmpeg", "-y",
-            "-i", path_a, "-i", path_b,
+            "ffmpeg",
+            "-y",
+            "-i",
+            path_a,
+            "-i",
+            path_b,
             "-filter_complex",
             f"xfade=transition=fade:duration={fade_dur}:offset={offset}",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "23",
             output,
         ]
-        result = await asyncio.to_thread(
-            subprocess.run, cmd, capture_output=True, timeout=120
-        )
+        result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, timeout=120)
         if result.returncode != 0:
             logger.error("xfade failed: %s", result.stderr.decode(errors="replace"))
             return False
@@ -344,6 +374,7 @@ class ChainGenerator:
                 prev_task = task
 
         elif mode == "parallel":
+
             async def submit(seg: dict) -> dict:
                 content = [{"type": "text", "text": seg.get("prompt", "")}]
                 result = await self._ark.create_task(
@@ -366,7 +397,9 @@ class ChainGenerator:
             # N1.1 防御：run_parallel 保证每个 input 都有 ParallelResult，
             # 无论 success / failed / cancelled，绝不静默丢弃。
             submit_results = await run_parallel(
-                segments, submit, max_concurrency=max(1, max_parallel),
+                segments,
+                submit,
+                max_concurrency=max(1, max_parallel),
             )
             for pr in submit_results:
                 # ``ParallelResult`` exposes ``.ok`` / ``.failed`` / ``.cancelled``
@@ -398,11 +431,13 @@ class ChainGenerator:
         if prev_task:
             frame_url = prev_task.get("last_frame_url") or ""
             if frame_url:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": frame_url},
-                    "role": "first_frame",
-                })
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": frame_url},
+                        "role": "first_frame",
+                    }
+                )
                 logger.info(
                     "Chain: using last_frame from segment %s as first_frame",
                     prev_task.get("id", "?"),
@@ -429,11 +464,13 @@ class ChainGenerator:
         if prev_task:
             video_url = prev_task.get("video_url") or ""
             if isinstance(video_url, str) and video_url.lower().startswith(("http://", "https://")):
-                content.append({
-                    "type": "video_url",
-                    "video_url": {"url": video_url},
-                    "role": "reference_video",
-                })
+                content.append(
+                    {
+                        "type": "video_url",
+                        "video_url": {"url": video_url},
+                        "role": "reference_video",
+                    }
+                )
                 logger.info(
                     "Chain: using video_url from segment %s for cloud extend",
                     prev_task.get("id", "?"),
@@ -466,8 +503,10 @@ class ChainGenerator:
                 pass
         logger.error("Chain segment %d failed: %s", idx, detail)
         return {
-            "error": detail, "index": idx,
-            "status": "failed", "prompt": seg.get("prompt", ""),
+            "error": detail,
+            "index": idx,
+            "status": "failed",
+            "prompt": seg.get("prompt", ""),
         }
 
     async def _wait_for_task(self, task_id: str, timeout: int = 600) -> dict:

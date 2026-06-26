@@ -65,6 +65,7 @@ class TestReadyzAuditPathFix:
         monkeypatch.setattr(al, "get_audit_logger", lambda: fake_logger)
 
         import asyncio
+
         result = asyncio.run(health_module._check_audit_chain())
         assert result is None, f"valid chain row should pass, got: {result}"
 
@@ -75,11 +76,12 @@ class TestReadyzAuditPathFix:
 
         log_path = tmp_path / "audit.jsonl"
         # Trailing line is bad JSON.
-        log_path.write_text("{\"ok\":1}\n{this is not json}\n", encoding="utf-8")
+        log_path.write_text('{"ok":1}\n{this is not json}\n', encoding="utf-8")
         fake_logger = al.AuditLogger(path=str(log_path), enabled=True, include_chain=False)
         monkeypatch.setattr(al, "get_audit_logger", lambda: fake_logger)
 
         import asyncio
+
         result = asyncio.run(health_module._check_audit_chain())
         assert result is not None
         assert result["name"] == "audit_chain"
@@ -96,6 +98,7 @@ class TestReadyzAuditPathFix:
         monkeypatch.setattr(al, "get_audit_logger", lambda: fake_logger)
 
         import asyncio
+
         result = asyncio.run(health_module._check_audit_chain())
         assert result is not None, "blank-only tail must not return OK"
         assert "blank" in result["details"] or "empty" in result["details"]
@@ -112,6 +115,7 @@ class TestReadyzAuditPathFix:
         monkeypatch.setattr(al, "get_audit_logger", lambda: fake_logger)
 
         import asyncio
+
         assert asyncio.run(health_module._check_audit_chain()) is None
 
     def test_probe_handles_missing_file(
@@ -128,6 +132,7 @@ class TestReadyzAuditPathFix:
         monkeypatch.setattr(al, "get_audit_logger", lambda: fake_logger)
 
         import asyncio
+
         assert asyncio.run(health_module._check_audit_chain()) is None
 
 
@@ -147,9 +152,7 @@ class TestHugeLineTailReload:
     16 MiB so the row_hash is recoverable; verify_chain stays clean.
     """
 
-    def test_reload_finds_hash_of_large_last_record(
-        self, tmp_path: Path
-    ) -> None:
+    def test_reload_finds_hash_of_large_last_record(self, tmp_path: Path) -> None:
         ac.reset_writers_for_testing()
         path = tmp_path / "chain.jsonl"
         writer = ac.get_writer(path)
@@ -177,9 +180,7 @@ class TestHugeLineTailReload:
         result = ac.verify_chain(path)
         assert result.ok, f"chain verify failed: {result.reason}"
 
-    def test_helper_returns_none_for_oversize_single_line(
-        self, tmp_path: Path
-    ) -> None:
+    def test_helper_returns_none_for_oversize_single_line(self, tmp_path: Path) -> None:
         """If one line truly exceeds the 16 MiB cap, helper must refuse
         rather than corrupt the chain. We can't allocate 16 MiB in CI
         comfortably; instead patch the cap to a tiny value to exercise
@@ -190,6 +191,7 @@ class TestHugeLineTailReload:
         path.write_bytes(b"X" * 100_000)
 
         import openakita.core.policy_v2.audit_chain as ac_mod
+
         original_cap = ac_mod._MAX_TAIL_BYTES
         original_initial = ac_mod._INITIAL_TAIL_WINDOW
         try:
@@ -208,9 +210,7 @@ class TestHugeLineTailReload:
 
 
 class TestOrgEventStoreLockingFix:
-    def test_query_does_not_see_torn_line_under_concurrent_emit(
-        self, tmp_path: Path
-    ) -> None:
+    def test_query_does_not_see_torn_line_under_concurrent_emit(self, tmp_path: Path) -> None:
         """Stress: 4 writer threads + 1 reader thread for ~200 events.
 
         We don't deterministically *trigger* a torn-line race here (it'd
@@ -294,9 +294,7 @@ class TestOrgEventStoreLockingFix:
 
         store.clear()
 
-        assert lock_path.exists(), (
-            "clear() must NOT delete the cross-process lockfile (C17 二轮)"
-        )
+        assert lock_path.exists(), "clear() must NOT delete the cross-process lockfile (C17 二轮)"
         # Crucial: it's the *same* file, not a recreated empty one.
         assert lock_path.read_bytes() == sentinel, (
             "clear() recreated the lockfile (lost the holder's state)"
@@ -400,9 +398,7 @@ class TestReadyzLagIsolation:
        failing list).
     """
 
-    def test_lag_is_measured_alone(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_lag_is_measured_alone(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Slow audit_chain check shouldn't poison the lag report."""
         import asyncio
 

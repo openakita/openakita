@@ -109,4 +109,3 @@ def test_manager_prefers_runtime_python(monkeypatch, tmp_path) -> None:
     manager = PythonDepsManager(tmp_path)
 
     assert manager.status("advanced_export")["python_executable"] == "packaged-python"
-

@@ -13,7 +13,10 @@ SAMPLE_EXTRA = {"google": {"thought_signature": "abc123"}}
 
 def test_to_dict_includes_provider_extra():
     tb = ToolUseBlock(
-        id="call_1", name="check", input={"x": 1}, provider_extra=SAMPLE_EXTRA,
+        id="call_1",
+        name="check",
+        input={"x": 1},
+        provider_extra=SAMPLE_EXTRA,
     )
     d = tb.to_dict()
     assert d["provider_extra"] == SAMPLE_EXTRA
@@ -45,7 +48,9 @@ def test_convert_messages_to_openai_emits_extra_content():
         content=[
             TextBlock(text="thinking..."),
             ToolUseBlock(
-                id="call_1", name="check", input={"x": 1},
+                id="call_1",
+                name="check",
+                input={"x": 1},
                 provider_extra=SAMPLE_EXTRA,
             ),
         ],
@@ -163,7 +168,9 @@ def test_stale_tool_result_after_user_summary_becomes_user_context():
     messages = [
         Message(
             role="assistant",
-            content=[ToolUseBlock(id="call_1", name="delegate_to_agent", input={"agent_id": "browser"})],
+            content=[
+                ToolUseBlock(id="call_1", name="delegate_to_agent", input={"agent_id": "browser"})
+            ],
         ),
         Message(role="user", content="请继续正常处理，保持回复质量。"),
         Message(
@@ -193,7 +200,9 @@ def test_tool_protocol_history_can_downgrade_to_text_context():
     messages = [
         Message(
             role="assistant",
-            content=[ToolUseBlock(id="call_1", name="delegate_to_agent", input={"agent_id": "browser"})],
+            content=[
+                ToolUseBlock(id="call_1", name="delegate_to_agent", input={"agent_id": "browser"})
+            ],
         ),
         Message(
             role="user",
@@ -236,7 +245,10 @@ def test_full_openai_roundtrip():
 def test_decision_dict_roundtrip():
     """Simulate _parse_decision dict construction → brain reconstruction."""
     block = ToolUseBlock(
-        id="call_1", name="check", input={"x": 1}, provider_extra=SAMPLE_EXTRA,
+        id="call_1",
+        name="check",
+        input={"x": 1},
+        provider_extra=SAMPLE_EXTRA,
     )
 
     # _parse_decision constructs these dicts

@@ -1,9 +1,10 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense, startTransition } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, getAppVersion, onWsEvent, reconnectWsNow, setWsApiBaseUrl, logger, registerGlobalShortcut } from "./platform";
+import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, getAppVersion, onWsEvent, reconnectWsNow, setWsApiBaseUrl, logger } from "./platform";
 import { getActiveServer, getActiveServerId } from "./platform/servers";
-import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet, clearAccessToken, setTauriRemoteMode, isTauriRemoteMode } from "./platform/auth";
+import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, clearAccessToken, setTauriRemoteMode, isTauriRemoteMode } from "./platform/auth";
 import { LoginView } from "./views/LoginView";
+import { SetupView } from "./views/SetupView";
 import { ServerManagerView } from "./views/ServerManagerView";
 import { ChatView } from "./views/ChatView";
 import type { LinkDiagnostic } from "./components/LinkDiagnosticsPanel";
@@ -12,6 +13,7 @@ import type { LinkDiagnostic } from "./components/LinkDiagnosticsPanel";
 const SkillManager = lazy(() => import("./views/SkillManager").then(m => ({ default: m.SkillManager })));
 const IMView = lazy(() => import("./views/IMView").then(m => ({ default: m.IMView })));
 const TokenStatsView = lazy(() => import("./views/TokenStatsView").then(m => ({ default: m.TokenStatsView })));
+const SkillUsageView = lazy(() => import("./views/SkillUsageView").then(m => ({ default: m.SkillUsageView })));
 const MCPView = lazy(() => import("./views/MCPView").then(m => ({ default: m.MCPView })));
 const PluginManagerView = lazy(() => import("./views/PluginManagerView"));
 const PluginAppHost = lazy(() => import("./views/PluginAppHost"));
@@ -25,7 +27,9 @@ const PixelOfficeView = lazy(() => import("./views/PixelOfficeView").then(m => (
 const AgentStoreView = lazy(() => import("./views/AgentStoreView").then(m => ({ default: m.AgentStoreView })));
 const SkillStoreView = lazy(() => import("./views/SkillStoreView").then(m => ({ default: m.SkillStoreView })));
 const SecurityView = lazy(() => import("./views/SecurityView"));
+const PendingApprovalsView = lazy(() => import("./views/PendingApprovalsView").then(m => ({ default: m.PendingApprovalsView })));
 const PetView = lazy(() => import("./views/PetView").then(m => ({ default: m.PetView })));
+const InboxView = lazy(() => import("./views/InboxView").then(m => ({ default: m.InboxView })));
 
 import { FeedbackModal, type FeedbackPrefill } from "./views/FeedbackModal";
 import { IMConfigView } from "./views/IMConfigView";
@@ -37,31 +41,57 @@ import { RuntimeEnvironmentDialog, type RuntimeDiagnostics } from "./components/
 import type {
   EndpointSummary as EndpointSummaryType,
   PlatformInfo, WorkspaceSummary, ProviderInfo,
-  EndpointDraft, PythonCandidate, BundledPythonInstallResult, InstallSource,
+  EndpointDraft,
   EnvMap, StepId, Step, ViewId,
 } from "./types";
 import {
   IconCheckCircle, IconXCircle, IconInfo,
-  IconLightbulb, IconAlertCircle, IconCheck, IconPartyPopper,
+  IconAlertCircle, IconCheck, IconPartyPopper,
 } from "./icons";
 import { ChevronRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import logoUrl from "./assets/logo.png";
 import "highlight.js/styles/github.css";
 import { getThemePref, setThemePref, THEME_CHANGE_EVENT, type Theme } from "./theme";
 import { copyToClipboard } from "./utils/clipboard";
-import { BUILTIN_PROVIDERS, PIP_INDEX_PRESETS } from "./constants";
+import { BUILTIN_PROVIDERS, PIP_INDEX_PRESETS, WEB_SEARCH_ENV_KEYS } from "./constants";
 import { safeFetch } from "./providers";
 import {
-  joinPath, toFileUrl,
-  envGet, envSet,
+  joinPath,
 } from "./utils";
+import type { AppServiceStatus } from "./AppContext";
+
+type ServiceStatus = AppServiceStatus & {
+  port?: number;
+  heartbeatPhase?: string;
+  heartbeatHttpReady?: boolean;
+  heartbeatImReady?: boolean;
+  heartbeatReady?: boolean;
+  lastLinkDiagnostic?: LinkDiagnostic | null;
+};
+
+const externalRunningStatus = (pid: number | null = null): ServiceStatus => ({
+  running: true,
+  pid,
+  pidFile: "",
+  managedBy: "external",
+  isManagedChild: false,
+});
+
+const stoppedStatus = (): ServiceStatus => ({
+  running: false,
+  pid: null,
+  pidFile: "",
+  managedBy: "unknown",
+  isManagedChild: false,
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 // 前后端交互路由原则（全局适用）：
 //   后端运行中 → 所有配置读写、模型列表、连接测试 **优先走后端 HTTP API**
@@ -75,10 +105,8 @@ import {
 //   1. Onboarding（打包模式）：NSIS → onboarding wizard → 写本地 → 启动服务 → HTTP API
 //   2. Wizard Full（开发者模式）：选工作区 → 装 venv → 配置端点(本地) → 启动服务 → HTTP API
 // ═══════════════════════════════════════════════════════════════════════
-import { CliManager } from "./components/CliManager";
-import { WebPasswordManager } from "./components/WebPasswordManager";
-import { FieldText, FieldBool, FieldSelect, FieldCombo, FieldSlider, TelegramPairingCodeHint } from "./components/EnvFields";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { DegradedBanner } from "./components/DegradedBanner";
 import { ModalOverlay } from "./components/ModalOverlay";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
@@ -88,19 +116,11 @@ import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { useVersionCheck } from "./hooks/useVersionCheck";
 import { useEnvManager } from "./hooks/useEnvManager";
-import { useExpandPanel } from "./hooks/useExpandPanel";
 import { AdvancedView } from "./views/AdvancedView";
+import { ToolsView } from "./views/ToolsView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import WebSearchProviderPanel from "./components/WebSearchProviderPanel";
-
-const THEME_I18N_KEYS: Record<Theme, string> = {
-  system: "topbar.themeSystem",
-  dark: "topbar.themeDark",
-  light: "topbar.themeLight",
-  "daltonized-light": "topbar.themeDaltonizedLight",
-  "daltonized-dark": "topbar.themeDaltonizedDark",
-  "high-contrast": "topbar.themeHighContrast",
-};
+import { INBOX_REFRESH_EVENT, INBOX_UNREAD_CHANGED_EVENT } from "./components/InboxBadge";
+import { isHighPriorityInbox, type InboxUpdatePayload, type InboxWsMessagePayload } from "./inboxTypes";
 
 /** Health-check timeout for recurring monitoring (heartbeat + refreshStatus).
  *  Startup/one-shot probes keep their own shorter timeouts.
@@ -133,12 +153,13 @@ const EnvFieldContext = createContext<EnvFieldCtx | null>(null);
 const _HASH_TO_VIEW: Record<string, ViewId> = {
   "chat": "chat", "im": "im", "skills": "skills", "mcp": "mcp",
   "scheduler": "scheduler", "memory": "memory", "status": "status",
-  "token-stats": "token_stats", "identity": "identity",
+  "token-stats": "token_stats", "skill-usage": "skill_usage", "identity": "identity",
   "dashboard": "dashboard", "org-editor": "org_editor",
   "pixel-office": "pixel_office",
   "agent-manager": "agent_manager", "agent-store": "agent_store",
   "skill-store": "skill_store", "wizard": "wizard", "docs": "docs",
-  "security": "security", "plugins": "plugins", "my_feedback": "my_feedback",
+  "security": "security", "pending-approvals": "pending_approvals",
+  "plugins": "plugins", "my_feedback": "my_feedback",
 };
 
 const _VIEW_TO_HASH: Record<string, string> = Object.fromEntries(
@@ -237,7 +258,7 @@ function UserDocsFrame({
 }
 
 function MainApp() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
 
   // ── Web / Capacitor auth gate ──
   // IS_LOCAL_WEB: hostname is 127.0.0.1/localhost/::1 — backend authenticates
@@ -252,8 +273,24 @@ function MainApp() {
   const [needServerConfig, setNeedServerConfig] = useState(
     () => IS_CAPACITOR && !getActiveServer(),
   );
+  // Setup gate: backend's middleware_setup_gate sends 428 when no web-access
+  // password is configured AND the caller is not a trusted local connection.
+  // We mirror the same condition here so the SPA can route the user to the
+  // SetupView before any "logged out" toast or login screen confuses them.
+  const [setupRequired, setSetupRequired] = useState(false);
   // Tauri remote auth: when Tauri desktop connects to a remote backend that requires login
   const [tauriRemoteLoginUrl, setTauriRemoteLoginUrl] = useState<string | null>(null);
+
+  // ── Top-level: react to 428 setup_required signals from any in-flight fetch
+  // (see providers.ts safeFetch). Mounted unconditionally so even local-web
+  // sessions can be redirected if the user explicitly invokes reset-password.
+  useEffect(() => {
+    const onSetupRequired = () => setSetupRequired(true);
+    window.addEventListener("openakita:setup-required", onSetupRequired);
+    return () => {
+      window.removeEventListener("openakita:setup-required", onSetupRequired);
+    };
+  }, []);
 
   useEffect(() => {
     if (!needsRemoteAuth) {
@@ -264,16 +301,40 @@ function MainApp() {
       setAuthChecking(false);
       return;
     }
-    checkAuth(IS_CAPACITOR ? (getActiveServer()?.url || "") : "").then((ok) => {
-      if (ok) {
-        installFetchInterceptor();
-      }
-      setWebAuthed(ok);
-      setAuthChecking(false);
-    });
+    const apiBase = IS_CAPACITOR ? (getActiveServer()?.url || "") : "";
+    let cancelled = false;
+    // Probe setup-status first: if the backend says setup is required we go
+    // straight to SetupView and skip the (pointless) checkAuth round-trip.
+    // The endpoint is in AUTH_EXEMPT_PATHS so it works without a token.
+    fetch(`${apiBase}/api/auth/setup-status`, {
+      method: "GET",
+      credentials: "include",
+      signal: AbortSignal.timeout(IS_CAPACITOR ? 5_000 : 8_000),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null)
+      .then((status) => {
+        if (cancelled) return;
+        if (status && status.setup_required === true) {
+          setSetupRequired(true);
+          setAuthChecking(false);
+          return;
+        }
+        // Setup already done (or skipped because we're trusted-local on the
+        // server side): proceed to normal auth check.
+        checkAuth(apiBase).then((ok) => {
+          if (cancelled) return;
+          if (ok) installFetchInterceptor();
+          setWebAuthed(ok);
+          setAuthChecking(false);
+        });
+      });
     const onExpired = () => setWebAuthed(false);
     window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
-    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -328,8 +389,6 @@ function MainApp() {
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null);
   const { confirmDialog, setConfirmDialog, askConfirm } = useNotifications();
   const busy: string | null = null;
-  const [dangerAck, setDangerAck] = useState(false);
-
   // ── Restart overlay state ──
   const [restartOverlay, setRestartOverlay] = useState<{
     phase: "saving" | "restarting" | "waiting" | "done" | "fail" | "notRunning";
@@ -414,7 +473,11 @@ function MainApp() {
   const [bugReportOpen, setBugReportOpen] = useState(false);
   const [feedbackPrefill, setFeedbackPrefill] = useState<FeedbackPrefill | null>(null);
   const [feedbackRefreshKey, setFeedbackRefreshKey] = useState(0);
+  const [inboxRefreshKey, setInboxRefreshKey] = useState(0);
+  const [inboxDialogOpen, setInboxDialogOpen] = useState(false);
+  const [inboxUnreadCount, setInboxUnreadCount] = useState(0);
   const [unreadFeedbackCount, setUnreadFeedbackCount] = useState(0);
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
   const multiAgentEnabled = true;
   const [storeVisible, setStoreVisible] = useState(() => localStorage.getItem("openakita_storeVisible") === "true");
@@ -492,8 +555,6 @@ function MainApp() {
       history.replaceState(null, "", window.location.pathname + window.location.search);
     }
   }, [isMobile]);
-  const currentStepIdxRaw = useMemo(() => steps.findIndex((s) => s.id === stepId), [steps, stepId]);
-  const currentStepIdx = currentStepIdxRaw < 0 ? 0 : currentStepIdxRaw;
 
   useEffect(() => {
     if (stepId === "workspace") {
@@ -510,9 +571,9 @@ function MainApp() {
   }, [stepId]);
 
   // ── Onboarding Wizard (首次安装引导) ──
-  type OnboardingStep = "ob-welcome" | "ob-agreement" | "ob-llm" | "ob-im" | "ob-cli" | "ob-progress" | "ob-done";
+  type OnboardingStep = "ob-welcome" | "ob-agreement" | "ob-llm" | "ob-im" | "ob-finish" | "ob-progress" | "ob-done";
   const [obStep, setObStep] = useState<OnboardingStep>("ob-welcome");
-  const [obInstallLog, setObInstallLog] = useState<string[]>([]);
+  const [, setObInstallLog] = useState<string[]>([]);
   const [obInstalling, setObInstalling] = useState(false);
   const [obEnvCheck, setObEnvCheck] = useState<{
     openakitaRoot: string;
@@ -544,10 +605,6 @@ function MainApp() {
     return () => window.clearInterval(timer);
   }, [obBackendStartup.phase, obBackendStartup.startedAt]);
 
-  // CLI 命令注册状态
-  const [obCliOpenakita, setObCliOpenakita] = useState(true);
-  const [obCliOa, setObCliOa] = useState(true);
-  const [obCliAddToPath, setObCliAddToPath] = useState(true);
   const [obAutostart, setObAutostart] = useState(true); // 开机自启，默认勾选
   const [obAgreementInput, setObAgreementInput] = useState("");
 
@@ -600,7 +657,7 @@ function MainApp() {
       // 2. 设置服务状态为已运行
       const baseUrl = "http://127.0.0.1:18900";
       setApiBaseUrl(baseUrl);
-      setServiceStatus({ running: true, pid: obDetectedService?.pid ?? null, pidFile: "" });
+      setServiceStatus(externalRunningStatus(obDetectedService?.pid ?? null));
       // 3. 刷新状态 & 自动检查端点
       refreshStatus("local", baseUrl, true);
       autoCheckEndpoints(baseUrl);
@@ -660,26 +717,17 @@ function MainApp() {
   // workspace quick-create name is managed by Topbar via wsQuickName state
 
   // python / venv / install
-  const [pythonCandidates, setPythonCandidates] = useState<PythonCandidate[]>([]);
-  const [selectedPythonIdx, setSelectedPythonIdx] = useState<number>(-1);
   const [venvStatus, setVenvStatus] = useState<string>("");
-  const [installLog, setInstallLog] = useState<string>("");
   const [installLiveLog, setInstallLiveLog] = useState<string>("");
   const [installProgress, setInstallProgress] = useState<{ stage: string; percent: number } | null>(null);
-  const [extras, setExtras] = useState<string>("all");
+  const [pipInstallPolling, setPipInstallPolling] = useState(false);
+  const [pipInstallId, setPipInstallId] = useState("default");
   const [indexUrl, setIndexUrl] = useState<string>("https://mirrors.aliyun.com/pypi/simple/");
-  const [pipIndexPresetId, setPipIndexPresetId] = useState<"official" | "tuna" | "ustc" | "aliyun" | "custom">("aliyun");
+  const [pipIndexPresetId] = useState<"official" | "tuna" | "ustc" | "aliyun" | "custom">("aliyun");
   const [customIndexUrl, setCustomIndexUrl] = useState<string>("");
-  const [venvReady, setVenvReady] = useState(false);
+  const [, setVenvReady] = useState(false);
   const [openakitaInstalled, setOpenakitaInstalled] = useState(false);
-  const [installSource, setInstallSource] = useState<InstallSource>("pypi");
-  const [githubRepo, setGithubRepo] = useState<string>("openakita/openakita");
-  const [githubRefType, setGithubRefType] = useState<"branch" | "tag">("branch");
-  const [githubRef, setGithubRef] = useState<string>("main");
-  const [localSourcePath, setLocalSourcePath] = useState<string>("");
-  const [pypiVersions, setPypiVersions] = useState<string[]>([]);
-  const [pypiVersionsLoading, setPypiVersionsLoading] = useState(false);
-  const [selectedPypiVersion, setSelectedPypiVersion] = useState<string>(""); // "" = 推荐同版本
+  const [, setSelectedPypiVersion] = useState<string>(""); // "" = 推荐同版本
   const [runtimeDiag, setRuntimeDiag] = useState<RuntimeDiagnostics | null>(null);
   const [runtimeDiagChecking, setRuntimeDiagChecking] = useState(false);
   const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
@@ -691,8 +739,8 @@ function MainApp() {
   const [savedSttEndpoints, setSavedSttEndpoints] = useState<EndpointDraft[]>([]);
 
   // status panel data
-  const [statusLoading, setStatusLoading] = useState(false);
-  const [statusError, setStatusError] = useState<string | null>(null);
+  const [, setStatusLoading] = useState(false);
+  const [, setStatusError] = useState<string | null>(null);
   const [endpointSummary, setEndpointSummary] = useState<
     { name: string; provider: string; apiType: string; baseUrl: string; model: string; keyEnv: string; keyPresent: boolean; enabled?: boolean }[]
   >([]);
@@ -700,22 +748,10 @@ function MainApp() {
   const [skillsDetail, setSkillsDetail] = useState<
     { skill_id: string; name: string; description: string; name_i18n?: Record<string, string> | null; description_i18n?: Record<string, string> | null; system: boolean; enabled?: boolean; tool_name?: string | null; category?: string | null; path?: string | null }[] | null
   >(null);
-  const [skillsSelection, setSkillsSelection] = useState<Record<string, boolean>>({});
-  const [skillsTouched, setSkillsTouched] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean | null>(null);
   // autoStartBackend 已合并到"开机自启"：--background 模式自动拉起后端，无需独立开关
-  const [serviceStatus, setServiceStatus] = useState<{
-    running: boolean;
-    pid: number | null;
-    pidFile: string;
-    port?: number;
-    heartbeatPhase?: string;
-    heartbeatHttpReady?: boolean;
-    heartbeatImReady?: boolean;
-    heartbeatReady?: boolean;
-    lastLinkDiagnostic?: LinkDiagnostic | null;
-  } | null>(null);
+  const [serviceStatus, setServiceStatus] = useState<ServiceStatus | null>(null);
   // ── 后端启动阶段（独立于 serviceStatus）──
   // serviceStatus 只能表达 "running:true|false"，无法区分"未启动"和"正在启动中"。
   // 老 UI 在自动启动期间一旦 invoke is_backend_auto_starting 偶发返回 false 或失败，
@@ -736,6 +772,7 @@ function MainApp() {
   const lastReadinessReadyRef = useRef<boolean | null>(null);
   const wsRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backendStartupHoldUntilRef = useRef(IS_TAURI ? Date.now() + BACKEND_STARTUP_PROBE_HOLD_MS : 0);
+  const stopInProgressRef = useRef(false);
   const [pageVisible, setPageVisible] = useState(true);
   const visibilityGraceRef = useRef(false); // 休眠恢复宽限期
   const lastPluginAppsReadyEventRef = useRef(0);
@@ -768,11 +805,11 @@ function MainApp() {
   }, []);
   const [detectedProcesses, setDetectedProcesses] = useState<Array<{ pid: number; cmd: string }>>([]);
   const [serviceLog, setServiceLog] = useState<{ path: string; content: string; truncated: boolean } | null>(null);
-  const [serviceLogError, setServiceLogError] = useState<string | null>(null);
+  const [, setServiceLogError] = useState<string | null>(null);
   const serviceLogRef = useRef<HTMLPreElement>(null);
   const logAtBottomRef = useRef(true);
-  const [appVersion, setAppVersion] = useState<string>("");
-  const [openakitaVersion, setOpenakitaVersion] = useState<string>("");
+  const [, setAppVersion] = useState<string>("");
+  const [, setOpenakitaVersion] = useState<string>("");
 
   // Health check state
   const [endpointHealth, setEndpointHealth] = useState<Record<string, {
@@ -796,12 +833,6 @@ function MainApp() {
   const envFieldCtx = useMemo<EnvFieldCtx>(() => ({
     envDraft, setEnvDraft, secretShown, setSecretShown, busy, t,
   }), [envDraft, secretShown, busy, t]);
-
-  // Refs for cross-view <details> panels that ConfigHintCard / chat-side
-  // hints can deep-link into via dispatchExpandPanel(anchor).
-  // Anchor names must match the backend ``actions[i].anchor`` strings emitted
-  // by tool handlers (see src/openakita/tools/handlers/web_search.py).
-  const webSearchPanelRef = useExpandPanel("web-search");
 
   async function refreshAll() {
     if (IS_TAURI) {
@@ -850,7 +881,7 @@ function MainApp() {
       if (cancelled) return;
       const capBase = IS_CAPACITOR ? apiBaseUrl : "";
       if (!IS_CAPACITOR) setApiBaseUrl("");
-      setServiceStatus({ running: true, pid: null, pidFile: "" });
+      setServiceStatus(externalRunningStatus());
       try {
         const hRes = await safeFetch(`${capBase}/api/health`, { signal: AbortSignal.timeout(3_000) });
         const hData = await hRes.json();
@@ -934,6 +965,8 @@ function MainApp() {
                 running: true,
                 pid: healthData.pid || null,
                 pidFile: "",
+                managedBy: "external",
+                isManagedChild: false,
                 heartbeatPhase: readinessPhase || undefined,
                 heartbeatHttpReady: readiness.http_ready,
                 heartbeatImReady: readiness.im_ready,
@@ -1003,7 +1036,7 @@ function MainApp() {
                       notifySuccess(t("topbar.autoStartSuccess"));
                     } else {
                       clearBackendStartingHold();
-                      setServiceStatus({ running: false, pid: null, pidFile: "" });
+                      setServiceStatus(stoppedStatus());
                       setBackendBootPhase("error");
                       notifyError(t("topbar.autoStartFail"));
                     }
@@ -1031,7 +1064,7 @@ function MainApp() {
                   // backend_in_boot_grace_cmd / is_backend_auto_starting，
                   // 若仍在 boot grace 就保持 "starting"；若真的死了再降级 dead。
                   // 这里保留 unknown，避免 mount 与 spawn 竞态时刺出一个 stopped 帧。
-                  setServiceStatus({ running: false, pid: null, pidFile: "" });
+                  setServiceStatus(stoppedStatus());
                   holdBackendStarting(BACKEND_STARTUP_PROBE_HOLD_MS);
                 }
               }
@@ -1108,6 +1141,7 @@ function MainApp() {
     const timer = setInterval(async () => {
       // 自重启互锁：restartOverlay 期间暂停心跳
       if (restartOverlay) return;
+      if (stopInProgressRef.current) return;
 
       const effectiveBase = httpApiBase();
       try {
@@ -1153,6 +1187,8 @@ function MainApp() {
             ...(prev || { pid: null, pidFile: "" }),
             running: true,
             pid: healthPid ?? prev?.pid ?? null,
+            managedBy: prev?.isManagedChild ? prev.managedBy : "external",
+            isManagedChild: prev?.isManagedChild === true,
             heartbeatPhase: readinessPhase || prev?.heartbeatPhase,
             heartbeatHttpReady: readinessHttpReady ?? prev?.heartbeatHttpReady,
             heartbeatImReady: readinessImReady ?? prev?.heartbeatImReady,
@@ -1179,7 +1215,7 @@ function MainApp() {
           }
           setBackendBootPhase("starting");
           setServiceStatus(prev =>
-            prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" }
+              prev ? { ...prev, running: false } : stoppedStatus()
           );
           return;
         }
@@ -1235,7 +1271,9 @@ function MainApp() {
                 setHeartbeatState("degraded");
                 try { await invoke("set_tray_backend_status", { status: "degraded" }); } catch { /* ignore */ }
               }
-              setServiceStatus(prev => prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" });
+              setServiceStatus(prev =>
+                prev ? { ...prev, running: true } : externalRunningStatus(),
+              );
               return;
             }
           } catch { /* invoke 失败，视为不可用 */ }
@@ -1247,7 +1285,9 @@ function MainApp() {
           setHeartbeatState("dead");
           if (IS_TAURI) try { await invoke("set_tray_backend_status", { status: "dead" }); } catch { /* ignore */ }
         }
-        setServiceStatus(prev => prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" });
+        setServiceStatus(prev =>
+          prev ? { ...prev, running: false } : stoppedStatus(),
+        );
         clearBackendStartingHold();
         setBackendBootPhase("stopped");
         setBackendVersion(null);
@@ -1285,52 +1325,54 @@ function MainApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentWorkspaceId, venvDir]);
 
-  // ── Global shortcut: Ctrl+Shift+A to summon window ──
+  // Tauri-local pip install progress is polled from Rust state. The worker
+  // thread never holds a Tauri AppHandle, avoiding late event-loop proxy clones
+  // during shutdown.
   useEffect(() => {
-    if (!IS_TAURI) return;
-    let unregister: (() => void) | null = null;
-    (async () => {
+    if (!pipInstallPolling || !IS_TAURI) return;
+    let cancelled = false;
+    let cursor = 0;
+    const poll = async () => {
       try {
-        const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        const win = getCurrentWindow();
-        unregister = await registerGlobalShortcut("CmdOrCtrl+Shift+A", () => {
-          win.show().catch(() => {});
-          win.setFocus().catch(() => {});
-        });
-      } catch { /* global-shortcut not available */ }
-    })();
-    return () => { if (unregister) unregister(); };
-  }, []);
-
-  // streaming pip logs (install step)
-  useEffect(() => {
-    let unlisten: null | (() => void) = null;
-    (async () => {
-      unlisten = await listen("pip_install_event", (ev) => {
-        const p = ev.payload as any;
-        if (!p || typeof p !== "object") return;
-        if (p.kind === "stage") {
-          const stage = String(p.stage || "");
-          const percent = Number(p.percent || 0);
-          if (stage) setInstallProgress({ stage, percent: Math.max(0, Math.min(100, percent)) });
-          return;
+        const p = await invoke<{
+          cursor: number;
+          done: boolean;
+          failed: boolean;
+          stage?: string | null;
+          percent?: number | null;
+          chunks?: string[];
+          missed?: boolean;
+        }>("pip_install_progress", { installId: pipInstallId, cursor });
+        if (cancelled) return;
+        cursor = Number(p.cursor || cursor);
+        if (p.stage) {
+          setInstallProgress({
+            stage: String(p.stage),
+            percent: Math.max(0, Math.min(100, Number(p.percent || 0))),
+          });
         }
-        if (p.kind === "line") {
-          const text = String(p.text || "");
-          if (!text) return;
+        const chunks = Array.isArray(p.chunks) ? p.chunks.join("") : "";
+        if (chunks) {
           setInstallLiveLog((prev) => {
-            const next = prev + text;
-            // keep tail to avoid huge memory usage
+            const next = prev + (p.missed ? "\n[log truncated]\n" : "") + chunks;
             const max = 80_000;
             return next.length > max ? next.slice(next.length - max) : next;
           });
         }
-      });
-    })();
-    return () => {
-      if (unlisten) unlisten();
+        if (p.done) setPipInstallPolling(false);
+      } catch {
+        // Keep polling while install is in progress; startup can briefly race.
+      }
     };
-  }, []);
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [pipInstallPolling, pipInstallId]);
 
   // tray quit failed: service still running
   useEffect(() => {
@@ -1352,6 +1394,32 @@ function MainApp() {
       if (unlisten) unlisten();
     };
   }, []);
+
+  const fetchInboxUnreadCount = useCallback(async () => {
+    if (!shouldUseHttpApi()) {
+      setInboxUnreadCount(0);
+      return;
+    }
+    try {
+      const resp = await safeFetch(`${httpApiBase()}/api/inbox/unread-count`, {
+        signal: AbortSignal.timeout(3_000),
+      });
+      const data = await resp.json();
+      const next = Math.max(0, Number(data?.unread_count || 0));
+      setInboxUnreadCount(next);
+      window.dispatchEvent(
+        new CustomEvent(INBOX_UNREAD_CHANGED_EVENT, {
+          detail: { unreadCount: next },
+        }),
+      );
+    } catch {
+      // Inbox is optional on older backend builds.
+    }
+  }, [serviceStatus?.running, dataMode, apiBaseUrl]);
+
+  useEffect(() => {
+    void fetchInboxUnreadCount();
+  }, [fetchInboxUnreadCount]);
 
   // ── Backend WebSocket events: keep derived status fresh across Web/Tauri ──
   // IM channels intentionally start after the HTTP API so the desktop can connect early.
@@ -1381,6 +1449,47 @@ function MainApp() {
           refreshStatus().catch(() => {});
         }, 2_000);
       }
+      if (event === "inbox:unread_changed") {
+        const next = Math.max(0, Number(p.unread_count || 0));
+        setInboxUnreadCount(next);
+        setInboxRefreshKey((value) => value + 1);
+        window.dispatchEvent(
+          new CustomEvent(INBOX_UNREAD_CHANGED_EVENT, {
+            detail: { unreadCount: next },
+          }),
+        );
+      }
+      if (event === "inbox:new_message") {
+        const payload = p as InboxWsMessagePayload;
+        setInboxRefreshKey((value) => value + 1);
+        void fetchInboxUnreadCount();
+        window.dispatchEvent(new CustomEvent(INBOX_REFRESH_EVENT));
+        if (isHighPriorityInbox(payload.priority)) {
+          const messageTitle = String(payload.title || t("inbox.newMessageFallback"));
+          toast.warning(messageTitle, {
+            description: t("inbox.newImportantMessage"),
+            action: {
+              label: t("inbox.openInbox"),
+              onClick: () => setInboxDialogOpen(true),
+            },
+          });
+        }
+      }
+      if (event === "inbox:update_available") {
+        const payload = p as InboxUpdatePayload;
+        setInboxRefreshKey((value) => value + 1);
+        void fetchInboxUnreadCount();
+        toast.info(String(payload.title || t("inbox.updateAvailable")), {
+          description: payload.version
+            ? t("inbox.updateAvailableVersion", { version: payload.version })
+            : t("inbox.updateAvailableHint"),
+          action: {
+            label: t("version.updateNow"),
+            onClick: () => { void checkForAppUpdate(); },
+          },
+        });
+        void checkForAppUpdate();
+      }
       // 桥接技能变更：把 WS 'skills:changed' 转成全局 window CustomEvent，
       // 各组件（SkillManager / OrgEditorView 等）可以监听同一事件实现实时刷新，
       // 无需让 App 知道具体组件存在。``action`` 透传给监听方按需做差异化处理。
@@ -1395,12 +1504,7 @@ function MainApp() {
       }
     });
     return unsub;
-  }, [webAuthed]);
-
-  const canUsePython = useMemo(() => {
-    if (selectedPythonIdx < 0) return false;
-    return pythonCandidates[selectedPythonIdx]?.isUsable ?? false;
-  }, [pythonCandidates, selectedPythonIdx]);
+  }, [webAuthed, fetchInboxUnreadCount, checkForAppUpdate, t]);
 
   // Keep preset <-> index-url consistent
   useEffect(() => {
@@ -1437,7 +1541,6 @@ function MainApp() {
     setSavedSttEndpoints([]);
     setSkillSummary(null);
     setSkillsDetail(null);
-    setSkillsSelection({});
     setServiceLog(null);
     setServiceLogError(null);
   }
@@ -1494,7 +1597,7 @@ function MainApp() {
                 doneMessage: t("topbar.switchWorkspaceRestartSuccess", { id: opts.targetId }),
               });
               setServiceStatus((prev) =>
-                prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" },
+                prev ? { ...prev, running: true } : externalRunningStatus(),
               );
               await refreshAll();
               try { await refreshStatus(undefined, undefined, true); } catch { /* ignore */ }
@@ -1533,7 +1636,7 @@ function MainApp() {
                 doneMessage: t("topbar.switchWorkspaceRestartSuccess", { id: opts.targetId }),
               });
               setServiceStatus((prev) =>
-                prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" },
+                prev ? { ...prev, running: true } : externalRunningStatus(),
               );
               await refreshAll();
               try { await refreshStatus(undefined, undefined, true); } catch { /* ignore */ }
@@ -1568,7 +1671,7 @@ function MainApp() {
           setRestartOverlay({ phase: "waiting", hint });
 
           try {
-            const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>(
+            const ss = await invoke<ServiceStatus>(
               "openakita_service_start", { venvDir, workspaceId: opts.targetId },
             );
             setServiceStatus(ss);
@@ -1588,7 +1691,7 @@ function MainApp() {
               doneMessage: t("topbar.switchWorkspaceRestartSuccess", { id: opts.targetId }),
             });
             setServiceStatus((prev) =>
-              prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" },
+              prev ? { ...prev, running: true } : externalRunningStatus(),
             );
             try { await refreshStatus("local", "http://127.0.0.1:18900", true); } catch { /* ignore */ }
             autoCheckEndpoints("http://127.0.0.1:18900");
@@ -1637,208 +1740,6 @@ function MainApp() {
         message: t("topbar.switchWorkspaceConfirmMsg", { name: displayName }),
         performSwitch: () => invoke("set_current_workspace", { id }),
       });
-    }
-  }
-
-  async function doDetectPython() {
-    const _busyId = notifyLoading("检测项目 Python 环境...");
-    try {
-      const cands = await invoke<PythonCandidate[]>("detect_python");
-      setPythonCandidates(cands);
-      const firstUsable = cands.findIndex((c) => c.isUsable);
-      setSelectedPythonIdx(firstUsable);
-      notifySuccess(firstUsable >= 0 ? "已找到可用 Python（3.11+）" : "未找到可用内置 Python（请检查安装包完整性）");
-    } catch (e) {
-      notifyError(String(e));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doInstallEmbeddedPython() {
-    const _busyId = notifyLoading("检查内置 Python...");
-    try {
-      setVenvStatus("检查内置 Python 中...");
-      const r = await invoke<BundledPythonInstallResult>("install_bundled_python", { pythonSeries: "3.11" });
-      const cand: PythonCandidate = {
-        command: r.pythonCommand,
-        versionText: `bundled (${r.tag}): ${r.assetName}`,
-        isUsable: true,
-      };
-      setPythonCandidates((prev) => [cand, ...prev.filter((p) => p.command.join(" ") !== cand.command.join(" "))]);
-      setSelectedPythonIdx(0);
-      setVenvStatus(`内置 Python 就绪：${r.pythonPath}`);
-      notifySuccess("内置 Python 可用，可以继续创建 venv");
-    } catch (e) {
-      notifyError(String(e));
-      setVenvStatus(`内置 Python 不可用：${String(e)}`);
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doCreateVenv() {
-    if (!canUsePython) return;
-    const _busyId = notifyLoading("创建 venv...");
-    try {
-      setVenvStatus("创建 venv 中...");
-      const py = pythonCandidates[selectedPythonIdx].command;
-      await invoke<string>("create_venv", { pythonCommand: py, venvDir });
-      setVenvStatus(`venv 就绪：${venvDir}`);
-      setVenvReady(true);
-      setOpenakitaInstalled(false);
-      notifySuccess("venv 已准备好，可以安装 openakita");
-      await persistPythonEnvConfig(venvDir);
-    } catch (e) {
-      notifyError(String(e));
-      setVenvStatus(`创建 venv 失败：${String(e)}`);
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function persistPythonEnvConfig(venvPath: string) {
-    if (!currentWorkspaceId || !IS_TAURI) return;
-    try {
-      const entries: { key: string; value: string }[] = [
-        { key: "PYTHON_VENV_PATH", value: venvPath },
-      ];
-      await invoke("workspace_update_env", { workspaceId: currentWorkspaceId, entries });
-      setEnvDraft((prev) => {
-        const next = { ...prev };
-        next["PYTHON_VENV_PATH"] = venvPath;
-        return next;
-      });
-    } catch {
-      // best-effort
-    }
-  }
-
-  async function doCreateVenvFromPython() {
-    if (!canUsePython) return;
-    const _busyId = notifyLoading(t("config.pyCreatingVenv"));
-    try {
-      setVenvStatus(t("config.pyCreatingVenv"));
-      const py = pythonCandidates[selectedPythonIdx].command;
-      await invoke<string>("create_venv", { pythonCommand: py, venvDir });
-      setVenvStatus(t("config.pyVenvCreated", { path: venvDir }));
-      setVenvReady(true);
-      setOpenakitaInstalled(false);
-      await persistPythonEnvConfig(venvDir);
-      notifySuccess(t("config.pyVenvReady"));
-    } catch (e) {
-      notifyError(String(e));
-      setVenvStatus(t("config.pyVenvCreateFail") + `: ${String(e)}`);
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doFetchPypiVersions() {
-    setPypiVersionsLoading(true);
-    setPypiVersions([]);
-    try {
-      const raw = await invoke<string>("fetch_pypi_versions", {
-        package: "openakita",
-        indexUrl: indexUrl.trim() ? indexUrl.trim() : null,
-      });
-      const list = JSON.parse(raw) as string[];
-      setPypiVersions(list);
-      // Auto-select: match Setup Center version if available
-      if (appVersion && list.includes(appVersion)) {
-        setSelectedPypiVersion(appVersion);
-      } else if (list.length > 0) {
-        setSelectedPypiVersion(list[0]); // latest
-      }
-    } catch (e: any) {
-      notifyError(`获取 PyPI 版本列表失败：${e}`);
-    } finally {
-      setPypiVersionsLoading(false);
-    }
-  }
-
-  async function doSetupVenvAndInstallOpenAkita() {
-    if (!canUsePython) {
-      notifyError("请先在 Python 步骤安装/检测并选择一个可用 Python（3.11+）。");
-      return;
-    }
-    setInstallLiveLog("");
-    setInstallProgress({ stage: "准备开始", percent: 1 });
-    const _busyId = notifyLoading("创建 venv 并安装 openakita...");
-    try {
-      // 1) create venv (idempotent)
-      setInstallProgress({ stage: "创建 venv", percent: 10 });
-      setVenvStatus("创建 venv 中...");
-      const py = pythonCandidates[selectedPythonIdx].command;
-      await invoke<string>("create_venv", { pythonCommand: py, venvDir });
-      setVenvReady(true);
-      setOpenakitaInstalled(false);
-      setVenvStatus(`venv 就绪：${venvDir}`);
-      setInstallProgress({ stage: "venv 就绪", percent: 30 });
-      await persistPythonEnvConfig(venvDir);
-
-      // 2) pip install
-      setInstallProgress({ stage: "pip 安装", percent: 35 });
-      setVenvStatus("安装 openakita 中（pip）...");
-      setInstallLog("");
-      const ex = extras.trim();
-      const extrasPart = ex ? `[${ex}]` : "";
-      const spec = (() => {
-        if (installSource === "github") {
-          const repo = githubRepo.trim() || "openakita/openakita";
-          const ref = githubRef.trim() || "main";
-          const kind = githubRefType;
-          const url =
-            kind === "tag"
-              ? `https://github.com/${repo}/archive/refs/tags/${ref}.zip`
-              : `https://github.com/${repo}/archive/refs/heads/${ref}.zip`;
-          return `openakita${extrasPart} @ ${url}`;
-        }
-        if (installSource === "local") {
-          const p = localSourcePath.trim();
-          if (!p) {
-            throw new Error("请选择/填写本地源码路径（例如本仓库根目录）");
-          }
-          const url = toFileUrl(p);
-          if (!url) {
-            throw new Error("本地路径无效");
-          }
-          return `openakita${extrasPart} @ ${url}`;
-        }
-        // PyPI mode: append ==version if a specific version is selected
-        const ver = selectedPypiVersion.trim();
-        if (ver) {
-          return `openakita${extrasPart}==${ver}`;
-        }
-        return `openakita${extrasPart}`;
-      })();
-      const log = await invoke<string>("pip_install", {
-        venvDir,
-        packageSpec: spec,
-        indexUrl: indexUrl.trim() ? indexUrl.trim() : null,
-      });
-      setInstallLog(String(log || ""));
-      setOpenakitaInstalled(true);
-      setVenvStatus(`安装完成：${spec}`);
-      setInstallProgress({ stage: "安装完成", percent: 100 });
-      notifySuccess("openakita 已安装，可以读取服务商列表并配置端点");
-
-      // 3) verify by attempting to list providers (makes failures visible early)
-      try {
-        await doLoadProviders();
-      } catch {
-        // ignore; doLoadProviders already sets error
-      }
-    } catch (e) {
-      const msg = String(e);
-      notifyError(msg);
-      setVenvStatus(`安装失败：${msg}`);
-      setInstallLog("");
-      if (msg.includes("缺少 Setup Center 所需模块") || msg.includes("No module named 'openakita.setup_center'")) {
-        notifySuccess("你安装到的 openakita 不包含 Setup Center 模块。建议切换“安装来源”为 GitHub 或 本地源码，然后重新安装。");
-      }
-    } finally {
-      dismissLoading(_busyId);
     }
   }
 
@@ -2065,6 +1966,24 @@ function MainApp() {
     return () => clearInterval(timer);
   }, [serviceStatus?.running, dataMode, apiBaseUrl]);
 
+  // ── Pending approvals count polling + WebSocket instant refresh ──
+  useEffect(() => {
+    if (!serviceStatus?.running) { setPendingApprovalsCount(0); return; }
+    const poll = async () => {
+      try {
+        const res = await safeFetch(`${httpApiBase()}/api/pending_approvals/stats`, { signal: AbortSignal.timeout(5000) });
+        const data = await res.json();
+        setPendingApprovalsCount(data.pending ?? 0);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const timer = setInterval(poll, 60_000);
+    const unsub = IS_WEB ? onWsEvent((event) => {
+      if (event === "pending_approval_created" || event === "pending_approval_resolved") poll();
+    }) : undefined;
+    return () => { clearInterval(timer); unsub?.(); };
+  }, [serviceStatus?.running, dataMode, apiBaseUrl]);
+
   const toggleViewDisabled = useCallback(async (viewName: string) => {
     const next = disabledViews.includes(viewName)
       ? disabledViews.filter((v) => v !== viewName)
@@ -2163,22 +2082,6 @@ function MainApp() {
    * 仅在后端运行时调用有意义；后端未运行时静默跳过。
    * 返回 true 表示重载成功，false 表示失败或后端未运行。
    */
-  async function triggerConfigReload(): Promise<boolean> {
-    if (!shouldUseHttpApi()) return false;
-    try {
-      const resp = await safeFetch(`${httpApiBase()}/api/config/reload`, {
-        method: "POST",
-        signal: AbortSignal.timeout(3000),
-      });
-      const data = await resp.json();
-      if (data.reloaded) return true;
-      logger.warn("App", `Config reload not applied: ${data.reason || "unknown"}`);
-      return false;
-    } catch {
-      return false;
-    }
-  }
-
   /**
    * 纯重启：安装 IM 依赖 → 检测存活 → 触发重启 → 轮询恢复。
    * 不含 env 保存逻辑，可独立调用（如 Bot 配置保存后重启）。
@@ -2205,10 +2108,19 @@ function MainApp() {
 
       // 检测服务是否运行
       let alive = false;
+      let liveBackendPid: number | null = null;
       try {
         const ping = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
         alive = ping.ok;
-      } catch { alive = false; }
+        if (ping.ok) {
+          try {
+            const healthData = await ping.json();
+            liveBackendPid = typeof healthData?.pid === "number" ? healthData.pid : null;
+          } catch { /* health payload is best-effort for ownership checks */ }
+        }
+      } catch {
+        alive = false;
+      }
 
       if (!alive) {
         setRestartOverlay({ phase: "notRunning" });
@@ -2223,7 +2135,29 @@ function MainApp() {
       setRestartOverlay({ phase: "restarting" });
       const wsId = currentWorkspaceId || workspaces[0]?.id;
 
-      if (IS_TAURI && wsId && venvDir && dataMode === "local") {
+      let freshServiceStatus: ServiceStatus | null = null;
+      if (IS_TAURI && wsId && dataMode === "local") {
+        try {
+          const ss = await invoke<ServiceStatus>("openakita_service_status", { workspaceId: wsId });
+          freshServiceStatus = ss.running ? ss : externalRunningStatus(liveBackendPid);
+          setServiceStatus(freshServiceStatus);
+        } catch {
+          freshServiceStatus = externalRunningStatus(liveBackendPid);
+        }
+      }
+      // Only the live MANAGED_CHILD handle means this Tauri instance can safely
+      // do process-level stop/start. A stale PID file may still say
+      // managedBy="tauri" from an older desktop session while the current
+      // backend was started manually from a terminal; treat that as external
+      // and let openakita serve restart itself via /api/config/restart.
+      // If the status command fails or cannot match a PID file, the HTTP health
+      // check above has already proved a backend exists, so default to external.
+      const tauriStatusMatchesHealthPid =
+        liveBackendPid === null || freshServiceStatus?.pid === liveBackendPid;
+      const tauriManagedBackend =
+        freshServiceStatus?.isManagedChild === true && tauriStatusMatchesHealthPid;
+
+      if (IS_TAURI && wsId && venvDir && dataMode === "local" && tauriManagedBackend) {
         // ── Tauri 本地模式：进程级重启（杀旧进程 → 启新进程） ──
         try {
           const shutRes = await fetch(`${base}/api/shutdown`, { method: "POST", signal: AbortSignal.timeout(2000) });
@@ -2238,7 +2172,7 @@ function MainApp() {
 
         setRestartOverlay({ phase: "waiting" });
         try {
-          const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>(
+          const ss = await invoke<ServiceStatus>(
             "openakita_service_start", { venvDir, workspaceId: wsId },
           );
           setServiceStatus(ss);
@@ -2251,7 +2185,7 @@ function MainApp() {
           return;
         }
       } else {
-        // ── Web / Capacitor 模式：进程内重启（唯一可用方式） ──
+        // ── Web / Capacitor / 外部本地后端：进程内重启 ──
         try {
           await fetch(`${base}/api/config/restart`, { method: "POST", signal: AbortSignal.timeout(3000) });
         } catch { /* 请求可能因服务关闭而失败 */ }
@@ -2284,7 +2218,7 @@ function MainApp() {
       if (recovered) {
         setRestartOverlay({ phase: "done" });
         setServiceStatus((prev) =>
-          prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" }
+          prev ? { ...prev, running: true } : externalRunningStatus()
         );
         notifyPluginAppsReady();
         try { await refreshStatus(undefined, undefined, true); } catch { /* ignore */ }
@@ -2323,8 +2257,6 @@ function MainApp() {
   }
 
 
-  const step = steps[currentStepIdx] || steps[0];
-
 
   /** 根据当前步骤返回需要自动保存的 env key 列表 */
   function getAutoSaveKeysForStep(sid: StepId): string[] {
@@ -2355,11 +2287,12 @@ function MainApp() {
           "DESKTOP_VISION_ENABLED", "DESKTOP_VISION_MAX_RETRIES", "DESKTOP_VISION_TIMEOUT",
           "DESKTOP_CLICK_DELAY", "DESKTOP_TYPE_INTERVAL", "DESKTOP_MOVE_DURATION",
           "DESKTOP_FAILSAFE", "DESKTOP_PAUSE",
+          ...WEB_SEARCH_ENV_KEYS,
           "GITHUB_TOKEN",
         ];
       case "agent":
         return [
-          "AGENT_NAME", "MAX_ITERATIONS", "SELFCHECK_AUTOFIX",
+          "MAX_ITERATIONS", "SELFCHECK_AUTOFIX",
           "THINKING_MODE",
           "PROGRESS_TIMEOUT_SECONDS", "HARD_TIMEOUT_SECONDS",
           "MEMORY_MODE",
@@ -2509,6 +2442,8 @@ function MainApp() {
                 ...(prev || { pid: healthData.pid || null, pidFile: "" }),
                 running: true,
                 pid: healthPid ?? prev?.pid ?? null,
+                managedBy: prev?.isManagedChild ? prev.managedBy : "external",
+                isManagedChild: prev?.isManagedChild === true,
                 heartbeatPhase: phase || prev?.heartbeatPhase,
                 heartbeatHttpReady: readiness.http_ready ?? prev?.heartbeatHttpReady,
                 heartbeatImReady: readiness.im_ready ?? prev?.heartbeatImReady,
@@ -2525,7 +2460,7 @@ function MainApp() {
               setBackendBootPhase("starting");
             }
             setServiceStatus((prev) =>
-              prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" }
+            prev ? { ...prev, running: false } : stoppedStatus()
             );
           }
         }
@@ -2677,19 +2612,13 @@ function MainApp() {
         // was started externally (not via this app).
         if (effectiveDataMode !== "remote" && currentWorkspaceId) {
           try {
-            const ss = await invoke<{
-              running: boolean;
-              pid: number | null;
-              pidFile: string;
-              heartbeatPhase?: string;
-              heartbeatHttpReady?: boolean;
-              heartbeatImReady?: boolean;
-              heartbeatReady?: boolean;
-            }>("openakita_service_status", { workspaceId: currentWorkspaceId });
+            const ss = await invoke<ServiceStatus>("openakita_service_status", { workspaceId: currentWorkspaceId });
             setServiceStatus((prev) => ({
               running: prev?.running ?? serviceAlive,
               pid: serviceAlive && healthPid !== undefined ? healthPid : (ss.pid ?? prev?.pid ?? null),
               pidFile: ss.pidFile ?? prev?.pidFile ?? "",
+              managedBy: ss.managedBy ?? "external",
+              isManagedChild: ss.isManagedChild === true,
               heartbeatPhase: ss.heartbeatPhase ?? prev?.heartbeatPhase,
               heartbeatHttpReady: ss.heartbeatHttpReady ?? prev?.heartbeatHttpReady,
               heartbeatImReady: ss.heartbeatImReady ?? prev?.heartbeatImReady,
@@ -2781,15 +2710,7 @@ function MainApp() {
       // This is the fallback when the HTTP API is not alive.
       if (effectiveDataMode !== "remote") {
         try {
-          const ss = await invoke<{
-            running: boolean;
-            pid: number | null;
-            pidFile: string;
-            heartbeatPhase?: string;
-            heartbeatHttpReady?: boolean;
-            heartbeatImReady?: boolean;
-            heartbeatReady?: boolean;
-          }>("openakita_service_status", {
+          const ss = await invoke<ServiceStatus>("openakita_service_status", {
             workspaceId: currentWorkspaceId,
           });
           setServiceStatus(ss);
@@ -2956,13 +2877,13 @@ function MainApp() {
     try {
       setDataMode("local");
       setApiBaseUrl("http://127.0.0.1:18900");
-      const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_start", {
+      const ss = await invoke<ServiceStatus>("openakita_service_start", {
         venvDir,
         workspaceId: effectiveWsId,
       });
       setServiceStatus(ss);
       const ready = await waitForServiceReady("http://127.0.0.1:18900", LOCAL_SERVICE_READY_TIMEOUT_MS);
-      const real = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", {
+      const real = await invoke<ServiceStatus>("openakita_service_status", {
         workspaceId: effectiveWsId,
       });
       setServiceStatus(real);
@@ -3025,9 +2946,16 @@ function MainApp() {
    */
   async function connectToExistingLocalService() {
     const ver = conflictDialog?.version || "";
+    const existingPid = conflictDialog?.pid ?? null;
     setDataMode("local");
     setApiBaseUrl("http://127.0.0.1:18900");
-    setServiceStatus({ running: true, pid: null, pidFile: "" });
+    setServiceStatus({
+      running: true,
+      pid: existingPid,
+      pidFile: "",
+      managedBy: "external",
+      isManagedChild: false,
+    });
     setConflictDialog(null);
     setPendingStartWsId(null);
     const _busyId = notifyLoading(t("connect.testing"));
@@ -3089,7 +3017,7 @@ function MainApp() {
     }
     // 2. PID-based kill as fallback (handles locally started services)
     try {
-      const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_stop", { workspaceId: id });
+      const ss = await invoke<ServiceStatus>("openakita_service_stop", { workspaceId: id });
       setServiceStatus(ss);
     } catch { /* PID file might not exist for externally started services */ }
     // 3. Quick verify — is the port freed?
@@ -3105,7 +3033,7 @@ function MainApp() {
     }
     // Final status
     try {
-      const final_ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", { workspaceId: id });
+      const final_ss = await invoke<ServiceStatus>("openakita_service_status", { workspaceId: id });
       setServiceStatus(final_ss);
       if (!final_ss.running) setBackendBootPhase("stopped");
     } catch { /* ignore */ }
@@ -3157,19 +3085,6 @@ function MainApp() {
     const el = serviceLogRef.current;
     if (el && logAtBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [serviceLog?.content]);
-
-  // Skills selection default sync (only when user hasn't changed it)
-  useEffect(() => {
-    if (!skillsDetail) return;
-    if (skillsTouched) return;
-    const m: Record<string, boolean> = {};
-    for (const s of skillsDetail) {
-      if (!s?.skill_id) continue;
-      if (s.system) m[s.skill_id] = true;
-      else m[s.skill_id] = typeof s.enabled === "boolean" ? s.enabled : true;
-    }
-    setSkillsSelection(m);
-  }, [skillsDetail, skillsTouched]);
 
   // 自动获取 skills：进入“工具与技能”页就拉一次（且仅在尚未拿到 skillsDetail 时）
   useEffect(() => {
@@ -3231,45 +3146,6 @@ function MainApp() {
     }
   }
 
-  async function doSaveSkillsSelection() {
-    if (!currentWorkspaceId) {
-      notifyError("请先设置当前工作区");
-      return;
-    }
-    if (!skillsDetail) {
-      notifyError("未读取到 skills 列表（请先刷新 skills）");
-      return;
-    }
-    const _busyId = notifyLoading("保存 skills 启用状态...");
-    try {
-      const externalAllowlist = skillsDetail
-        .filter((s) => !s.system && !!s.skill_id)
-        .filter((s) => !!skillsSelection[s.skill_id])
-        .map((s) => s.skill_id);
-
-      const content =
-        JSON.stringify(
-          {
-            version: 1,
-            external_allowlist: externalAllowlist,
-            updated_at: new Date().toISOString(),
-          },
-          null,
-          2,
-        ) + "\n";
-
-      await writeWorkspaceFile("data/skills.json", content);
-      setSkillsTouched(false);
-      notifySuccess("已保存：data/skills.json（系统技能默认启用；外部技能按你的选择启用）");
-    } catch (e) {
-      notifyError(String(e));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-
-
   function renderStatus() {
     return (
       <div className="space-y-4">
@@ -3304,8 +3180,7 @@ function MainApp() {
           startLocalServiceWithConflictCheck={startLocalServiceWithConflictCheck}
           refreshStatus={refreshStatus}
           doStopService={doStopService}
-          waitForServiceDown={waitForServiceDown}
-          doStartLocalService={doStartLocalService}
+          restartService={restartService}
           onOpenRuntimeEnvironment={() => setRuntimeDialogOpen(true)}
           setView={navigateToView}
         />
@@ -3335,6 +3210,12 @@ function MainApp() {
         providers={providers}
         doLoadProviders={doLoadProviders}
         loadSavedEndpoints={loadSavedEndpoints}
+        onEndpointConfigChanged={async (endpointType) => {
+          await refreshStatus(undefined, undefined, true);
+          if (endpointType === "endpoints") {
+            autoCheckEndpoints(httpApiBase());
+          }
+        }}
         readWorkspaceFile={readWorkspaceFile}
         writeWorkspaceFile={writeWorkspaceFile}
         venvDir={venvDir}
@@ -3343,20 +3224,6 @@ function MainApp() {
       />
     );
   }
-
-  // FieldText/FieldBool/FieldSelect/FieldCombo/TelegramPairingCodeHint -> ./components/EnvFields.tsx
-  // Wrapper closures that pass envDraft/onEnvChange automatically to extracted field components
-  const _envBase = { envDraft, onEnvChange: setEnvDraft, busy };
-  const FT = (p: { k: string; label: string; placeholder?: string; help?: string; type?: "text" | "password" }) =>
-    <FieldText key={p.k} {...p} {..._envBase} />;
-  const FB = (p: { k: string; label: string; help?: string; defaultValue?: boolean }) =>
-    <FieldBool key={p.k} {...p} {..._envBase} />;
-  const FS = (p: { k: string; label: string; options: { value: string; label: string }[]; help?: string; defaultValue?: string }) =>
-    <FieldSelect key={p.k} {...p} {..._envBase} />;
-  const FC = (p: { k: string; label: string; options: { value: string; label: string }[]; placeholder?: string; help?: string }) =>
-    <FieldCombo key={p.k} {...p} {..._envBase} />;
-  const FR = (p: { k: string; label: string; help?: string; min: number; max: number; step: number; defaultValue: number; unit?: string }) =>
-    <FieldSlider key={p.k} {...p} {..._envBase} />;
 
   async function renderIntegrationsSave(keys: string[], successText: string) {
     if (!currentWorkspaceId) { notifyError(t("common.error")); return; }
@@ -3401,274 +3268,21 @@ function MainApp() {
   }
 
   function renderTools() {
-    const keysTools = [
-      "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "FORCE_IPV4",
-      "TOOL_MAX_PARALLEL", "FORCE_TOOL_CALL_MAX_RETRIES", "FORCE_TOOL_CALL_IM_FLOOR", "CONFIRMATION_TEXT_MAX_RETRIES",
-      "ALLOW_PARALLEL_TOOLS_WITH_INTERRUPT_CHECKS",
-      "MCP_ENABLED", "MCP_TIMEOUT",
-      "DESKTOP_ENABLED", "DESKTOP_DEFAULT_MONITOR", "DESKTOP_COMPRESSION_QUALITY",
-      "DESKTOP_MAX_WIDTH", "DESKTOP_MAX_HEIGHT", "DESKTOP_CACHE_TTL",
-      "DESKTOP_UIA_TIMEOUT", "DESKTOP_UIA_RETRY_INTERVAL", "DESKTOP_UIA_MAX_RETRIES",
-      "DESKTOP_VISION_ENABLED", "DESKTOP_VISION_MAX_RETRIES", "DESKTOP_VISION_TIMEOUT",
-      "DESKTOP_CLICK_DELAY", "DESKTOP_TYPE_INTERVAL", "DESKTOP_MOVE_DURATION",
-      "DESKTOP_FAILSAFE", "DESKTOP_PAUSE",
-      "GITHUB_TOKEN",
-      "WEB_SEARCH_PROVIDER", "BOCHA_API_KEY", "TAVILY_API_KEY", "JINA_API_KEY", "SEARXNG_BASE_URL",
-    ];
-
-    const list = skillsDetail || [];
-    const systemSkills = list.filter((s) => !!s.system);
-    const externalSkills = list.filter((s) => !s.system);
-
     return (
-      <>
-        <div className="card">
-          <h3 className="text-base font-bold tracking-tight">{t("config.toolsTitle")}</h3>
-          <p className="text-sm text-muted-foreground mt-1 mb-3">{t("config.toolsHint")}</p>
-
-          {/* ── MCP ── */}
-          <details className="group rounded-lg border border-border">
-            <summary className="cursor-pointer flex items-center justify-between px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <span className="flex items-center gap-1.5">
-                <ChevronRight className="size-4 shrink-0 transition-transform group-open:rotate-90 text-muted-foreground" />
-                {t("config.toolsMCP")}
-              </span>
-              <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
-                <span>{disabledViews.includes("mcp") ? t("config.toolsSkillsDisabled") : t("config.toolsSkillsEnabled")}</span>
-                <div
-                  onClick={async () => {
-                    const willDisable = !disabledViews.includes("mcp");
-                    toggleViewDisabled("mcp");
-                    setEnvDraft((p) => ({ ...p, MCP_ENABLED: willDisable ? "false" : "true" }));
-                    try {
-                      const entries = { MCP_ENABLED: willDisable ? "false" : "true" };
-                      if (shouldUseHttpApi()) {
-                        await safeFetch(`${httpApiBase()}/api/config/env`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ entries }),
-                        });
-                        notifySuccess(willDisable
-                          ? t("config.mcpDisabledNeedRestart", { defaultValue: "MCP 已禁用，重启后生效" })
-                          : t("config.mcpEnabledNeedRestart", { defaultValue: "MCP 已启用，重启后生效" }));
-                      }
-                    } catch { /* ignore */ }
-                  }}
-                  className="relative shrink-0 transition-colors duration-200 rounded-full"
-                  style={{
-                    width: 40, height: 22,
-                    background: disabledViews.includes("mcp") ? "var(--line, #d1d5db)" : "var(--ok, #22c55e)",
-                  }}
-                >
-                  <div className="absolute top-0.5 rounded-full bg-white shadow-sm transition-[left] duration-200" style={{
-                    width: 18, height: 18,
-                    left: disabledViews.includes("mcp") ? 2 : 20,
-                  }} />
-                </div>
-              </label>
-            </summary>
-            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-              <div className="grid2">
-                {FT({ k: "MCP_TIMEOUT", label: "Timeout (s)", placeholder: "60" })}
-              </div>
-            </div>
-          </details>
-
-          {/* ── Skills ── */}
-          <details className="group/skills rounded-lg border border-border mt-2">
-            <summary className="cursor-pointer flex items-center justify-between px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <span className="flex items-center gap-1.5">
-                <ChevronRight className="size-4 shrink-0 transition-transform group-open/skills:rotate-90 text-muted-foreground" />
-                {t("config.toolsSkills")}
-              </span>
-              <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
-                <span>{disabledViews.includes("skills") ? t("config.toolsSkillsDisabled") : t("config.toolsSkillsEnabled")}</span>
-                <div
-                  onClick={() => toggleViewDisabled("skills")}
-                  className="relative shrink-0 transition-colors duration-200 rounded-full"
-                  style={{
-                    width: 40, height: 22,
-                    background: disabledViews.includes("skills") ? "var(--line, #d1d5db)" : "var(--ok, #22c55e)",
-                  }}
-                >
-                  <div className="absolute top-0.5 rounded-full bg-white shadow-sm transition-[left] duration-200" style={{
-                    width: 18, height: 18,
-                    left: disabledViews.includes("skills") ? 2 : 20,
-                  }} />
-                </div>
-              </label>
-            </summary>
-            <div className="flex items-center gap-2 px-4 py-3 border-t border-border">
-              <button
-                className="px-3 py-1.5 text-xs font-medium rounded-md border border-border hover:bg-accent/50 transition-colors"
-                onClick={() => {
-                  if (!skillsDetail) return;
-                  const m: Record<string, boolean> = {};
-                  for (const s of skillsDetail) { if (s?.skill_id) m[s.skill_id] = true; }
-                  setSkillsSelection(m);
-                  setSkillsTouched(true);
-                }}
-              >
-                {t("config.toolsEnableAll")}
-              </button>
-              <button
-                className="px-3 py-1.5 text-xs font-medium rounded-md border border-border hover:bg-accent/50 transition-colors"
-                onClick={() => {
-                  if (!skillsDetail) return;
-                  const m: Record<string, boolean> = {};
-                  for (const s of skillsDetail) { if (s?.skill_id) m[s.skill_id] = false; }
-                  setSkillsSelection(m);
-                  setSkillsTouched(true);
-                }}
-              >
-                {t("config.toolsDisableAll")}
-              </button>
-              <span className="text-xs text-muted-foreground ml-auto">
-                {skillsDetail ? t("config.toolsSkillsCount", { enabled: Object.values(skillsSelection).filter(Boolean).length, total: skillsDetail.length }) : ""}
-              </span>
-            </div>
-          </details>
-
-          {/* ── Desktop Automation ── */}
-          <details className="group/desktop rounded-lg border border-border mt-2">
-            <summary className="cursor-pointer flex items-center justify-between px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <span className="flex items-center gap-1.5">
-                <ChevronRight className="size-4 shrink-0 transition-transform group-open/desktop:rotate-90 text-muted-foreground" />
-                {t("config.toolsDesktop")}
-              </span>
-              <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none" onClick={(e) => e.stopPropagation()}>
-                <span>{envDraft["DESKTOP_ENABLED"] === "false" ? t("config.toolsSkillsDisabled") : t("config.toolsSkillsEnabled")}</span>
-                <div
-                  onClick={() => setEnvDraft((p) => ({ ...p, DESKTOP_ENABLED: p.DESKTOP_ENABLED === "false" ? "true" : "false" }))}
-                  className="relative shrink-0 transition-colors duration-200 rounded-full"
-                  style={{
-                    width: 40, height: 22,
-                    background: envDraft["DESKTOP_ENABLED"] === "false" ? "var(--line, #d1d5db)" : "var(--ok, #22c55e)",
-                  }}
-                >
-                  <div className="absolute top-0.5 rounded-full bg-white shadow-sm transition-[left] duration-200" style={{
-                    width: 18, height: 18,
-                    left: envDraft["DESKTOP_ENABLED"] === "false" ? 2 : 20,
-                  }} />
-                </div>
-              </label>
-            </summary>
-            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-              <div className="grid3">
-                {FT({ k: "DESKTOP_DEFAULT_MONITOR", label: t("config.toolsMonitor"), placeholder: "0" })}
-                {FT({ k: "DESKTOP_MAX_WIDTH", label: t("config.toolsMaxW"), placeholder: "1920" })}
-                {FT({ k: "DESKTOP_MAX_HEIGHT", label: t("config.toolsMaxH"), placeholder: "1080" })}
-              </div>
-              <details className="group/deskadv rounded-lg border border-border">
-                <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors text-muted-foreground">
-                  <ChevronRight className="size-4 shrink-0 transition-transform group-open/deskadv:rotate-90" />
-                  {t("config.toolsDesktopAdvanced")}
-                </summary>
-                <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-                  <div className="grid3">
-                    {FT({ k: "DESKTOP_COMPRESSION_QUALITY", label: t("config.toolsCompression"), placeholder: "85" })}
-                    {FT({ k: "DESKTOP_CACHE_TTL", label: "Cache TTL", placeholder: "1.0" })}
-                    {FB({ k: "DESKTOP_FAILSAFE", label: "安全角保护", help: "鼠标移到屏幕角落时自动停止桌面操作，避免误点或误操作。" })}
-                  </div>
-                  {FB({ k: "DESKTOP_VISION_ENABLED", label: t("config.toolsVision"), help: t("config.toolsVisionHelp") })}
-                  <div className="grid3">
-                    {FT({ k: "DESKTOP_CLICK_DELAY", label: "Click Delay", placeholder: "0.1" })}
-                    {FT({ k: "DESKTOP_TYPE_INTERVAL", label: "Type Interval", placeholder: "0.03" })}
-                    {FT({ k: "DESKTOP_MOVE_DURATION", label: "Move Duration", placeholder: "0.15" })}
-                  </div>
-                </div>
-              </details>
-            </div>
-          </details>
-
-          {/* ── Model Downloads & Voice Recognition — hidden (not actively used) ── */}
-
-          {/* ── Tool Parallelism ── */}
-          <details className="group/net rounded-lg border border-border mt-2">
-            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <ChevronRight className="size-4 shrink-0 transition-transform group-open/net:rotate-90 text-muted-foreground" />
-              {t("config.toolsParallel")}
-            </summary>
-            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-              <div className="grid2">
-                {FT({ k: "TOOL_MAX_PARALLEL", label: t("config.toolsParallel"), placeholder: "1", help: t("config.toolsParallelHelp") })}
-              </div>
-            </div>
-          </details>
-
-          {/* ── Hallucination Guard ── */}
-          <details className="group/hguard rounded-lg border border-border mt-2">
-            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <ChevronRight className="size-4 shrink-0 transition-transform group-open/hguard:rotate-90 text-muted-foreground" />
-              {t("config.toolsHallucinationGuard")}
-            </summary>
-            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-              <p className="text-xs text-muted-foreground">{t("config.toolsHallucinationGuardHint")}</p>
-              <div className="grid2">
-                {FS({ k: "FORCE_TOOL_CALL_MAX_RETRIES", label: t("config.toolsForceRetry"), defaultValue: "2", options: [
-                  { value: "0", label: t("config.guardOff") },
-                  { value: "1", label: "1" },
-                  { value: "2", label: "2" },
-                  { value: "3", label: "3" },
-                ] })}
-                {FS({ k: "FORCE_TOOL_CALL_IM_FLOOR", label: t("config.toolsImFloor"), defaultValue: "2", options: [
-                  { value: "0", label: t("config.guardSameAsGlobal") },
-                  { value: "1", label: "1" },
-                  { value: "2", label: "2" },
-                ] })}
-              </div>
-              <div className="grid2">
-                {FS({ k: "CONFIRMATION_TEXT_MAX_RETRIES", label: t("config.toolsConfirmTextRetry"), defaultValue: "2", options: [
-                  { value: "0", label: t("config.guardOff") },
-                  { value: "1", label: "1" },
-                  { value: "2", label: "2" },
-                  { value: "3", label: "3" },
-                ] })}
-              </div>
-            </div>
-          </details>
-
-          {/* ── Web Search Provider (Bocha / Tavily / SearXNG / Jina / DuckDuckGo) ── */}
-          <details
-            ref={webSearchPanelRef}
-            data-panel-id="web-search"
-            className="group/wsearch rounded-lg border border-border mt-2"
-          >
-            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <ChevronRight className="size-4 shrink-0 transition-transform group-open/wsearch:rotate-90 text-muted-foreground" />
-              {t("toolsWebSearch.sectionTitle", "网页搜索源（Web Search Source）")}
-            </summary>
-            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
-              <WebSearchProviderPanel
-                envDraft={envDraft}
-                onEnvChange={setEnvDraft}
-                onSaveEnv={async () => {
-                  const keys = ["WEB_SEARCH_PROVIDER", "BOCHA_API_KEY", "TAVILY_API_KEY", "JINA_API_KEY", "SEARXNG_BASE_URL"];
-                  await saveEnvKeys(keys);
-                }}
-                busy={busy}
-                apiBaseUrl={apiBaseUrl}
-              />
-            </div>
-          </details>
-
-          {/* ── Skills toggle (moved below, no longer here) ── */}
-
-        </div>
-
-        {/* ── CLI 命令行工具管理 (desktop only) ── */}
-        {IS_TAURI && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <h3 className="text-base font-bold tracking-tight">{t("config.cliTitle")}</h3>
-          <p className="text-sm text-muted-foreground mt-1 mb-3">{t("config.cliDesc")}</p>
-          <CliManager />
-        </div>
-        )}
-      </>
+      <ToolsView
+        envDraft={envDraft}
+        setEnvDraft={setEnvDraft}
+        busy={busy}
+        disabledViews={disabledViews}
+        toggleViewDisabled={toggleViewDisabled}
+        shouldUseHttpApi={shouldUseHttpApi}
+        httpApiBase={httpApiBase}
+        apiBaseUrl={apiBaseUrl}
+        saveEnvKeys={saveEnvKeys}
+        setView={navigateToView}
+      />
     );
   }
-
-  // CliManager -> ./components/CliManager.tsx
 
   function renderAgentSystem() {
     return <AgentSystemView {..._configViewProps} serviceRunning={!!serviceStatus?.running} apiBaseUrl={apiBaseUrl} />;
@@ -3700,544 +3314,7 @@ function MainApp() {
     );
   }
 
-  function renderIntegrations() {
-    const keysCore = [
-      // network/proxy
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "ALL_PROXY",
-      "FORCE_IPV4",
-      // agent (基础)
-      "AGENT_NAME",
-      "MAX_ITERATIONS",
-      "THINKING_MODE",
-      "TOOL_MAX_PARALLEL",
-      "FORCE_TOOL_CALL_MAX_RETRIES",
-      "FORCE_TOOL_CALL_IM_FLOOR",
-      "CONFIRMATION_TEXT_MAX_RETRIES",
-      "ALLOW_PARALLEL_TOOLS_WITH_INTERRUPT_CHECKS",
-      // timeouts
-      "PROGRESS_TIMEOUT_SECONDS",
-      "HARD_TIMEOUT_SECONDS",
-      // logging/db
-      "DATABASE_PATH",
-      "LOG_LEVEL",
-      "LOG_DIR",
-      "LOG_FILE_PREFIX",
-      "LOG_MAX_SIZE_MB",
-      "LOG_BACKUP_COUNT",
-      "LOG_RETENTION_DAYS",
-      "LOG_FORMAT",
-      "LOG_TO_CONSOLE",
-      "LOG_TO_FILE",
-      "GITHUB_TOKEN",
-      // memory / embedding
-      "MEMORY_MODE",
-      "EMBEDDING_MODEL",
-      "EMBEDDING_DEVICE",
-      "MODEL_DOWNLOAD_SOURCE",
-      "MEMORY_HISTORY_DAYS",
-      "MEMORY_MAX_HISTORY_FILES",
-      "MEMORY_MAX_HISTORY_SIZE_MB",
-      // persona
-      "PERSONA_NAME",
-      // proactive (living presence)
-      "PROACTIVE_ENABLED",
-      "PROACTIVE_MAX_DAILY_MESSAGES",
-      "PROACTIVE_MIN_INTERVAL_MINUTES",
-      "PROACTIVE_QUIET_HOURS_START",
-      "PROACTIVE_QUIET_HOURS_END",
-      "PROACTIVE_IDLE_THRESHOLD_HOURS",
-      // sticker
-      "STICKER_ENABLED",
-      "STICKER_DATA_DIR",
-      // scheduler
-      "SCHEDULER_TIMEZONE",
-      "SCHEDULER_TASK_TIMEOUT",
-      // session
-      "SESSION_TIMEOUT_MINUTES",
-      "SESSION_MAX_HISTORY",
-      "SESSION_STORAGE_PATH",
-      // IM
-      "IM_CHAIN_PUSH",
-      "TELEGRAM_ENABLED",
-      "TELEGRAM_BOT_TOKEN",
-      "TELEGRAM_PROXY",
-      "TELEGRAM_REQUIRE_PAIRING",
-      "TELEGRAM_PAIRING_CODE",
-      "TELEGRAM_WEBHOOK_URL",
-      "FEISHU_ENABLED",
-      "FEISHU_APP_ID",
-      "FEISHU_APP_SECRET",
-      "WEWORK_ENABLED",
-      "WEWORK_CORP_ID",
-      "WEWORK_TOKEN",
-      "WEWORK_ENCODING_AES_KEY",
-      "WEWORK_CALLBACK_PORT",
-      "WEWORK_CALLBACK_HOST",
-      "WEWORK_MODE",
-      "WEWORK_WS_ENABLED",
-      "WEWORK_WS_BOT_ID",
-      "WEWORK_WS_SECRET",
-      "DINGTALK_ENABLED",
-      "DINGTALK_CLIENT_ID",
-      "DINGTALK_CLIENT_SECRET",
-      "ONEBOT_ENABLED",
-      "ONEBOT_MODE",
-      "ONEBOT_WS_URL",
-      "ONEBOT_REVERSE_HOST",
-      "ONEBOT_REVERSE_PORT",
-      "ONEBOT_ACCESS_TOKEN",
-      "QQBOT_ENABLED",
-      "QQBOT_APP_ID",
-      "QQBOT_APP_SECRET",
-      "QQBOT_SANDBOX",
-      "QQBOT_MODE",
-      "QQBOT_WEBHOOK_PORT",
-      "QQBOT_WEBHOOK_PATH",
-      // WeChat (iLink Bot API)
-      "WECHAT_ENABLED",
-      "WECHAT_TOKEN",
-      // MCP (docs/mcp-integration.md)
-      "MCP_ENABLED",
-      "MCP_TIMEOUT",
-      // Desktop automation
-      "DESKTOP_ENABLED",
-      "DESKTOP_DEFAULT_MONITOR",
-      "DESKTOP_COMPRESSION_QUALITY",
-      "DESKTOP_MAX_WIDTH",
-      "DESKTOP_MAX_HEIGHT",
-      "DESKTOP_CACHE_TTL",
-      "DESKTOP_UIA_TIMEOUT",
-      "DESKTOP_UIA_RETRY_INTERVAL",
-      "DESKTOP_UIA_MAX_RETRIES",
-      "DESKTOP_VISION_ENABLED",
-      "DESKTOP_VISION_MAX_RETRIES",
-      "DESKTOP_VISION_TIMEOUT",
-      "DESKTOP_CLICK_DELAY",
-      "DESKTOP_TYPE_INTERVAL",
-      "DESKTOP_MOVE_DURATION",
-      "DESKTOP_FAILSAFE",
-      "DESKTOP_PAUSE",
-      // browser-use / openai compatibility (used by browser_mcp)
-      "OPENAI_API_BASE",
-      "OPENAI_BASE_URL",
-      "OPENAI_API_KEY",
-      "OPENAI_API_KEY_BASE64",
-      "BROWSER_USE_API_KEY",
-    ];
 
-    return (
-      <>
-        <div className="card">
-          <div className="cardTitle">工具与集成（全覆盖写入 .env）</div>
-          <div className="cardHint">
-            这一页会把项目里常用的开关与参数集中起来（参考 `examples/.env.example` + MCP 文档 + 桌面自动化配置）。
-            <br />
-            只会写入你实际填写/修改过的键；留空保存会从工作区 `.env` 删除该键（可选项不填就不会落盘）。
-          </div>
-          <div className="divider" />
-
-          <div className="card" style={{ marginTop: 0 }}>
-            <div className="cardTitle">
-              LLM（不在这里重复填）
-            </div>
-            <div className="cardHint">
-              LLM 的 API Key / Base URL / 模型选择，统一在上一步“LLM 端点”里完成：端点会写入 `data/llm_endpoints.json`，并把对应 `api_key_env` 写入工作区 `.env`。
-              <br />
-              这里主要管理 IM / MCP / 桌面自动化 / Agent/调度 等“运行期开关与参数”。
-            </div>
-          </div>
-
-          <div className="card" style={{ marginTop: 0 }}>
-            <div className="cardTitle">
-              网络代理与并行
-            </div>
-            <div className="grid3">
-              {FT({ k: "HTTP_PROXY", label: "HTTP_PROXY", placeholder: "http://127.0.0.1:7890" })}
-              {FT({ k: "HTTPS_PROXY", label: "HTTPS_PROXY", placeholder: "http://127.0.0.1:7890" })}
-              {FT({ k: "ALL_PROXY", label: "ALL_PROXY", placeholder: "socks5://127.0.0.1:1080" })}
-            </div>
-            <div className="grid3" style={{ marginTop: 10 }}>
-              {FB({ k: "FORCE_IPV4", label: "强制 IPv4", help: "某些 VPN/IPv6 环境下有用" })}
-              {FT({ k: "TOOL_MAX_PARALLEL", label: "TOOL_MAX_PARALLEL", placeholder: "1", help: "单轮多工具并行数（默认 1=串行）" })}
-              {FT({ k: "LOG_LEVEL", label: "LOG_LEVEL", placeholder: "INFO", help: "DEBUG/INFO/WARNING/ERROR" })}
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="cardTitle">
-              IM 通道
-            </div>
-            <div className="cardHint">
-              默认折叠显示。选择“启用”后展开填写信息（上下排列）。建议先把 LLM 端点配置好，再回来启用 IM。
-            </div>
-            <div className="divider" />
-
-            {[
-              {
-                title: "Telegram",
-                enabledKey: "TELEGRAM_ENABLED",
-                apply: "https://t.me/BotFather",
-                body: (
-                  <>
-                    {FT({ k: "TELEGRAM_BOT_TOKEN", label: "Bot Token", placeholder: "从 BotFather 获取（仅会显示一次）", type: "password" })}
-                    {FT({ k: "TELEGRAM_PROXY", label: "代理（可选）", placeholder: "http://127.0.0.1:7890 / socks5://..." })}
-                    {FB({ k: "TELEGRAM_REQUIRE_PAIRING", label: t("config.imPairing") })}
-                    {FT({ k: "TELEGRAM_PAIRING_CODE", label: t("config.imPairingCode"), placeholder: t("config.imPairingCodeHint") })}
-                    <TelegramPairingCodeHint currentWorkspaceId={currentWorkspaceId} envDraft={envDraft} onEnvChange={setEnvDraft} />
-                    {FT({ k: "TELEGRAM_WEBHOOK_URL", label: "Webhook URL", placeholder: "https://..." })}
-                  </>
-                ),
-              },
-              {
-                title: "飞书（需要 openakita[feishu]）",
-                enabledKey: "FEISHU_ENABLED",
-                apply: "https://open.feishu.cn/",
-                body: (
-                  <>
-                    {FT({ k: "FEISHU_APP_ID", label: "App ID", placeholder: "" })}
-                    {FT({ k: "FEISHU_APP_SECRET", label: "App Secret", placeholder: "", type: "password" })}
-                  </>
-                ),
-              },
-              (() => {
-                const wMode = (envDraft["WEWORK_MODE"] || "websocket") as "http" | "websocket";
-                const isWs = wMode === "websocket";
-                return {
-                  title: "企业微信（需要 openakita[wework]）",
-                  enabledKey: isWs ? "WEWORK_WS_ENABLED" : "WEWORK_ENABLED",
-                  apply: "https://work.weixin.qq.com/",
-                  body: (
-                    <>
-                      <div style={{ marginBottom: 8 }}>
-                        <div className="label">{t("config.imWeworkMode")}</div>
-                        <ToggleGroup type="single" variant="outline" size="sm" value={wMode} onValueChange={(v) => {
-                          if (!v) return;
-                          const m = v as "http" | "websocket";
-                          const oldKey = isWs ? "WEWORK_WS_ENABLED" : "WEWORK_ENABLED";
-                          const newKey = m === "websocket" ? "WEWORK_WS_ENABLED" : "WEWORK_ENABLED";
-                          setEnvDraft((d) => {
-                            const wasEnabled = (d[oldKey] || "false").toLowerCase() === "true";
-                            const next: Record<string, string> = { ...d, WEWORK_MODE: m };
-                            if (wasEnabled && oldKey !== newKey) { next[oldKey] = "false"; next[newKey] = "true"; }
-                            return next;
-                          });
-                        }} className="mt-1 [&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground">
-                          <ToggleGroupItem value="http">{t("config.imWeworkModeHttp")}</ToggleGroupItem>
-                          <ToggleGroupItem value="websocket">{t("config.imWeworkModeWs")}</ToggleGroupItem>
-                        </ToggleGroup>
-                        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-                          {isWs ? t("config.imWeworkModeWsHint") : t("config.imWeworkModeHttpHint")}
-                        </div>
-                      </div>
-                      {isWs ? (
-                        <>
-                          {FT({ k: "WEWORK_WS_BOT_ID", label: t("config.imWeworkBotId") })}
-                          {FT({ k: "WEWORK_WS_SECRET", label: t("config.imWeworkSecret"), type: "password" })}
-                        </>
-                      ) : (
-                        <>
-                          {FT({ k: "WEWORK_CORP_ID", label: "Corp ID" })}
-                          {FT({ k: "WEWORK_TOKEN", label: "回调 Token", placeholder: "在企业微信后台「接收消息」设置中获取" })}
-                          {FT({ k: "WEWORK_ENCODING_AES_KEY", label: "EncodingAESKey", placeholder: "在企业微信后台「接收消息」设置中获取", type: "password" })}
-                          {FT({ k: "WEWORK_CALLBACK_PORT", label: "回调端口", placeholder: "9880" })}
-                          <div style={{ fontSize: 12, color: "var(--muted)", margin: "4px 0 0 0", lineHeight: 1.6 }}>
-                            <IconLightbulb size={12} /> 企业微信后台「接收消息服务器配置」的 URL 请填：<code style={{ background: "#f5f5f5", padding: "1px 5px", borderRadius: 4, fontSize: 11 }}>http://your-domain:9880/callback</code>
-                          </div>
-                        </>
-                      )}
-                    </>
-                  ),
-                };
-              })(),
-              {
-                title: "钉钉（需要 openakita[dingtalk]）",
-                enabledKey: "DINGTALK_ENABLED",
-                apply: "https://open.dingtalk.com/",
-                body: (
-                  <>
-                    {FT({ k: "DINGTALK_CLIENT_ID", label: "Client ID" })}
-                    {FT({ k: "DINGTALK_CLIENT_SECRET", label: "Client Secret", type: "password" })}
-                  </>
-                ),
-              },
-              {
-                title: "QQ 官方机器人（需要 openakita[qqbot]）",
-                enabledKey: "QQBOT_ENABLED",
-                apply: "https://bot.q.qq.com/wiki/develop/api-v2/",
-                body: (
-                  <>
-                    {FT({ k: "QQBOT_APP_ID", label: "AppID", placeholder: "q.qq.com 开发设置" })}
-                    {FT({ k: "QQBOT_APP_SECRET", label: "AppSecret", type: "password", placeholder: "q.qq.com 开发设置" })}
-                    {FB({ k: "QQBOT_SANDBOX", label: t("config.imQQBotSandbox") })}
-                    <div style={{ marginTop: 8 }}>
-                      <div className="label">{t("config.imQQBotMode")}</div>
-                      <ToggleGroup type="single" variant="outline" size="sm" value={envDraft["QQBOT_MODE"] || "websocket"} onValueChange={(v) => { if (v) setEnvDraft((d) => ({ ...d, QQBOT_MODE: v })); }} className="mt-1 [&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground">
-                        <ToggleGroupItem value="websocket">WebSocket</ToggleGroupItem>
-                        <ToggleGroupItem value="webhook">Webhook</ToggleGroupItem>
-                      </ToggleGroup>
-                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-                        {(envDraft["QQBOT_MODE"] || "websocket") === "websocket"
-                          ? t("config.imQQBotModeWsHint")
-                          : t("config.imQQBotModeWhHint")}
-                      </div>
-                    </div>
-                    {(envDraft["QQBOT_MODE"] === "webhook") && (
-                      <>
-                        {FT({ k: "QQBOT_WEBHOOK_PORT", label: t("config.imQQBotWebhookPort"), placeholder: "9890" })}
-                        {FT({ k: "QQBOT_WEBHOOK_PATH", label: t("config.imQQBotWebhookPath"), placeholder: "/qqbot/callback" })}
-                      </>
-                    )}
-                  </>
-                ),
-              },
-              {
-                title: t("config.imWechat") + "（需要 openakita[wechat]）",
-                enabledKey: "WECHAT_ENABLED",
-                apply: "",
-                body: (
-                  <>
-                    {FT({ k: "WECHAT_TOKEN", label: "Token", type: "password", placeholder: t("wechat.tokenHint") })}
-                    <p style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>{t("wechat.hint")}</p>
-                  </>
-                ),
-              },
-              (() => {
-                const obMode = (envDraft["ONEBOT_MODE"] || "reverse") as "reverse" | "forward";
-                const isReverse = obMode === "reverse";
-                return {
-                  title: "OneBot（需要 openakita[onebot] + NapCat/Lagrange）",
-                  enabledKey: "ONEBOT_ENABLED",
-                  apply: "https://github.com/botuniverse/onebot-11",
-                  body: (
-                    <>
-                      <div style={{ marginBottom: 8 }}>
-                        <div className="label">{t("config.imOneBotMode")}</div>
-                        <ToggleGroup type="single" variant="outline" size="sm" value={obMode} onValueChange={(v) => { if (v) setEnvDraft((d) => ({ ...d, ONEBOT_MODE: v })); }} className="mt-1 [&_[data-state=on]]:bg-primary [&_[data-state=on]]:text-primary-foreground">
-                          <ToggleGroupItem value="reverse">{t("config.imOneBotModeReverse")}</ToggleGroupItem>
-                          <ToggleGroupItem value="forward">{t("config.imOneBotModeForward")}</ToggleGroupItem>
-                        </ToggleGroup>
-                        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-                          {isReverse ? t("config.imOneBotModeReverseHint") : t("config.imOneBotModeForwardHint")}
-                        </div>
-                      </div>
-                      {isReverse ? (
-                        <>
-                          {FT({ k: "ONEBOT_REVERSE_HOST", label: t("config.imOneBotReverseHost"), placeholder: "0.0.0.0" })}
-                          {FT({ k: "ONEBOT_REVERSE_PORT", label: t("config.imOneBotReversePort"), placeholder: "6700" })}
-                        </>
-                      ) : (
-                        FT({ k: "ONEBOT_WS_URL", label: "WebSocket URL", placeholder: "ws://127.0.0.1:8080" })
-                      )}
-                      {FT({ k: "ONEBOT_ACCESS_TOKEN", label: "Access Token", type: "password", placeholder: t("config.imOneBotTokenHint") })}
-                    </>
-                  ),
-                };
-              })(),
-            ].map((c) => {
-              const enabled = envGet(envDraft, c.enabledKey, "false").toLowerCase() === "true";
-              return (
-                <div key={c.enabledKey} className="card" style={{ marginTop: 10 }}>
-                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                    <div className="label" style={{ marginBottom: 0 }}>
-                      {c.title}
-                    </div>
-                    <label className="pill" style={{ cursor: "pointer", userSelect: "none" }}>
-                      <input
-                        style={{ width: 16, height: 16 }}
-                        type="checkbox"
-                        checked={enabled}
-                        onChange={(e) => setEnvDraft((m) => envSet(m, c.enabledKey, String(e.target.checked)))}
-                      />
-                      启用
-                    </label>
-                  </div>
-                  <div className="help" style={{ marginTop: 8 }}>
-                    申请/文档：<code style={{ userSelect: "all", fontSize: 12 }}>{c.apply}</code>
-                  </div>
-                  {enabled ? (
-                    <>
-                      <div className="divider" />
-                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{c.body}</div>
-                    </>
-                  ) : (
-                    <div className="cardHint" style={{ marginTop: 8 }}>
-                      未启用：保持折叠。
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="card">
-            <div className="cardTitle">
-              MCP / 桌面自动化 / 语音与 GitHub
-            </div>
-            <div className="grid2">
-              <div className="card" style={{ marginTop: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                  <div className="label" style={{ marginBottom: 0 }}>MCP</div>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--fg2)", cursor: "pointer", userSelect: "none" }} onClick={(e) => e.stopPropagation()}>
-                    <span>{envDraft["MCP_ENABLED"] === "false" ? "已禁用" : "已启用"}</span>
-                    <div
-                      onClick={() => setEnvDraft((p) => ({ ...p, MCP_ENABLED: p.MCP_ENABLED === "false" ? "true" : "false" }))}
-                      style={{
-                        position: "relative", width: 40, height: 22, borderRadius: 11,
-                        background: envDraft["MCP_ENABLED"] === "false" ? "var(--line, #d1d5db)" : "var(--ok, #22c55e)",
-                        transition: "background 0.2s", flexShrink: 0,
-                      }}
-                    >
-                      <div style={{
-                        position: "absolute", top: 2, width: 18, height: 18, borderRadius: 9,
-                        background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.15)",
-                        left: envDraft["MCP_ENABLED"] === "false" ? 2 : 20,
-                        transition: "left 0.2s",
-                      }} />
-                    </div>
-                  </label>
-                </div>
-                <div className="grid2">
-                  {FT({ k: "MCP_TIMEOUT", label: "MCP_TIMEOUT", placeholder: "60" })}
-                </div>
-              </div>
-
-              <div className="card" style={{ marginTop: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                  <div className="label" style={{ marginBottom: 0 }}>桌面自动化（Windows）</div>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--fg2)", cursor: "pointer", userSelect: "none" }} onClick={(e) => e.stopPropagation()}>
-                    <span>{envDraft["DESKTOP_ENABLED"] === "false" ? "已禁用" : "已启用"}</span>
-                    <div
-                      onClick={() => setEnvDraft((p) => ({ ...p, DESKTOP_ENABLED: p.DESKTOP_ENABLED === "false" ? "true" : "false" }))}
-                      style={{
-                        position: "relative", width: 40, height: 22, borderRadius: 11,
-                        background: envDraft["DESKTOP_ENABLED"] === "false" ? "var(--line, #d1d5db)" : "var(--ok, #22c55e)",
-                        transition: "background 0.2s", flexShrink: 0,
-                      }}
-                    >
-                      <div style={{
-                        position: "absolute", top: 2, width: 18, height: 18, borderRadius: 9,
-                        background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.15)",
-                        left: envDraft["DESKTOP_ENABLED"] === "false" ? 2 : 20,
-                        transition: "left 0.2s",
-                      }} />
-                    </div>
-                  </label>
-                </div>
-                <div className="divider" />
-                <div className="grid3">
-                  {FT({ k: "DESKTOP_DEFAULT_MONITOR", label: "默认显示器", placeholder: "0" })}
-                  {FT({ k: "DESKTOP_MAX_WIDTH", label: "最大宽", placeholder: "1920" })}
-                  {FT({ k: "DESKTOP_MAX_HEIGHT", label: "最大高", placeholder: "1080" })}
-                </div>
-                <div className="grid3" style={{ marginTop: 10 }}>
-                  {FT({ k: "DESKTOP_COMPRESSION_QUALITY", label: "压缩质量", placeholder: "85" })}
-                  {FT({ k: "DESKTOP_CACHE_TTL", label: "截图缓存秒", placeholder: "1.0" })}
-                  {FB({ k: "DESKTOP_FAILSAFE", label: "安全角保护", help: "鼠标移到屏幕角落时自动停止桌面操作，避免误点或误操作。" })}
-                </div>
-                <div className="divider" />
-                {FB({ k: "DESKTOP_VISION_ENABLED", label: "启用视觉", help: "用于屏幕理解/定位" })}
-                <div className="grid3" style={{ marginTop: 10 }}>
-                  {FT({ k: "DESKTOP_CLICK_DELAY", label: "click_delay", placeholder: "0.1" })}
-                  {FT({ k: "DESKTOP_TYPE_INTERVAL", label: "type_interval", placeholder: "0.03" })}
-                  {FT({ k: "DESKTOP_MOVE_DURATION", label: "move_duration", placeholder: "0.15" })}
-                </div>
-              </div>
-            </div>
-
-            <div className="divider" />
-            <div className="grid3">
-              {FT({ k: "GITHUB_TOKEN", label: "GITHUB_TOKEN", placeholder: "", type: "password", help: "用于搜索/下载技能" })}
-              {FT({ k: "DATABASE_PATH", label: "DATABASE_PATH", placeholder: "data/agent.db" })}
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="cardTitle">
-              灵魂与意志（核心配置）
-            </div>
-            <div className="cardHint">
-              这些是系统内置能力的开关与参数。<b>内置项默认启用</b>（你随时可以关闭）。建议先用默认值跑通，再按需调优。
-            </div>
-            <div className="divider" />
-
-            <details open>
-              <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>基础</summary>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-                {FT({ k: "AGENT_NAME", label: "Agent 名称", placeholder: "OpenAkita" })}
-                {FT({ k: "MAX_ITERATIONS", label: "最大迭代次数", placeholder: "300" })}
-                {FS({ k: "THINKING_MODE", label: t("config.agentThinking"), options: [
-                  { value: "auto", label: t("config.agentThinkingAuto") },
-                  { value: "always", label: t("config.agentThinkingAlways") },
-                  { value: "never", label: t("config.agentThinkingNever") },
-                ] })}
-                {FT({ k: "DATABASE_PATH", label: "数据库路径", placeholder: "data/agent.db" })}
-                {FS({ k: "LOG_LEVEL", label: "日志级别", options: [
-                  { value: "DEBUG", label: "DEBUG" },
-                  { value: "INFO", label: "INFO" },
-                  { value: "WARNING", label: "WARNING" },
-                  { value: "ERROR", label: "ERROR" },
-                ] })}
-              </div>
-            </details>
-
-            <div className="divider" />
-            <details>
-              <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>日志高级</summary>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-                {FT({ k: "LOG_DIR", label: "日志目录", placeholder: "logs" })}
-                {FT({ k: "LOG_FILE_PREFIX", label: "日志文件前缀", placeholder: "openakita" })}
-                {FT({ k: "LOG_MAX_SIZE_MB", label: "单文件最大 MB", placeholder: "10" })}
-                {FT({ k: "LOG_BACKUP_COUNT", label: "备份文件数", placeholder: "30" })}
-                {FT({ k: "LOG_RETENTION_DAYS", label: "保留天数", placeholder: "30" })}
-                {FT({ k: "LOG_FORMAT", label: "日志格式", placeholder: "%(asctime)s - %(name)s - %(levelname)s - %(message)s" })}
-                {FB({ k: "LOG_TO_CONSOLE", label: "输出到控制台", help: "默认 true" })}
-                {FB({ k: "LOG_TO_FILE", label: "输出到文件", help: "默认 true" })}
-              </div>
-            </details>
-
-            <div className="divider" />
-            <details>
-              <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>会话</summary>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-                {FT({ k: "SESSION_TIMEOUT_MINUTES", label: "会话超时（分钟）", placeholder: "30" })}
-                {FT({ k: "SESSION_MAX_HISTORY", label: "会话最大历史条数", placeholder: "50" })}
-                {FT({ k: "SESSION_STORAGE_PATH", label: "会话存储路径", placeholder: "data/sessions" })}
-              </div>
-            </details>
-
-            <div className="divider" />
-            <details open>
-              <summary style={{ cursor: "pointer", fontWeight: 800, padding: "8px 0" }}>调度器</summary>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-                {FT({ k: "SCHEDULER_TIMEZONE", label: "时区", placeholder: "Asia/Shanghai" })}
-                {FT({ k: "SCHEDULER_TASK_TIMEOUT", label: "任务超时（秒）", placeholder: "600" })}
-              </div>
-            </details>
-
-          </div>
-
-          <div className="btnRow" style={{ gap: 8 }}>
-            <button
-              className="btnPrimary"
-              onClick={() => renderIntegrationsSave(keysCore, "已写入工作区 .env（工具/IM/MCP/桌面/高级配置）")}
-              disabled={!currentWorkspaceId || !!busy}
-            >
-              一键写入工作区 .env（全覆盖）
-            </button>
-            <button className="btnApplyRestart"
-              onClick={() => applyAndRestart(keysCore)}
-              disabled={!currentWorkspaceId || !!busy || !!restartOverlay}
-              title={t("config.applyRestartHint")}>
-              {t("config.applyRestart")}
-            </button>
-          </div>
-
-        </div>
-      </>
-    );
-  }
 
   // 构造端点摘要（供 ChatView 使用，仅启用的端点）
   const chatEndpoints: EndpointSummaryType[] = useMemo(() =>
@@ -4351,12 +3428,6 @@ function MainApp() {
       { id: "workspace", label: "准备工作区", status: "pending" },
     ];
     taskDefs.push({ id: "backend-check", label: "检查后端环境", status: "pending" });
-    const cliCommands: string[] = [];
-    if (obCliOpenakita) cliCommands.push("openakita");
-    if (obCliOa) cliCommands.push("oa");
-    if (cliCommands.length > 0) {
-      taskDefs.push({ id: "cli", label: `注册 CLI 命令 (${cliCommands.join(", ")})`, status: "pending" });
-    }
     if (obAutostart) {
       taskDefs.push({ id: "autostart", label: t("onboarding.autostart.taskLabel"), status: "pending" });
     }
@@ -4429,17 +3500,39 @@ function MainApp() {
           logTask("检查后端环境", "running", "创建 venv...");
           updateTask("backend-check", { detail: "创建 venv..." });
           const detectedPy = await invoke<Array<{ command: string[]; version: string }>>("detect_python");
-          if (detectedPy.length > 0) {
-            await invoke<string>("create_venv", { pythonCommand: detectedPy[0].command, venvDir: effectiveVenv });
+          const pythonCandidate = detectedPy.find((p: any) =>
+            Array.isArray(p.command) && p.command.length > 0 && p.isUsable !== false
+          );
+          if (pythonCandidate) {
+            const installId = `onboarding-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            setPipInstallId(installId);
+            setInstallLiveLog("");
+            setInstallProgress({ stage: "创建 venv...", percent: 0 });
+            setPipInstallPolling(true);
+            await invoke<string>("create_venv", {
+              pythonCommand: pythonCandidate.command,
+              venvDir: effectiveVenv,
+              installId,
+            });
             updateTask("backend-check", { detail: "安装 openakita..." });
             logTask("检查后端环境", "running", "安装 openakita...");
-            await invoke<string>("pip_install", { venvDir: effectiveVenv, packageSpec: "openakita" });
+            setInstallProgress({ stage: "安装 openakita...", percent: 0 });
+            try {
+              await invoke<string>("pip_install", {
+                venvDir: effectiveVenv,
+                packageSpec: "openakita",
+                installId,
+              });
+            } finally {
+              setPipInstallPolling(false);
+            }
             log("[OK] 已自动安装后端环境");
           } else {
             log("[!] 未检测到 Python 3.11+，无法自动创建后端环境");
             log(`  已检查路径: bundled=${backendInfo.bundledChecked} venv=${backendInfo.venvChecked}`);
             updateTask("backend-check", { status: "error", detail: "未找到 Python 3.11+" });
             logTask("检查后端环境", "error", "未找到 Python 3.11+");
+            hasErr = true;
           }
         } else {
           log(backendInfo.bundled ? "[OK] 使用内置后端" : "[OK] 使用 venv 后端");
@@ -4449,29 +3542,27 @@ function MainApp() {
           logTask("检查后端环境", "done");
         }
       } catch (e) {
+        setPipInstallPolling(false);
         log(`[!] 后端环境检查失败: ${String(e)}`);
         updateTask("backend-check", { status: "error", detail: String(e).slice(0, 120) });
         logTask("检查后端环境", "error", String(e));
+        if (String(e).length > 200) {
+          log("--- 详细错误信息 ---");
+          log(String(e));
+        }
+        hasErr = true;
       }
 
-      // ── STEP: cli ──
-      if (cliCommands.length > 0) {
-        updateTask("cli", { status: "running" });
-        logTask(`注册 CLI 命令 (${cliCommands.join(", ")})`, "running");
-        log("注册 CLI 命令...");
-        try {
-          const result = await invoke<string>("register_cli", {
-            commands: cliCommands,
-            addToPath: obCliAddToPath,
-          });
-          log(`[OK] ${result}`);
-          updateTask("cli", { status: "done" });
-          logTask(`注册 CLI 命令 (${cliCommands.join(", ")})`, "done", result);
-        } catch (e) {
-          log(`[!] CLI 命令注册失败: ${String(e)}`);
-          updateTask("cli", { status: "error", detail: String(e) });
-          logTask(`注册 CLI 命令 (${cliCommands.join(", ")})`, "error", String(e));
+      if (hasErr) {
+        if (obAutostart) {
+          updateTask("autostart", { status: "skipped", detail: "后端环境检查失败" });
+          logTask(t("onboarding.autostart.taskLabel"), "skipped", "后端环境检查失败");
         }
+        updateTask("service-start", { status: "skipped", detail: "后端环境检查失败" });
+        logTask("启动后端服务", "skipped", "后端环境检查失败");
+        updateTask("http-wait", { status: "skipped", detail: "后端环境检查失败" });
+        logTask("等待 HTTP 服务就绪", "skipped", "后端环境检查失败");
+        throw new Error("后端环境检查失败，已跳过后续启动步骤");
       }
 
       // ── STEP: autostart ──
@@ -4504,7 +3595,13 @@ function MainApp() {
         const backendStartInFlight = ["checking", "starting", "waiting"].includes(obBackendStartup.phase);
         if (earlyProbe) {
           log("[OK] 后端已在运行（由 ob-welcome 提前启动）");
-          setServiceStatus({ running: true, pid: null, pidFile: "" });
+          setServiceStatus({
+            running: true,
+            pid: null,
+            pidFile: "",
+            managedBy: "external",
+            isManagedChild: false,
+          });
           setObBackendStartupPhase("ready", t("onboarding.backendStartup.ready"));
           httpReady = true;
           updateTask("service-start", { status: "done", detail: "已在运行" });
@@ -4519,7 +3616,8 @@ function MainApp() {
           } else {
             log(t("onboarding.progress.startingService"));
             setObBackendStartupPhase("starting", t("onboarding.backendStartup.starting"));
-            await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
+            const ss = await invoke<ServiceStatus>("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
+            setServiceStatus(ss);
             log(t("onboarding.progress.serviceStarted"));
             updateTask("service-start", { status: "done" });
             logTask("启动后端服务", "done");
@@ -4549,7 +3647,17 @@ function MainApp() {
               const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
               if (res.ok) {
                 log("[OK] HTTP 服务已就绪");
-                setServiceStatus({ running: true, pid: null, pidFile: "" });
+                setServiceStatus((prev) => (
+                  prev
+                    ? { ...prev, running: true }
+                    : {
+                        running: true,
+                        pid: null,
+                        pidFile: "",
+                        managedBy: "external",
+                        isManagedChild: false,
+                      }
+                ));
                 setObBackendStartupPhase("ready", t("onboarding.backendStartup.ready"));
                 httpReady = true;
                 updateTask("http-wait", { status: "done", detail: `${waitedSec}s` });
@@ -4696,7 +3804,7 @@ function MainApp() {
 
   function renderOnboarding() {
     // Progress/done are transitional states and should not create extra indicator dots.
-    const obStepDots = ["ob-welcome", "ob-agreement", "ob-llm", "ob-im", "ob-cli"] as OnboardingStep[];
+    const obStepDots = ["ob-welcome", "ob-agreement", "ob-llm", "ob-im", "ob-finish"] as OnboardingStep[];
     const obCurrentIdxRaw = obStepDots.indexOf(obStep);
     const obCurrentIdx = obCurrentIdxRaw >= 0 ? obCurrentIdxRaw : obStepDots.length - 1;
 
@@ -4705,7 +3813,7 @@ function MainApp() {
       "ob-agreement": t("onboarding.step.agreement", "协议"),
       "ob-llm": t("onboarding.step.llm", "模型"),
       "ob-im": t("onboarding.step.im", "通讯"),
-      "ob-cli": t("onboarding.step.cli", "完成"),
+      "ob-finish": t("onboarding.step.finish", "完成"),
     };
 
     const stepIndicator = (
@@ -4997,7 +4105,8 @@ function MainApp() {
                           return;
                         }
                         setObBackendStartupPhase("starting", t("onboarding.backendStartup.starting"));
-                        await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: wsId });
+                        const ss = await invoke<ServiceStatus>("openakita_service_start", { venvDir: effectiveVenv, workspaceId: wsId });
+                        setServiceStatus(ss);
                         setObBackendStartupPhase("waiting", t("onboarding.backendStartup.waiting"));
                         let earlyHttpReady = false;
                         const maxEarlyHttpWaitTicks = Math.ceil(ONBOARDING_HTTP_READY_TIMEOUT_MS / HTTP_READY_POLL_INTERVAL_MS);
@@ -5010,9 +4119,19 @@ function MainApp() {
                             detail: t("onboarding.backendStartup.waitingDetail", { seconds: waitedSec }),
                           }));
                           try {
-                            const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
-                            if (res.ok) {
-                              setServiceStatus({ running: true, pid: null, pidFile: "" });
+                          const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
+                          if (res.ok) {
+                              setServiceStatus((prev) => (
+                                prev
+                                  ? { ...prev, running: true }
+                                  : {
+                                      running: true,
+                                      pid: null,
+                                      pidFile: "",
+                                      managedBy: "external",
+                                      isManagedChild: false,
+                                    }
+                              ));
                               setObBackendStartupPhase("ready", t("onboarding.backendStartup.ready"));
                               earlyHttpReady = true;
                               break;
@@ -5137,13 +4256,13 @@ function MainApp() {
               {stepIndicator}
               <div className="obFooterBtns">
                 <Button variant="outline" onClick={() => setObStep("ob-llm")}>{t("config.prev")}</Button>
-                <Button onClick={() => setObStep("ob-cli")}>{t("config.next")}</Button>
+                <Button onClick={() => setObStep("ob-finish")}>{t("config.next")}</Button>
               </div>
             </div>
           </div>
         );
 
-      case "ob-cli":
+      case "ob-finish":
         return (
           <div className="obPage">
             <div className="obContent">
@@ -5154,33 +4273,6 @@ function MainApp() {
               {backendStartupNotice}
 
               <div className="flex flex-col gap-2">
-                <label className="obModuleItem" data-checked={obCliOpenakita || undefined}>
-                  <Checkbox checked={obCliOpenakita} onCheckedChange={() => setObCliOpenakita(!obCliOpenakita)} />
-                  <div className="obModuleInfo">
-                    <strong style={{ fontFamily: "monospace", fontSize: 15 }}>openakita</strong>
-                    <span className="obModuleDesc">{t("onboarding.system.cmdFull")}</span>
-                  </div>
-                </label>
-
-                <label className="obModuleItem" data-checked={obCliOa || undefined}>
-                  <Checkbox checked={obCliOa} onCheckedChange={() => setObCliOa(!obCliOa)} />
-                  <div className="obModuleInfo">
-                    <strong style={{ fontFamily: "monospace", fontSize: 15 }}>oa</strong>
-                    <span className="obModuleDesc">{t("onboarding.system.cmdShort")}</span>
-                  </div>
-                  <Badge variant="secondary" className="obModuleBadge obModuleBadgeRec">{t("onboarding.system.recommended")}</Badge>
-                </label>
-
-                <label className="obModuleItem" data-checked={obCliAddToPath || undefined}>
-                  <Checkbox checked={obCliAddToPath} onCheckedChange={() => setObCliAddToPath(!obCliAddToPath)} />
-                  <div className="obModuleInfo">
-                    <strong>{t("onboarding.system.addToPath")}</strong>
-                    <span className="obModuleDesc">{t("onboarding.system.addToPathDesc")}</span>
-                  </div>
-                </label>
-
-                <div style={{ borderTop: "1px solid var(--line)", margin: "8px 0" }} />
-
                 <label className="obModuleItem" data-checked={obAutostart || undefined}>
                   <Checkbox checked={obAutostart} onCheckedChange={() => setObAutostart(!obAutostart)} />
                   <div className="obModuleInfo">
@@ -5190,26 +4282,6 @@ function MainApp() {
                   <Badge variant="secondary" className="obModuleBadge obModuleBadgeRec">{t("onboarding.autostart.recommended")}</Badge>
                 </label>
               </div>
-
-              {(obCliOpenakita || obCliOa) && (
-                <Card className="mt-4">
-                  <CardContent className="py-4 px-5 space-y-2.5">
-                    <p className="text-[13px] font-semibold text-muted-foreground">{t("onboarding.system.cmdExamples")}</p>
-                    <div className="bg-slate-900 rounded-lg px-4 py-3.5 font-mono text-[13px] leading-[1.9] text-slate-200 overflow-x-auto">
-                      {obCliOa && <>
-                        <div><span className="text-slate-400">$</span> <span className="text-blue-300">oa</span> serve <span className="text-slate-400 ml-6">{t("onboarding.system.commentServe")}</span></div>
-                        <div><span className="text-slate-400">$</span> <span className="text-blue-300">oa</span> status <span className="text-slate-400 ml-4">{t("onboarding.system.commentStatus")}</span></div>
-                        <div><span className="text-slate-400">$</span> <span className="text-blue-300">oa</span> run <span className="text-slate-400 ml-9">{t("onboarding.system.commentRun")}</span></div>
-                      </>}
-                      {obCliOa && obCliOpenakita && <div className="h-1" />}
-                      {obCliOpenakita && <>
-                        <div><span className="text-slate-400">$</span> <span className="text-indigo-300">openakita</span> init <span className="text-slate-400 ml-2">{t("onboarding.system.commentInit")}</span></div>
-                        <div><span className="text-slate-400">$</span> <span className="text-indigo-300">openakita</span> serve <span className="text-slate-400">{t("onboarding.system.commentServe")}</span></div>
-                      </>}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
             </div>
             <div className="obFooter">
               {stepIndicator}
@@ -5224,6 +4296,7 @@ function MainApp() {
         );
 
       case "ob-progress": {
+        const installLogLines = installLiveLog ? installLiveLog.split(/\r?\n/) : [];
         const taskStatusIcon = (status: TaskStatus) => {
           switch (status) {
             case "done": return <span style={{ color: "#22c55e", fontSize: 18 }}>&#x2714;</span>;
@@ -5282,6 +4355,30 @@ function MainApp() {
                 ))}
               </div>
 
+              {installProgress && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, color: "#475569", fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {installProgress.stage}
+                    </span>
+                    <span style={{ fontSize: 12, color: "#64748b", flexShrink: 0 }}>
+                      {Math.max(0, Math.min(100, Math.round(installProgress.percent)))}%
+                    </span>
+                  </div>
+                  <div style={{ height: 6, borderRadius: 999, background: "#e2e8f0", overflow: "hidden" }}>
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${Math.max(0, Math.min(100, installProgress.percent))}%`,
+                        borderRadius: 999,
+                        background: "#2563eb",
+                        transition: "width 160ms ease",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* ── 实时日志窗口 ── */}
               <div style={{
                 flex: 1, minHeight: 120, maxHeight: 200,
@@ -5292,7 +4389,7 @@ function MainApp() {
               }}
                 ref={(el) => { if (el) el.scrollTop = el.scrollHeight; }}
               >
-                {obDetailLog.length === 0 && (
+                {obDetailLog.length === 0 && installLogLines.length === 0 && (
                   <div style={{ color: "#64748b" }}>{t("onboarding.progress.waitingStart")}</div>
                 )}
                 {obDetailLog.map((line, i) => (
@@ -5302,6 +4399,24 @@ function MainApp() {
                          : line.includes("---") ? "#64748b"
                          : "#cbd5e1",
                   }}>{line}</div>
+                ))}
+                {installLogLines.length > 0 && (
+                  <div style={{ color: "#94a3b8", marginTop: obDetailLog.length > 0 ? 8 : 0 }}>
+                    --- runtime install log ---
+                  </div>
+                )}
+                {installLogLines.slice(-220).map((line, i) => (
+                  <div key={`pip-${i}`} style={{
+                    color: line.includes("ERROR") || line.includes("failed") || line.includes("失败")
+                      ? "#fca5a5"
+                      : line.startsWith("===") || line.startsWith("[")
+                        ? "#93c5fd"
+                        : "#cbd5e1",
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                  }}>
+                    {line || " "}
+                  </div>
                 ))}
                 {obInstalling && (
                   <div style={{ color: "#60a5fa" }}>
@@ -5378,29 +4493,6 @@ function MainApp() {
     if (view === "status") return renderStatus();
     if (view === "chat") return null;  // ChatView 始终挂载，不在此渲染
 
-    const _disableToggle = (viewKey: string, label: string) => (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 12 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--muted)", cursor: "pointer" }}>
-          <span>{disabledViews.includes(viewKey) ? t("common.disabled", { label }) : t("common.enabled", { label })}</span>
-          <div
-            onClick={() => toggleViewDisabled(viewKey)}
-            style={{
-              width: 40, height: 22, borderRadius: 11, cursor: "pointer",
-              background: disabledViews.includes(viewKey) ? "var(--line)" : "var(--ok)",
-              position: "relative", transition: "background 0.2s",
-            }}
-          >
-            <div style={{
-              width: 18, height: 18, borderRadius: 9, background: "#fff",
-              position: "absolute", top: 2,
-              left: disabledViews.includes(viewKey) ? 2 : 20,
-              transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
-            }} />
-          </div>
-        </label>
-      </div>
-    );
-
     if (view === "skills") {
       return disabledViews.includes("skills") ? (
         <div className="card" style={{ opacity: 0.65, textAlign: "center", padding: 28 }}>
@@ -5437,6 +4529,14 @@ function MainApp() {
           apiBaseUrl={apiBaseUrl}
           disabled={disabledViews.includes("token_stats")}
           onToggleDisabled={() => toggleViewDisabled("token_stats")}
+        />
+      );
+    }
+    if (view === "skill_usage") {
+      return (
+        <SkillUsageView
+          serviceRunning={serviceStatus?.running ?? false}
+          apiBaseUrl={apiBaseUrl}
         />
       );
     }
@@ -5528,6 +4628,16 @@ function MainApp() {
       return (
         <ErrorBoundary>
           <SecurityView
+            apiBaseUrl={apiBaseUrl}
+            serviceRunning={serviceStatus?.running ?? false}
+          />
+        </ErrorBoundary>
+      );
+    }
+    if (view === "pending_approvals") {
+      return (
+        <ErrorBoundary>
+          <PendingApprovalsView
             apiBaseUrl={apiBaseUrl}
             serviceRunning={serviceStatus?.running ?? false}
           />
@@ -5634,6 +4744,25 @@ function MainApp() {
     />;
   }
 
+  // ── First-run setup gate: show SetupView before LoginView ──
+  // Triggered either by the startup setup-status probe or by a 428 from any
+  // subsequent fetch. Loopback callers never reach this branch because the
+  // backend's setup_state.should_require_setup returns False for them; the
+  // gate is for non-trusted-local sessions (Capacitor / LAN browser).
+  if (setupRequired) {
+    return (
+      <SetupView
+        apiBaseUrl={IS_CAPACITOR ? apiBaseUrl : ""}
+        onSetupSuccess={() => {
+          installFetchInterceptor();
+          webInitDone.current = false;
+          setSetupRequired(false);
+          setWebAuthed(true);
+        }}
+      />
+    );
+  }
+
   // ── Web / Capacitor auth gate: show login page if not authenticated ──
   if (needsRemoteAuth && !webAuthed) {
     if (authChecking) {
@@ -5662,7 +4791,13 @@ function MainApp() {
         installFetchInterceptor();
         setTauriRemoteLoginUrl(null);
         setDataMode("remote");
-        setServiceStatus({ running: true, pid: null, pidFile: "" });
+        setServiceStatus({
+          running: true,
+          pid: null,
+          pidFile: "",
+          managedBy: "external",
+          isManagedChild: false,
+        });
         notifySuccess(t("connect.success"));
         void refreshStatus("remote", tauriRemoteLoginUrl, true).then(() => {
           autoCheckEndpoints(tauriRemoteLoginUrl);
@@ -5680,6 +4815,7 @@ function MainApp() {
   return (
     <EnvFieldContext.Provider value={envFieldCtx}>
     <div className={`appShell ${sidebarCollapsed ? "appShellCollapsed" : ""}${isMobile ? " appShellMobile" : ""}`} style={previewMode ? { paddingTop: IS_CAPACITOR ? "calc(32px + env(safe-area-inset-top))" : 32 } : undefined}>
+      <DegradedBanner apiBase={httpApiBase()} />
       {previewMode && (
         <div style={{
           position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
@@ -5732,6 +4868,7 @@ function MainApp() {
         isWeb={IS_WEB}
         httpApiBase={httpApiBase()}
         unreadFeedbackCount={unreadFeedbackCount}
+        pendingApprovalsCount={pendingApprovalsCount}
       />
 
       <main className="main">
@@ -5789,14 +4926,30 @@ function MainApp() {
           endpointCount={endpointSummary.length}
           dataMode={dataMode}
           busy={busy}
-          onDisconnect={() => {
-            clearBackendStartingHold();
-            setTauriRemoteMode(false);
-            setDataMode("local");
-            setApiBaseUrl(DEFAULT_LOCAL_API_BASE);
-            setServiceStatus({ running: false, pid: null, pidFile: "" });
-            resetEnvLoaded();
-            notifySuccess(t("topbar.disconnected"));
+          onDisconnect={async () => {
+            if (dataMode === "remote") {
+              clearBackendStartingHold();
+              setTauriRemoteMode(false);
+              setDataMode("local");
+              setApiBaseUrl(DEFAULT_LOCAL_API_BASE);
+              setServiceStatus(stoppedStatus());
+              resetEnvLoaded();
+              notifySuccess(t("topbar.disconnected"));
+            } else {
+              const wsId = currentWorkspaceId || workspaces[0]?.id || null;
+              if (!wsId) return;
+              const _busyId = notifyLoading(t("topbar.stopping"));
+              stopInProgressRef.current = true;
+              try {
+                await doStopService(wsId);
+                notifySuccess(t("topbar.stopped_toast"));
+              } catch (e) {
+                notifyError(String(e));
+              } finally {
+                stopInProgressRef.current = false;
+                dismissLoading(_busyId);
+              }
+            }
           }}
           onConnect={() => {
             setConnectAddress(apiBaseUrl.replace(/^https?:\/\//, ""));
@@ -5827,6 +4980,8 @@ function MainApp() {
           restartService={restartService}
           askConfirm={askConfirm}
           setView={navigateToView}
+          inboxUnreadCount={inboxUnreadCount}
+          onOpenInbox={() => setInboxDialogOpen(true)}
         />
 
         {showPwBanner && (
@@ -5865,6 +5020,10 @@ function MainApp() {
               visible={view === "chat"}
               multiAgentEnabled={multiAgentEnabled}
               currentWorkspaceId={currentWorkspaceId}
+              feedbackModalOpen={bugReportOpen}
+              envDraft={envDraft}
+              setEnvDraft={setEnvDraft}
+              saveEnvKeys={saveEnvKeys}
               onStartService={async () => {
                 const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
                 if (!effectiveWsId) {
@@ -5940,7 +5099,13 @@ function MainApp() {
                       setApiBaseUrl(url);
                       localStorage.setItem("openakita_apiBaseUrl", url);
                       setDataMode("remote");
-                      setServiceStatus({ running: true, pid: null, pidFile: "" });
+                      setServiceStatus({
+                        running: true,
+                        pid: null,
+                        pidFile: "",
+                        managedBy: "external",
+                        isManagedChild: false,
+                      });
                       setConnectDialogOpen(false);
                       connected = true;
                       notifySuccess(t("connect.success"));
@@ -6118,6 +5283,22 @@ function MainApp() {
         )}
 
         <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
+        <Dialog open={inboxDialogOpen} onOpenChange={setInboxDialogOpen}>
+          <DialogContent className="inboxDialogContent">
+            <DialogHeader className="sr-only">
+              <DialogTitle>{t("inbox.title")}</DialogTitle>
+              <DialogDescription>{t("inbox.description")}</DialogDescription>
+            </DialogHeader>
+            <Suspense fallback={<div className="inboxDialogFallback"><div className="spinner" style={{ width: 24, height: 24 }} /></div>}>
+              <InboxView
+                serviceRunning={serviceStatus?.running ?? false}
+                apiBaseUrl={httpApiBase()}
+                refreshKey={inboxRefreshKey}
+                onUnreadChange={setInboxUnreadCount}
+              />
+            </Suspense>
+          </DialogContent>
+        </Dialog>
         <RuntimeEnvironmentDialog
           open={runtimeDialogOpen}
           onOpenChange={setRuntimeDialogOpen}
@@ -6177,5 +5358,3 @@ function MainApp() {
     </EnvFieldContext.Provider>
   );
 }
-
-

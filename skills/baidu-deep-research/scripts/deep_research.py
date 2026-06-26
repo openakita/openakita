@@ -11,7 +11,7 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '_shared'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_shared"))
 from baidu_appbuilder import parse_common_args, run_skill_query
 
 
@@ -42,15 +42,22 @@ def main() -> None:
 
     p_research = sub.add_parser("research", help="发起深度研究")
     p_research.add_argument("topic", help="研究主题")
-    p_research.add_argument("--depth", default="comprehensive",
-                            choices=["quick", "comprehensive", "expert"],
-                            help="研究深度")
+    p_research.add_argument(
+        "--depth",
+        default="comprehensive",
+        choices=["quick", "comprehensive", "expert"],
+        help="研究深度",
+    )
 
     p_report = sub.add_parser("report", help="生成研究报告")
     p_report.add_argument("topic", help="报告主题")
-    p_report.add_argument("--format", dest="format_type", default="standard",
-                          choices=["standard", "executive", "academic"],
-                          help="报告格式")
+    p_report.add_argument(
+        "--format",
+        dest="format_type",
+        default="standard",
+        choices=["standard", "executive", "academic"],
+        help="报告格式",
+    )
 
     args = parser.parse_args()
 
@@ -64,4 +71,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

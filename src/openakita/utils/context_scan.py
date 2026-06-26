@@ -57,7 +57,9 @@ def scan_context_content(content: str, source: str = "unknown") -> tuple[str, li
     if threats:
         logger.warning(
             "Context injection detected in %s: %d threat(s) — %s",
-            source, len(threats), "; ".join(threats[:3])
+            source,
+            len(threats),
+            "; ".join(threats[:3]),
         )
         return _INJECTION_WARNING + content, threats
 

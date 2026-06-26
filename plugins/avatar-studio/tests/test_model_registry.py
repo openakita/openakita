@@ -28,9 +28,7 @@ def test_dashscope_entries_have_model_id() -> None:
 def test_rh_and_local_entries_have_empty_model_id() -> None:
     for entry in REGISTRY:
         if entry.backend in ("runninghub", "comfyui_local"):
-            assert entry.model_id == "", (
-                f"{entry.mode}/{entry.backend} should have empty model_id"
-            )
+            assert entry.model_id == "", f"{entry.mode}/{entry.backend} should have empty model_id"
 
 
 def test_each_dashscope_mode_has_exactly_one_default() -> None:

@@ -1,7 +1,22 @@
 //! Native crash handler that captures minidumps for SEH exceptions
-//! (0xc0000005 access violation / 0xc0000374 heap corruption /
-//! 0xc000001d illegal instruction / etc.) which `std::panic::set_hook`
-//! cannot see.
+//! (0xc0000005 access violation / 0xc000001d illegal instruction / etc.)
+//! which `std::panic::set_hook` cannot see.
+//!
+//! ## What this handler does NOT catch
+//!
+//! `SetUnhandledExceptionFilter` only runs for exceptions dispatched
+//! through normal SEH. **Fast-fail terminations bypass it entirely**:
+//! heap-corruption detection (0xc0000374), `/GS` stack-cookie failures,
+//! and Control Flow Guard violations all funnel through
+//! `__fastfail` / `RtlFailFast`, which raises a non-continuable,
+//! non-dispatchable exception (int 0x29) that skips both vectored handlers
+//! and this top-level filter and goes straight to Windows Error Reporting.
+//! So a heap-corruption crash produces **no** `*.dmp` here — its evidence
+//! lands in WER instead, which is why the feedback bundle separately
+//! collects WER `Report.wer` / minidumps (from both `ReportQueue` and
+//! `ReportArchive`) and WebView2's own Crashpad dumps. Likewise a crash
+//! inside the WebView2 process is in a different process and is captured by
+//! Edge's Crashpad, not by this filter.
 //!
 //! Design notes:
 //!
@@ -24,8 +39,89 @@
 //! looks for `~/.openakita/crashdumps/*.dmp` regardless of platform, so
 //! macOS / Linux users still get their existing `crash.log` shipped, just
 //! without binary dumps (which they wouldn't have anyway).
+//!
+//! ## Events ring buffer
+//!
+//! In addition to the SEH minidump, this module owns a 64-slot ring buffer
+//! of recent diagnostic events (each entry is one line of text plus a unix
+//! timestamp). Code anywhere in the desktop crate calls `record_event(...)`
+//! during normal operation; `log_to_file` is wired to forward every line it
+//! writes, so any path that already logs to `autostart.log` automatically
+//! shows up in the ring buffer without further changes.
+//!
+//! The ring buffer is read in two places:
+//!
+//! 1. The Rust panic hook reads it via `snapshot_events()` and embeds the
+//!    last 64 events into `crash.log`, so a panic-class crash arrives with
+//!    a built-in "what was happening just before" trail next to the source
+//!    location, payload, machine fingerprint, and backtrace.
+//! 2. The native SEH crash filter reads it via `try_lock` (best-effort,
+//!    never blocks) and writes a sibling `<pid>-<tick>.events.txt` next to
+//!    the minidump, so SEH-class crashes — which never trigger the Rust
+//!    panic hook — also ship with their own event trail.
+//!
+//! The SEH path uses `try_lock` rather than `lock` because by the time we
+//! land in the unhandled exception filter the heap may already be corrupt
+//! (e.g. 0xc0000374) and waiting for a poisoned mutex would mean producing
+//! no diagnostic at all instead of a partial one.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+use once_cell::sync::Lazy;
+
+const EVENT_RING_CAPACITY: usize = 64;
+const EVENT_MAX_LEN: usize = 512;
+
+static EVENTS_RING: Lazy<Mutex<VecDeque<String>>> =
+    Lazy::new(|| Mutex::new(VecDeque::with_capacity(EVENT_RING_CAPACITY)));
+
+/// Push a single event line into the ring buffer. Best-effort: if another
+/// thread already holds the lock we drop the event rather than block,
+/// because every caller of `record_event` is in the critical path of UI /
+/// IPC / tray callbacks where blocking on a logging mutex would itself
+/// produce the kind of hang we're trying to diagnose.
+pub fn record_event(msg: &str) {
+    let body = if msg.len() > EVENT_MAX_LEN {
+        // `msg.len()` is a BYTE count; slicing `&msg[..EVENT_MAX_LEN]` panics
+        // if that byte falls inside a multi-byte UTF-8 char (the common case
+        // for CJK log content). Back off to the nearest char boundary at or
+        // below the limit. This must never panic: `record_event` is forwarded
+        // every `log_to_file` line and runs inside UI / IPC / tray callbacks,
+        // where a panic can unwind across an `extern "system"` FFI frame and
+        // abort the whole process — the exact crash class this module exists
+        // to diagnose, not cause.
+        let mut end = EVENT_MAX_LEN;
+        while end > 0 && !msg.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}\u{2026}[+{} bytes]", &msg[..end], msg.len() - end)
+    } else {
+        msg.to_string()
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(mut g) = EVENTS_RING.try_lock() {
+        if g.len() >= EVENT_RING_CAPACITY {
+            g.pop_front();
+        }
+        g.push_back(format!("[{ts}] {body}"));
+    }
+}
+
+/// Drain the current ring buffer contents into a Vec. Order is oldest to
+/// newest. Used by the Rust panic hook to embed recent events into
+/// `crash.log`. Failure to acquire the lock returns an empty Vec (we never
+/// stall the panic path on a logging mutex).
+pub fn snapshot_events() -> Vec<String> {
+    EVENTS_RING
+        .try_lock()
+        .map(|g| g.iter().cloned().collect())
+        .unwrap_or_default()
+}
 
 #[cfg(windows)]
 mod imp {
@@ -44,10 +140,24 @@ mod imp {
         CreateFileW, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
     };
     use windows_sys::Win32::System::Diagnostics::Debug::{
-        MiniDumpWithDataSegs, MiniDumpWithThreadInfo, MiniDumpWithUnloadedModules,
-        MiniDumpWriteDump, SetUnhandledExceptionFilter, EXCEPTION_POINTERS,
-        LPTOP_LEVEL_EXCEPTION_FILTER, MINIDUMP_EXCEPTION_INFORMATION,
+        MiniDumpWithDataSegs, MiniDumpWithIndirectlyReferencedMemory, MiniDumpWithThreadInfo,
+        MiniDumpWithUnloadedModules, MiniDumpWriteDump, SetUnhandledExceptionFilter,
+        EXCEPTION_POINTERS, LPTOP_LEVEL_EXCEPTION_FILTER, MINIDUMP_EXCEPTION_INFORMATION,
     };
+
+    // Declared by hand to avoid pulling another windows-sys feature flag for
+    // a single one-off call. WriteFile's Win32 signature is stable, and we
+    // already use this pattern elsewhere in the desktop crate (e.g. the
+    // crash dialog calls MessageBoxW the same way).
+    extern "system" {
+        fn WriteFile(
+            file: HANDLE,
+            buffer: *const u8,
+            bytes_to_write: u32,
+            bytes_written: *mut u32,
+            overlapped: *mut core::ffi::c_void,
+        ) -> i32;
+    }
     use windows_sys::Win32::System::SystemInformation::GetTickCount64;
     use windows_sys::Win32::System::Threading::{
         GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId,
@@ -224,9 +334,17 @@ mod imp {
 
         // MINIDUMP_TYPE in windows-sys 0.59 is an i32 newtype; combining
         // the With* constants stays i32 so we pass through unchanged.
+        //
+        // WithIndirectlyReferencedMemory is the single most useful flag
+        // beyond the defaults: it walks each thread's stack and registers,
+        // copies anything they point at into the dump, and lets WinDbg
+        // resolve heap-allocated structs (Strings, Vecs, Tauri handles)
+        // sitting on the stack at crash time. Roughly +50% dump size for
+        // an order of magnitude more readable post-mortems.
         let dump_type = MiniDumpWithDataSegs
             | MiniDumpWithThreadInfo
-            | MiniDumpWithUnloadedModules;
+            | MiniDumpWithUnloadedModules
+            | MiniDumpWithIndirectlyReferencedMemory;
 
         let _ok = MiniDumpWriteDump(
             GetCurrentProcess(),
@@ -243,10 +361,95 @@ mod imp {
         );
 
         let _ = CloseHandle(file);
+
+        // Best-effort: write a sibling `<pid>-<tick>.events.txt` containing
+        // the last ~64 entries of the events ring buffer. This is the only
+        // diagnostic axis the Rust panic hook gets but the SEH path
+        // historically did not — without it, every minidump arrives with
+        // an unsymbolized address and zero context about what user action
+        // happened just before the crash.
+        //
+        // Layout reuses the dump path buffer up to the trailing ".dmp\0"
+        // and overwrites that suffix with ".events.txt\0".
+        write_sibling_events(&mut path_w, path_len);
+
         // We deliberately do NOT call IN_CRASH.store(false, …): if the
         // OS unwinds and tries again, we want to fall through.
         let _ = &mut exc_info; // keep alive until CloseHandle returns
         chain(info)
+    }
+
+    /// Replace the trailing ".dmp\0" suffix on a fully-built dump path with
+    /// ".events.txt\0", open the file, and dump the events ring buffer.
+    /// Pure best-effort: any IO failure is swallowed because by definition
+    /// we are inside an unhandled exception filter and have no fallback
+    /// reporting channel.
+    unsafe fn write_sibling_events(path_w: &mut [u16; MAX_DUMP_PATH_W], dmp_path_len: usize) {
+        // dmp_path_len includes the trailing NUL after ".dmp". Strip
+        // ".dmp\0" (5 wide chars) and append ".events.txt\0" (12 wide
+        // chars). Length sanity-checked to avoid running off the buffer.
+        const SUFFIX: [u16; 12] = [
+            b'.' as u16, b'e' as u16, b'v' as u16, b'e' as u16, b'n' as u16, b't' as u16,
+            b's' as u16, b'.' as u16, b't' as u16, b'x' as u16, b't' as u16, 0,
+        ];
+        if dmp_path_len < 5 {
+            return;
+        }
+        let mut len = dmp_path_len - 5;
+        if len + SUFFIX.len() > path_w.len() {
+            return;
+        }
+        path_w[len..len + SUFFIX.len()].copy_from_slice(&SUFFIX);
+        len += SUFFIX.len();
+
+        let file: HANDLE = CreateFileW(
+            path_w.as_ptr(),
+            GENERIC_WRITE,
+            0,
+            ptr::null(),
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            ptr::null_mut::<core::ffi::c_void>() as HANDLE,
+        );
+        if file.is_null() || file == INVALID_HANDLE_VALUE {
+            let _ = len; // silence unused
+            return;
+        }
+
+        // try_lock the events ring. If it fails (another thread holds the
+        // lock or the heap is corrupt), write a marker so the dump still
+        // contains evidence the crash filter ran.
+        match super::EVENTS_RING.try_lock() {
+            Ok(g) => {
+                for entry in g.iter() {
+                    let bytes = entry.as_bytes();
+                    let mut written: u32 = 0;
+                    let _ = WriteFile(
+                        file,
+                        bytes.as_ptr(),
+                        bytes.len() as u32,
+                        &mut written,
+                        ptr::null_mut(),
+                    );
+                    let nl = b"\n";
+                    let mut nlw: u32 = 0;
+                    let _ = WriteFile(file, nl.as_ptr(), 1, &mut nlw, ptr::null_mut());
+                }
+            }
+            Err(_) => {
+                let marker = b"[crash-handler] events ring lock unavailable\n";
+                let mut written: u32 = 0;
+                let _ = WriteFile(
+                    file,
+                    marker.as_ptr(),
+                    marker.len() as u32,
+                    &mut written,
+                    ptr::null_mut(),
+                );
+            }
+        }
+
+        let _ = CloseHandle(file);
     }
 
     unsafe fn chain(info: *const EXCEPTION_POINTERS) -> i32 {

@@ -15,9 +15,6 @@
 
 Var LegacyInstallDir
 Var LegacyUninstallString
-Var LegacyCliOpenakita
-Var LegacyCliOa
-Var LegacyCliAddPath
 Var LegacyMigrated
 
 !macro _OpenAkita_DetectLegacyInstall
@@ -40,55 +37,36 @@ Var LegacyMigrated
 
   ; UninstallString keeps its embedded quotes (ExecWait needs them)
   ReadRegStr $LegacyUninstallString HKCU "${LEGACY_UNINSTKEY}" "UninstallString"
-
-  ; Save CLI preferences BEFORE running old uninstaller (it deletes the key)
-  ${If} $LegacyInstallDir != ""
-    ReadRegDWORD $LegacyCliOpenakita HKCU "Software\OpenAkita\CLI" "openakita"
-    ReadRegDWORD $LegacyCliOa HKCU "Software\OpenAkita\CLI" "oa"
-    ReadRegDWORD $LegacyCliAddPath HKCU "Software\OpenAkita\CLI" "addToPath"
-  ${EndIf}
 !macroend
 
-; ── PATH 辅助脚本 ──
-; 通过 PowerShell 安全地读写 PATH 注册表值，解决：
+; ── PATH 辅助脚本（sweep / remove）──
+; CLI 命令注册功能已下线；安装时只清理 PATH，不再注入 bin 目录。
+; 通过 PowerShell 读写 PATH 注册表值，解决：
 ; 1. NSIS ReadRegStr 字符串长度上限导致长 PATH 被截断/清空
 ; 2. 保持 REG_EXPAND_SZ 类型（保留 %USERPROFILE% 等环境变量引用）
-; 3. 使用分号分割后逐条精确比较，避免子字符串误匹配
+; 3. sweep：正则扫除所有 OpenAkitaDesktop / OpenAkita Desktop 的 bin 条目（覆盖安装必跑）
+; 4. remove：按 BinDir 精确移除单条（卸载等场景保留）
 !macro _OpenAkita_WritePathHelper
   InitPluginsDir
   FileOpen $R9 "$PLUGINSDIR\_oa_pathhelper.ps1" w
   FileWrite $R9 "param([string]$$Action, [string]$$BinDir, [string]$$RegPath)$\r$\n"
   FileWrite $R9 "$$ErrorActionPreference = 'Stop'$\r$\n"
   FileWrite $R9 "try {$\r$\n"
+  FileWrite $R9 "    if ($$Action -ne 'sweep' -and $$Action -ne 'remove') { exit 0 }$\r$\n"
   FileWrite $R9 "    $$key = Get-Item -LiteralPath $$RegPath -ErrorAction SilentlyContinue$\r$\n"
-  FileWrite $R9 "    if (-not $$key) {$\r$\n"
-  FileWrite $R9 "        if ($$Action -eq 'add') {$\r$\n"
-  FileWrite $R9 "            New-Item -Path $$RegPath -Force | Out-Null$\r$\n"
-  FileWrite $R9 "            New-ItemProperty -Path $$RegPath -Name 'Path' -Value $$BinDir -PropertyType ExpandString | Out-Null$\r$\n"
-  FileWrite $R9 "        }$\r$\n"
-  FileWrite $R9 "        exit 0$\r$\n"
-  FileWrite $R9 "    }$\r$\n"
+  FileWrite $R9 "    if (-not $$key) { exit 0 }$\r$\n"
   FileWrite $R9 "    $$cur = $$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')$\r$\n"
-  FileWrite $R9 "    $$bn = $$BinDir.TrimEnd([char]92)$\r$\n"
-  FileWrite $R9 "    if ($$Action -eq 'add') {$\r$\n"
-  FileWrite $R9 "        if (-not $$cur) {$\r$\n"
-  FileWrite $R9 "            Set-ItemProperty -LiteralPath $$RegPath -Name 'Path' -Value $$BinDir -Type ExpandString$\r$\n"
-  FileWrite $R9 "        } else {$\r$\n"
-  FileWrite $R9 "            $$entries = $$cur -split ';'$\r$\n"
-  FileWrite $R9 "            $$found = $$entries | Where-Object { $$_.TrimEnd([char]92) -ieq $$bn }$\r$\n"
-  FileWrite $R9 "            if (-not $$found) {$\r$\n"
-  FileWrite $R9 '                $$np = "$$cur;$$BinDir"$\r$\n'
-  FileWrite $R9 "                Set-ItemProperty -LiteralPath $$RegPath -Name 'Path' -Value $$np -Type ExpandString$\r$\n"
-  FileWrite $R9 "            }$\r$\n"
-  FileWrite $R9 "        }$\r$\n"
-  FileWrite $R9 "    } elseif ($$Action -eq 'remove') {$\r$\n"
-  FileWrite $R9 "        if ($$cur) {$\r$\n"
-  FileWrite $R9 "            $$filtered = ($$cur -split ';') | Where-Object { $$_ -and ($$_.TrimEnd([char]92) -ine $$bn) }$\r$\n"
-  FileWrite $R9 "            $$np = $$filtered -join ';'$\r$\n"
-  FileWrite $R9 "            if ($$np -cne $$cur) {$\r$\n"
-  FileWrite $R9 "                Set-ItemProperty -LiteralPath $$RegPath -Name 'Path' -Value $$np -Type ExpandString$\r$\n"
-  FileWrite $R9 "            }$\r$\n"
-  FileWrite $R9 "        }$\r$\n"
+  FileWrite $R9 "    if (-not $$cur) { exit 0 }$\r$\n"
+  FileWrite $R9 "    if ($$Action -eq 'sweep') {$\r$\n"
+  FileWrite $R9 "        $$np = ($$cur -split ';') | Where-Object { $$_ -and -not ($$_ -imatch '[\\/](OpenAkita Desktop|OpenAkitaDesktop)[\\/]bin[\\/]?$$') }$\r$\n"
+  FileWrite $R9 "        $$np = ($$np | Where-Object { $$_ }) -join ';'$\r$\n"
+  FileWrite $R9 "    } else {$\r$\n"
+  FileWrite $R9 "        $$bn = $$BinDir.TrimEnd([char]92)$\r$\n"
+  FileWrite $R9 "        $$np = ($$cur -split ';') | Where-Object { $$_ -and ($$_.TrimEnd([char]92) -ine $$bn) }$\r$\n"
+  FileWrite $R9 "        $$np = ($$np | Where-Object { $$_ }) -join ';'$\r$\n"
+  FileWrite $R9 "    }$\r$\n"
+  FileWrite $R9 "    if ($$np -cne $$cur) {$\r$\n"
+  FileWrite $R9 "        Set-ItemProperty -LiteralPath $$RegPath -Name 'Path' -Value $$np -Type ExpandString$\r$\n"
   FileWrite $R9 "    }$\r$\n"
   FileWrite $R9 "    exit 0$\r$\n"
   FileWrite $R9 "} catch {$\r$\n"
@@ -259,6 +237,30 @@ Var LegacyMigrated
   FileWrite $R9 "            $$_.Path -and $$_.Path.StartsWith($$d, [System.StringComparison]::OrdinalIgnoreCase)$\r$\n"
   FileWrite $R9 "        } | Stop-Process -Force -EA $$EA$\r$\n"
   FileWrite $R9 "    }$\r$\n"
+  ; Kill OpenAkita-owned Python processes (embedded bootstrap interpreter + uv
+  ; runtime venv). These are the actual holders of
+  ; resources\bootstrap\python\DLLs\*.pyd and venv\Scripts\python.exe during an
+  ; overwrite install. The install-path Get-Process pass above misses them when
+  ; .Path is unreadable (access-denied / elevation mismatch) or the interpreter
+  ; lives in a uv cache dir. We read Win32_Process (ExecutablePath + CommandLine
+  ; stay readable via CIM even then) and kill ONLY processes provably owned by
+  ; this install — never an unrelated user / conda / venv python. The broad
+  ; LIKE query returns every python; the ownership gate is what keeps it safe.
+  FileWrite $R9 "    $$ownerDirs = @($$InstDir, $$root, $$customRoot) | Where-Object { $$_ } | ForEach-Object { $$_.TrimEnd([char]92) }$\r$\n"
+  FileWrite $R9 "    try {$\r$\n"
+  FileWrite $R9 "        Get-CimInstance Win32_Process -Filter $\"Name LIKE 'python%.exe'$\" -EA $$EA | ForEach-Object {$\r$\n"
+  FileWrite $R9 "            $$proc = $$_; $$exe = $$proc.ExecutablePath; $$cl = $$proc.CommandLine; $$owned = $$false$\r$\n"
+  FileWrite $R9 "            foreach ($$od in $$ownerDirs) {$\r$\n"
+  FileWrite $R9 "                if ($$exe -and $$exe.StartsWith($$od + [char]92, [System.StringComparison]::OrdinalIgnoreCase)) { $$owned = $$true; break }$\r$\n"
+  FileWrite $R9 "                if ($$cl -and $$cl.IndexOf($$od, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $$owned = $$true; break }$\r$\n"
+  FileWrite $R9 "            }$\r$\n"
+  FileWrite $R9 "            if (-not $$owned -and $$cl -and ($$cl -match 'openakita\.main' -or $$cl -match 'openakita-server' -or $$cl -match 'resources\\bootstrap' -or $$cl -match '\.openakita\\')) { $$owned = $$true }$\r$\n"
+  FileWrite $R9 "            if ($$owned) {$\r$\n"
+  FileWrite $R9 "                Stop-Process -Id $$proc.ProcessId -Force -EA $$EA$\r$\n"
+  FileWrite $R9 "                & cmd /c $\"taskkill /PID $$($$proc.ProcessId) /T /F >nul 2>&1$\"$\r$\n"
+  FileWrite $R9 "            }$\r$\n"
+  FileWrite $R9 "        }$\r$\n"
+  FileWrite $R9 "    } catch {}$\r$\n"
   FileWrite $R9 "}$\r$\n"
   ; ── function: Test file lock ──
   FileWrite $R9 "function Test-Locked([string]$$f) {$\r$\n"
@@ -375,12 +377,8 @@ Var LegacyMigrated
     ; Clean leftover autostart Run entry
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${LEGACY_PRODUCTNAME}"
 
-    ; Write back CLI preferences (old uninstaller deleted the key)
-    ${If} $LegacyCliOpenakita != ""
-      WriteRegDWORD HKCU "Software\OpenAkita\CLI" "openakita" $LegacyCliOpenakita
-      WriteRegDWORD HKCU "Software\OpenAkita\CLI" "oa" $LegacyCliOa
-      WriteRegDWORD HKCU "Software\OpenAkita\CLI" "addToPath" $LegacyCliAddPath
-    ${EndIf}
+    ; CLI 命令行工具注册功能已下线：不再回写 CLI 偏好。旧的
+    ; Software\OpenAkita\CLI 项会在本次安装的 Section Install 清理逻辑中删除。
 
     ; Log migration result for passive/silent installs where UI is hidden
     ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\logs"
@@ -436,44 +434,7 @@ Var LegacyMigrated
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
-  ; 安装完成后：写入版本信息到 state.json（供 App 环境检测用）
-  ; 注意：state.json 可能已存在（升级安装），仅更新版本字段
-  ; 解析实际数据根目录（可能被用户自定义到其他磁盘）
-  !insertmacro _OpenAkita_ResolveRoot
-  StrCpy $R0 $R9
-  CreateDirectory "$R0"
-
-  ; 写入 cli.json（供 Rust get_cli_status 读取）
-  ReadRegDWORD $R1 HKCU "Software\OpenAkita\CLI" "openakita"
-  ReadRegDWORD $R2 HKCU "Software\OpenAkita\CLI" "oa"
-  ReadRegDWORD $R3 HKCU "Software\OpenAkita\CLI" "addToPath"
-  ; 构造 JSON 中的 commands 数组
-  StrCpy $R4 ""
-  ${If} $R1 = ${BST_CHECKED}
-    StrCpy $R4 '"openakita"'
-  ${EndIf}
-  ${If} $R2 = ${BST_CHECKED}
-    ${If} $R4 != ""
-      StrCpy $R4 '$R4, "oa"'
-    ${Else}
-      StrCpy $R4 '"oa"'
-    ${EndIf}
-  ${EndIf}
-  ; 写入 cli.json
-  ${If} $R4 != ""
-    ; Escape backslashes in path for valid JSON (\ → \\)
-    ${StrRep} $R6 "$INSTDIR\bin" "\" "\\"
-    FileOpen $R5 "$R0\cli.json" w
-    FileWrite $R5 '{"commands": [$R4], "addToPath": '
-    ${If} $R3 = ${BST_CHECKED}
-      FileWrite $R5 'true'
-    ${Else}
-      FileWrite $R5 'false'
-    ${EndIf}
-    FileWrite $R5 ', "binDir": "$R6", "installedAt": "${VERSION}"}'
-    FileClose $R5
-  ${EndIf}
-
+  ; 命令行工具注册功能已下线，POSTINSTALL 不再写入 cli.json。
   ; venv/runtime 清理已统一在 NSIS_HOOK_PREINSTALL 中通过 PowerShell 脚本完成，
   ; 无需再以用户身份单独启动应用执行 --clean-env。
 !macroend

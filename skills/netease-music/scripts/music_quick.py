@@ -56,10 +56,10 @@ def main():
     p_play.add_argument("--id", required=True, help="歌曲 ID")
 
     args = parser.parse_args()
-    {"search": cmd_search, "playlist": cmd_playlist,
-     "recommend": cmd_recommend, "play": cmd_play}[args.command](args)
+    {"search": cmd_search, "playlist": cmd_playlist, "recommend": cmd_recommend, "play": cmd_play}[
+        args.command
+    ](args)
 
 
 if __name__ == "__main__":
     main()
-

@@ -17,9 +17,10 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 from ...core.policy_v2 import ApprovalClass
+from ...utils.url_safety import safe_urlparse
 
 if TYPE_CHECKING:
     from ...agent.core import Agent
@@ -29,6 +30,16 @@ logger = logging.getLogger(__name__)
 _MAX_REDIRECTS = 10
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _BINARY_CONTENT_MARKERS = ("image/", "audio/", "video/", "application/pdf")
+
+
+def _unsafe_url_hint(reason: str) -> str:
+    if "198.18.0.0/15" in reason or "proxy/TUN/DNS interception" in reason:
+        return (
+            f"{reason}。该域名被本机 DNS/代理/TUN 解析到了保留测试网段，"
+            "web_fetch 出于 SSRF 防护不会直接访问。请检查代理、TUN 模式、DNS 分流或安全软件；"
+            "如确认需要人工打开页面，可改用浏览器工具。"
+        )
+    return f"{reason}。请使用浏览器工具访问本地/内网服务。"
 
 
 @dataclass(slots=True)
@@ -51,7 +62,7 @@ class WebFetchMeta:
     @property
     def hostname(self) -> str:
         try:
-            return urlparse(self.final_url or self.requested_url).hostname or ""
+            return safe_urlparse(self.final_url or self.requested_url).hostname or ""
         except Exception:
             return ""
 
@@ -200,7 +211,7 @@ class WebFetchHandler:
             )
             return _build_fetch_error_text(meta)
 
-        parsed = urlparse(url)
+        parsed = safe_urlparse(url)
         if not parsed.scheme or not parsed.netloc:
             meta = WebFetchMeta(
                 requested_url=url,
@@ -222,7 +233,7 @@ class WebFetchHandler:
                 redirect_chain=[url],
                 fetched_at=_utc_now_iso(),
                 error_code="unsafe_url",
-                hint=f"{reason}。请使用浏览器工具访问本地/内网服务。",
+                hint=_unsafe_url_hint(reason),
             )
             return _build_fetch_error_text(meta)
 

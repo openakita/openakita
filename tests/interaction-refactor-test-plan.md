@@ -549,14 +549,10 @@ Content-Type: application/json
 - Onboarding 步骤圆点旁有步骤名称标签
 - 已完成步骤显示勾选 + 名称
 
-### 3.25 全局快捷键 (Batch 10: 9.9)
+### 3.25 全局快捷键 (Batch 10: 9.9) — 已移除
 
-**人工操作** (Desktop 应用):
-
-1. 最小化 OpenAkita 窗口, 切换到其他应用
-2. 按 Ctrl+Shift+A
-   - [ ] OpenAkita 窗口是否弹出并聚焦
-   - [ ] 输入框是否获得焦点
+全局快捷键 (Ctrl+Shift+A 唤起窗口) 已随 `tauri-plugin-global-shortcut` 插件移除
+(该插件被定位为 WebView2 事件循环重入崩溃的回归来源, 引入于 v1.27.9)。此测试项作废。
 
 ### 3.26 系统托盘 (Batch 10: 9.8)
 
@@ -987,7 +983,7 @@ Content-Type: application/json
 - [ ] 3.18 大文本粘贴折叠
 - [ ] 3.19 Spinner 轮播提示
 - [ ] 3.21 对话导出
-- [ ] 3.25 Ctrl+Shift+A 全局快捷键
+- [x] 3.25 Ctrl+Shift+A 全局快捷键 (已移除, 作废)
 - [ ] 3.26 系统托盘
 - [ ] 3.27 设置重启提示
 - [ ] 3.28 /memory /skills 命令

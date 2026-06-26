@@ -718,7 +718,9 @@ duration 参考:
 
     def _generate_fallback_summary(self, turns: list[ConversationTurn]) -> str:
         user_msgs = [
-            coerce_text(t.content)[:100] for t in turns if t.role == "user" and coerce_text(t.content)
+            coerce_text(t.content)[:100]
+            for t in turns
+            if t.role == "user" and coerce_text(t.content)
         ]
         if user_msgs:
             return f"对话涉及: {'; '.join(user_msgs[:3])}"
@@ -1103,7 +1105,9 @@ duration 参考:
                         importance_score=importance,
                         subject=as_clean_str(item.get("subject")),
                         predicate=as_clean_str(item.get("predicate")),
-                        tags=[as_clean_str(tag) for tag in item.get("tags", []) if as_clean_str(tag)],
+                        tags=[
+                            as_clean_str(tag) for tag in item.get("tags", []) if as_clean_str(tag)
+                        ],
                     )
                 )
 

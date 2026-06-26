@@ -7,6 +7,7 @@ helper 同步删除（无生产 caller）。本文件原 ``TestV2ToV1DecisionMap
 清理；保留 metadata flatten / fallback context / engine fail-closed 等仍有效的
 adapter 测试。
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -209,12 +210,8 @@ class TestEvaluateViaV2:
         engine = _StubEngine(decision)
         set_engine_v2(engine)  # type: ignore[arg-type]
 
-        ctx_a = PolicyContext(
-            session_id="ctx_a", workspace=__import__("pathlib").Path("/tmp")
-        )
-        ctx_b = PolicyContext(
-            session_id="ctx_b", workspace=__import__("pathlib").Path("/tmp")
-        )
+        ctx_a = PolicyContext(session_id="ctx_a", workspace=__import__("pathlib").Path("/tmp"))
+        ctx_b = PolicyContext(session_id="ctx_b", workspace=__import__("pathlib").Path("/tmp"))
         token = set_current_context(ctx_a)
         try:
             evaluate_via_v2("read_file", {}, extra_ctx=ctx_b)

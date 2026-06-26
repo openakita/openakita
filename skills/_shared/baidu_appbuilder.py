@@ -54,9 +54,7 @@ class AppBuilderClient:
     ):
         self.token = token or os.environ.get("APPBUILDER_TOKEN", "")
         if not self.token:
-            raise AppBuilderError(
-                "缺少 APPBUILDER_TOKEN，请设置环境变量或显式传入 token"
-            )
+            raise AppBuilderError("缺少 APPBUILDER_TOKEN，请设置环境变量或显式传入 token")
         self.app_id = app_id or os.environ.get("APPBUILDER_APP_ID", "")
         self.timeout = timeout
 
@@ -205,4 +203,3 @@ def run_skill_query(args: argparse.Namespace, query: str) -> None:
         print(json.dumps({"error": str(e)}, ensure_ascii=False), file=sys.stderr)
         sys.exit(1)
     print_response(result, stream=stream)
-

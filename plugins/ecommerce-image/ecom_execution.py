@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Typed configs (not a catch-all dict)
 # ---------------------------------------------------------------------------
 
+
 class PromptTemplateConfig(TypedDict, total=False):
     template_mode: str  # "format" (default) | "safe_substitute"
 
@@ -53,6 +54,7 @@ class BatchConfig(TypedDict, total=False):
 # ExecutionContext
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ExecutionContext:
     """All dependencies available to strategies at runtime."""
@@ -64,7 +66,9 @@ class ExecutionContext:
     plugin_api: Any  # PluginAPI
     feature: Any  # FeatureDefinition
     semaphore: asyncio.Semaphore | None = None
-    defaults: dict | None = None  # global defaults (default_image_model, default_video_model, default_image_size, watermark)
+    defaults: dict | None = (
+        None  # global defaults (default_image_model, default_video_model, default_image_size, watermark)
+    )
 
 
 def resolve_model(params: dict, ctx: ExecutionContext) -> str:
@@ -82,16 +86,25 @@ def resolve_model(params: dict, ctx: ExecutionContext) -> str:
 
 RATIO_SIZE_MAP: dict[str, dict[str, str]] = {
     "1K": {
-        "1:1": "1024*1024", "16:9": "1344*768", "9:16": "768*1344",
-        "4:3": "1184*864", "3:4": "864*1184",
+        "1:1": "1024*1024",
+        "16:9": "1344*768",
+        "9:16": "768*1344",
+        "4:3": "1184*864",
+        "3:4": "864*1184",
     },
     "2K": {
-        "1:1": "2048*2048", "16:9": "2688*1536", "9:16": "1536*2688",
-        "4:3": "2368*1728", "3:4": "1728*2368",
+        "1:1": "2048*2048",
+        "16:9": "2688*1536",
+        "9:16": "1536*2688",
+        "4:3": "2368*1728",
+        "3:4": "1728*2368",
     },
     "4K": {
-        "1:1": "4096*4096", "16:9": "4096*2304", "9:16": "2304*4096",
-        "4:3": "4096*3072", "3:4": "3072*4096",
+        "1:1": "4096*4096",
+        "16:9": "4096*2304",
+        "9:16": "2304*4096",
+        "4:3": "4096*3072",
+        "3:4": "3072*4096",
     },
 }
 
@@ -166,6 +179,7 @@ def _build_video_kwargs(params: dict, ctx: ExecutionContext) -> dict:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 class _SafeDict(dict):
     def __missing__(self, key: str) -> str:
@@ -264,6 +278,7 @@ async def _persist_api_result(
 
     if is_sync_done:
         import json as _json
+
         await ctx.task_manager.update_task(
             task["id"],
             image_urls=_json.dumps(image_urls),
@@ -287,6 +302,7 @@ def _extract_text(result: Any) -> str:
 # Strategy base
 # ---------------------------------------------------------------------------
 
+
 class ExecutionStrategy(ABC):
     """Abstract base for all execution strategies."""
 
@@ -306,6 +322,7 @@ class ExecutionStrategy(ABC):
 # ---------------------------------------------------------------------------
 # PromptTemplateStrategy
 # ---------------------------------------------------------------------------
+
 
 class PromptTemplateStrategy(ExecutionStrategy):
     """Template fill -> single API call."""
@@ -336,8 +353,12 @@ class PromptTemplateStrategy(ExecutionStrategy):
                 )
 
         task = await _persist_api_result(
-            ctx, api_result, prompt=prompt, model=chosen_model,
-            execution_mode="prompt_template", params=params,
+            ctx,
+            api_result,
+            prompt=prompt,
+            model=chosen_model,
+            execution_mode="prompt_template",
+            params=params,
         )
         return task
 
@@ -345,6 +366,7 @@ class PromptTemplateStrategy(ExecutionStrategy):
 # ---------------------------------------------------------------------------
 # AgentStrategy
 # ---------------------------------------------------------------------------
+
 
 class AgentStrategy(ExecutionStrategy):
     """Direct prompt -> API call.
@@ -384,13 +406,21 @@ class AgentStrategy(ExecutionStrategy):
 
         if prompts_list and len(prompts_list) > 1:
             return await self._execute_multi(
-                prompts_list, resolved, params, text_params, ctx,
+                prompts_list,
+                resolved,
+                params,
+                text_params,
+                ctx,
             )
         if count > 1 and ctx.feature.prompt_template:
             if prompts_list and len(prompts_list) == 1:
                 text_params = {**text_params, "prompt": prompts_list[0]}
             return await self._execute_suite(
-                count, text_params, resolved, params, ctx,
+                count,
+                text_params,
+                resolved,
+                params,
+                ctx,
             )
 
         chosen_model = resolve_model(params, ctx)
@@ -414,8 +444,12 @@ class AgentStrategy(ExecutionStrategy):
                 )
 
         task = await _persist_api_result(
-            ctx, api_result, prompt=prompt, model=chosen_model,
-            execution_mode="agent", params=params,
+            ctx,
+            api_result,
+            prompt=prompt,
+            model=chosen_model,
+            execution_mode="agent",
+            params=params,
         )
         return task
 
@@ -533,16 +567,22 @@ class AgentStrategy(ExecutionStrategy):
                             **_build_video_kwargs(params, ctx),
                         )
                 child = await _persist_api_result(
-                    ctx, api_result, prompt=p, model=chosen_model,
-                    execution_mode="agent", params=params,
+                    ctx,
+                    api_result,
+                    prompt=p,
+                    model=chosen_model,
+                    execution_mode="agent",
+                    params=params,
                 )
                 await ctx.task_manager.update_task(
-                    child["id"], batch_parent_id=parent["id"],
+                    child["id"],
+                    batch_parent_id=parent["id"],
                 )
                 if child.get("status") == "succeeded":
                     try:
                         ctx.plugin_api.broadcast_ui_event(
-                            "task_update", {"task_id": child["id"], "status": "succeeded"},
+                            "task_update",
+                            {"task_id": child["id"], "status": "succeeded"},
                         )
                     except Exception:
                         pass
@@ -611,16 +651,22 @@ class AgentStrategy(ExecutionStrategy):
                             **_build_video_kwargs(params, ctx),
                         )
                 child = await _persist_api_result(
-                    ctx, api_result, prompt=prompt, model=chosen_model,
-                    execution_mode="agent", params=params,
+                    ctx,
+                    api_result,
+                    prompt=prompt,
+                    model=chosen_model,
+                    execution_mode="agent",
+                    params=params,
                 )
                 await ctx.task_manager.update_task(
-                    child["id"], batch_parent_id=parent["id"],
+                    child["id"],
+                    batch_parent_id=parent["id"],
                 )
                 if child.get("status") == "succeeded":
                     try:
                         ctx.plugin_api.broadcast_ui_event(
-                            "task_update", {"task_id": child["id"], "status": "succeeded"},
+                            "task_update",
+                            {"task_id": child["id"], "status": "succeeded"},
                         )
                     except Exception:
                         pass
@@ -642,7 +688,11 @@ class AgentStrategy(ExecutionStrategy):
 
     @staticmethod
     def _build_user_msg(
-        text_params: dict, feature: Any, *, is_video: bool = False, params: dict | None = None,
+        text_params: dict,
+        feature: Any,
+        *,
+        is_video: bool = False,
+        params: dict | None = None,
     ) -> str:
         parts: list[str] = []
         if text_params.get("product_name"):
@@ -658,10 +708,16 @@ class AgentStrategy(ExecutionStrategy):
         if text_params.get("storyboard_script"):
             parts.append(f"故事脚本: {text_params['storyboard_script']}")
         remaining = {
-            k: v for k, v in text_params.items()
-            if k not in (
-                "product_name", "selling_points", "prompt", "reference_desc",
-                "target_character", "storyboard_script",
+            k: v
+            for k, v in text_params.items()
+            if k
+            not in (
+                "product_name",
+                "selling_points",
+                "prompt",
+                "reference_desc",
+                "target_character",
+                "storyboard_script",
             )
             and v
         }
@@ -682,6 +738,7 @@ class AgentStrategy(ExecutionStrategy):
 # StepHandler protocol + registry
 # ---------------------------------------------------------------------------
 
+
 class StepResult(TypedDict):
     status: str  # ok | error
     data: dict
@@ -691,9 +748,11 @@ class StepResult(TypedDict):
 
 class StepHandler(Protocol):
     async def run(
-        self, input_data: dict, config: dict, ctx: ExecutionContext,
-    ) -> StepResult:
-        ...
+        self,
+        input_data: dict,
+        config: dict,
+        ctx: ExecutionContext,
+    ) -> StepResult: ...
 
 
 _STEP_HANDLERS: dict[str, StepHandler] = {}
@@ -701,9 +760,11 @@ _STEP_HANDLERS: dict[str, StepHandler] = {}
 
 def register_step(name: str):
     """Decorator to register a StepHandler."""
+
     def decorator(cls: type) -> type:
         _STEP_HANDLERS[name] = cls()
         return cls
+
     return decorator
 
 
@@ -730,7 +791,12 @@ class OptimizePromptStep:
             else:
                 result = await ctx.brain.think(prompt=user_msg, system=system)
             optimized = _extract_text(result).strip() or user_msg
-            return {"status": "ok", "data": {**input_data, "prompt": optimized}, "artifacts": [], "error": ""}
+            return {
+                "status": "ok",
+                "data": {**input_data, "prompt": optimized},
+                "artifacts": [],
+                "error": "",
+            }
         except Exception as e:
             logger.warning("optimize_prompt failed (%s); falling back to original prompt", e)
             return {"status": "ok", "data": dict(input_data), "artifacts": [], "error": ""}
@@ -753,7 +819,9 @@ class GenerateImageStep:
 
         force_ratio = config.get("force_ratio")
         if force_ratio:
-            resolution = input_data.get("size") or (ctx.defaults or {}).get("default_image_size") or "2K"
+            resolution = (
+                input_data.get("size") or (ctx.defaults or {}).get("default_image_size") or "2K"
+            )
             if resolution in RATIO_SIZE_MAP and force_ratio in RATIO_SIZE_MAP[resolution]:
                 size = RATIO_SIZE_MAP[resolution][force_ratio]
             else:
@@ -766,13 +834,15 @@ class GenerateImageStep:
 
         if not resolved and input_data.get("ref_image"):
             resolved = await resolve_assets(
-                {"ref_image": input_data["ref_image"]}, ctx.task_manager,
+                {"ref_image": input_data["ref_image"]},
+                ctx.task_manager,
             )
 
         try:
             logger.debug(
                 "GenerateImageStep: model=%s images_keys=%s n=%s",
-                model, list(resolved.keys()) if resolved else "none",
+                model,
+                list(resolved.keys()) if resolved else "none",
                 int(input_data.get("section_count") or config.get("n", 1)),
             )
             sem = ctx.semaphore or asyncio.Semaphore(10)
@@ -793,7 +863,9 @@ class GenerateImageStep:
 
             if not urls:
                 return {
-                    "status": "error", "data": input_data, "artifacts": [],
+                    "status": "error",
+                    "data": input_data,
+                    "artifacts": [],
                     "error": "DashScope task produced no images",
                 }
 
@@ -821,9 +893,7 @@ class GenerateImageStep:
                 return poll.get("image_urls", []) or []
             if status == "FAILED":
                 raise RuntimeError(poll.get("error") or "DashScope task failed")
-        raise TimeoutError(
-            f"DashScope task {task_id} did not finish in {int(self.MAX_WAIT_S)}s"
-        )
+        raise TimeoutError(f"DashScope task {task_id} did not finish in {int(self.MAX_WAIT_S)}s")
 
 
 @register_step("generate_video")
@@ -852,7 +922,9 @@ class GenerateVideoStep:
 
         if not prompt or not prompt.strip():
             return {
-                "status": "error", "data": input_data, "artifacts": [],
+                "status": "error",
+                "data": input_data,
+                "artifacts": [],
                 "error": "视频提示词为空，无法生成",
             }
 
@@ -868,7 +940,9 @@ class GenerateVideoStep:
             task_id = result.get("task_id", "") or ""
             if not task_id:
                 return {
-                    "status": "error", "data": input_data, "artifacts": [],
+                    "status": "error",
+                    "data": input_data,
+                    "artifacts": [],
                     "error": "Ark create_task returned no task_id",
                 }
 
@@ -891,7 +965,12 @@ class StitchImagesStep:
 
         urls = input_data.get("image_urls", [])
         if not urls:
-            return {"status": "error", "data": input_data, "artifacts": [], "error": "No images to stitch"}
+            return {
+                "status": "error",
+                "data": input_data,
+                "artifacts": [],
+                "error": "No images to stitch",
+            }
 
         images: list[Image.Image] = []
         async with httpx.AsyncClient(timeout=60) as client:
@@ -908,7 +987,8 @@ class StitchImagesStep:
                 if img.width != target_w:
                     ratio = target_w / img.width
                     img = img.resize(
-                        (target_w, int(img.height * ratio)), Image.LANCZOS,
+                        (target_w, int(img.height * ratio)),
+                        Image.LANCZOS,
                     )
                 resized.append(img)
             total_h = sum(img.height for img in resized)
@@ -924,7 +1004,8 @@ class StitchImagesStep:
                 if img.height != target_h:
                     ratio = target_h / img.height
                     img = img.resize(
-                        (int(img.width * ratio), target_h), Image.LANCZOS,
+                        (int(img.width * ratio), target_h),
+                        Image.LANCZOS,
                     )
                 resized.append(img)
             total_w = sum(img.width for img in resized)
@@ -938,6 +1019,7 @@ class StitchImagesStep:
         out_dir = data_dir / "stitched"
         out_dir.mkdir(parents=True, exist_ok=True)
         import uuid
+
         out_path = out_dir / f"{uuid.uuid4().hex[:8]}_stitched.png"
         canvas.save(str(out_path), quality=95)
 
@@ -975,18 +1057,25 @@ class DecomposeStoryboardStep:
     async def run(self, input_data: dict, config: dict, ctx: ExecutionContext) -> StepResult:
         script = input_data.get("storyboard_script", "") or input_data.get("prompt", "")
         if not script or not script.strip():
-            return {"status": "error", "data": input_data, "artifacts": [],
-                    "error": "故事脚本为空，请填写故事脚本"}
+            return {
+                "status": "error",
+                "data": input_data,
+                "artifacts": [],
+                "error": "故事脚本为空，请填写故事脚本",
+            }
         total_duration = int(input_data.get("total_duration", 60))
         segment_duration = int(config.get("segment_duration", 10))
 
         if ctx.brain is None:
             logger.info("decompose_storyboard: brain unavailable, creating single segment")
-            segments = [{"prompt": script.strip(), "duration": min(total_duration, segment_duration)}]
+            segments = [
+                {"prompt": script.strip(), "duration": min(total_duration, segment_duration)}
+            ]
             return {
                 "status": "ok",
                 "data": {**input_data, "segments": segments},
-                "artifacts": [], "error": "",
+                "artifacts": [],
+                "error": "",
             }
 
         system_prompt = (
@@ -994,17 +1083,20 @@ class DecomposeStoryboardStep:
             f"每段约 {segment_duration} 秒，总时长约 {total_duration} 秒。\n"
             f"每段 prompt 必须是具体的画面描述（镜头运动+场景+动作），而非旁白文字。\n"
             f"只输出 JSON，不要任何其他文字：\n"
-            f"{{\"segments\": [{{\"prompt\": \"...\", \"duration\": {segment_duration}}}]}}"
+            f'{{"segments": [{{"prompt": "...", "duration": {segment_duration}}}]}}'
         )
         try:
             if hasattr(ctx.brain, "think_lightweight"):
                 result = await ctx.brain.think_lightweight(
-                    prompt=script, system=system_prompt, max_tokens=4096,
+                    prompt=script,
+                    system=system_prompt,
+                    max_tokens=4096,
                 )
             else:
                 result = await ctx.brain.think(prompt=script, system=system_prompt)
             import json
             import re
+
             text = _extract_text(result).strip()
             if not text:
                 raise ValueError("LLM 返回空内容")
@@ -1071,9 +1163,7 @@ class LlmTranslateStep:
 
     async def run(self, input_data: dict, config: dict, ctx: ExecutionContext) -> StepResult:
         target_lang_code = (
-            input_data.get("target_language")
-            or config.get("target_language")
-            or "en"
+            input_data.get("target_language") or config.get("target_language") or "en"
         )
         lang_label = _lang_label(target_lang_code)
         source_text = (input_data.get("source_text") or "").strip()
@@ -1134,6 +1224,7 @@ class LlmTranslateStep:
 # PipelineStrategy
 # ---------------------------------------------------------------------------
 
+
 class PipelineStrategy(ExecutionStrategy):
     """Multi-step sequential pipeline with progress tracking."""
 
@@ -1162,7 +1253,8 @@ class PipelineStrategy(ExecutionStrategy):
             handler = _STEP_HANDLERS.get(action)
             if not handler:
                 await ctx.task_manager.update_task_status(
-                    task["id"], "failed",
+                    task["id"],
+                    "failed",
                     error_message=f"Unknown pipeline step: {action}",
                     failed_at_step=i,
                 )
@@ -1172,7 +1264,8 @@ class PipelineStrategy(ExecutionStrategy):
                 result = await handler.run(context_data, step.get("config", {}), ctx)
             except Exception as e:
                 await ctx.task_manager.update_task_status(
-                    task["id"], "failed",
+                    task["id"],
+                    "failed",
                     error_message=f"Step '{action}' exception: {e}",
                     failed_at_step=i,
                 )
@@ -1181,7 +1274,8 @@ class PipelineStrategy(ExecutionStrategy):
             if result["status"] == "error":
                 if on_error == "abort":
                     await ctx.task_manager.update_task_status(
-                        task["id"], "failed",
+                        task["id"],
+                        "failed",
                         error_message=f"Step '{action}' failed: {result.get('error', '')}",
                         failed_at_step=i,
                     )
@@ -1190,7 +1284,8 @@ class PipelineStrategy(ExecutionStrategy):
 
             context_data = result["data"]
             await ctx.task_manager.update_task(
-                task["id"], progress_current=i + 1,
+                task["id"],
+                progress_current=i + 1,
             )
             try:
                 ctx.plugin_api.broadcast_ui_event(
@@ -1208,9 +1303,11 @@ class PipelineStrategy(ExecutionStrategy):
         updates: dict[str, Any] = {"progress_current": total}
         if image_urls:
             import json
+
             updates["image_urls"] = json.dumps(image_urls)
         if local_paths:
             import json as _jl
+
             updates["local_paths"] = _jl.dumps(local_paths)
         if video_url:
             updates["video_url"] = video_url
@@ -1221,7 +1318,9 @@ class PipelineStrategy(ExecutionStrategy):
             await ctx.task_manager.update_task(task["id"], **updates)
         else:
             await ctx.task_manager.update_task_status(
-                task["id"], "succeeded", **updates,
+                task["id"],
+                "succeeded",
+                **updates,
             )
         return task
 
@@ -1229,6 +1328,7 @@ class PipelineStrategy(ExecutionStrategy):
 # ---------------------------------------------------------------------------
 # BatchStrategy
 # ---------------------------------------------------------------------------
+
 
 class BatchStrategy(ExecutionStrategy):
     """Run the same operation per image, using parent-child task structure.
@@ -1272,7 +1372,8 @@ class BatchStrategy(ExecutionStrategy):
         async def run_one(asset_id: str) -> None:
             try:
                 resolved = await resolve_assets(
-                    {"ref_image": asset_id}, ctx.task_manager,
+                    {"ref_image": asset_id},
+                    ctx.task_manager,
                 )
                 async with sem:
                     if ctx.feature.api_provider == "dashscope":
@@ -1292,11 +1393,16 @@ class BatchStrategy(ExecutionStrategy):
                             **_build_video_kwargs(params, ctx),
                         )
                 child = await _persist_api_result(
-                    ctx, api_result, prompt=prompt, model=chosen_model,
-                    execution_mode="batch", params=params,
+                    ctx,
+                    api_result,
+                    prompt=prompt,
+                    model=chosen_model,
+                    execution_mode="batch",
+                    params=params,
                 )
                 await ctx.task_manager.update_task(
-                    child["id"], batch_parent_id=parent["id"],
+                    child["id"],
+                    batch_parent_id=parent["id"],
                 )
                 if child.get("status") == "succeeded":
                     try:

@@ -32,7 +32,9 @@ class EchoAdapter(ChannelAdapter):
         bot_id: str,
         agent_profile_id: str,
     ) -> None:
-        super().__init__(channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id)
+        super().__init__(
+            channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id
+        )
         self._creds = creds
         self._sent_messages: list[dict] = []
 
@@ -47,12 +49,16 @@ class EchoAdapter(ChannelAdapter):
     async def send_message(self, message: OutgoingMessage) -> str:
         text = message.content.text if message.content else ""
         msg_id = f"echo-msg-{len(self._sent_messages)}"
-        self._sent_messages.append({
-            "id": msg_id,
-            "chat_id": message.chat_id,
-            "text": text,
-        })
-        logger.info("EchoAdapter sent message id=%s chat_id=%s text=%s", msg_id, message.chat_id, text[:200])
+        self._sent_messages.append(
+            {
+                "id": msg_id,
+                "chat_id": message.chat_id,
+                "text": text,
+            }
+        )
+        logger.info(
+            "EchoAdapter sent message id=%s chat_id=%s text=%s", msg_id, message.chat_id, text[:200]
+        )
         return msg_id
 
     async def download_media(self, media: MediaFile) -> Path:
@@ -106,4 +112,3 @@ class Plugin(PluginBase):
 
     def on_unload(self) -> None:
         pass
-

@@ -112,11 +112,7 @@ def _is_empty_response_error(error: str) -> bool:
     err_lower = error.lower()
     if "stream" in err_lower:
         return False
-    return (
-        "empty response" in err_lower
-        or "no choices" in err_lower
-        or "no output" in err_lower
-    )
+    return "empty response" in err_lower or "no choices" in err_lower or "no output" in err_lower
 
 
 def _humanize_upstream_error(status: int, body: str) -> str:
@@ -147,16 +143,11 @@ def _humanize_upstream_error(status: int, body: str) -> str:
             "请尝试换一种表述、清空对话上下文，或切换到对内容审核更宽松的模型端点。"
         )
 
-    if (
-        "invalidparameter" in body_l
-        and (
-            "url" in body_l
-            or "image" in body_l
-            or "vision" in body_l
-        )
+    if "invalidparameter" in body_l and (
+        "url" in body_l or "image" in body_l or "vision" in body_l
     ):
         return "云端模型未能访问到您发送的图片（图片需可公网访问或采用内嵌方式），请稍后重试或更换更小的图片"
-    if "appidnoautherror" in body_l or "code\":11200" in body_l or "code\":\"11200" in body_l:
+    if "appidnoautherror" in body_l or 'code":11200' in body_l or 'code":"11200' in body_l:
         return (
             "讯飞模型授权或额度异常 (xfyun_auth_or_quota, AppIdNoAuthError/code 11200)。"
             "请检查 Coding Plan 订阅、模型权限和当日用量。"
@@ -378,10 +369,8 @@ class OpenAIProvider(LLMProvider):
 
         # 统一判断：非流式未能产出内容 → 尝试流式回退
         _should_fallback = (
-            (non_stream_error is not None and _is_empty_response_error(str(non_stream_error)))
-            or (response is not None and not response.content
-                and response.usage.output_tokens > 0)
-        )
+            non_stream_error is not None and _is_empty_response_error(str(non_stream_error))
+        ) or (response is not None and not response.content and response.usage.output_tokens > 0)
 
         if _should_fallback:
             _reason = (
@@ -389,9 +378,7 @@ class OpenAIProvider(LLMProvider):
                 if non_stream_error
                 else f"empty content with {response.usage.output_tokens} output tokens"  # type: ignore[union-attr]
             )
-            logger.warning(
-                f"[OpenAI] '{self.name}': {_reason}, attempting stream fallback"
-            )
+            logger.warning(f"[OpenAI] '{self.name}': {_reason}, attempting stream fallback")
             try:
                 stream_response = await self._chat_via_stream(request)
                 if stream_response.content:
@@ -406,9 +393,7 @@ class OpenAIProvider(LLMProvider):
                     f"[OpenAI] '{self.name}': stream fallback also returned empty content"
                 )
             except Exception as stream_err:
-                logger.warning(
-                    f"[OpenAI] '{self.name}': stream fallback failed: {stream_err}"
-                )
+                logger.warning(f"[OpenAI] '{self.name}': stream fallback failed: {stream_err}")
 
         if non_stream_error is not None:
             raise non_stream_error
@@ -436,7 +421,8 @@ class OpenAIProvider(LLMProvider):
                 body = (response.text or "")[:500]
                 logger.error(
                     "[OpenAIProvider] upstream non-stream error status=%s body=%s",
-                    response.status_code, body[:1000],
+                    response.status_code,
+                    body[:1000],
                 )
                 if response.status_code == 401:
                     raise AuthenticationError(
@@ -546,7 +532,8 @@ class OpenAIProvider(LLMProvider):
                     error_text = error_body.decode(errors="replace")[:500]
                     logger.error(
                         "[OpenAIProvider] upstream stream error status=%s body=%s",
-                        response.status_code, error_text,
+                        response.status_code,
+                        error_text,
                     )
                     if response.status_code == 401:
                         raise AuthenticationError(
@@ -1015,7 +1002,8 @@ class OpenAIProvider(LLMProvider):
 
             if request.enable_thinking or is_always_thinking:
                 if "thinking" not in body:
-                    body["thinking"] = {"type": "enabled"}
+                    thinking_type = "adaptive" if is_minimax else "enabled"
+                    body["thinking"] = {"type": thinking_type}
                 if request.thinking_depth:
                     effort = reasoning_effort_for_depth(
                         provider=self.config.provider,
@@ -1091,9 +1079,7 @@ class OpenAIProvider(LLMProvider):
                             if _blocks:
                                 _msgs[0] = {"role": "system", "content": _blocks}
             except Exception as _cache_err:
-                logger.debug(
-                    f"[CACHE] DashScope cache_control injection skipped: {_cache_err}"
-                )
+                logger.debug(f"[CACHE] DashScope cache_control injection skipped: {_cache_err}")
 
         return body
 
@@ -1123,9 +1109,7 @@ class OpenAIProvider(LLMProvider):
         if isinstance(value, str):
             return value.strip()
         if isinstance(value, list):
-            return "".join(
-                OpenAIProvider._extract_text_value(item) for item in value
-            ).strip()
+            return "".join(OpenAIProvider._extract_text_value(item) for item in value).strip()
         if isinstance(value, dict):
             for key in (
                 "text",
@@ -1143,7 +1127,9 @@ class OpenAIProvider(LLMProvider):
                         return recovered
         return ""
 
-    def _recover_empty_content_text(self, message: dict, choice: dict, data: dict) -> tuple[str, str]:
+    def _recover_empty_content_text(
+        self, message: dict, choice: dict, data: dict
+    ) -> tuple[str, str]:
         """Recover visible text from compatibility gateways with empty message.content.
 
         PR-C1: extended to cover the dashscope OpenAI-compat gateway, which
@@ -1224,9 +1210,7 @@ class OpenAIProvider(LLMProvider):
         )
 
         if content_blocks:
-            logger.info(
-                f"[PARSE] Parsed Responses API format: {len(text)} chars from {self.name}"
-            )
+            logger.info(f"[PARSE] Parsed Responses API format: {len(text)} chars from {self.name}")
         else:
             logger.warning(
                 f"[PARSE] Responses API format detected but no text extracted from {self.name}, "
@@ -1369,9 +1353,7 @@ class OpenAIProvider(LLMProvider):
         # ── pull usage early so empty-content fallbacks below can reference token counts ──
         usage_data = data.get("usage", {})
         _out_tokens = int(
-            usage_data.get("output_tokens")
-            or usage_data.get("completion_tokens")
-            or 0
+            usage_data.get("output_tokens") or usage_data.get("completion_tokens") or 0
         )
 
         # Reasoning 模型容错：content 为空但 reasoning 有内容
@@ -1675,4 +1657,3 @@ class OpenAIProvider(LLMProvider):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
-

@@ -12,4 +12,3 @@ from .judge import Judge
 from .runner import TestRunner
 
 __all__ = ["TestRunner", "Judge", "CodeFixer"]
-

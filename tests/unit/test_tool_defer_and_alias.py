@@ -54,7 +54,9 @@ class _StubCatalog(ToolCatalog):
 
 
 def _stub(tool_names: list[str]) -> _StubCatalog:
-    return _StubCatalog({n: {"name": n, "description": "x", "input_schema": {}} for n in tool_names})
+    return _StubCatalog(
+        {n: {"name": n, "description": "x", "input_schema": {}} for n in tool_names}
+    )
 
 
 def test_resolve_tool_alias_hyphen_to_underscore():

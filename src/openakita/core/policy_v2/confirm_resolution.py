@@ -84,16 +84,12 @@ def apply_resolution(confirm_id: str, decision: str) -> bool:
     needs_sandbox = bool(resolved.get("needs_sandbox", False))
 
     if final_decision in ("allow_session", "sandbox", "allow_always"):
-        get_session_allowlist_manager().add(
-            tool_name, params, needs_sandbox=needs_sandbox
-        )
+        get_session_allowlist_manager().add(tool_name, params, needs_sandbox=needs_sandbox)
 
     if final_decision == "allow_always":
         try:
             engine = get_engine_v2()
-            engine.user_allowlist.add_entry(
-                tool_name, params, needs_sandbox=needs_sandbox
-            )
+            engine.user_allowlist.add_entry(tool_name, params, needs_sandbox=needs_sandbox)
             engine.user_allowlist.save_to_yaml()
         except Exception as exc:
             logger.warning(

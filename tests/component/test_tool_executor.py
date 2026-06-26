@@ -220,4 +220,3 @@ async def test_tool_hard_timeout_marks_tool_result_as_error():
     assert executed == []
     assert tool_results[0]["is_error"] is True
     assert "工具执行被中断" in tool_results[0]["content"]
-

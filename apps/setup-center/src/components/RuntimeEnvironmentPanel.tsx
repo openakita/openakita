@@ -49,6 +49,8 @@ export type RuntimeEnvironmentPanelProps = {
     running: boolean;
     pid: number | null;
     pidFile: string;
+    managedBy?: "tauri" | "external" | "unknown";
+    isManagedChild?: boolean;
     port?: number;
     heartbeatPhase?: string;
     heartbeatReady?: boolean;

@@ -13,6 +13,17 @@ from typing import Any
 import aiosqlite
 from word_models import DOC_TYPES, PROJECT_STATUSES, ProjectSpec
 
+
+def source_path_key(path: str) -> str:
+    """Normalize source paths so uploads/foo and absolute .../uploads/foo match."""
+    normalized = str(path).replace("\\", "/").strip().lower()
+    for marker in ("/uploads/", "uploads/"):
+        idx = normalized.find(marker)
+        if idx >= 0:
+            return normalized[idx + 1 :] if marker.startswith("/") else normalized[idx:]
+    return normalized
+
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS projects (
     id                  TEXT PRIMARY KEY,
@@ -77,6 +88,7 @@ CREATE INDEX IF NOT EXISTS idx_versions_project ON draft_versions(project_id, ve
 PROJECT_WRITABLE = frozenset(
     {
         "title",
+        "doc_type",
         "audience",
         "tone",
         "language",
@@ -289,6 +301,21 @@ class WordTaskManager:
         shutil.rmtree(self.project_dir(project_id), ignore_errors=True)
         return cursor.rowcount > 0
 
+    async def find_source_by_path(self, project_id: str, path: str) -> dict[str, Any] | None:
+        await self.init()
+        assert self._db is not None
+        key = source_path_key(path)
+        async with self._db.execute(
+            "SELECT * FROM sources WHERE project_id = ? ORDER BY created_at ASC",
+            (project_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        for item in rows:
+            row = _source_row(item)
+            if row and source_path_key(str(row.get("path") or "")) == key:
+                return row
+        return None
+
     async def add_source(
         self,
         project_id: str,
@@ -302,6 +329,9 @@ class WordTaskManager:
     ) -> dict[str, Any]:
         await self.init()
         assert self._db is not None
+        existing = await self.find_source_by_path(project_id, path)
+        if existing is not None:
+            return existing
         source_id = _new_id("src")
         await self._db.execute(
             """
@@ -336,7 +366,63 @@ class WordTaskManager:
             (project_id,),
         ) as cursor:
             rows = await cursor.fetchall()
-        return [row for row in (_source_row(item) for item in rows) if row is not None]
+        parsed = [row for row in (_source_row(item) for item in rows) if row is not None]
+        seen: set[str] = set()
+        unique: list[dict[str, Any]] = []
+        for row in parsed:
+            key = source_path_key(str(row.get("path") or ""))
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            unique.append(row)
+        return unique
+
+    async def latest_template(self, project_id: str) -> dict[str, Any] | None:
+        await self.init()
+        assert self._db is not None
+        async with self._db.execute(
+            "SELECT * FROM templates WHERE project_id = ? ORDER BY created_at DESC LIMIT 1",
+            (project_id,),
+        ) as cursor:
+            return _template_row(await cursor.fetchone())
+
+    async def list_templates(self, project_id: str) -> list[dict[str, Any]]:
+        await self.init()
+        assert self._db is not None
+        async with self._db.execute(
+            "SELECT * FROM templates WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [row for row in (_template_row(item) for item in rows) if row is not None]
+
+    async def delete_project_template(
+        self,
+        project_id: str,
+        *,
+        template_path: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Remove template record(s) for a project. If template_path is set, only matching paths."""
+        await self.init()
+        assert self._db is not None
+        target_key = source_path_key(template_path) if template_path else None
+        deleted: list[dict[str, Any]] = []
+        async with self._db.execute(
+            "SELECT * FROM templates WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        for item in rows:
+            row = _template_row(item)
+            if row is None:
+                continue
+            if target_key is not None and source_path_key(str(row.get("path") or "")) != target_key:
+                continue
+            await self._db.execute("DELETE FROM templates WHERE id = ?", (row["id"],))
+            deleted.append(row)
+        if deleted:
+            await self._db.commit()
+        return deleted
 
     async def add_template(
         self,

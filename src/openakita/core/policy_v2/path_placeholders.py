@@ -110,10 +110,7 @@ def resolve_path_list(
     workspace: Path | None = None,
 ) -> list[str]:
     """Apply :func:`resolve_path_template` to every entry in ``paths``."""
-    return [
-        resolve_path_template(p, cwd=cwd, home=home, workspace=workspace)
-        for p in paths
-    ]
+    return [resolve_path_template(p, cwd=cwd, home=home, workspace=workspace) for p in paths]
 
 
 __all__ = [

@@ -44,6 +44,7 @@ def _default_store_path() -> Path:
     """Return the default path for ``skill_categories.json``."""
     try:
         from openakita.config import settings
+
         return settings.project_root / "data" / "skills" / "skill_categories.json"
     except Exception:
         return Path.cwd() / "data" / "skills" / "skill_categories.json"
@@ -221,11 +222,13 @@ class CategoryStore:
             for c in self._data["categories"]:
                 if c["name"] == name:
                     return False
-            self._data["categories"].append({
-                "name": name,
-                "description": description,
-                "skills": [],
-            })
+            self._data["categories"].append(
+                {
+                    "name": name,
+                    "description": description,
+                    "skills": [],
+                }
+            )
             self._save()
             return True
 
@@ -258,9 +261,7 @@ class CategoryStore:
         """删除分类并清除其下所有 skills 归属。"""
         with self._lock:
             before = len(self._data["categories"])
-            self._data["categories"] = [
-                c for c in self._data["categories"] if c["name"] != name
-            ]
+            self._data["categories"] = [c for c in self._data["categories"] if c["name"] != name]
             if len(self._data["categories"]) == before:
                 return False
             self._save()

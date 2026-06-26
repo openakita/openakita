@@ -70,7 +70,9 @@ _CATEGORY_MESSAGES: dict[ErrorCategory, str] = {
 
 
 _WINDOWS_PATH_RE = re.compile(r"[A-Za-z]:\\[^\s`'\"<>]+")
-_TRACEBACK_RE = re.compile(r"(?i)(traceback \(most recent call last\)|\n\s*file \"[^\"]+\", line \d+)")
+_TRACEBACK_RE = re.compile(
+    r"(?i)(traceback \(most recent call last\)|\n\s*file \"[^\"]+\", line \d+)"
+)
 
 
 def _format_local_permission_error(error: str, lower: str) -> str | None:

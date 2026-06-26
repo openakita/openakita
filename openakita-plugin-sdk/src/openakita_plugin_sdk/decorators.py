@@ -87,9 +87,7 @@ def hook(hook_name: str) -> Callable:
     from .hooks import HOOK_NAMES
 
     if hook_name not in HOOK_NAMES:
-        raise ValueError(
-            f"Unknown hook '{hook_name}'. Valid hooks: {sorted(HOOK_NAMES)}"
-        )
+        raise ValueError(f"Unknown hook '{hook_name}'. Valid hooks: {sorted(HOOK_NAMES)}")
 
     def decorator(fn: Callable) -> Callable:
         fn.__openakita_hook__ = hook_name  # type: ignore[attr-defined]
@@ -170,4 +168,3 @@ def clear_registries() -> None:
     """Clear global decorator registries. Useful between tests."""
     _TOOL_REGISTRY.clear()
     _HOOK_REGISTRY.clear()
-

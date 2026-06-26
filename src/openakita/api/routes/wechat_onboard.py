@@ -48,4 +48,3 @@ async def onboard_poll(body: PollRequest):
     except Exception as e:
         logger.error(f"WeChat onboard poll failed: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": str(e)})
-

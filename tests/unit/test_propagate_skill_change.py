@@ -30,9 +30,7 @@ def _build_fake_agent(*, initialized: bool = True, ctx_system: str | None = "old
 
     fake = SimpleNamespace()
     fake.skill_loader = MagicMock()
-    fake.skill_loader.compute_effective_allowlist = MagicMock(
-        return_value={"a", "b"}
-    )
+    fake.skill_loader.compute_effective_allowlist = MagicMock(return_value={"a", "b"})
     fake.skill_loader.prune_external_by_allowlist = MagicMock()
     fake.skill_loader.load_all = MagicMock(return_value=2)
 
@@ -57,9 +55,7 @@ def _build_fake_agent(*, initialized: bool = True, ctx_system: str | None = "old
     # 绑定真实的 propagate_skill_change：MethodType 让 self=fake
     import types
 
-    fake.propagate_skill_change = types.MethodType(
-        Agent.propagate_skill_change, fake
-    )
+    fake.propagate_skill_change = types.MethodType(Agent.propagate_skill_change, fake)
 
     return fake
 
@@ -82,12 +78,8 @@ def patched_env(monkeypatch, tmp_path):
     notify_pools_mock = MagicMock()
     notify_changed_mock = MagicMock()
 
-    monkeypatch.setattr(
-        "openakita.skills.watcher.clear_all_skill_caches", clear_caches_mock
-    )
-    monkeypatch.setattr(
-        "openakita.skills.allowlist_io.read_allowlist", read_allowlist_mock
-    )
+    monkeypatch.setattr("openakita.skills.watcher.clear_all_skill_caches", clear_caches_mock)
+    monkeypatch.setattr("openakita.skills.allowlist_io.read_allowlist", read_allowlist_mock)
     monkeypatch.setattr(
         "openakita.skills.preset_utils.collect_preset_referenced_skills",
         collect_skills_mock,
@@ -96,9 +88,7 @@ def patched_env(monkeypatch, tmp_path):
         "openakita.core._agent_legacy.Agent.notify_pools_skills_changed",
         staticmethod(notify_pools_mock),
     )
-    monkeypatch.setattr(
-        "openakita.skills.events.notify_skills_changed", notify_changed_mock
-    )
+    monkeypatch.setattr("openakita.skills.events.notify_skills_changed", notify_changed_mock)
 
     return SimpleNamespace(
         clear_caches=clear_caches_mock,

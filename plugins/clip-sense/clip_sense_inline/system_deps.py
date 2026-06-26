@@ -70,6 +70,7 @@ def _is_root() -> bool:
 # net), merging anything new into os.environ["PATH"] for the current
 # process. This is purely additive — we never shrink PATH.
 
+
 def _read_registry_path_windows() -> str:
     """Concatenate HKLM\\System Env Path + HKCU\\Environment Path.
 
@@ -175,7 +176,7 @@ class InstallMethod:
     """One platform-specific install recipe."""
 
     platform: Platform
-    strategy: str          # "winget" | "brew" | "apt" | "dnf" | "manual"
+    strategy: str  # "winget" | "brew" | "apt" | "dnf" | "manual"
     command: tuple[str, ...] | None
     description: str
     requires_sudo: bool = False
@@ -232,8 +233,13 @@ _FFMPEG = DepSpec(
             platform="windows",
             strategy="winget",
             command=(
-                "winget", "install", "--id", "Gyan.FFmpeg",
-                "-e", "--accept-source-agreements", "--accept-package-agreements",
+                "winget",
+                "install",
+                "--id",
+                "Gyan.FFmpeg",
+                "-e",
+                "--accept-source-agreements",
+                "--accept-package-agreements",
             ),
             description="Install FFmpeg via Windows Package Manager (winget).",
             requires_sudo=False,
@@ -331,8 +337,8 @@ class _RunState:
     finished_at: float = 0.0
     return_code: int | None = None
     method_strategy: str = ""
-    op_kind: str = ""              # "install" | "uninstall" | ""
-    install_error: str = ""        # historical name; reused for uninstall errors
+    op_kind: str = ""  # "install" | "uninstall" | ""
+    install_error: str = ""  # historical name; reused for uninstall errors
     log_tail: deque[str] = field(default_factory=lambda: deque(maxlen=50))
     _proc: asyncio.subprocess.Process | None = None
     _drain_task: asyncio.Task[Any] | None = None
@@ -434,7 +440,11 @@ class SystemDepsManager:
         argv = (location,) + tuple(spec.version_argv[1:])
         try:
             proc = subprocess.run(
-                argv, capture_output=True, text=True, timeout=5, check=False,
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
             )
         except Exception as exc:
             logger.debug("Version probe for %s failed: %s", spec.id, exc)
@@ -480,16 +490,18 @@ class SystemDepsManager:
             self.detect(dep_id, force=True)
             spec = _SPECS[dep_id]
             st = self._state[dep_id]
-            items.append({
-                **self._detect_dict(spec, st),
-                "description": spec.description,
-                "platform": self._platform,
-                "is_root": _is_root(),
-                "methods": self.methods(dep_id),
-                "uninstall_methods": self.uninstall_methods(dep_id),
-                "busy": st.busy,
-                "last_install": self._install_dict(st),
-            })
+            items.append(
+                {
+                    **self._detect_dict(spec, st),
+                    "description": spec.description,
+                    "platform": self._platform,
+                    "is_root": _is_root(),
+                    "methods": self.methods(dep_id),
+                    "uninstall_methods": self.uninstall_methods(dep_id),
+                    "busy": st.busy,
+                    "last_install": self._install_dict(st),
+                }
+            )
         return items
 
     # ── Installation / Uninstallation ──────────────────────────────────
@@ -631,6 +643,7 @@ class SystemDepsManager:
         st = self._state[dep_id]
         async with lock:
             try:
+
                 async def pump(reader: asyncio.StreamReader | None, _label: str) -> None:
                     if reader is None:
                         return
@@ -736,7 +749,10 @@ class SystemDepsManager:
         return spec
 
     def _resolve_method(
-        self, spec: DepSpec, public: dict[str, Any], op_kind: str = "install",
+        self,
+        spec: DepSpec,
+        public: dict[str, Any],
+        op_kind: str = "install",
     ) -> InstallMethod | None:
         """Match a public method-dict back to the original ``InstallMethod``.
 

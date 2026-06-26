@@ -92,6 +92,17 @@ class ChatRequest(BaseModel):
         None,
         description="Unique client/tab identifier for multi-device busy-lock coordination.",
     )
+    turn_id: str | None = Field(
+        None,
+        description=(
+            "Per-turn idempotency key (v1.27.14, plan v1.28 S1.6). "
+            "Identical turn_id replayed within ~60s returns 409 turn_already_processing "
+            "to avoid duplicate streams on flaky networks / SSE reconnects. "
+            "Optional; missing means no idempotency short-circuit."
+        ),
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_\-:.@]{0,128}$",
+    )
 
 
 class AttachmentInfo(BaseModel):

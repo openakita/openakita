@@ -415,6 +415,7 @@ class RuntimeSupervisor:
             return False
         try:
             from openakita.config import settings as _s
+
             return bool(getattr(_s, "org_supervisor_poll_whitelist", True))
         except Exception:
             return True
@@ -473,9 +474,7 @@ class RuntimeSupervisor:
         sig_is_poll = self._is_poll_friendly(_tail_tool)
         # poll-friendly tools 用放宽后的 warn 阈值触发 NUDGE；TERMINATE / STRATEGY_SWITCH
         # 路径直接通过 ``not sig_is_poll`` 兜底跳过，无需单独阈值。
-        poll_warn_threshold = (
-            self._signature_repeat_warn * POLL_REPEAT_MULTIPLIER
-        )
+        poll_warn_threshold = self._signature_repeat_warn * POLL_REPEAT_MULTIPLIER
 
         # --- TERMINATE / STRATEGY_SWITCH 仅基于精确签名重复 ---
         # 历史上曾用 top_count（按工具名聚合）触发 TERMINATE，会把 "agent 写 5 个
@@ -588,9 +587,7 @@ class RuntimeSupervisor:
             if result_text:
                 for pat in KNOWN_ERROR_PATTERNS:
                     if pat in result_text:
-                        tool_known_error_failures[name] = (
-                            tool_known_error_failures.get(name, 0) + 1
-                        )
+                        tool_known_error_failures[name] = tool_known_error_failures.get(name, 0) + 1
                         # 记一条样本用于提示文案，避免过长
                         if name not in tool_known_error_sample:
                             tool_known_error_sample[name] = result_text[:160]
@@ -850,4 +847,3 @@ class RuntimeSupervisor:
                 (e.level for e in self._events), default=InterventionLevel.NONE
             ).name,
         }
-

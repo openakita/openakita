@@ -116,7 +116,7 @@ def split_static_dynamic(prompt: str) -> tuple[str, str]:
     if SYSTEM_PROMPT_DYNAMIC_BOUNDARY in prompt:
         idx = prompt.index(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)
         static = prompt[:idx].rstrip()
-        dynamic = prompt[idx + len(SYSTEM_PROMPT_DYNAMIC_BOUNDARY):].lstrip()
+        dynamic = prompt[idx + len(SYSTEM_PROMPT_DYNAMIC_BOUNDARY) :].lstrip()
         return static, dynamic
     return prompt, ""
 
@@ -326,8 +326,8 @@ _SAFETY_SECTION = """\
 - 告诉用户你记得他什么（USER.md 的内容）、当前所处的目录结构
 - 说明为什么某个操作做不了（缺哪个工具/技能/凭据）
 
-不需要把内部配置文件原文整段贴出来，但**不要装神秘**——OpenAkita 是开源项目，\
-源码和默认配置在 GitHub 上公开。
+不需要把内部配置文件原文整段贴出来，但**不要装神秘**——运行平台/上游项目 \
+OpenAkita 是开源项目，源码和默认配置在 GitHub 上公开。
 
 ## 解释失败的语气
 当工具调用因配置缺失、凭据不足、模式限制等原因没法执行时：
@@ -505,6 +505,7 @@ def build_system_prompt(
     catalog_scope: list[str] | None = None,
     include_project_guidelines: bool | None = None,
     intent_tool_hints: list[str] | None = None,
+    agent_voice: str = "",
 ) -> str:
     """
     组装系统提示词
@@ -529,6 +530,8 @@ def build_system_prompt(
         model_id: 模型标识（用于 per-model 基础 prompt）
         prompt_profile: 产品场景 profile（None 回退到 LOCAL_AGENT）
         prompt_tier: 上下文窗口分档（None 回退到 LARGE）
+        agent_voice: 当前 Agent 的显示名，用于替换 SOUL.md / NONE-mode 中的
+            ``{{agent_name}}`` 占位符。空字符串时回退到 "OpenAkita"。
 
     Returns:
         完整的系统提示词
@@ -555,7 +558,12 @@ def build_system_prompt(
     if prompt_mode is None:
         prompt_mode = PromptMode.MINIMAL if is_sub_agent else PromptMode.FULL
 
-    logger.debug("build_system_prompt: profile=%s, tier=%s, mode=%s", _profile.value, _tier.value, prompt_mode.value)
+    logger.debug(
+        "build_system_prompt: profile=%s, tier=%s, mode=%s",
+        _profile.value,
+        _tier.value,
+        prompt_mode.value,
+    )
 
     system_parts: list[str] = []
     developer_parts: list[str] = []
@@ -563,7 +571,7 @@ def build_system_prompt(
     user_parts: list[str] = []
 
     # 1. Per-model base prompt
-    base_prompt = _select_base_prompt(model_id)
+    base_prompt = _select_base_prompt(model_id, agent_voice=agent_voice)
     if base_prompt:
         system_parts.append(base_prompt)
 
@@ -602,6 +610,7 @@ def build_system_prompt(
                     prompt_mode == PromptMode.FULL
                     and (tools_enabled or bool(_catalog_scope - {"index"}))
                 ),
+                agent_voice=agent_voice,
             ),
             force_recompute=True,
         )
@@ -619,7 +628,7 @@ def build_system_prompt(
                 system_parts.append(persona_section)
 
     elif prompt_mode == PromptMode.NONE:
-        system_parts.append("你是 OpenAkita，一个 AI 助手。")
+        system_parts.append(f"你是 {_resolve_agent_voice(agent_voice)}，一个 AI 助手。")
 
     # 5. Mode Rules（Ask/Plan/Agent 模式专属规则）
     mode_rules = build_mode_rules(mode)
@@ -648,9 +657,7 @@ def build_system_prompt(
             and isinstance(session_context, dict)
             and session_context.get("authorized_intent")
         ):
-            auth_section = _build_authorized_intent_section(
-                session_context["authorized_intent"]
-            )
+            auth_section = _build_authorized_intent_section(session_context["authorized_intent"])
             if auth_section:
                 system_parts.append(auth_section)
     except Exception:
@@ -689,7 +696,11 @@ def build_system_prompt(
 
     # 8. 项目 AGENTS.md（FULL 和 MINIMAL 都注入；ask 模式和 CONSUMER_CHAT
     #    profile 跳过——纯聊天/轻量问答不需要开发规范）
-    if prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL) and mode != "ask" and _include_project_guidelines:
+    if (
+        prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL)
+        and mode != "ask"
+        and _include_project_guidelines
+    ):
         agents_md_content = _cached_section("agents_md", _read_agents_md)
         if agents_md_content:
             from ..utils.context_scan import scan_context_content
@@ -736,7 +747,8 @@ def build_system_prompt(
             elif _profile == PromptProfile.IM_ASSISTANT:
                 _hint_exp = "core+recommended"
             rec_hint = skill_catalog.generate_recommendation_hint(
-                task_description, exposure_filter=_hint_exp,
+                task_description,
+                exposure_filter=_hint_exp,
             )
             if rec_hint:
                 tool_parts.append(rec_hint)
@@ -771,16 +783,17 @@ def build_system_prompt(
             logger.debug("Failed to build failure hint section: %s", e)
 
     # 10. Memory 层。pinned_only 是轻量记忆，不应等同于完全不注入记忆。
-    if _memory_scope in {"pinned_only", "relevant", "full"} and prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL):
+    if _memory_scope in {"pinned_only", "relevant", "full"} and prompt_mode in (
+        PromptMode.FULL,
+        PromptMode.MINIMAL,
+    ):
         if precomputed_memory is not None:
             memory_section = precomputed_memory
         else:
-            effective_memory_budget, skip_experience, skip_relational = (
-                _adaptive_memory_budget(
-                    budget_config.memory_budget,
-                    user_input_tokens,
-                    context_window,
-                )
+            effective_memory_budget, skip_experience, skip_relational = _adaptive_memory_budget(
+                budget_config.memory_budget,
+                user_input_tokens,
+                context_window,
             )
             # Phase 5：compact Memory Guide 设为默认（节省 ~600 token/轮）。
             # 完整版只在以下场景才用：
@@ -790,9 +803,7 @@ def build_system_prompt(
             # 也是用户最容易感知"慢"的地方。
             _verbose_env = os.environ.get("OPENAKITA_PROMPT_VERBOSE_MEMORY_GUIDE", "").strip()
             _verbose_override = _verbose_env in {"1", "true", "yes", "on"}
-            _eligible_for_full = (
-                _profile == PromptProfile.LOCAL_AGENT and _tier == PromptTier.LARGE
-            )
+            _eligible_for_full = _profile == PromptProfile.LOCAL_AGENT and _tier == PromptTier.LARGE
             _use_compact = not (_verbose_override or _eligible_for_full)
             memory_section = _build_memory_section(
                 memory_manager=memory_manager,
@@ -915,7 +926,7 @@ def _build_persona_section(persona_manager: "PersonaManager") -> str:
         return ""
 
 
-def _select_base_prompt(model_id: str) -> str:
+def _select_base_prompt(model_id: str, agent_voice: str = "") -> str:
     """根据模型 ID 选择 per-model 基础提示词。
 
     查找 prompt/models/ 目录下的 .txt 文件，按模型族匹配。
@@ -946,9 +957,10 @@ def _select_base_prompt(model_id: str) -> str:
         return ""
 
     try:
-        return prompt_file.read_text(encoding="utf-8").strip()
+        text = prompt_file.read_text(encoding="utf-8").strip()
     except Exception:
         return ""
+    return _apply_agent_voice(text, agent_voice)
 
 
 def build_mode_rules(mode: str) -> str:
@@ -1113,21 +1125,64 @@ def _read_with_fallback(path: Path, fallback_key: str) -> str:
     return fallback
 
 
+_AGENT_VOICE_PLACEHOLDER = "{{agent_name}}"
+_DEFAULT_AGENT_VOICE = "OpenAkita"
+_DEFAULT_BASE_PROMPT_SELF_INTRO = "你是 OpenAkita，一个帮助用户完成各类任务的 AI 助手。"
+
+
+def _resolve_agent_voice(agent_voice: str | None) -> str:
+    """Pick a non-empty agent voice for SOUL.md / NONE-mode placeholder substitution.
+
+    Returns the caller's value when it has any visible characters, otherwise
+    falls back to the legacy product name so the prompt remains grammatical for
+    callers that have not yet plumbed the AgentProfile through (e.g.
+    identity.IdentityManager._build_compiled_prompt).
+    """
+    if isinstance(agent_voice, str):
+        stripped = agent_voice.strip()
+        if stripped:
+            return stripped
+    return _DEFAULT_AGENT_VOICE
+
+
+def _apply_agent_voice(text: str, agent_voice: str | None) -> str:
+    """Apply the current Agent display name to prompt self-reference text."""
+    resolved = _resolve_agent_voice(agent_voice)
+    return text.replace(_AGENT_VOICE_PLACEHOLDER, resolved).replace(
+        _DEFAULT_BASE_PROMPT_SELF_INTRO,
+        f"你是 {resolved}，一个帮助用户完成各类任务的 AI 助手。",
+    )
+
+
 def _build_identity_section(
     compiled: dict[str, str],
     identity_dir: Path,
     tools_enabled: bool,
     budget_tokens: int,
     include_tooling: bool = False,
+    agent_voice: str = "",
 ) -> str:
     """构建 Identity 层。
 
     常规 prompt 只注入编译后的短身份核心，避免 SOUL/AGENT 长文反复进入每轮请求。
+
+    ``agent_voice`` 用于把 SOUL.md / identity.core.md 里的 ``{{agent_name}}``
+    占位符替换为当前 Agent 的显示名，避免 SOUL.md 把所有 Agent 都钉死在
+    "OpenAkita" 这一个自称上。空字符串时回退到 ``_DEFAULT_AGENT_VOICE``。
     """
     parts = []
 
-    parts.append("# OpenAkita System")
+    parts.append("# Agent Identity")
     parts.append("")
+
+    resolved_voice = _resolve_agent_voice(agent_voice)
+    if resolved_voice != _DEFAULT_AGENT_VOICE:
+        parts.append(
+            f"当前 Agent 的自称是「{resolved_voice}」。OpenAkita 仅指运行平台或上游"
+            "开源项目，不是当前 Agent 的自称；除非身份文件明确要求，不要把自己"
+            "介绍为 OpenAkita。"
+        )
+        parts.append("")
 
     identity_core = compiled.get("identity_core") or _BUILT_IN_DEFAULTS.get("soul", "")
     if identity_core:
@@ -1135,7 +1190,11 @@ def _build_identity_section(
         parts.append(result.content)
         parts.append("")
 
-    agent_behavior = compiled.get("agent_behavior") or compiled.get("agent_core") or _BUILT_IN_DEFAULTS.get("agent_core", "")
+    agent_behavior = (
+        compiled.get("agent_behavior")
+        or compiled.get("agent_core")
+        or _BUILT_IN_DEFAULTS.get("agent_core", "")
+    )
     if agent_behavior:
         result = apply_budget(agent_behavior.strip(), budget_tokens * 40 // 100, "agent_behavior")
         parts.append(result.content)
@@ -1161,7 +1220,8 @@ def _build_identity_section(
         except Exception:
             pass
 
-    return "\n".join(parts)
+    text = "\n".join(parts)
+    return _apply_agent_voice(text, agent_voice)
 
 
 def _get_current_time(timezone_name: str = "Asia/Shanghai") -> str:
@@ -1447,9 +1507,7 @@ def _build_authorized_intent_section(intent: dict) -> str:
             "请直接调用 `run_powershell` / `run_shell` 执行用户指定的命令，"
             "不要再次询问用户。**禁止**扩大命令范围或递归扫描。"
         ),
-        "skill_install": (
-            "请调用 `install_skill` 工具，参数从 scope 中读取。"
-        ),
+        "skill_install": ("请调用 `install_skill` 工具，参数从 scope 中读取。"),
     }
     op_hint = op_hint_map.get(op, "请按 scope 指定的最小范围执行；不得扩大。")
 
@@ -1598,7 +1656,9 @@ def _build_python_info(
             ]
         )
     if legacy_mode:
-        lines.append("- **兼容模式**: 当前使用 legacy PyInstaller fallback，动态 pip install 可能不可靠")
+        lines.append(
+            "- **兼容模式**: 当前使用 legacy PyInstaller fallback，动态 pip install 可能不可靠"
+        )
     lines.extend(
         [
             "",
@@ -1866,6 +1926,7 @@ def _build_catalogs_section(
             # 仅名字。LLM 仍能通过 get_skill_info 拉详情，但首轮 prompt
             # 显著瘦身。priority_categories=() 时退化为旧行为。
             from .budget import intent_to_priority_categories
+
             _priority_cats = intent_to_priority_categories(intent_tool_hints)
 
             if _index_only:
@@ -1898,9 +1959,7 @@ def _build_catalogs_section(
                 "- **重要**：当前日期时间已写在「运行环境」里，禁止为了查日期而调用技能脚本\n"
             )
 
-            parts.append(
-                "\n\n".join([skills_grouped, skills_rule]).strip()
-            )
+            parts.append("\n\n".join([skills_grouped, skills_rule]).strip())
         except Exception as e:
             logger.error(
                 "[PromptBuilder] skill catalog build failed, skipping: %s",
@@ -1909,7 +1968,9 @@ def _build_catalogs_section(
             )
 
     elif skill_catalog and _scope:
-        parts.append("## Skills\n\n技能可通过 `tool_search` / `get_skill_info` 按需发现，当前请求未注入完整技能清单。")
+        parts.append(
+            "## Skills\n\n技能可通过 `tool_search` / `get_skill_info` 按需发现，当前请求未注入完整技能清单。"
+        )
 
     if plugin_catalog and (not _scope or _scope & {"plugins", "plugin"}):
         try:
@@ -1947,7 +2008,9 @@ def _build_catalogs_section(
             )
 
     elif mcp_catalog and _scope:
-        parts.append("## MCP\n\nMCP 外部服务按需披露；需要时先用 `tool_search` 或 MCP catalog 查询。")
+        parts.append(
+            "## MCP\n\nMCP 外部服务按需披露；需要时先用 `tool_search` 或 MCP catalog 查询。"
+        )
 
     if include_tools_guide:
         parts.append(_get_tools_guide_short())
@@ -2570,7 +2633,9 @@ def _build_experience_section(
         return ""
 
 
-def _retrieve_relevant_experiences(memory_manager: Any, task_description: str, max_items: int) -> list:
+def _retrieve_relevant_experiences(
+    memory_manager: Any, task_description: str, max_items: int
+) -> list:
     """Semantic search for experiences relevant to the current task."""
     try:
         search_visible = getattr(memory_manager, "search_visible_semantic_scored", None)
@@ -2774,9 +2839,7 @@ def get_prompt_debug_info(
         except Exception:
             skills_grouped = skill_catalog.get_catalog()
         _skills_rule_overhead = 200
-        info["catalogs"]["skills"] = (
-            estimate_tokens(skills_grouped) + _skills_rule_overhead
-        )
+        info["catalogs"]["skills"] = estimate_tokens(skills_grouped) + _skills_rule_overhead
 
     if mcp_catalog:
         mcp_text = mcp_catalog.get_catalog()
@@ -2805,4 +2868,3 @@ def get_prompt_debug_info(
     }
 
     return info
-

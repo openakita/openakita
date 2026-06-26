@@ -27,8 +27,16 @@ async def main() -> None:
     agent.set_interrupt_enabled(False)
 
     tool_calls = [
-        {"id": "t1", "name": "run_shell", "input": {"command": "python -c \"import time; time.sleep(2); print('A')\""}},
-        {"id": "t2", "name": "run_shell", "input": {"command": "python -c \"import time; time.sleep(2); print('B')\""}},
+        {
+            "id": "t1",
+            "name": "run_shell",
+            "input": {"command": "python -c \"import time; time.sleep(2); print('A')\""},
+        },
+        {
+            "id": "t2",
+            "name": "run_shell",
+            "input": {"command": "python -c \"import time; time.sleep(2); print('B')\""},
+        },
     ]
 
     t0 = time.time()
@@ -47,5 +55,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-

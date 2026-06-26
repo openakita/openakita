@@ -144,4 +144,3 @@ CODE_SEARCH_TESTS = [
 
 def get_tests() -> list[TestCase]:
     return CODE_SEARCH_TESTS
-

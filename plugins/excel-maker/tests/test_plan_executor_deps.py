@@ -41,4 +41,3 @@ def test_formula_generation_starts_with_equals() -> None:
 
     assert suggestion.formula.startswith("=")
     assert "SUMIFS" in suggestion.formula
-

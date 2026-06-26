@@ -11,7 +11,7 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '_shared'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_shared"))
 from baidu_appbuilder import parse_common_args, run_skill_query
 
 
@@ -27,8 +27,7 @@ def build_search_query(keywords: str, year: str = "", sort: str = "") -> str:
 
 def build_cite_query(paper_title: str) -> str:
     return (
-        f"请查询论文《{paper_title}》的引用关系，"
-        "包括引用该论文的文献列表和该论文引用的参考文献。"
+        f"请查询论文《{paper_title}》的引用关系，包括引用该论文的文献列表和该论文引用的参考文献。"
     )
 
 
@@ -39,8 +38,9 @@ def main() -> None:
     p_search = sub.add_parser("search", help="搜索学术论文")
     p_search.add_argument("keywords", help="搜索关键词")
     p_search.add_argument("--year", default="", help="限定年份，如 2024")
-    p_search.add_argument("--sort", default="", choices=["relevance", "citation", "date"],
-                          help="排序方式")
+    p_search.add_argument(
+        "--sort", default="", choices=["relevance", "citation", "date"], help="排序方式"
+    )
 
     p_cite = sub.add_parser("cite", help="查询论文引用关系")
     p_cite.add_argument("paper_title", help="论文标题")
@@ -57,4 +57,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -89,6 +89,20 @@ def test_publish_request_minimal() -> None:
     assert body.auto_submit is True
 
 
+def test_publish_request_allows_mp_without_asset_or_accounts() -> None:
+    body = PublishRequest.model_validate(
+        {
+            "payload": {"title": "t", "description": "body"},
+            "platforms": ["wechat_mp"],
+            "account_ids": [],
+            "client_trace_id": "trace-mp",
+            "engine": "mp",
+        }
+    )
+    assert body.asset_id is None
+    assert body.account_ids == []
+
+
 def test_schedule_request_requires_scheduled_at() -> None:
     with pytest.raises(ValidationError):
         ScheduleRequest.model_validate(

@@ -35,11 +35,15 @@ def test_session_create_and_messages():
     assert session.channel == "cli", f"Expected channel='cli', got '{session.channel}'"
     assert session.chat_id == "cli", f"Expected chat_id='cli', got '{session.chat_id}'"
     assert session.user_id == "user", f"Expected user_id='user', got '{session.user_id}'"
-    assert session.id.startswith("cli_cli_"), f"Session ID should start with 'cli_cli_', got '{session.id}'"
+    assert session.id.startswith("cli_cli_"), (
+        f"Session ID should start with 'cli_cli_', got '{session.id}'"
+    )
     print(f"  ✓ Session 创建成功: id={session.id}")
 
     # session_key 属性
-    assert session.session_key == "cli:cli:user", f"Expected 'cli:cli:user', got '{session.session_key}'"
+    assert session.session_key == "cli:cli:user", (
+        f"Expected 'cli:cli:user', got '{session.session_key}'"
+    )
     print(f"  ✓ session_key 正确: {session.session_key}")
 
     # 添加消息
@@ -98,7 +102,12 @@ def test_session_dedup_logic():
     # 添加上下文边界标记
     if messages:
         messages.append({"role": "user", "content": "[上下文结束，以下是用户的最新消息]"})
-        messages.append({"role": "assistant", "content": "好的，我已了解之前的对话上下文。请告诉我你现在的需求。"})
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "好的，我已了解之前的对话上下文。请告诉我你现在的需求。",
+            }
+        )
 
     # 添加当前用户消息（可能经过 Prompt Compiler 处理）
     messages.append({"role": "user", "content": "第二轮问题"})
@@ -116,7 +125,12 @@ def test_im_context_conditional():
     print("测试 3: IM Context 条件设置")
     print("=" * 60)
 
-    from openakita.core.im_context import set_im_context, get_im_session, get_im_gateway, reset_im_context
+    from openakita.core.im_context import (
+        set_im_context,
+        get_im_session,
+        get_im_gateway,
+        reset_im_context,
+    )
 
     # 场景 A: CLI 模式 (gateway=None)
     # 应该不暴露 session 给 IM 工具
@@ -209,10 +223,12 @@ def test_clear_command_logic():
     assert len(agent._conversation_history) == 2
     assert len(agent._context.messages) == 2
     assert len(agent._cli_session.context.get_messages()) == 2
-    print(f"  清理前: history={len(agent._conversation_history)}, context={len(agent._context.messages)}, session={len(agent._cli_session.context.get_messages())}")
+    print(
+        f"  清理前: history={len(agent._conversation_history)}, context={len(agent._context.messages)}, session={len(agent._cli_session.context.get_messages())}"
+    )
 
     # 模拟 /clear 命令（与 main.py 中新代码一致）
-    if hasattr(agent, '_cli_session') and agent._cli_session:
+    if hasattr(agent, "_cli_session") and agent._cli_session:
         agent._cli_session.context.clear_messages()
     agent._conversation_history.clear()
     agent._context.messages.clear()
@@ -220,8 +236,12 @@ def test_clear_command_logic():
     # 验证清理后状态
     assert len(agent._conversation_history) == 0, "conversation_history should be empty"
     assert len(agent._context.messages) == 0, "context.messages should be empty"
-    assert len(agent._cli_session.context.get_messages()) == 0, "cli_session messages should be empty"
-    print(f"  清理后: history={len(agent._conversation_history)}, context={len(agent._context.messages)}, session={len(agent._cli_session.context.get_messages())}")
+    assert len(agent._cli_session.context.get_messages()) == 0, (
+        "cli_session messages should be empty"
+    )
+    print(
+        f"  清理后: history={len(agent._conversation_history)}, context={len(agent._context.messages)}, session={len(agent._cli_session.context.get_messages())}"
+    )
 
     print("  ✅ 测试 5 通过")
 
@@ -248,7 +268,7 @@ def test_selfcheck_clearing():
     # 模拟 self_check.py 的清理逻辑（与改动后代码一致）
     agent._context.messages = []
     agent._conversation_history = []
-    if hasattr(agent, '_cli_session') and agent._cli_session:
+    if hasattr(agent, "_cli_session") and agent._cli_session:
         agent._cli_session.context.clear_messages()
 
     assert len(agent._conversation_history) == 0
@@ -265,7 +285,7 @@ def test_selfcheck_clearing():
     agent2 = MockAgentNoSession()
     agent2._context.messages = []
     agent2._conversation_history = []
-    if hasattr(agent2, '_cli_session') and agent2._cli_session:
+    if hasattr(agent2, "_cli_session") and agent2._cli_session:
         agent2._cli_session.context.clear_messages()
 
     assert len(agent2._conversation_history) == 0
@@ -291,10 +311,8 @@ async def test_chat_delegation():
 
         async def chat(self, message, session_id=None):
             """与 agent.py 改动后的 chat() 逻辑一致"""
-            if not hasattr(self, '_cli_session') or self._cli_session is None:
-                self._cli_session = Session.create(
-                    channel="cli", chat_id="cli", user_id="user"
-                )
+            if not hasattr(self, "_cli_session") or self._cli_session is None:
+                self._cli_session = Session.create(channel="cli", chat_id="cli", user_id="user")
 
             self._cli_session.add_message("user", message)
             session_messages = self._cli_session.context.get_messages()
@@ -310,6 +328,7 @@ async def test_chat_delegation():
             self._cli_session.add_message("assistant", response)
 
             from datetime import datetime
+
             self._conversation_history.append(
                 {"role": "user", "content": message, "timestamp": datetime.now().isoformat()}
             )
@@ -319,7 +338,9 @@ async def test_chat_delegation():
 
             return response
 
-        async def chat_with_session(self, message, session_messages, session_id="", session=None, gateway=None):
+        async def chat_with_session(
+            self, message, session_messages, session_id="", session=None, gateway=None
+        ):
             """Mock: 记录调用参数并返回固定响应"""
             self._last_call = {
                 "message": message,
@@ -338,16 +359,22 @@ async def test_chat_delegation():
     assert agent._cli_session is not None, "CLI Session should be created"
     assert agent._cli_session.channel == "cli"
     assert agent._last_call["gateway"] is None, "gateway should be None for CLI"
-    assert agent._last_call["session_messages_count"] == 1, "First call should have 1 message (user)"
+    assert agent._last_call["session_messages_count"] == 1, (
+        "First call should have 1 message (user)"
+    )
     print(f"  ✓ 第一轮: session 已创建, gateway=None, messages=1")
 
     # 第二轮对话
     r2 = await agent.chat("今天天气")
-    assert agent._last_call["session_messages_count"] == 3, "Second call should have 3 messages (user+assistant+user)"
+    assert agent._last_call["session_messages_count"] == 3, (
+        "Second call should have 3 messages (user+assistant+user)"
+    )
     print(f"  ✓ 第二轮: messages=3 (含历史), session 复用")
 
     # 验证 _conversation_history 同步
-    assert len(agent._conversation_history) == 4, f"Should have 4 history entries, got {len(agent._conversation_history)}"
+    assert len(agent._conversation_history) == 4, (
+        f"Should have 4 history entries, got {len(agent._conversation_history)}"
+    )
     assert agent._conversation_history[0]["role"] == "user"
     assert agent._conversation_history[1]["role"] == "assistant"
     print(f"  ✓ _conversation_history 同步正确: {len(agent._conversation_history)} 条")

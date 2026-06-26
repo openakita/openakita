@@ -25,8 +25,9 @@ def get_config(sandbox: bool = False):
     return appid, token, base
 
 
-def api_request(method: str, path: str, appid: str, token: str, base: str,
-                body: dict | None = None) -> dict:
+def api_request(
+    method: str, path: str, appid: str, token: str, base: str, body: dict | None = None
+) -> dict:
     url = f"{base}{path}"
     data = json.dumps(body).encode() if body else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -66,8 +67,9 @@ def cmd_channels(args):
 def cmd_send(args):
     appid, token, base = get_config(args.sandbox)
     body = {"content": args.content}
-    data = api_request("POST", f"/channels/{args.channel_id}/messages", appid, token, base,
-                       body=body)
+    data = api_request(
+        "POST", f"/channels/{args.channel_id}/messages", appid, token, base, body=body
+    )
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 
@@ -84,7 +86,8 @@ def cmd_members(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="QQ 频道机器人 API (env: QQ_BOT_APPID, QQ_BOT_TOKEN)")
+        description="QQ 频道机器人 API (env: QQ_BOT_APPID, QQ_BOT_TOKEN)"
+    )
     parser.add_argument("--sandbox", action="store_true", help="使用沙箱环境")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -101,10 +104,10 @@ def main():
     p_mem.add_argument("guild_id", help="频道 ID")
 
     args = parser.parse_args()
-    {"guilds": cmd_guilds, "channels": cmd_channels,
-     "send": cmd_send, "members": cmd_members}[args.command](args)
+    {"guilds": cmd_guilds, "channels": cmd_channels, "send": cmd_send, "members": cmd_members}[
+        args.command
+    ](args)
 
 
 if __name__ == "__main__":
     main()
-

@@ -730,11 +730,13 @@ class PlanHandler:
             if isinstance(todo, str):
                 content = todo.strip()
                 if content:
-                    normalized.append({
-                        "id": f"step_{idx}",
-                        "content": content[:512],
-                        "status": "pending",
-                    })
+                    normalized.append(
+                        {
+                            "id": f"step_{idx}",
+                            "content": content[:512],
+                            "status": "pending",
+                        }
+                    )
                 continue
             if not isinstance(todo, dict):
                 continue
@@ -748,11 +750,13 @@ class PlanHandler:
             content = str(content).strip()
             if not content:
                 continue
-            normalized.append({
-                "id": todo.get("id") or f"step_{idx}",
-                "content": content[:512],
-                "status": todo.get("status", "pending"),
-            })
+            normalized.append(
+                {
+                    "id": todo.get("id") or f"step_{idx}",
+                    "content": content[:512],
+                    "status": todo.get("status", "pending"),
+                }
+            )
         return normalized
 
     @staticmethod
@@ -786,11 +790,13 @@ class PlanHandler:
             content = re.sub(r"^\*\*(.+?)\*\*\s*[:：-]?\s*", r"\1", content).strip()
             if not content:
                 continue
-            todos.append({
-                "id": f"step_{len(todos) + 1}",
-                "content": content[:512],
-                "status": "pending",
-            })
+            todos.append(
+                {
+                    "id": f"step_{len(todos) + 1}",
+                    "content": content[:512],
+                    "status": "pending",
+                }
+            )
         return todos
 
     async def _exit_plan_mode(self, params: dict) -> str:

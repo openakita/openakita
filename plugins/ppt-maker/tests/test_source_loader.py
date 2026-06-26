@@ -62,4 +62,3 @@ async def test_parse_unknown_or_missing_file_fails(tmp_path) -> None:
     unknown.write_bytes(b"abc")
     with pytest.raises(SourceParseError):
         await loader.parse(unknown)
-

@@ -37,9 +37,7 @@ def _make_items(source_id: str, n: int = 2) -> list[NormalizedItem]:
 
 
 class TestNewsNowUnified:
-    def test_iterates_enabled_newsnow_sources(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_iterates_enabled_newsnow_sources(self, monkeypatch: pytest.MonkeyPatch) -> None:
         called_ids: list[str] = []
 
         async def fake_fetch(**kwargs: Any) -> list[NormalizedItem]:
@@ -49,6 +47,7 @@ class TestNewsNowUnified:
             return _make_items(sid, 1)
 
         import finpulse_fetchers.newsnow as nn_mod
+
         monkeypatch.setattr(newsnow_base, "fetch_from_newsnow", fake_fetch)
         monkeypatch.setattr(nn_mod, "fetch_from_newsnow", fake_fetch)
         monkeypatch.setattr(nn_mod, "jittered_sleep", lambda *a, **k: asyncio.sleep(0))
@@ -62,9 +61,7 @@ class TestNewsNowUnified:
         assert "xueqiu" in called_ids
         assert "xueqiu-hotstock" in called_ids
 
-    def test_can_limit_to_one_newsnow_subsource(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_can_limit_to_one_newsnow_subsource(self, monkeypatch: pytest.MonkeyPatch) -> None:
         called_ids: list[str] = []
 
         async def fake_fetch(**kwargs: Any) -> list[NormalizedItem]:
@@ -72,6 +69,7 @@ class TestNewsNowUnified:
             return _make_items(kwargs["source_id"], 1)
 
         import finpulse_fetchers.newsnow as nn_mod
+
         monkeypatch.setattr(newsnow_base, "fetch_from_newsnow", fake_fetch)
         monkeypatch.setattr(nn_mod, "fetch_from_newsnow", fake_fetch)
         monkeypatch.setattr(nn_mod, "jittered_sleep", lambda *a, **k: asyncio.sleep(0))
@@ -100,6 +98,7 @@ class TestNewsNowUnified:
             return _make_items(kwargs["source_id"], 1)
 
         import finpulse_fetchers.newsnow as nn_mod
+
         monkeypatch.setattr(newsnow_base, "fetch_from_newsnow", flaky_fetch)
         monkeypatch.setattr(nn_mod, "fetch_from_newsnow", flaky_fetch)
         monkeypatch.setattr(nn_mod, "jittered_sleep", lambda *a, **k: asyncio.sleep(0))
@@ -111,9 +110,7 @@ class TestNewsNowUnified:
         assert len(items) >= 1
         assert all(i.source_id != "wallstreetcn" for i in items)
 
-    def test_fanout_timeout_returns_partial_results(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_fanout_timeout_returns_partial_results(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A slow NewsNow channel must not discard completed channels.
 
         This pins the reliability fix for "拉取全部": the public
@@ -128,6 +125,7 @@ class TestNewsNowUnified:
             return _make_items(sid, 1)
 
         import finpulse_fetchers.newsnow as nn_mod
+
         monkeypatch.setattr(newsnow_base, "fetch_from_newsnow", slow_fetch)
         monkeypatch.setattr(nn_mod, "fetch_from_newsnow", slow_fetch)
         monkeypatch.setattr(nn_mod, "jittered_sleep", lambda *a, **k: asyncio.sleep(0))
@@ -156,6 +154,7 @@ class TestNewsNowUnified:
             return []
 
         import finpulse_fetchers.newsnow as nn_mod
+
         monkeypatch.setattr(newsnow_base, "fetch_from_newsnow", empty_fetch)
         monkeypatch.setattr(nn_mod, "fetch_from_newsnow", empty_fetch)
         monkeypatch.setattr(nn_mod, "jittered_sleep", lambda *a, **k: asyncio.sleep(0))

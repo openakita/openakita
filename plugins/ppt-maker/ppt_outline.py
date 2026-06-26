@@ -145,7 +145,9 @@ class OutlineBuilder:
             }
         return outline
 
-    def confirm(self, outline: dict[str, Any], updates: dict[str, Any] | None = None) -> dict[str, Any]:
+    def confirm(
+        self, outline: dict[str, Any], updates: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         result = {**outline, **(updates or {})}
         result["confirmed"] = True
         result["needs_confirmation"] = False
@@ -202,7 +204,9 @@ class OutlineBuilder:
         for index, (slide_title, slide_type, purpose) in enumerate(selected, start=1):
             topic_for_bullets = slide_title if slide_type != SlideType.COVER else title
             if slide_type == SlideType.INSIGHT_SUMMARY and findings:
-                bullets = [str(item) for item in findings[:5]] or _format_bullets(slide_type, topic_for_bullets)
+                bullets = [str(item) for item in findings[:5]] or _format_bullets(
+                    slide_type, topic_for_bullets
+                )
             elif slide_type == SlideType.METRIC_CARDS and findings:
                 bullets = [str(item) for item in findings[:3]]
             else:
@@ -234,4 +238,3 @@ class OutlineBuilder:
         if mode == DeckMode.TEMPLATE_DECK or template_profile:
             questions.append("是否接受模板 fallback，而不是 1:1 复刻所有母版效果？")
         return questions
-

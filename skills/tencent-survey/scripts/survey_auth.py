@@ -33,19 +33,25 @@ def cmd_check(_args):
 
 def cmd_configure(_args):
     if not _mcporter_installed():
-        print(json.dumps(
-            {"error": "mcporter 未安装，请先执行: npm install -g mcporter"},
-            ensure_ascii=False, indent=2,
-        ))
+        print(
+            json.dumps(
+                {"error": "mcporter 未安装，请先执行: npm install -g mcporter"},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         sys.exit(1)
 
     token = os.environ.get("TENCENT_SURVEY_TOKEN", "")
     if token:
         if not token.startswith("wjpt_"):
-            print(json.dumps(
-                {"error": "TENCENT_SURVEY_TOKEN 必须以 wjpt_ 前缀开头"},
-                ensure_ascii=False, indent=2,
-            ))
+            print(
+                json.dumps(
+                    {"error": "TENCENT_SURVEY_TOKEN 必须以 wjpt_ 前缀开头"},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             sys.exit(1)
     else:
         print("未检测到 TENCENT_SURVEY_TOKEN 环境变量。")
@@ -56,11 +62,17 @@ def cmd_configure(_args):
         sys.exit(1)
 
     cmd = [
-        "mcporter", "config", "add", "tencent-survey",
+        "mcporter",
+        "config",
+        "add",
+        "tencent-survey",
         "https://wj.qq.com/api/v2/mcp",
-        "--header", f"Authorization=Bearer {token}",
-        "--transport", "http",
-        "--scope", "home",
+        "--header",
+        f"Authorization=Bearer {token}",
+        "--transport",
+        "http",
+        "--scope",
+        "home",
     ]
     r = _run(cmd)
     result = {
@@ -106,4 +118,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

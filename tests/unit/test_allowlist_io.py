@@ -53,9 +53,7 @@ class TestReadAllowlist:
         """文件存在但无 external_allowlist 字段：语义为『全部启用』→ None。"""
         from openakita.skills import allowlist_io
 
-        _skills_file(isolated_workspace).write_text(
-            json.dumps({"version": 1}), encoding="utf-8"
-        )
+        _skills_file(isolated_workspace).write_text(json.dumps({"version": 1}), encoding="utf-8")
 
         _, allowlist = allowlist_io.read_allowlist()
         assert allowlist is None
@@ -75,9 +73,7 @@ class TestReadAllowlist:
         from openakita.skills import allowlist_io
 
         _skills_file(isolated_workspace).write_text(
-            json.dumps(
-                {"version": 1, "external_allowlist": ["skill-a", "skill-b", "skill-a"]}
-            ),
+            json.dumps({"version": 1, "external_allowlist": ["skill-a", "skill-b", "skill-a"]}),
             encoding="utf-8",
         )
 
@@ -88,9 +84,7 @@ class TestReadAllowlist:
         from openakita.skills import allowlist_io
 
         _skills_file(isolated_workspace).write_text(
-            json.dumps(
-                {"version": 1, "external_allowlist": ["  skill-a  ", "", "   ", "b"]}
-            ),
+            json.dumps({"version": 1, "external_allowlist": ["  skill-a  ", "", "   ", "b"]}),
             encoding="utf-8",
         )
 
@@ -217,9 +211,7 @@ class TestUpsertSkillIds:
         """skills.json 存在但没有 external_allowlist：保持未声明语义，不 upsert。"""
         from openakita.skills import allowlist_io
 
-        _skills_file(isolated_workspace).write_text(
-            json.dumps({"version": 1}), encoding="utf-8"
-        )
+        _skills_file(isolated_workspace).write_text(json.dumps({"version": 1}), encoding="utf-8")
         result = allowlist_io.upsert_skill_ids({"newbie"})
         assert result is None
         # 原文件未被修改为含 allowlist
@@ -262,9 +254,7 @@ class TestRemoveSkillIds:
     def test_no_allowlist_field_returns_none(self, isolated_workspace):
         from openakita.skills import allowlist_io
 
-        _skills_file(isolated_workspace).write_text(
-            json.dumps({"version": 1}), encoding="utf-8"
-        )
+        _skills_file(isolated_workspace).write_text(json.dumps({"version": 1}), encoding="utf-8")
         assert allowlist_io.remove_skill_ids({"x"}) is None
 
     def test_removes_existing(self, isolated_workspace):
@@ -305,22 +295,16 @@ class TestConcurrency:
 
         errors: list[BaseException] = []
         with ThreadPoolExecutor(max_workers=16) as pool:
-            futures = [
-                pool.submit(allowlist_io.overwrite_allowlist, s) for s in written_sets
-            ]
+            futures = [pool.submit(allowlist_io.overwrite_allowlist, s) for s in written_sets]
             for f in as_completed(futures):
                 try:
                     f.result()
                 except BaseException as e:  # noqa: BLE001
                     errors.append(e)
 
-        assert errors == [], (
-            f"concurrent overwrite raised: {[type(e).__name__ for e in errors]}"
-        )
+        assert errors == [], f"concurrent overwrite raised: {[type(e).__name__ for e in errors]}"
 
-        final = json.loads(
-            _skills_file(isolated_workspace).read_text(encoding="utf-8")
-        )
+        final = json.loads(_skills_file(isolated_workspace).read_text(encoding="utf-8"))
         final_set = set(final["external_allowlist"])
         assert any(final_set == s for s in written_sets), (
             f"final set {final_set} does not match any written set"
@@ -332,8 +316,6 @@ class TestConcurrency:
 
         for i in range(20):
             allowlist_io.overwrite_allowlist({f"s{j}" for j in range(i + 1)})
-            cfg = json.loads(
-                _skills_file(isolated_workspace).read_text(encoding="utf-8")
-            )
+            cfg = json.loads(_skills_file(isolated_workspace).read_text(encoding="utf-8"))
             assert isinstance(cfg.get("external_allowlist"), list)
             assert len(cfg["external_allowlist"]) == i + 1

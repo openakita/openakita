@@ -81,16 +81,12 @@ def test_unknown_never_silently_allows() -> None:
 
 def test_destructive_in_trust_still_confirms() -> None:
     """DESTRUCTIVE 在 trust 模式仍需 CONFIRM（safety-by-default）。"""
-    decision = lookup_matrix(
-        SessionRole.AGENT, ConfirmationMode.TRUST, ApprovalClass.DESTRUCTIVE
-    )
+    decision = lookup_matrix(SessionRole.AGENT, ConfirmationMode.TRUST, ApprovalClass.DESTRUCTIVE)
     assert decision == DecisionAction.CONFIRM
 
 
 def test_destructive_in_strict_denies() -> None:
-    decision = lookup_matrix(
-        SessionRole.AGENT, ConfirmationMode.STRICT, ApprovalClass.DESTRUCTIVE
-    )
+    decision = lookup_matrix(SessionRole.AGENT, ConfirmationMode.STRICT, ApprovalClass.DESTRUCTIVE)
     assert decision == DecisionAction.DENY
 
 
@@ -105,9 +101,9 @@ def test_plan_mode_blocks_all_mutations_and_exec() -> None:
     )
     for klass in blocked_classes:
         for mode in ConfirmationMode:
-            assert (
-                lookup_matrix(SessionRole.PLAN, mode, klass) == DecisionAction.DENY
-            ), f"plan mode must DENY {klass.value} regardless of mode={mode.value}"
+            assert lookup_matrix(SessionRole.PLAN, mode, klass) == DecisionAction.DENY, (
+                f"plan mode must DENY {klass.value} regardless of mode={mode.value}"
+            )
 
 
 def test_plan_mode_allows_readonly_and_interactive() -> None:
@@ -118,17 +114,14 @@ def test_plan_mode_allows_readonly_and_interactive() -> None:
         ApprovalClass.INTERACTIVE,
     ):
         assert (
-            lookup_matrix(SessionRole.PLAN, ConfirmationMode.DEFAULT, klass)
-            == DecisionAction.ALLOW
+            lookup_matrix(SessionRole.PLAN, ConfirmationMode.DEFAULT, klass) == DecisionAction.ALLOW
         )
 
 
 def test_ask_mode_blocks_control_plane() -> None:
     """ask 模式禁 CONTROL_PLANE（不能 switch_mode 等）。"""
     assert (
-        lookup_matrix(
-            SessionRole.ASK, ConfirmationMode.TRUST, ApprovalClass.CONTROL_PLANE
-        )
+        lookup_matrix(SessionRole.ASK, ConfirmationMode.TRUST, ApprovalClass.CONTROL_PLANE)
         == DecisionAction.DENY
     )
 
@@ -141,9 +134,7 @@ def test_coordinator_stricter_than_agent_in_trust() -> None:
         ApprovalClass.CONTROL_PLANE,
     ):
         agent_dec = lookup_matrix(SessionRole.AGENT, ConfirmationMode.TRUST, klass)
-        coord_dec = lookup_matrix(
-            SessionRole.COORDINATOR, ConfirmationMode.TRUST, klass
-        )
+        coord_dec = lookup_matrix(SessionRole.COORDINATOR, ConfirmationMode.TRUST, klass)
         assert agent_dec == DecisionAction.ALLOW
         assert coord_dec == DecisionAction.CONFIRM, (
             f"coordinator should CONFIRM {klass.value} in trust, got {coord_dec.value}"
@@ -154,10 +145,9 @@ def test_interactive_always_allow() -> None:
     """INTERACTIVE 在所有 role × mode 一律 ALLOW（IM 渠道屏蔽是 engine 层职责）。"""
     for role in SessionRole:
         for mode in ConfirmationMode:
-            assert (
-                lookup_matrix(role, mode, ApprovalClass.INTERACTIVE)
-                == DecisionAction.ALLOW
-            ), f"INTERACTIVE must ALLOW under role={role.value} mode={mode.value}"
+            assert lookup_matrix(role, mode, ApprovalClass.INTERACTIVE) == DecisionAction.ALLOW, (
+                f"INTERACTIVE must ALLOW under role={role.value} mode={mode.value}"
+            )
 
 
 # ---- PolicyContext ----
@@ -195,16 +185,10 @@ def test_context_legacy_yolo_mode_alias() -> None:
     assert ctx.confirmation_mode == ConfirmationMode.TRUST
 
     FakeSession.confirmation_mode = "smart"
-    assert (
-        PolicyContext.from_session(FakeSession()).confirmation_mode
-        == ConfirmationMode.DEFAULT
-    )
+    assert PolicyContext.from_session(FakeSession()).confirmation_mode == ConfirmationMode.DEFAULT
 
     FakeSession.confirmation_mode = "cautious"
-    assert (
-        PolicyContext.from_session(FakeSession()).confirmation_mode
-        == ConfirmationMode.STRICT
-    )
+    assert PolicyContext.from_session(FakeSession()).confirmation_mode == ConfirmationMode.STRICT
 
 
 def test_context_im_channel_metadata_propagates() -> None:

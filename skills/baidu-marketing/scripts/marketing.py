@@ -11,7 +11,7 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '_shared'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_shared"))
 from baidu_appbuilder import parse_common_args, run_skill_query
 
 
@@ -41,12 +41,18 @@ def main() -> None:
 
     p_copy = sub.add_parser("copywrite", help="生成营销文案")
     p_copy.add_argument("theme", help="文案主题")
-    p_copy.add_argument("--style", default="",
-                        choices=["formal", "casual", "humorous", "emotional", ""],
-                        help="文案风格")
-    p_copy.add_argument("--platform", default="",
-                        choices=["wechat", "weibo", "douyin", "xiaohongshu", ""],
-                        help="投放平台")
+    p_copy.add_argument(
+        "--style",
+        default="",
+        choices=["formal", "casual", "humorous", "emotional", ""],
+        help="文案风格",
+    )
+    p_copy.add_argument(
+        "--platform",
+        default="",
+        choices=["wechat", "weibo", "douyin", "xiaohongshu", ""],
+        help="投放平台",
+    )
 
     p_plan = sub.add_parser("plan", help="制定营销方案")
     p_plan.add_argument("objective", help="营销目标")
@@ -65,4 +71,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

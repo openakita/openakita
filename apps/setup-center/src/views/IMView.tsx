@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
-  IconIM, IconMessageCircle, IconRefresh, IconFile, IconImage, IconVolume,
+  IconIM, IconMessageCircle, IconFile, IconImage, IconVolume,
   IconBot, IconPlus, IconEdit, IconTrash,
   IconUser, IconUsers,
   DotGreen, DotGray,
@@ -22,7 +22,7 @@ import { WechatQRModal } from "../components/WechatQRModal";
 import { PluginOnboardModal } from "../components/PluginOnboardModal";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,7 +34,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { LogoTelegram, LogoFeishu, LogoWework, LogoDingtalk, LogoQQ, LogoOneBot, LogoWechat } from "../icons";
-import { AlertCircle, ArrowLeft, ArrowRight, Bot, BotOff, Check, Dices, ExternalLink, Loader2, MoreHorizontal, Pencil, RefreshCw, Sparkles, Terminal, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, Bot, BotOff, Check, Dices, ExternalLink, Loader2, MoreHorizontal, Pencil, RefreshCw, Sparkles, Terminal, Trash2 } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -521,27 +521,6 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
     } catch { /* ignore */ }
     setLoadingMore(false);
   }, [apiBase, selectedSessionId, totalMessages, loadingMore, dateFrom, dateTo]);
-
-  const handleDeleteMessages = useCallback(async () => {
-    if (!selectedSessionId || selectedMsgIds.size === 0) return;
-    const turnIds = messages
-      .filter((_, i) => selectedMsgIds.has(i))
-      .map((m) => m.id)
-      .filter((id): id is number => id != null);
-    try {
-      if (turnIds.length > 0) {
-        await safeFetch(`${apiBase}/api/im/sessions/${encodeURIComponent(selectedSessionId)}/messages/delete`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ turn_ids: turnIds }),
-        });
-      }
-      setMessages((prev) => prev.filter((_, i) => !selectedMsgIds.has(i)));
-      setTotalMessages((prev) => Math.max(0, prev - selectedMsgIds.size));
-      setSelectedMsgIds(new Set());
-      setSelectMode(false);
-    } catch { /* ignore */ }
-  }, [apiBase, selectedSessionId, selectedMsgIds, messages]);
 
   const toggleMsgSelect = useCallback((idx: number) => {
     setSelectedMsgIds((prev) => {
@@ -1290,8 +1269,8 @@ export function BotConfigTab({ apiBase, onRequestRestart, venvDir, apiBaseUrl }:
   const [showWecomQR, setShowWecomQR] = useState(false);
   const [showWechatQR, setShowWechatQR] = useState(false);
   const [showPluginOnboard, setShowPluginOnboard] = useState(false);
-  const [tgPairingCode, setTgPairingCode] = useState<string | null>(null);
-  const [tgPairingLoading, setTgPairingLoading] = useState(false);
+  const [, setTgPairingCode] = useState<string | null>(null);
+  const [, setTgPairingLoading] = useState(false);
   const [isAutoId, setIsAutoId] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
 

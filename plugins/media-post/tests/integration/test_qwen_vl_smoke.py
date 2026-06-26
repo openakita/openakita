@@ -48,9 +48,7 @@ def _make_solid_png_b64(color: tuple[int, int, int], *, size: int = 64) -> str:
 
     sig = b"\x89PNG\r\n\x1a\n"
     ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
-    raw = b"".join(
-        b"\x00" + bytes((r, g, b)) * size for _ in range(size)
-    )
+    raw = b"".join(b"\x00" + bytes((r, g, b)) * size for _ in range(size))
     idat = zlib.compress(raw, level=9)
     png = sig + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
     return base64.b64encode(png).decode("ascii")

@@ -200,4 +200,3 @@ class CodeFixer:
                 fix_results.append(fix_result)
 
         return fix_results
-

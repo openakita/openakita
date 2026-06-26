@@ -296,4 +296,3 @@ def clear_cache() -> None:
     global _cache
     if _cache is not None:
         _cache.clear()
-

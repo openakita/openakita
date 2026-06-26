@@ -107,9 +107,7 @@ def test_dashscope_hits_compatible_mode_path(patch_httpx):
         api_key="sk-y",
     )
     assert models == ["qwen-max"]
-    assert capture["url"] == (
-        "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
-    )
+    assert capture["url"] == ("https://dashscope.aliyuncs.com/compatible-mode/v1/models")
 
 
 def test_unknown_api_type_raises_unsupported(patch_httpx):
@@ -161,19 +159,20 @@ def test_normalize_strips_chat_completions_suffix(patch_httpx):
 )
 def test_parser_accepts_real_world_shapes(patch_httpx, payload, expected):
     patch_httpx["set"](_make_transport(body=json.dumps(payload)))
-    assert probe_models(
-        api_type="openai",
-        base_url="https://relay.example.com/v1",
-    ) == expected
+    assert (
+        probe_models(
+            api_type="openai",
+            base_url="https://relay.example.com/v1",
+        )
+        == expected
+    )
 
 
 # ─── Error classification ────────────────────────────────────────────
 
 
 def test_401_classified_as_auth_error(patch_httpx):
-    patch_httpx["set"](
-        _make_transport(status=401, body=json.dumps({"error": "bad key"}))
-    )
+    patch_httpx["set"](_make_transport(status=401, body=json.dumps({"error": "bad key"})))
     with pytest.raises(ProbeAuthError) as ei:
         probe_models(
             api_type="openai",
@@ -211,11 +210,7 @@ def test_html_body_classified_as_unsupported(patch_httpx):
 
 
 def test_200_with_error_body_classified_as_probe_error(patch_httpx):
-    patch_httpx["set"](
-        _make_transport(
-            status=200, body=json.dumps({"error": "quota exceeded"})
-        )
-    )
+    patch_httpx["set"](_make_transport(status=200, body=json.dumps({"error": "quota exceeded"})))
     with pytest.raises(ProbeError) as ei:
         probe_models(
             api_type="openai",

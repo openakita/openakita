@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..sessions import Session, SessionManager
 from ..utils.errors import format_user_friendly_error as format_user_friendly_error  # re-export
-from .base import ChannelAdapter
+from .base import ChannelAdapter, ChannelDeliveryUnavailable
 from .group_response import GroupResponseMode, SmartModeThrottle
 from .types import MediaStatus, MessageContent, OutgoingMessage, UnifiedMessage
 
@@ -627,9 +627,7 @@ class ThinkingCommandHandler:
         if text_lower.startswith("/thinking_depth "):
             depth = text_lower.split(None, 1)[1].strip()
             if depth not in self.VALID_DEPTHS:
-                return (
-                    f"❌ 无效的思考深度: `{depth}`\n可选: `low`（低）| `medium`（中）| `high`（高）| `max`（最大）"
-                )
+                return f"❌ 无效的思考深度: `{depth}`\n可选: `low`（低）| `medium`（中）| `high`（高）| `max`（最大）"
             if depth == "xhigh":
                 depth = "max"
             session.set_metadata("thinking_depth", depth)
@@ -1092,9 +1090,7 @@ class MessageGateway:
         self._dm_pairing = DMPairingManager(data_dir)
         logger.info("DM Pairing enabled")
 
-    async def _handle_pair_command(
-        self, cmd: str, message: "UnifiedMessage"
-    ) -> str | None:
+    async def _handle_pair_command(self, cmd: str, message: "UnifiedMessage") -> str | None:
         """Handle /pair command for DM Pairing."""
         if not self._dm_pairing:
             return "DM Pairing is not enabled."
@@ -1103,13 +1099,8 @@ class MessageGateway:
         sub = parts[1] if len(parts) > 1 else "generate"
 
         if sub == "generate":
-            code = self._dm_pairing.generate_code(
-                created_by=f"{message.channel}:{message.user_id}"
-            )
-            return (
-                f"🔑 配对码: **{code}**\n\n"
-                f"有效期 1 小时，发送给需要授权的用户即可。"
-            )
+            code = self._dm_pairing.generate_code(created_by=f"{message.channel}:{message.user_id}")
+            return f"🔑 配对码: **{code}**\n\n有效期 1 小时，发送给需要授权的用户即可。"
         elif sub == "list":
             authorized = self._dm_pairing.list_authorized()
             if not authorized:
@@ -1129,9 +1120,7 @@ class MessageGateway:
                 "/pair revoke channel:chat_id — 撤销授权"
             )
 
-    async def _handle_background_command(
-        self, text: str, message: "UnifiedMessage"
-    ) -> str | None:
+    async def _handle_background_command(self, text: str, message: "UnifiedMessage") -> str | None:
         """
         Handle /background <prompt> — run a task in the background.
 
@@ -1155,8 +1144,7 @@ class MessageGateway:
         bg_id = f"bg_{session_key}_{int(_time.time())}"
 
         await self._send_feedback(
-            message,
-            f"⏳ 后台任务已启动: {prompt[:60]}...\n任务完成后会自动通知你。"
+            message, f"⏳ 后台任务已启动: {prompt[:60]}...\n任务完成后会自动通知你。"
         )
 
         async def _run_background():
@@ -1869,9 +1857,7 @@ class MessageGateway:
                     adapter._owner_user_ids = {str(uid) for uid in owners}
                     applied += 1
             if applied:
-                logger.info(
-                    f"[Gateway] Applied persisted owner allowlist for {applied} channel(s)"
-                )
+                logger.info(f"[Gateway] Applied persisted owner allowlist for {applied} channel(s)")
         except Exception as e:
             logger.warning(f"[Gateway] Failed to load owner allowlist: {e}")
 
@@ -1895,8 +1881,12 @@ class MessageGateway:
                 # 若 reason 只是 "缺少依赖: pip install xxx" 之类笼统提示，
                 # 用 channel-deps 安装错误快照补充更具体的根因（超时/版本冲突/网络）
                 install_err = self._resolve_install_error_for_adapter(name)
-                if install_err and ("缺少依赖" in reason or "ImportError" in reason
-                                    or "No module" in reason or not reason):
+                if install_err and (
+                    "缺少依赖" in reason
+                    or "ImportError" in reason
+                    or "No module" in reason
+                    or not reason
+                ):
                     reason = f"{reason}（原因：{install_err}）" if reason else install_err
                 failed_reasons[name] = reason
                 adapter._running = False
@@ -2527,11 +2517,14 @@ class MessageGateway:
                 bare_handled = await self._handle_bare_org_cancel(message)
             except Exception as exc:
                 logger.warning(
-                    "[IM] bare-text org cancel failed: %s", exc, exc_info=True,
+                    "[IM] bare-text org cancel failed: %s",
+                    exc,
+                    exc_info=True,
                 )
                 bare_handled = False
                 await self._send_response(
-                    message, f"中止失败：{_format_user_error(exc)}",
+                    message,
+                    f"中止失败：{_format_user_error(exc)}",
                 )
             if bare_handled:
                 return
@@ -2749,15 +2742,12 @@ class MessageGateway:
                 if is_pair_cmd:
                     pass
                 else:
-                    result = self._dm_pairing.verify_code(
-                        _raw_text, channel, chat_id
-                    )
+                    result = self._dm_pairing.verify_code(_raw_text, channel, chat_id)
                     if result[0]:
                         await self._send_feedback(message, f"✅ {result[1]}")
                     else:
                         await self._send_feedback(
-                            message,
-                            f"🔒 未授权。请输入配对码或联系管理员获取。({result[1]})"
+                            message, f"🔒 未授权。请输入配对码或联系管理员获取。({result[1]})"
                         )
                     return
 
@@ -2946,18 +2936,14 @@ class MessageGateway:
 
         def _namespace_prefixes(namespace: str) -> tuple[str, ...]:
             platform = namespace.split(":", 1)[0]
-            return tuple(
-                value
-                for value in (namespace, platform)
-                if value
-            )
+            return tuple(value for value in (namespace, platform) if value)
 
         def _match_key(key: str) -> bool:
             for namespace, chat_id, thread_id in candidates:
                 for prefix in _namespace_prefixes(namespace):
-                    base_matched = (
-                        key.startswith(f"{prefix}_") and f"_{chat_id}_" in key
-                    ) or (key.startswith(f"{prefix}:") and f":{chat_id}:" in key)
+                    base_matched = (key.startswith(f"{prefix}_") and f"_{chat_id}_" in key) or (
+                        key.startswith(f"{prefix}:") and f":{chat_id}:" in key
+                    )
                     if base_matched and (not thread_id or thread_id in key):
                         return True
             return False
@@ -3084,14 +3070,16 @@ class MessageGateway:
             except Exception as e:
                 logger.error(f"Error handling message: {e}", exc_info=True)
 
-    def _parse_org_command(self, text: str, session: Session | None = None) -> tuple[str, str] | None:
+    def _parse_org_command(
+        self, text: str, session: Session | None = None
+    ) -> tuple[str, str] | None:
         stripped = (text or "").strip()
         if not stripped:
             return None
         lowered = stripped.lower()
         for prefix in ("/org ", "/组织 "):
             if lowered.startswith(prefix):
-                rest = stripped[len(prefix):].strip()
+                rest = stripped[len(prefix) :].strip()
                 if not rest:
                     return None
                 if rest.lower().startswith("bind ") or rest.lower().startswith("绑定 "):
@@ -3103,7 +3091,7 @@ class MessageGateway:
         for prefix in ("@组织 ", "@org "):
             if lowered.startswith(prefix):
                 org_id = session.get_metadata("bound_org_id") if session else ""
-                task = stripped[len(prefix):].strip()
+                task = stripped[len(prefix) :].strip()
                 if org_id and task:
                     return str(org_id), task
         return None
@@ -3357,7 +3345,9 @@ class MessageGateway:
             create_if_missing=False,
         )
         if session is None:
-            await self._send_response(message, "当前会话不存在或已过期，请先发送一条普通消息建立会话。")
+            await self._send_response(
+                message, "当前会话不存在或已过期，请先发送一条普通消息建立会话。"
+            )
             return True
 
         if normalized in ("/org cancel", "/组织 取消"):
@@ -3426,15 +3416,29 @@ class MessageGateway:
     # 半天没反应"。AIGC 编排优化 P1-B：当 session 有 active org command
     # 时，直接走 command_service.cancel 的 fast-path，绕过队列。
     # 故意只接受**短**且**意图明确**的裸文本，避免在长正文里误命中。
-    _BARE_ORG_CANCEL_PHRASES: frozenset[str] = frozenset({
-        "中止", "中止任务",
-        "停止", "停止任务", "停了", "停了停了",
-        "结束任务", "结束",
-        "取消", "取消任务",
-        "终止", "终止任务",
-        "别做了", "不做了",
-        "/中止", "/结束", "/停止", "/取消", "/终止",
-    })
+    _BARE_ORG_CANCEL_PHRASES: frozenset[str] = frozenset(
+        {
+            "中止",
+            "中止任务",
+            "停止",
+            "停止任务",
+            "停了",
+            "停了停了",
+            "结束任务",
+            "结束",
+            "取消",
+            "取消任务",
+            "终止",
+            "终止任务",
+            "别做了",
+            "不做了",
+            "/中止",
+            "/结束",
+            "/停止",
+            "/取消",
+            "/终止",
+        }
+    )
 
     @classmethod
     def _is_bare_org_cancel(cls, text: str) -> bool:
@@ -3487,24 +3491,29 @@ class MessageGateway:
             svc = get_command_service()
             if svc is None:
                 await self._send_response(
-                    message, "检测到中止意图，但组织命令服务尚未就绪，请稍后再试。",
+                    message,
+                    "检测到中止意图，但组织命令服务尚未就绪，请稍后再试。",
                 )
                 return True
             result = await svc.cancel(org_id, command_id)
         except Exception as exc:
             logger.warning(
-                "[IM] bare-text org cancel failed: %s", exc, exc_info=True,
+                "[IM] bare-text org cancel failed: %s",
+                exc,
+                exc_info=True,
             )
             await self._send_response(message, f"中止失败：{_format_user_error(exc)}")
             return True
         if not result:
             await self._send_response(
-                message, "检测到中止意图，但当前组织命令已经被清理。",
+                message,
+                "检测到中止意图，但当前组织命令已经被清理。",
             )
             return True
         if result.get("already_done"):
             await self._send_response(
-                message, "命令已经结束，无需中止。",
+                message,
+                "命令已经结束，无需中止。",
             )
             return True
         await self._send_response(
@@ -3531,7 +3540,9 @@ class MessageGateway:
         if org_id:
             return org_id, None
         if candidates:
-            lines = [f"找到 {len(candidates)} 个名为「{q}」的组织，请用更精确的名字或直接用 ID 指定："]
+            lines = [
+                f"找到 {len(candidates)} 个名为「{q}」的组织，请用更精确的名字或直接用 ID 指定："
+            ]
             for c in candidates[:10]:
                 created = (c.get("created_at") or "")[:10]
                 lines.append(f"  • {c.get('name', '')}  ID: {c.get('id', '')}  创建于 {created}")
@@ -3732,7 +3743,9 @@ class MessageGateway:
             if display_name:
                 await self._send_response(message, f"当前绑定组织：「{display_name}」(ID: {bound})")
             else:
-                await self._send_response(message, f"当前绑定组织：{bound}（注意：该组织可能已被删除或归档）")
+                await self._send_response(
+                    message, f"当前绑定组织：{bound}（注意：该组织可能已被删除或归档）"
+                )
             return True
         if lowered in ("/org list", "/组织 列表"):
             mgr = self._get_org_manager()
@@ -3762,6 +3775,12 @@ class MessageGateway:
         if parsed is None:
             return False
         org_query, task = parsed
+
+        # 将已下载的文本文件内容拼接到 task，使组织根节点能看到文件内容。
+        # _preprocess_media 已在 _handle_message 中提前执行（媒体已下载到本地）。
+        file_supplement = self._extract_text_file_content(message)
+        if file_supplement:
+            task = task + file_supplement
 
         # 把用户输入的"组织名或 ID"解析为真实 ID。@组织/@org 简短形式时
         # ``_parse_org_command`` 已经返回 session 里 bound 好的真实 id，再走一遍解析
@@ -3798,7 +3817,9 @@ class MessageGateway:
                         display_name=(message.metadata or {}).get("sender_name", ""),
                     ),
                     origin_surface=OrgCommandSurface.IM,
-                    output_scope=default_scope_for_surface(OrgCommandSurface.IM, chat_type=chat_type),
+                    output_scope=default_scope_for_surface(
+                        OrgCommandSurface.IM, chat_type=chat_type
+                    ),
                 )
             )
             command_id = started["command_id"]
@@ -3872,7 +3893,9 @@ class MessageGateway:
                         else:
                             final_text = str(error or result or "组织命令已完成")
                         if attachments:
-                            final_text = self._append_attachment_media_lines(final_text, attachments)
+                            final_text = self._append_attachment_media_lines(
+                                final_text, attachments
+                            )
                         session.add_message("user", text, message_id=message.id)
                         session.add_message("assistant", final_text)
                         self._finish_current_org_command(session, result_text=final_text)
@@ -4176,6 +4199,13 @@ class MessageGateway:
                 classify_entry(message.channel),
             )
 
+            # 1.5 媒体预处理（下载文件/图片/语音 + 语音 STT）。
+            # 必须在 org 命令路由之前执行，否则组织命令路径无法读取文件内容。
+            # 对纯文本消息是 no-op（无媒体时直接跳过）；内部有幂等保护，
+            # 后续正常路径即使再次调用也安全。
+            if message.content.has_media:
+                await self._preprocess_media(message)
+
             org_handled = await self._try_handle_org_command(message, session, user_text)
             if org_handled:
                 return
@@ -4194,7 +4224,7 @@ class MessageGateway:
                         f"[Gateway] Pre-process hook {hook.__qualname__} failed: {hook_err}"
                     )
 
-            # 4. 媒体预处理（下载图片、语音转文字）
+            # 4. 媒体预处理（幂等：已下载的文件不会重复下载）
             await self._preprocess_media(message)
 
             # 4.1 多Bot绑定：将 adapter 配置的 agent_profile_id 写入新 session
@@ -4703,6 +4733,113 @@ class MessageGateway:
                 logger.warning(f"[Interrupt] _build_pending_files failed for {fil.local_path}: {e}")
         return files_data
 
+    # Known text-file extensions for inline content injection.
+    # Shared by _extract_text_file_content and _call_agent.
+    _TEXT_FILE_EXTENSIONS = frozenset(
+        (
+            ".md",
+            ".txt",
+            ".csv",
+            ".json",
+            ".jsonl",
+            ".xml",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".ini",
+            ".cfg",
+            ".log",
+            ".py",
+            ".js",
+            ".ts",
+            ".jsx",
+            ".tsx",
+            ".html",
+            ".htm",
+            ".css",
+            ".sql",
+            ".sh",
+            ".bat",
+            ".ps1",
+            ".java",
+            ".c",
+            ".cpp",
+            ".h",
+            ".hpp",
+            ".go",
+            ".rs",
+            ".rb",
+            ".php",
+            ".lua",
+            ".r",
+            ".swift",
+            ".kt",
+            ".scala",
+            ".conf",
+            ".env",
+            ".gitignore",
+            ".dockerfile",
+            ".makefile",
+        )
+    )
+
+    _TEXT_FILE_SIZE_LIMIT = 512 * 1024  # 512 KB
+
+    @staticmethod
+    def _extract_text_file_content(message: "UnifiedMessage") -> str:
+        """Extract readable text content from downloaded file attachments.
+
+        Returns a string with file contents (for known text extensions)
+        or path/failure notices for other file types.  Returns "" when
+        the message carries no file attachments or none could be read.
+
+        This is the single source of truth for text-file inlining —
+        used by both the normal agent path and the org-command path.
+        """
+        parts: list[str] = []
+        for fil in getattr(message.content, "files", []) or []:
+            if not fil.local_path or not Path(fil.local_path).exists():
+                continue
+            try:
+                mime = fil.mime_type or ""
+                suffix = Path(fil.local_path).suffix.lower()
+                _fname = fil.filename or Path(fil.local_path).name
+
+                if suffix in MessageGateway._TEXT_FILE_EXTENSIONS or mime.startswith("text/"):
+                    _fpath = Path(fil.local_path)
+                    if _fpath.stat().st_size <= MessageGateway._TEXT_FILE_SIZE_LIMIT:
+                        _content = _fpath.read_text(encoding="utf-8", errors="replace")
+                        parts.append(f"\n\n--- 文件: {_fname} ---\n{_content}\n--- 文件结束 ---")
+                        logger.info(f"Text file injected: {fil.local_path} ({len(_content)} chars)")
+                    else:
+                        parts.append(
+                            f"\n[附件: {_fname} ({mime or suffix}), "
+                            f"文件过大无法内联，本地路径: {fil.local_path}]"
+                        )
+                        logger.info(
+                            f"Text file too large for inline, path provided: {fil.local_path}"
+                        )
+                elif suffix == ".pdf" or "pdf" in mime:
+                    parts.append(f"\n[附件: {_fname} (PDF), 本地路径: {fil.local_path}]")
+                else:
+                    parts.append(
+                        f"\n[附件: {_fname} ({mime or suffix}), 本地路径: {fil.local_path}]"
+                    )
+            except Exception as e:
+                logger.error(f"Failed to extract file content: {e}")
+
+        failed_files = [
+            fil
+            for fil in (getattr(message.content, "files", []) or [])
+            if fil.status == MediaStatus.FAILED
+        ]
+        if failed_files:
+            reasons = "; ".join(fil.description or "未知原因" for fil in failed_files)
+            parts.append(f"\n[用户发送了{len(failed_files)}个文件，但下载失败: {reasons}]")
+            logger.warning(f"File download failed, notifying agent: {reasons}")
+
+        return "".join(parts)
+
     async def _send_typing(self, message: UnifiedMessage) -> None:
         """发送正在输入状态"""
         adapter = self._adapters.get(message.channel)
@@ -4946,7 +5083,15 @@ class MessageGateway:
                     input_text = "[用户发送了视频]"
                 logger.info(f"Processing multimodal message with {len(videos_data)} videos")
 
-            # 处理文件 - PDF 等文档的多模态输入
+            # 处理文件 — 文本内联 + PDF/二进制多模态
+            # 文本文件内联使用共享 helper（与 org 命令路径一致）
+            file_text_supplement = self._extract_text_file_content(message)
+            if file_text_supplement:
+                input_text += file_text_supplement
+
+            # PDF 文件构建 pending_files（供 Agent DocumentBlock 多模态）。
+            # 文本文件已由 _extract_text_file_content 内联到 input_text，
+            # 不需要重复进入 pending_files。
             files_data = []
             for fil in message.content.files:
                 if fil.local_path and Path(fil.local_path).exists():
@@ -4971,89 +5116,8 @@ class MessageGateway:
                                 }
                             )
                             logger.info(f"PDF file encoded: {fil.local_path}")
-                        elif suffix in (
-                            ".md",
-                            ".txt",
-                            ".csv",
-                            ".json",
-                            ".jsonl",
-                            ".xml",
-                            ".yaml",
-                            ".yml",
-                            ".toml",
-                            ".ini",
-                            ".cfg",
-                            ".log",
-                            ".py",
-                            ".js",
-                            ".ts",
-                            ".jsx",
-                            ".tsx",
-                            ".html",
-                            ".htm",
-                            ".css",
-                            ".sql",
-                            ".sh",
-                            ".bat",
-                            ".ps1",
-                            ".java",
-                            ".c",
-                            ".cpp",
-                            ".h",
-                            ".hpp",
-                            ".go",
-                            ".rs",
-                            ".rb",
-                            ".php",
-                            ".lua",
-                            ".r",
-                            ".swift",
-                            ".kt",
-                            ".scala",
-                            ".conf",
-                            ".env",
-                            ".gitignore",
-                            ".dockerfile",
-                            ".makefile",
-                        ) or mime.startswith("text/"):
-                            _TEXT_FILE_SIZE_LIMIT = 512 * 1024  # 512KB
-                            _fpath = Path(fil.local_path)
-                            if _fpath.stat().st_size <= _TEXT_FILE_SIZE_LIMIT:
-                                _content = _fpath.read_text(
-                                    encoding="utf-8",
-                                    errors="replace",
-                                )
-                                input_text += (
-                                    f"\n\n--- 文件: {_fname} ---\n{_content}\n--- 文件结束 ---"
-                                )
-                                logger.info(
-                                    f"Text file injected: {fil.local_path} ({len(_content)} chars)"
-                                )
-                            else:
-                                input_text += (
-                                    f"\n[附件: {_fname} ({mime or suffix}), "
-                                    f"文件过大无法内联，本地路径: {fil.local_path}]"
-                                )
-                                logger.info(
-                                    f"Text file too large for inline, "
-                                    f"path provided: {fil.local_path}"
-                                )
-                        else:
-                            input_text += (
-                                f"\n[附件: {_fname} ({mime or suffix}), 本地路径: {fil.local_path}]"
-                            )
                     except Exception as e:
-                        logger.error(f"Failed to process file: {e}")
-
-            # 检查文件下载失败
-            failed_files = [
-                fil for fil in message.content.files if fil.status == MediaStatus.FAILED
-            ]
-            if failed_files:
-                reasons = "; ".join(fil.description or "未知原因" for fil in failed_files)
-                notice = f"[用户发送了{len(failed_files)}个文件，但下载失败: {reasons}]"
-                input_text = f"{input_text}\n\n{notice}" if input_text.strip() else notice
-                logger.warning(f"File download failed, notifying agent: {reasons}")
+                        logger.error(f"Failed to process file for pending_files: {e}")
 
             if files_data:
                 session.set_metadata("pending_files", files_data)
@@ -5321,6 +5385,7 @@ class MessageGateway:
     _SPLIT_SEND_INTERVAL: dict[str, float] = {
         "telegram": 0.5,
         "wechat": 2.5,
+        "feishu": 0.4,
     }
     _DEFAULT_SPLIT_INTERVAL = 0.15
 
@@ -5330,6 +5395,7 @@ class MessageGateway:
         "wechat": 12.0,
         "qqbot": 10.0,
         "onebot": 10.0,
+        "feishu": 3.0,
     }
 
     @staticmethod
@@ -5472,6 +5538,16 @@ class MessageGateway:
                     )
                     failed_at = i
                     break
+            except ChannelDeliveryUnavailable:
+                logger.warning(
+                    "Channel unavailable while sending response part %s/%s "
+                    "(channel=%s, chat_id=%s)",
+                    i + 1,
+                    len(messages),
+                    original.channel,
+                    original.chat_id,
+                )
+                raise
             except Exception as e:
                 logger.error(
                     f"Failed to send response part {i + 1}/{len(messages)} after retries: {e}"
@@ -5504,6 +5580,8 @@ class MessageGateway:
                 plain_result = await adapter.send_message(plain_out)
                 if not self._is_im_send_delivered(plain_result):
                     raise RuntimeError("adapter did not confirm immediate delivery")
+            except ChannelDeliveryUnavailable:
+                raise
             except Exception as e2:
                 logger.error(f"Plain-text fallback also failed for part {failed_at + j + 1}: {e2}")
                 _sent_count = failed_at + j
@@ -5753,8 +5831,7 @@ class MessageGateway:
         """Send final text through the same chunking/retry path as normal replies."""
         if not isinstance(text, str):
             logger.warning(
-                "[Gateway] Refusing to send non-text reliable payload to IM channel "
-                "%s/%s: %s",
+                "[Gateway] Refusing to send non-text reliable payload to IM channel %s/%s: %s",
                 channel,
                 chat_id,
                 type(text).__name__,
@@ -5812,8 +5889,7 @@ class MessageGateway:
         """
         if not isinstance(text, str):
             logger.warning(
-                "[Gateway] Refusing to send non-text payload to IM channel "
-                "%s/%s: %s",
+                "[Gateway] Refusing to send non-text payload to IM channel %s/%s: %s",
                 channel,
                 chat_id,
                 type(text).__name__,
@@ -5856,6 +5932,8 @@ class MessageGateway:
                     logger.warning(f"Failed to record message to session: {e}")
 
             return result
+        except ChannelDeliveryUnavailable:
+            raise
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
             return None
@@ -5941,11 +6019,26 @@ class MessageGateway:
                     f"**原因**: {reason}"
                 ),
                 buttons=[
-                    {"text": "✅ 允许", "value": {"action": "security_allow", "confirm_id": confirm_id}},
-                    {"text": "❌ 拒绝", "value": {"action": "security_deny", "confirm_id": confirm_id}},
-                    {"text": "本次会话允许", "value": {"action": "security_allow_session", "confirm_id": confirm_id}},
-                    {"text": "始终允许", "value": {"action": "security_allow_always", "confirm_id": confirm_id}},
-                    {"text": "沙箱执行", "value": {"action": "security_sandbox", "confirm_id": confirm_id}},
+                    {
+                        "text": "✅ 允许",
+                        "value": {"action": "security_allow", "confirm_id": confirm_id},
+                    },
+                    {
+                        "text": "❌ 拒绝",
+                        "value": {"action": "security_deny", "confirm_id": confirm_id},
+                    },
+                    {
+                        "text": "本次会话允许",
+                        "value": {"action": "security_allow_session", "confirm_id": confirm_id},
+                    },
+                    {
+                        "text": "始终允许",
+                        "value": {"action": "security_allow_always", "confirm_id": confirm_id},
+                    },
+                    {
+                        "text": "沙箱执行",
+                        "value": {"action": "security_sandbox", "confirm_id": confirm_id},
+                    },
                 ],
             )
             try:
@@ -6043,7 +6136,11 @@ class MessageGateway:
 
         code = confirm_id[-4:].lower() if confirm_id else ""
         original_user = getattr(message, "user_id", "") or ""
-        reply_user = getattr(getattr(reply_msg, "message", None), "user_id", "") if "reply_msg" in locals() else ""
+        reply_user = (
+            getattr(getattr(reply_msg, "message", None), "user_id", "")
+            if "reply_msg" in locals()
+            else ""
+        )
         if original_user and reply_user and reply_user != original_user:
             logger.warning("[Security] Ignored IM confirmation from a different user")
             text = ""

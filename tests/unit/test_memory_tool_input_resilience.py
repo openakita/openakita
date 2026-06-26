@@ -116,10 +116,12 @@ def test_add_memory_keeps_one_off_task_facts_in_current_session_scope():
     agent = SimpleNamespace(memory_manager=mm, profile_manager=None)
     handler = MemoryHandler(agent)
 
-    result = handler._add_memory({
-        "content": "用户希望生成一份本周活动报告",
-        "type": "fact",
-    })
+    result = handler._add_memory(
+        {
+            "content": "用户希望生成一份本周活动报告",
+            "type": "fact",
+        }
+    )
 
     assert "当前会话" in result
     assert mm.add_memory.call_args.kwargs["scope"] == "session"

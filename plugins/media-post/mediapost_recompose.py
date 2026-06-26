@@ -110,9 +110,7 @@ async def smart_recompose(
     """Run the 4-step recompose. Returns the trajectory + scene cuts."""
     if ctx.orig_width <= 0 or ctx.orig_height <= 0:
         raise MediaPostError("format", "orig_width/orig_height must be > 0")
-    crop_w, crop_h = compute_crop_dims(
-        ctx.orig_width, ctx.orig_height, ctx.target_aspect
-    )
+    crop_w, crop_h = compute_crop_dims(ctx.orig_width, ctx.orig_height, ctx.target_aspect)
 
     if progress_cb:
         await _safe_call(progress_cb, 0.05, "detecting scene cuts")
@@ -390,9 +388,7 @@ async def ffprobe_duration(video: Path) -> float:
         return 0.0
 
 
-async def extract_frames(
-    video: Path, out_dir: Path, fps: float, scale: str
-) -> None:
+async def extract_frames(video: Path, out_dir: Path, fps: float, scale: str) -> None:
     """Run ``ffmpeg -vf fps=N,scale=W:H -y ...frame_%05d.png``."""
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -438,9 +434,7 @@ async def run_ffmpeg_crop(
     output.parent.mkdir(parents=True, exist_ok=True)
     vf = f"crop={crop_w}:{crop_h}:'{x_expr}':0"
     if letterbox_if_needed:
-        vf += (
-            f",pad={crop_w}:{crop_h}:(ow-iw)/2:(oh-ih)/2:color=black"
-        )
+        vf += f",pad={crop_w}:{crop_h}:(ow-iw)/2:(oh-ih)/2:color=black"
     cmd = [
         _FFMPEG_BIN,
         "-y",
@@ -487,9 +481,7 @@ async def _detect_subjects(
     batch_size: int,
     concurrency: int,
 ) -> list[dict[str, Any] | None]:
-    frames_b64 = [
-        base64.b64encode(p.read_bytes()).decode("ascii") for p in frame_files
-    ]
+    frames_b64 = [base64.b64encode(p.read_bytes()).decode("ascii") for p in frame_files]
     indices = list(range(len(frame_files)))
 
     def _kwargs_factory(batch_indices: list[int]) -> dict[str, Any]:

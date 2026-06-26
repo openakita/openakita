@@ -111,8 +111,7 @@ class SystemHandler:
             logs = [
                 log
                 for log in logs
-                if log.get("level") != "DEBUG"
-                and "[LLM DEBUG]" not in str(log.get("message", ""))
+                if log.get("level") != "DEBUG" and "[LLM DEBUG]" not in str(log.get("message", ""))
             ]
 
         if not logs:
@@ -345,14 +344,18 @@ class SystemHandler:
 
             try:
                 img_bytes = await async_with_retry(
-                    _download_image, image_url,
-                    max_retries=3, base_delay=2.0, operation_name="download_generated_image",
+                    _download_image,
+                    image_url,
+                    max_retries=3,
+                    base_delay=2.0,
+                    operation_name="download_generated_image",
                 )
                 out_path.write_bytes(img_bytes)
             except Exception as e:
                 detail = extract_connection_error(e)
-                from urllib.parse import urlparse
-                host = urlparse(image_url).hostname or image_url[:60]
+                from openakita.utils.url_safety import safe_urlparse
+
+                host = safe_urlparse(image_url).hostname or image_url[:60]
                 return f"❌ 图片下载失败（网络错误，目标: {host}）: {detail}{_hint}"
 
         except httpx.HTTPError as e:

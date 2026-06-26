@@ -230,9 +230,7 @@ def truncate_memory_md_with_status(
     if "lines" in triggers:
         parts.append(f"{original_lines} 行（上限 {max_lines}）")
     if "bytes" in triggers:
-        parts.append(
-            f"{_format_byte_size(original_bytes)}（上限 {_format_byte_size(max_bytes)}）"
-        )
+        parts.append(f"{_format_byte_size(original_bytes)}（上限 {_format_byte_size(max_bytes)}）")
     warning = (
         "> ⚠️ MEMORY.md 当前 "
         + "、".join(parts)

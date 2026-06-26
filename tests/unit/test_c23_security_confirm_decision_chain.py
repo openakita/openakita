@@ -46,8 +46,14 @@ class TestToUiChainShape:
         d = _make_decision(
             chain=[
                 DecisionStep(name="preflight", action=DecisionAction.ALLOW, note="tool=run_shell"),
-                DecisionStep(name="classify", action=DecisionAction.ALLOW, note="approval_class=destructive"),
-                DecisionStep(name="confirmation_gate", action=DecisionAction.CONFIRM, note="destructive in strict"),
+                DecisionStep(
+                    name="classify", action=DecisionAction.ALLOW, note="approval_class=destructive"
+                ),
+                DecisionStep(
+                    name="confirmation_gate",
+                    action=DecisionAction.CONFIRM,
+                    note="destructive in strict",
+                ),
             ]
         )
         ui_chain = d.to_ui_chain()
@@ -105,9 +111,7 @@ class TestToUiChainShape:
     def test_empty_note_kept_as_empty_string(self) -> None:
         """note 缺省是 ""——前端 ``if (step.note)`` 判断渲染。保持 str
         类型让 schema 一致，不要回退到 None。"""
-        d = _make_decision(
-            chain=[DecisionStep(name="x", action=DecisionAction.ALLOW)]
-        )
+        d = _make_decision(chain=[DecisionStep(name="x", action=DecisionAction.ALLOW)])
         step = d.to_ui_chain()[0]
         assert step["note"] == ""
 
@@ -119,8 +123,14 @@ class TestJsonSafety:
         d = _make_decision(
             chain=[
                 DecisionStep(name="preflight", action=DecisionAction.ALLOW, note="tool=write_file"),
-                DecisionStep(name="zones", action=DecisionAction.ALLOW, note="path inside workspace"),
-                DecisionStep(name="confirmation_gate", action=DecisionAction.CONFIRM, note="destructive in default mode"),
+                DecisionStep(
+                    name="zones", action=DecisionAction.ALLOW, note="path inside workspace"
+                ),
+                DecisionStep(
+                    name="confirmation_gate",
+                    action=DecisionAction.CONFIRM,
+                    note="destructive in default mode",
+                ),
             ]
         )
         payload = {"decision_chain": d.to_ui_chain()}

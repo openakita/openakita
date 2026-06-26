@@ -104,9 +104,7 @@ class TestRankAndFilter:
             {"overall_score": 2.0, "best_for": "thumbnail"},
             {"overall_score": 3.5, "best_for": "hero_image"},
         ]
-        ranked = _rank_and_filter(
-            files, detections, min_score_threshold=3.0, quantity=8
-        )
+        ranked = _rank_and_filter(files, detections, min_score_threshold=3.0, quantity=8)
         assert [det.get("overall_score") for _, det in ranked] == [4.5, 3.5]
 
     def test_quantity_caps_results(self, tmp_path: Path) -> None:
@@ -116,9 +114,7 @@ class TestRankAndFilter:
             {"overall_score": 4.0},
             {"overall_score": 3.5},
         ]
-        ranked = _rank_and_filter(
-            files, detections, min_score_threshold=0.0, quantity=2
-        )
+        ranked = _rank_and_filter(files, detections, min_score_threshold=0.0, quantity=2)
         assert len(ranked) == 2
         assert ranked[0][1]["overall_score"] == 5.0
 
@@ -129,7 +125,9 @@ class TestRankAndFilter:
 
 
 class TestPickCovers:
-    def test_happy_path_writes_finalists(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_happy_path_writes_finalists(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         files = _make_files(tmp_path, 3)
 
         async def _fake_extract(*args: Any, **kwargs: Any) -> list[Path]:

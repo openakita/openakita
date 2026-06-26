@@ -12,7 +12,10 @@ from typing import Any
 from word_brain_helper import WordBrainHelper
 from word_source_loader import load_source
 from word_task_manager import WordTaskManager
-from word_template_engine import extract_template_vars, render_template
+from word_field_prepare import prepare_template_fields
+from word_outline_sync import build_outline_from_sources
+from word_template_starters import resolve_template_for_project
+from word_template_engine import append_outline_to_template, extract_template_vars, render_template, save_document
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 
@@ -24,6 +27,7 @@ class WordPipelineContext:
     requirement: str = ""
     doc_type: str = "research_report"
     template_path: Path | None = None
+    template_source: str = "none"
     source_paths: list[Path] = field(default_factory=list)
     fields: dict[str, Any] = field(default_factory=dict)
     outline: dict[str, Any] = field(default_factory=dict)
@@ -63,8 +67,14 @@ def _outline_to_markdown(outline: dict[str, Any], fields: dict[str, Any]) -> str
     return "\n".join(chunks).strip() + "\n"
 
 
-def audit_output(path: Path | None, *, markdown: str = "", missing: list[str] | None = None) -> dict[str, Any]:
-    warnings: list[str] = []
+def audit_output(
+    path: Path | None,
+    *,
+    markdown: str = "",
+    missing: list[str] | None = None,
+    extra_warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    warnings: list[str] = list(extra_warnings or [])
     errors: list[str] = []
     if path is None or not path.exists():
         errors.append("Output file was not created")
@@ -134,21 +144,21 @@ async def run_pipeline(
                 )
 
         sources_text = "\n\n".join(source_texts)
-        if not ctx.outline and brain_helper is not None:
-            outline_result = await brain_helper.generate_outline(
-                requirement=ctx.requirement,
-                doc_type=ctx.doc_type,
-                sources_text=sources_text,
-            )
-            ctx.outline = outline_result.data
-        if not ctx.outline:
-            ctx.outline = {
-                "title": ctx.fields.get("title") or "文档初稿",
-                "sections": [
-                    {"id": "main", "title": "正文", "goal": ctx.requirement or "整理核心内容", "bullets": []}
-                ],
-                "missing_inputs": [],
-            }
+        if not (ctx.outline or {}).get("sections"):
+            if brain_helper is not None and brain_helper.is_available():
+                outline_result = await brain_helper.generate_outline(
+                    requirement=ctx.requirement,
+                    doc_type=ctx.doc_type,
+                    sources_text=sources_text,
+                )
+                if outline_result.ok:
+                    ctx.outline = outline_result.data
+            if not (ctx.outline or {}).get("sections"):
+                ctx.outline = build_outline_from_sources(
+                    sources_text,
+                    ctx.requirement,
+                    title=str(ctx.fields.get("title") or "文档初稿"),
+                )
 
         ctx.doc_markdown = _outline_to_markdown(ctx.outline, ctx.fields)
         drafts_dir = ctx.task_dir / "drafts"
@@ -158,13 +168,48 @@ async def run_pipeline(
         (drafts_dir / "draft.md").write_text(ctx.doc_markdown, encoding="utf-8")
 
         missing: list[str] = []
+        if ctx.template_path is None:
+            uploads_dir = ctx.task_dir.parent.parent / "uploads"
+            resolved, source = resolve_template_for_project(
+                ctx.doc_type,
+                None,
+                uploads_dir=uploads_dir,
+            )
+            if resolved is not None:
+                ctx.template_path = resolved
+                ctx.template_source = source
+
         if ctx.template_path is not None:
+            prepared = await prepare_template_fields(
+                doc_type=ctx.doc_type,
+                template_path=ctx.template_path,
+                sources_text=sources_text,
+                requirement=ctx.requirement,
+                outline=ctx.outline,
+                fields=ctx.fields,
+                brain_helper=brain_helper,
+            )
+            ctx.fields = prepared.fields
             inspection = extract_template_vars(ctx.template_path, context=ctx.fields)
             missing = inspection.missing
             ctx.output_path = exports_dir / "document.docx"
-            render = render_template(ctx.template_path, ctx.output_path, ctx.fields)
+            if not inspection.variables and (ctx.outline or {}).get("sections"):
+                render = append_outline_to_template(
+                    ctx.template_path,
+                    ctx.output_path,
+                    outline=ctx.outline,
+                    fields=ctx.fields,
+                )
+            else:
+                render = render_template(
+                    ctx.template_path,
+                    ctx.output_path,
+                    ctx.fields,
+                    outline=ctx.outline,
+                )
             if not render.ok:
                 raise RuntimeError(render.error or "Template render failed")
+            ctx.output_path = Path(render.output_path)
             await manager.add_template(
                 ctx.project_id,
                 label=ctx.template_path.name,
@@ -186,9 +231,21 @@ async def run_pipeline(
                 elif line.strip():
                     document.add_paragraph(line)
             ctx.output_path = exports_dir / "document.docx"
-            document.save(ctx.output_path)
+            ctx.output_path = save_document(document, ctx.output_path)
 
-        ctx.audit = audit_output(ctx.output_path, markdown=ctx.doc_markdown, missing=missing)
+        audit_warnings: list[str] = []
+        if ctx.template_path is not None:
+            tmpl_inspection = extract_template_vars(ctx.template_path, context=ctx.fields)
+            if not tmpl_inspection.variables and (ctx.outline or {}).get("sections"):
+                audit_warnings.append(
+                    "模板未检测到 {{ 字段名 }} 占位符，已在模板末尾追加根据资料生成的大纲正文"
+                )
+        ctx.audit = audit_output(
+            ctx.output_path,
+            markdown=ctx.doc_markdown,
+            missing=missing,
+            extra_warnings=audit_warnings,
+        )
         (ctx.task_dir / "audit.json").write_text(
             json.dumps(ctx.audit, ensure_ascii=False, indent=2),
             encoding="utf-8",

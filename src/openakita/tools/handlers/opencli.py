@@ -69,12 +69,12 @@ class OpenCLIHandler:
             return await self._doctor(params)
         return f"Unknown opencli tool: {tool_name}"
 
-    async def _run_cmd(
-        self, args: list[str], timeout: float | None = None
-    ) -> tuple[int, str, str]:
+    async def _run_cmd(self, args: list[str], timeout: float | None = None) -> tuple[int, str, str]:
         """Execute opencli with given args, return (returncode, stdout, stderr)."""
         if timeout is None:
-            timeout = float(getattr(settings, "opencli_command_timeout_seconds", _OPENCLI_CMD_TIMEOUT) or 0)
+            timeout = float(
+                getattr(settings, "opencli_command_timeout_seconds", _OPENCLI_CMD_TIMEOUT) or 0
+            )
         cmd = [self._opencli_path or "opencli"] + args
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -143,7 +143,9 @@ class OpenCLIHandler:
 
         rc, stdout, stderr = await self._run_cmd(
             cmd_parts,
-            timeout=float(getattr(settings, "opencli_task_timeout_seconds", _OPENCLI_TASK_TIMEOUT) or 0),
+            timeout=float(
+                getattr(settings, "opencli_task_timeout_seconds", _OPENCLI_TASK_TIMEOUT) or 0
+            ),
         )
         if rc != 0:
             error_msg = stderr.strip() or stdout.strip() or "未知错误"

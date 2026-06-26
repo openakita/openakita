@@ -22,10 +22,7 @@ import {
   type Edge,
   type Connection,
   type NodeTypes,
-  type EdgeTypes,
   type ReactFlowInstance,
-  type NodeChange,
-  type EdgeChange,
   Handle,
   Position,
   MarkerType,
@@ -43,10 +40,7 @@ import {
   IconStop,
   IconCheck,
   IconX,
-  IconUsers,
   IconChevronDown,
-  IconChevronRight,
-  IconRadar,
   IconSnowflake,
   IconGear,
   IconBuilding,
@@ -54,7 +48,6 @@ import {
   IconMenu,
   IconSitemap,
   IconAlertCircle,
-  IconUpload,
   IconMessageCircle,
   IconUnlock,
   IconPin,
@@ -67,7 +60,7 @@ import { IS_CAPACITOR, saveFileDialog, IS_TAURI, writeTextFile, openFileDialog, 
 import { OrgInboxSidebar } from "../components/OrgInboxSidebar";
 import { WorkbenchNodePicker, type WorkbenchTemplate } from "../components/WorkbenchNodePicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { OrgAvatar, AVATAR_PRESETS, AVATAR_MAP } from "../components/OrgAvatars";
+import { OrgAvatar, AVATAR_PRESETS } from "../components/OrgAvatars";
 import { OrgChatPanel } from "../components/OrgChatPanel";
 import { TemplatePickerDialog } from "../components/TemplatePickerDialog";
 import type { OrgWire } from "../api/orgs";
@@ -78,7 +71,7 @@ import { OrgProjectBoard } from "../components/OrgProjectBoard";
 import { ZoomIn, ZoomOut, Maximize, X as XIcon, Copy as IconCopy } from "lucide-react";
 import { copyToClipboard } from "../utils/clipboard";
 import { Button } from "../components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Checkbox } from "../components/ui/checkbox";
 import { Input as ShadInput } from "../components/ui/input";
 import { Label as ShadLabel } from "../components/ui/label";
@@ -90,7 +83,7 @@ import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import {
   fmtTime, fmtDateTime, fmtShortDate, stripMd,
   STATUS_LABELS, STATUS_COLORS, ORG_STATUS_LABELS,
-  EDGE_COLORS, DEPT_COLORS, getDeptColor,
+  EDGE_COLORS, getDeptColor,
   BB_TYPE_COLORS, BB_TYPE_LABELS,
   type OrgNodeData, type OrgEdgeData, type OrgSummary,
   type OrgFull,
@@ -650,7 +643,7 @@ export function OrgEditorView({
   const [currentOrg, setCurrentOrg] = useState<OrgFull | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lastSavedRef = useRef<string>("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

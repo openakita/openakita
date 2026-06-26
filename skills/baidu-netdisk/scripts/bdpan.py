@@ -29,53 +29,70 @@ QUOTA_URL = "https://pan.baidu.com/api/quota"
 def _get(url: str, params: dict) -> dict:
     qs = urllib.parse.urlencode(params)
     full_url = f"{url}?{qs}"
-    req = urllib.request.Request(full_url, headers={
-        "User-Agent": "pan.baidu.com",
-    })
+    req = urllib.request.Request(
+        full_url,
+        headers={
+            "User-Agent": "pan.baidu.com",
+        },
+    )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode())
 
 
-def list_files(token: str, dir_path: str, order: str = "name",
-               start: int = 0, limit: int = 100) -> dict:
-    return _get(XPAN_FILE, {
-        "method": "list",
-        "access_token": token,
-        "dir": dir_path,
-        "order": order,
-        "start": start,
-        "limit": limit,
-    })
+def list_files(
+    token: str, dir_path: str, order: str = "name", start: int = 0, limit: int = 100
+) -> dict:
+    return _get(
+        XPAN_FILE,
+        {
+            "method": "list",
+            "access_token": token,
+            "dir": dir_path,
+            "order": order,
+            "start": start,
+            "limit": limit,
+        },
+    )
 
 
-def search_files(token: str, keyword: str, dir_path: str = "/",
-                 page: int = 1, num: int = 100) -> dict:
-    return _get(XPAN_FILE, {
-        "method": "search",
-        "access_token": token,
-        "key": keyword,
-        "dir": dir_path,
-        "page": page,
-        "num": num,
-        "recursion": 1,
-    })
+def search_files(
+    token: str, keyword: str, dir_path: str = "/", page: int = 1, num: int = 100
+) -> dict:
+    return _get(
+        XPAN_FILE,
+        {
+            "method": "search",
+            "access_token": token,
+            "key": keyword,
+            "dir": dir_path,
+            "page": page,
+            "num": num,
+            "recursion": 1,
+        },
+    )
 
 
 def get_quota(token: str) -> dict:
-    return _get(QUOTA_URL, {
-        "access_token": token,
-        "checkfree": 1,
-        "checkexpire": 1,
-    })
+    return _get(
+        QUOTA_URL,
+        {
+            "access_token": token,
+            "checkfree": 1,
+            "checkexpire": 1,
+        },
+    )
 
 
 def file_metas(token: str, fsids: list) -> dict:
-    return _get(XPAN_MULTI, {
-        "method": "filemetas",
-        "access_token": token,
-        "fsids": json.dumps(fsids),
-        "dlink": 1,
-    })
+    return _get(
+        XPAN_MULTI,
+        {
+            "method": "filemetas",
+            "access_token": token,
+            "fsids": json.dumps(fsids),
+            "dlink": 1,
+        },
+    )
 
 
 def main():
@@ -83,18 +100,17 @@ def main():
         description="百度网盘 Open API CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例:\n"
-               "  python3 bdpan.py ls /apps/mydata/\n"
-               "  python3 bdpan.py search \"报告\" --dir /\n"
-               "  python3 bdpan.py info\n"
-               "  python3 bdpan.py meta 123456789",
+        "  python3 bdpan.py ls /apps/mydata/\n"
+        '  python3 bdpan.py search "报告" --dir /\n'
+        "  python3 bdpan.py info\n"
+        "  python3 bdpan.py meta 123456789",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     # ls
     p_ls = sub.add_parser("ls", help="列出文件")
     p_ls.add_argument("path", nargs="?", default="/", help="目录路径 (默认 /)")
-    p_ls.add_argument("--order", default="name",
-                      choices=["name", "time", "size"], help="排序方式")
+    p_ls.add_argument("--order", default="name", choices=["name", "time", "size"], help="排序方式")
     p_ls.add_argument("--start", type=int, default=0, help="起始索引")
     p_ls.add_argument("--limit", type=int, default=100, help="数量上限")
 
@@ -135,8 +151,10 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except urllib.error.HTTPError as e:
         body = e.read().decode() if e.fp else ""
-        print(json.dumps({"error": str(e), "detail": body}, ensure_ascii=False, indent=2),
-              file=sys.stderr)
+        print(
+            json.dumps({"error": str(e), "detail": body}, ensure_ascii=False, indent=2),
+            file=sys.stderr,
+        )
         sys.exit(1)
     except Exception as e:
         print(json.dumps({"error": str(e)}, ensure_ascii=False, indent=2), file=sys.stderr)
@@ -145,4 +163,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

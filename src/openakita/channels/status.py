@@ -53,7 +53,10 @@ def _adapter_items(gateway: Any | None) -> list[tuple[str, Any]]:
     if isinstance(adapters_dict, dict):
         return list(adapters_dict.items())
     adapters_list = getattr(gateway, "adapters", []) or []
-    return [(getattr(adapter, "channel_name", f"adapter_{i}"), adapter) for i, adapter in enumerate(adapters_list)]
+    return [
+        (getattr(adapter, "channel_name", f"adapter_{i}"), adapter)
+        for i, adapter in enumerate(adapters_list)
+    ]
 
 
 def collect_effective_im_status(settings: Any, gateway: Any | None = None) -> dict[str, Any]:
@@ -91,11 +94,7 @@ def collect_effective_im_status(settings: Any, gateway: Any | None = None) -> di
 
     for channel_type, (enabled_field, required_fields) in _ENV_CHANNELS.items():
         enabled = _truthy(getattr(settings, enabled_field, False))
-        missing = [
-            field
-            for field in required_fields
-            if not _present(getattr(settings, field, ""))
-        ]
+        missing = [field for field in required_fields if not _present(getattr(settings, field, ""))]
         runtime_entries = runtime_by_type.get(channel_type, [])
         runtime_seen = bool(runtime_entries)
         configured = enabled and not missing
@@ -122,7 +121,9 @@ def collect_effective_im_status(settings: Any, gateway: Any | None = None) -> di
             continue
         bot_id = str(bot_cfg.get("id") or "")
         channel_name = f"{bot_type}:{bot_id}" if bot_id else bot_type
-        credentials = bot_cfg.get("credentials") if isinstance(bot_cfg.get("credentials"), dict) else {}
+        credentials = (
+            bot_cfg.get("credentials") if isinstance(bot_cfg.get("credentials"), dict) else {}
+        )
         required = _BOT_REQUIRED_CREDENTIALS.get(bot_type, [])
         missing = [key for key in required if not _present(credentials.get(key))]
         enabled = bot_cfg.get("enabled", True) is not False

@@ -119,9 +119,7 @@ class SessionAllowlistManager:
             count = len(self._entries)
             self._entries.clear()
         if count:
-            logger.debug(
-                "[PolicyV2 SessionAllowlist] cleared %d entries", count
-            )
+            logger.debug("[PolicyV2 SessionAllowlist] cleared %d entries", count)
 
     # ----- query -----------------------------------------------------------
 

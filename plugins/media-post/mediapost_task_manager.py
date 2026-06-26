@@ -448,9 +448,7 @@ class MediaPostTaskManager:
 
     async def get_running_tasks(self) -> list[dict[str, Any]]:
         assert self._db
-        cur = await self._db.execute(
-            "SELECT * FROM tasks WHERE status IN ('pending', 'running')"
-        )
+        cur = await self._db.execute("SELECT * FROM tasks WHERE status IN ('pending', 'running')")
         rows = await cur.fetchall()
         return [self._task_row_to_dict(r) for r in rows]
 
@@ -664,8 +662,7 @@ class MediaPostTaskManager:
     async def list_chapter_card_results(self, task_id: str) -> list[dict[str, Any]]:
         assert self._db
         cur = await self._db.execute(
-            "SELECT * FROM chapter_cards_results WHERE task_id = ? "
-            "ORDER BY chapter_index ASC",
+            "SELECT * FROM chapter_cards_results WHERE task_id = ? ORDER BY chapter_index ASC",
             (task_id,),
         )
         rows = await cur.fetchall()
@@ -677,9 +674,7 @@ class MediaPostTaskManager:
 
     async def get_asset(self, asset_id: str) -> dict[str, Any] | None:
         assert self._db
-        cur = await self._db.execute(
-            "SELECT * FROM assets_bus WHERE asset_id = ?", (asset_id,)
-        )
+        cur = await self._db.execute("SELECT * FROM assets_bus WHERE asset_id = ?", (asset_id,))
         row = await cur.fetchone()
         return self._asset_row_to_dict(row) if row else None
 

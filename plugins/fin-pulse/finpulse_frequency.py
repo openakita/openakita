@@ -231,9 +231,7 @@ class FrequencyMatcher:
             if _token_matches(fw, text):
                 return False
         for group in self.rules.groups:
-            required_ok = all(
-                _token_matches(tok, text) for tok in group.required
-            )
+            required_ok = all(_token_matches(tok, text) for tok in group.required)
             if not required_ok:
                 continue
             if group.normal:
@@ -255,9 +253,7 @@ class FrequencyMatcher:
             if _token_matches(fw, text):
                 return None
         for group in self.rules.groups:
-            required_ok = all(
-                _token_matches(tok, text) for tok in group.required
-            )
+            required_ok = all(_token_matches(tok, text) for tok in group.required)
             if not required_ok:
                 continue
             if group.normal:

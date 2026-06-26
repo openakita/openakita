@@ -133,9 +133,7 @@ def test_trace_scrubber_drops_full_tool_trace_in_single_chunk():
     """单 chunk 内出现完整 <<TOOL_TRACE>> section → 不产生可见 text_delta。"""
     acc = StreamAccumulator()
     events = acc.feed(
-        _text_delta(
-            "Visible answer.\n\n<<TOOL_TRACE>>\n- web_search({'q': 'x'}) -> ..."
-        )
+        _text_delta("Visible answer.\n\n<<TOOL_TRACE>>\n- web_search({'q': 'x'}) -> ...")
     )
     events.extend(acc.feed({"type": "message_stop"}))
 
@@ -267,9 +265,7 @@ def test_trace_scrubber_does_not_eat_inline_marker_discussion():
 def test_trace_scrubber_delegation_trace_variant():
     """<<DELEGATION_TRACE>> 也应该被识别为 trace marker。"""
     acc = StreamAccumulator()
-    events = acc.feed(
-        _text_delta("Done.\n\n<<DELEGATION_TRACE>>\n1. [foo] task: ...")
-    )
+    events = acc.feed(_text_delta("Done.\n\n<<DELEGATION_TRACE>>\n1. [foo] task: ..."))
     events.extend(acc.feed({"type": "message_stop"}))
     combined = "".join(e["content"] for e in events if e.get("type") == "text_delta")
     assert "DELEGATION_TRACE" not in combined

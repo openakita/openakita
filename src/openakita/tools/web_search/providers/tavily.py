@@ -48,9 +48,7 @@ class TavilyProvider:
     ) -> list[SearchResult]:
         api_key = (settings.tavily_api_key or "").strip()
         if not api_key:
-            raise MissingCredentialError(
-                "TAVILY_API_KEY not configured", provider_id=self.id
-            )
+            raise MissingCredentialError("TAVILY_API_KEY not configured", provider_id=self.id)
 
         payload = {
             "api_key": api_key,
@@ -94,7 +92,8 @@ class TavilyProvider:
             data = resp.json()
         except ValueError as exc:
             raise NetworkUnreachableError(
-                "tavily returned non-JSON response", provider_id=self.id,
+                "tavily returned non-JSON response",
+                provider_id=self.id,
             ) from exc
 
         results = data.get("results") or []

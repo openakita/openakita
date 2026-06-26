@@ -63,9 +63,7 @@ class SkillAllowlistManager:
             return
         with self._lock:
             self._allowlists[skill_id] = names
-            logger.debug(
-                "[PolicyV2 SkillAllowlist] '%s' granted: %s", skill_id, sorted(names)
-            )
+            logger.debug("[PolicyV2 SkillAllowlist] '%s' granted: %s", skill_id, sorted(names))
 
     def remove(self, skill_id: str) -> bool:
         """撤销 ``skill_id`` 的所有临时授权；返回是否真的删了一个 entry。"""

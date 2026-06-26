@@ -11,7 +11,6 @@
 - 可关闭: 一句话关闭
 """
 
-import json
 import logging
 import random
 from dataclasses import dataclass, field
@@ -63,23 +62,27 @@ class ProactiveFeedbackTracker:
         self._load()
 
     def _load(self) -> None:
-        if self.data_file.exists():
-            try:
-                data = json.loads(self.data_file.read_text(encoding="utf-8"))
-                for rec in data.get("records", []):
-                    self.records.append(
-                        ProactiveRecord(
-                            msg_type=rec["msg_type"],
-                            timestamp=datetime.fromisoformat(rec["timestamp"]),
-                            reaction=rec.get("reaction"),
-                            response_delay_minutes=rec.get("response_delay_minutes"),
-                        )
+        try:
+            from openakita.utils.atomic_io import read_json_safe
+
+            data = read_json_safe(self.data_file)
+            if not isinstance(data, dict):
+                return
+            for rec in data.get("records", []):
+                self.records.append(
+                    ProactiveRecord(
+                        msg_type=rec["msg_type"],
+                        timestamp=datetime.fromisoformat(rec["timestamp"]),
+                        reaction=rec.get("reaction"),
+                        response_delay_minutes=rec.get("response_delay_minutes"),
                     )
-            except Exception as e:
-                logger.warning(f"Failed to load proactive feedback: {e}")
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load proactive feedback: {e}")
 
     def _save(self) -> None:
-        self.data_file.parent.mkdir(parents=True, exist_ok=True)
+        from openakita.utils.atomic_io import atomic_json_write
+
         data = {
             "records": [
                 {
@@ -88,10 +91,10 @@ class ProactiveFeedbackTracker:
                     "reaction": r.reaction,
                     "response_delay_minutes": r.response_delay_minutes,
                 }
-                for r in self.records[-200:]  # 只保留最近 200 条
+                for r in self.records[-200:]
             ]
         }
-        self.data_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_json_write(self.data_file, data)
 
     def record_send(self, msg_type: str, timestamp: datetime | None = None) -> None:
         """记录一次主动消息发送"""

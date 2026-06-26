@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from openakita.agents.identity_files import PROFILE_IDENTITY_FILENAMES
 from openakita.memory.json_utils import coerce_text
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,18 @@ def _invalidate_profile_agents(request: Request, profile_id: str) -> None:
                     f"[Agents API] Failed to invalidate profile pool "
                     f"({pool_attr}, profile={profile_id}): {e}"
                 )
+
+
+def _invalidate_profile_runtime(request: Request, profile_id: str, reason: str) -> None:
+    """Invalidate prompt and pooled runtime state after profile-affecting edits."""
+    try:
+        from openakita.prompt.builder import clear_prompt_section_cache
+
+        clear_prompt_section_cache()
+    except Exception as exc:
+        logger.warning(f"[Agents API] Failed to clear prompt cache ({reason}): {exc}")
+
+    _invalidate_profile_agents(request, profile_id)
 
 
 # ─── Pydantic models ─────────────────────────────────────────────────────
@@ -620,11 +633,8 @@ class IdentityFileRequest(BaseModel):
     content: str = ""
 
 
-_ALLOWED_IDENTITY_FILES = frozenset({"SOUL.md", "AGENT.md", "USER.md", "MEMORY.md"})
-
-
 @router.post("/api/agents/profiles/{profile_id}/identity/init")
-async def init_profile_identity(profile_id: str):
+async def init_profile_identity(profile_id: str, request: Request):
     """Initialize the profile-specific identity directory."""
     from openakita.agents.profile import get_profile_store
 
@@ -642,13 +652,14 @@ async def init_profile_identity(profile_id: str):
     resolver = ProfileIdentityResolver(identity_dir, settings.identity_path)
     resolver.ensure_independent_files()
 
+    _invalidate_profile_runtime(request, profile_id, "profile identity init")
     return {"status": "ok", "identity_dir": str(identity_dir)}
 
 
 @router.get("/api/agents/profiles/{profile_id}/identity/{filename}")
 async def read_profile_identity_file(profile_id: str, filename: str):
     """Read a profile-specific identity file. Returns global content if profile has none."""
-    if filename not in _ALLOWED_IDENTITY_FILES:
+    if filename not in PROFILE_IDENTITY_FILENAMES:
         raise HTTPException(status_code=400, detail=f"Invalid identity file: {filename}")
 
     from openakita.agents.profile import get_profile_store
@@ -676,9 +687,14 @@ async def read_profile_identity_file(profile_id: str, filename: str):
 
 
 @router.put("/api/agents/profiles/{profile_id}/identity/{filename}")
-async def write_profile_identity_file(profile_id: str, filename: str, body: IdentityFileRequest):
+async def write_profile_identity_file(
+    profile_id: str,
+    filename: str,
+    body: IdentityFileRequest,
+    request: Request,
+):
     """Write a profile-specific identity file."""
-    if filename not in _ALLOWED_IDENTITY_FILES:
+    if filename not in PROFILE_IDENTITY_FILENAMES:
         raise HTTPException(status_code=400, detail=f"Invalid identity file: {filename}")
 
     from openakita.agents.profile import get_profile_store
@@ -695,6 +711,7 @@ async def write_profile_identity_file(profile_id: str, filename: str, body: Iden
     fp = identity_dir / filename
     fp.write_text(body.content, encoding="utf-8")
 
+    _invalidate_profile_runtime(request, profile_id, f"profile identity {filename} write")
     logger.info(f"[Agents API] Wrote identity file {filename} for profile {profile_id}")
     return {"status": "ok", "filename": filename}
 
@@ -716,21 +733,58 @@ async def get_profile_memory_stats(profile_id: str):
     if not db_path.exists():
         return {"exists": False, "semantic_count": 0, "db_size_bytes": 0}
 
-    import aiosqlite
+    from openakita.storage.safe_sqlite import SQLiteUnavailable, safe_open_async_ctx
 
     semantic_count = 0
+    degraded = False
+    degraded_reason: str | None = None
     try:
-        async with aiosqlite.connect(str(db_path)) as db:
+        async with safe_open_async_ctx(
+            db_path,
+            want_wal=False,
+            run_quick_check=True,
+            foreign_keys=False,
+        ) as db:
             cursor = await db.execute("SELECT COUNT(*) FROM semantic_memories")
             row = await cursor.fetchone()
             semantic_count = row[0] if row else 0
-    except Exception:
-        pass
+    except SQLiteUnavailable as e:
+        degraded = True
+        degraded_reason = e.reason
+        logger.warning(
+            "[Agents API] profile memory stats degraded for %s: reason=%s",
+            profile_id,
+            e.reason,
+        )
+        # Surface this in the unified DegradedBanner too. The registry
+        # key is per-profile so two simultaneously-broken profiles
+        # render as two separate banner entries. ``manual_quarantine``
+        # is intentional — there is no generic quarantine target for
+        # arbitrary profile dirs, so the repair is operator-driven.
+        try:
+            from openakita.storage.degraded import registry as _degraded
+
+            _degraded.register(
+                f"profile_memory:{profile_id}",
+                e.reason or "unknown",
+                repair="manual_quarantine",
+                details=(e.details or "")[:200] or None,
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug(
+            "[Agents API] profile memory stats query failed for %s: %s",
+            profile_id,
+            e,
+        )
 
     return {
         "exists": True,
         "semantic_count": semantic_count,
         "db_size_bytes": db_path.stat().st_size,
+        "degraded": degraded,
+        "degraded_reason": degraded_reason,
     }
 
 

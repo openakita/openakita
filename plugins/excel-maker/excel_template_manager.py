@@ -12,7 +12,9 @@ class TemplateDiagnosticError(RuntimeError):
 
 
 class TemplateManager:
-    def diagnose(self, template_path: str | Path, output_path: str | Path | None = None) -> dict[str, Any]:
+    def diagnose(
+        self, template_path: str | Path, output_path: str | Path | None = None
+    ) -> dict[str, Any]:
         try:
             import openpyxl  # type: ignore
         except ImportError as exc:
@@ -43,6 +45,7 @@ class TemplateManager:
             "defined_names": [defined_name.name for defined_name in wb.defined_names.values()],
         }
         if output_path:
-            Path(output_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            Path(output_path).write_text(
+                json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
         return result
-

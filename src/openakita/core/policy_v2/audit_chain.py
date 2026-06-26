@@ -122,6 +122,7 @@ GENESIS_HASH: str = "0" * 64
 
 _FSYNC_ENV: str = "OPENAKITA_AUDIT_FSYNC"
 
+
 # C17 Phase E.1: cross-process append serialization. ``filelock`` is in
 # pyproject deps, but tests and embedded deployments can run from source
 # without installing extras. If import fails, use a stdlib OS file lock
@@ -196,6 +197,7 @@ class _StdlibFileLock:
 try:
     from filelock import FileLock
     from filelock import Timeout as _FileLockTimeout
+
     _HAS_FILELOCK = True
 except Exception:  # pragma: no cover
     _HAS_FILELOCK = False
@@ -276,8 +278,7 @@ def _read_last_complete_line(path: Path) -> bytes | None:
 
         if window >= _MAX_TAIL_BYTES:
             logger.warning(
-                "[audit_chain] %s last line exceeds %d bytes; "
-                "cannot recover row_hash safely",
+                "[audit_chain] %s last line exceeds %d bytes; cannot recover row_hash safely",
                 path,
                 _MAX_TAIL_BYTES,
             )
@@ -423,8 +424,7 @@ class ChainedJsonlWriter:
             last_obj = json.loads(last_line.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             logger.warning(
-                "[audit_chain] %s last line is not valid JSON; "
-                "bootstrapping from GENESIS.",
+                "[audit_chain] %s last line is not valid JSON; bootstrapping from GENESIS.",
                 self.path,
             )
             return
@@ -554,18 +554,14 @@ class ChainedJsonlWriter:
         if mode == "size":
             limit_bytes = size_mb * 1024 * 1024
             if stat.st_size + pending_line_bytes > limit_bytes:
-                stamp = datetime.fromtimestamp(time.time(), tz=UTC).strftime(
-                    "%Y%m%dT%H%M%S"
-                )
+                stamp = datetime.fromtimestamp(time.time(), tz=UTC).strftime("%Y%m%dT%H%M%S")
                 # Disambiguate same-second rotations: if the archive
                 # path already exists (extremely rare, but two threads
                 # could race here in pathological tests / micro-bench),
                 # append a millisecond suffix.
                 archive = self.path.with_suffix(f".{stamp}.jsonl")
                 if archive.exists():
-                    ms = datetime.fromtimestamp(time.time(), tz=UTC).strftime(
-                        "%Y%m%dT%H%M%S%f"
-                    )
+                    ms = datetime.fromtimestamp(time.time(), tz=UTC).strftime("%Y%m%dT%H%M%S%f")
                     stamp = ms
                 return True, stamp
             return False, None
@@ -659,9 +655,7 @@ class ChainedJsonlWriter:
                     keep_count,
                 )
             except OSError as exc:
-                logger.warning(
-                    "[audit_chain] failed to prune %s: %s", stale, exc
-                )
+                logger.warning("[audit_chain] failed to prune %s: %s", stale, exc)
 
     # ------------------------------------------------------------------
     # Append
@@ -711,9 +705,7 @@ class ChainedJsonlWriter:
                         _FILELOCK_TIMEOUT_SECONDS,
                         self.path,
                     )
-                    raise OSError(
-                        f"audit_chain filelock timeout on {self.path}"
-                    ) from exc
+                    raise OSError(f"audit_chain filelock timeout on {self.path}") from exc
 
             try:
                 # Critical: re-read tail under the filelock, not before.
@@ -750,9 +742,7 @@ class ChainedJsonlWriter:
                             fh.flush()
                             os.fsync(fh.fileno())
                 except OSError as exc:
-                    logger.error(
-                        "[audit_chain] Failed to append to %s: %s", self.path, exc
-                    )
+                    logger.error("[audit_chain] Failed to append to %s: %s", self.path, exc)
                     raise
 
                 self._last_hash = row_hash
@@ -799,13 +789,9 @@ class ChainedJsonlWriter:
             return []
         for r in records:
             if not isinstance(r, dict):
-                raise TypeError(
-                    f"all batch records must be dicts, got {type(r).__name__}"
-                )
+                raise TypeError(f"all batch records must be dicts, got {type(r).__name__}")
             if "row_hash" in r or "prev_hash" in r:
-                raise ValueError(
-                    "batch records must not pre-populate prev_hash / row_hash"
-                )
+                raise ValueError("batch records must not pre-populate prev_hash / row_hash")
 
         with self._lock:
             acquired_cross = False
@@ -821,9 +807,7 @@ class ChainedJsonlWriter:
                         self.path,
                         len(records),
                     )
-                    raise OSError(
-                        f"audit_chain filelock timeout on {self.path}"
-                    ) from exc
+                    raise OSError(f"audit_chain filelock timeout on {self.path}") from exc
 
             try:
                 self._reload_last_hash_from_disk()
@@ -1038,11 +1022,7 @@ def verify_chain_with_rotation(active_path: Path | str) -> ChainVerifyResult:
             except ValueError as exc:
                 # Allow only the very last line of the very last file
                 # to be a torn partial write (crash recovery semantics).
-                if (
-                    is_last_file
-                    and line_in_file_idx == len(lines)
-                    and file_truncated
-                ):
+                if is_last_file and line_in_file_idx == len(lines) and file_truncated:
                     total -= 1
                     break
                 return ChainVerifyResult(
@@ -1051,10 +1031,7 @@ def verify_chain_with_rotation(active_path: Path | str) -> ChainVerifyResult:
                     legacy_prefix_lines=legacy_prefix,
                     truncated_tail_recovered=truncated_any,
                     first_bad_line=total,
-                    reason=(
-                        f"{file_path.name} line {line_in_file_idx} is "
-                        f"not valid JSON: {exc}"
-                    ),
+                    reason=(f"{file_path.name} line {line_in_file_idx} is not valid JSON: {exc}"),
                 )
             if not isinstance(obj, dict):
                 return ChainVerifyResult(
@@ -1063,10 +1040,7 @@ def verify_chain_with_rotation(active_path: Path | str) -> ChainVerifyResult:
                     legacy_prefix_lines=legacy_prefix,
                     truncated_tail_recovered=truncated_any,
                     first_bad_line=total,
-                    reason=(
-                        f"{file_path.name} line {line_in_file_idx} is "
-                        "not a JSON object"
-                    ),
+                    reason=(f"{file_path.name} line {line_in_file_idx} is not a JSON object"),
                 )
 
             row_hash = obj.get("row_hash")

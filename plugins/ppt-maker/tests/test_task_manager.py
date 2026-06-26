@@ -275,7 +275,9 @@ async def test_create_and_get_export(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_delete_export_removes_record(tmp_path) -> None:
     async with PptTaskManager(tmp_path / "ppt_maker.db") as manager:
-        project = await manager.create_project(ProjectCreate(mode=DeckMode.TOPIC_TO_DECK, title="Roadmap"))
+        project = await manager.create_project(
+            ProjectCreate(mode=DeckMode.TOPIC_TO_DECK, title="Roadmap")
+        )
         export = await manager.create_export(
             project_id=project.id,
             path="exports/roadmap.pptx",
@@ -287,4 +289,3 @@ async def test_delete_export_removes_record(tmp_path) -> None:
     assert deleted is True
     assert fetched is None
     assert exports == []
-

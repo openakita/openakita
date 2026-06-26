@@ -46,7 +46,9 @@ async def test_pipeline_generates_export_after_confirmed_gates(tmp_path) -> None
             ProjectCreate(mode=DeckMode.TOPIC_TO_DECK, title="Roadmap", slide_count=3)
         )
         outline = OutlineBuilder().confirm(
-            OutlineBuilder().build(mode=project.mode, title=project.title, slide_count=project.slide_count)
+            OutlineBuilder().build(
+                mode=project.mode, title=project.title, slide_count=project.slide_count
+            )
         )
         await manager.create_outline(project_id=project.id, outline=outline, confirmed=True)
         design = DesignBuilder().confirm(DesignBuilder().build(outline=outline))
@@ -225,4 +227,3 @@ async def test_cancel_and_delete_project_helpers(tmp_path) -> None:
     assert cancelled == 1
     assert deleted is True
     assert fetched is None
-

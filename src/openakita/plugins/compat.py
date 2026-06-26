@@ -197,7 +197,7 @@ def _check_sdk(plugin_id: str, spec: str, result: CompatResult) -> None:
     if sdk is None:
         result.warnings.append(
             f"Plugin '{plugin_id}' needs openakita-plugin-sdk {spec} but it is not "
-            f"installed. Fix it with `pip install \"openakita[plugins]\"` "
+            f'installed. Fix it with `pip install "openakita[plugins]"` '
             f"(or `pip install -e ./openakita-plugin-sdk` in monorepo dev). "
             f"Plugins that import openakita_plugin_sdk classes will fail to "
             f"load until this is resolved."
@@ -260,6 +260,4 @@ def _check_plugin_ui_api(plugin_id: str, spec: str, result: CompatResult) -> Non
                 f"current is {PLUGIN_UI_API_VERSION} — UI will not be loaded"
             )
     else:
-        result.warnings.append(
-            f"Unrecognised plugin_ui_api spec '{spec}' (expected ~N or >=X.Y.Z)"
-        )
+        result.warnings.append(f"Unrecognised plugin_ui_api spec '{spec}' (expected ~N or >=X.Y.Z)")

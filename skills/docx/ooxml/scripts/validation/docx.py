@@ -97,9 +97,7 @@ class DOCXSchemaValidator(BaseSchemaValidator):
                             ):
                                 # Show a preview of the text
                                 text_preview = (
-                                    repr(text)[:50] + "..."
-                                    if len(repr(text)) > 50
-                                    else repr(text)
+                                    repr(text)[:50] + "..." if len(repr(text)) > 50 else repr(text)
                                 )
                                 errors.append(
                                     f"  {xml_file.relative_to(self.unpacked_dir)}: "
@@ -107,9 +105,7 @@ class DOCXSchemaValidator(BaseSchemaValidator):
                                 )
 
             except (lxml.etree.XMLSyntaxError, Exception) as e:
-                errors.append(
-                    f"  {xml_file.relative_to(self.unpacked_dir)}: Error: {e}"
-                )
+                errors.append(f"  {xml_file.relative_to(self.unpacked_dir)}: Error: {e}")
 
         if errors:
             print(f"FAILED - Found {len(errors)} whitespace preservation violations:")
@@ -139,9 +135,7 @@ class DOCXSchemaValidator(BaseSchemaValidator):
                 # Find all w:t elements that are descendants of w:del elements
                 namespaces = {"w": self.WORD_2006_NAMESPACE}
                 xpath_expression = ".//w:del//w:t"
-                problematic_t_elements = root.xpath(
-                    xpath_expression, namespaces=namespaces
-                )
+                problematic_t_elements = root.xpath(xpath_expression, namespaces=namespaces)
                 for t_elem in problematic_t_elements:
                     if t_elem.text:
                         # Show a preview of the text
@@ -156,9 +150,7 @@ class DOCXSchemaValidator(BaseSchemaValidator):
                         )
 
             except (lxml.etree.XMLSyntaxError, Exception) as e:
-                errors.append(
-                    f"  {xml_file.relative_to(self.unpacked_dir)}: Error: {e}"
-                )
+                errors.append(f"  {xml_file.relative_to(self.unpacked_dir)}: Error: {e}")
 
         if errors:
             print(f"FAILED - Found {len(errors)} deletion validation violations:")
@@ -230,8 +222,7 @@ class DOCXSchemaValidator(BaseSchemaValidator):
 
                 # Find w:delText in w:ins that are NOT within w:del
                 invalid_elements = root.xpath(
-                    ".//w:ins//w:delText[not(ancestor::w:del)]",
-                    namespaces=namespaces
+                    ".//w:ins//w:delText[not(ancestor::w:del)]", namespaces=namespaces
                 )
 
                 for elem in invalid_elements:
@@ -246,9 +237,7 @@ class DOCXSchemaValidator(BaseSchemaValidator):
                     )
 
             except (lxml.etree.XMLSyntaxError, Exception) as e:
-                errors.append(
-                    f"  {xml_file.relative_to(self.unpacked_dir)}: Error: {e}"
-                )
+                errors.append(f"  {xml_file.relative_to(self.unpacked_dir)}: Error: {e}")
 
         if errors:
             print(f"FAILED - Found {len(errors)} insertion validation violations:")
@@ -272,4 +261,3 @@ class DOCXSchemaValidator(BaseSchemaValidator):
 
 if __name__ == "__main__":
     raise RuntimeError("This module should not be run directly.")
-

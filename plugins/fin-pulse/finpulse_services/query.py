@@ -54,9 +54,7 @@ def _clamp(v: Any, lo: int, hi: int, default: int) -> int:
     return max(lo, min(hi, iv))
 
 
-def _clamp_float(
-    v: Any, lo: float, hi: float, default: float | None = None
-) -> float | None:
+def _clamp_float(v: Any, lo: float, hi: float, default: float | None = None) -> float | None:
     """Float counterpart of :func:`_clamp`. ``default=None`` lets the
     caller distinguish "not supplied" from a clamped value so the SQL
     layer can drop the predicate entirely.

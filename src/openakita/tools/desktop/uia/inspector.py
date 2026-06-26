@@ -427,4 +427,3 @@ class UIAInspector:
             parts.append(f"值: {value}")
 
         return "\n".join(parts)
-

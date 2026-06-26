@@ -120,9 +120,7 @@ def test_duration_100pct_without_recent_progress_returns_pause() -> None:
 
     status = budget.check()
     assert status.dimension == "duration"
-    assert status.action == BudgetAction.PAUSE, (
-        f"无进展应 PAUSE，但 action={status.action}"
-    )
+    assert status.action == BudgetAction.PAUSE, f"无进展应 PAUSE，但 action={status.action}"
     assert budget.duration_renewals == 0
 
 

@@ -87,18 +87,31 @@ def version_satisfies(seen: str, minimum: str) -> bool:
 # Map our internal platform ids to the MultiPost-Extension platform
 # strings. Values here mirror the extension's own catalog; when they
 # differ from our id, the mapping is explicit (e.g. rednote → xiaohongshu).
-_PLATFORM_MP_MAP: dict[str, str] = {
-    "douyin": "douyin",
-    "rednote": "xiaohongshu",
-    "bilibili": "bilibili",
-    "wechat_channels": "weixin_video",
-    "wechat_mp": "weixin_mp",
-    "kuaishou": "kuaishou",
-    "youtube": "youtube",
-    "tiktok": "tiktok",
-    "zhihu": "zhihu",
-    "weibo": "weibo",
+_PLATFORM_MP_MAP: dict[str, dict[str, str]] = {
+    "douyin": {"video": "VIDEO_DOUYIN", "default": "DYNAMIC_DOUYIN"},
+    "rednote": {"video": "VIDEO_REDNOTE", "default": "DYNAMIC_REDNOTE"},
+    "bilibili": {
+        "article": "ARTICLE_BILIBILI",
+        "video": "VIDEO_BILIBILI",
+        "default": "DYNAMIC_BILIBILI",
+    },
+    "wechat_channels": {"video": "VIDEO_WEIXINCHANNEL", "default": "DYNAMIC_WEIXINCHANNEL"},
+    "wechat_mp": {"article": "ARTICLE_WEIXIN", "default": "ARTICLE_WEIXIN"},
+    "kuaishou": {"video": "VIDEO_KUAISHOU", "default": "DYNAMIC_KUAISHOU"},
+    "youtube": {"video": "VIDEO_YOUTUBE", "default": "VIDEO_YOUTUBE"},
+    "tiktok": {"video": "VIDEO_TIKTOK", "default": "VIDEO_TIKTOK"},
+    "zhihu": {"article": "ARTICLE_ZHIHU", "video": "VIDEO_ZHIHU", "default": "DYNAMIC_ZHIHU"},
+    "weibo": {"article": "ARTICLE_WEIBO", "video": "VIDEO_WEIBO", "default": "DYNAMIC_WEIBO"},
 }
+
+
+def _mp_platform_name(platform: str, kind: str | None) -> str:
+    mapping = _PLATFORM_MP_MAP.get(platform)
+    if not mapping:
+        return platform
+    if kind and kind in mapping:
+        return mapping[kind]
+    return mapping["default"]
 
 
 def build_mp_payload(
@@ -109,14 +122,71 @@ def build_mp_payload(
 ) -> dict[str, Any]:
     """Translate an omni-post task into the MultiPost dispatch payload.
 
-    Output shape follows the extension's documented contract:
-    ``{ action: "MULTIPOST_EXTENSION_REQUEST_PUBLISH", data: {...} }``.
+    Output shape follows the extension's current web API contract:
+    ``{ action: "MULTIPOST_EXTENSION_PUBLISH", data: SyncData }``.
     The pipeline does NOT send cookies through this path — the
     extension owns the session — so this function is safe to log.
     """
 
     payload = task.get("payload") or {}
-    platform_mp = _PLATFORM_MP_MAP.get(task["platform"], task["platform"])
+    kind = (asset_info or {}).get("kind")
+    source_platforms = payload.get("_mp_platforms") or [task["platform"]]
+    platform_names = [_mp_platform_name(str(platform), kind) for platform in source_platforms]
+    platform_mp = platform_names[0] if platform_names else _mp_platform_name(task["platform"], kind)
+    title = payload.get("title") or ""
+    content = payload.get("content") or payload.get("description") or ""
+    tags = list(payload.get("hashtags") or payload.get("tags") or [])
+    file_data: dict[str, Any] | None = None
+    if asset_info is not None:
+        asset_id = asset_info.get("id")
+        rel_url = f"/api/plugins/omni-post/assets/{asset_id}/file" if asset_id else ""
+        file_data = {
+            "name": asset_info.get("filename") or "asset",
+            "url": rel_url,
+            "type": asset_info.get("mime") or asset_info.get("kind"),
+            "size": asset_info.get("filesize"),
+        }
+
+    if platform_mp.startswith("VIDEO_") or kind == "video":
+        publish_data: dict[str, Any] = {
+            "title": title,
+            "content": content,
+            "video": file_data or {"name": "video", "url": ""},
+            "tags": tags,
+        }
+    elif platform_mp.startswith("PODCAST_") or kind == "audio":
+        publish_data = {
+            "title": title,
+            "description": content,
+            "audio": file_data or {"name": "audio", "url": ""},
+        }
+    elif platform_mp.startswith("ARTICLE_") or kind == "article":
+        publish_data = {
+            "title": title,
+            "digest": content[:120],
+            "htmlContent": payload.get("htmlContent") or content,
+            "markdownContent": payload.get("markdownContent") or content,
+            "cover": file_data or {"name": "cover", "url": ""},
+        }
+    else:
+        publish_data = {
+            "title": title,
+            "content": content,
+            "images": [file_data] if file_data else [],
+            "videos": [],
+        }
+
+    sync_data: dict[str, Any] = {
+        "platforms": [{"name": name} for name in platform_names],
+        "isAutoPublish": bool((settings or {}).get("auto_submit", True)),
+        "data": publish_data,
+        "origin": {
+            "task_id": task["id"],
+            "client_trace_id": task.get("client_trace_id"),
+            "platform": task["platform"],
+            "platforms": list(source_platforms),
+        },
+    }
     data: dict[str, Any] = {
         "platform": platform_mp,
         "title": payload.get("title") or "",
@@ -136,9 +206,10 @@ def build_mp_payload(
     if settings:
         data["auto_submit"] = bool(settings.get("auto_submit", True))
     return {
-        "action": "MULTIPOST_EXTENSION_REQUEST_PUBLISH",
+        "action": "MULTIPOST_EXTENSION_PUBLISH",
         "contract_version": DEFAULT_MIN_VERSION,
-        "data": data,
+        "data": sync_data,
+        "debug": data,
     }
 
 
@@ -262,7 +333,8 @@ class MultiPostCompatEngine:
         """Run one task through the MP extension. Blocks until ack."""
 
         merged_settings = {**self._settings, **(settings or {})}
-        if not self.is_available():
+        require_cached_status = bool(merged_settings.get("mp_require_cached_status", False))
+        if require_cached_status and not self.is_available():
             return AdapterOutcome(
                 success=False,
                 error_kind=ErrorKind.DEPENDENCY.value,

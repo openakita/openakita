@@ -433,7 +433,9 @@ def _infer_tool_action_hints(message: str) -> tuple[list[str], bool]:
         add_hint("Desktop")
     if re.search(r"(?:GitHub|issue|网页|搜索|下载|仓库)", message, flags=re.IGNORECASE):
         add_hint("Web Search")
-    if re.search(r"(?:日志|报错|警告|错误|文件|目录|项目|代码|skill|技能|配置|数据库|命令|脚本)", message):
+    if re.search(
+        r"(?:日志|报错|警告|错误|文件|目录|项目|代码|skill|技能|配置|数据库|命令|脚本)", message
+    ):
         add_hint("File System")
         needs_project_context = True
 
@@ -748,14 +750,20 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
     prompt_depth = _parse_enum(
         extracted.get("prompt_depth", ""),
         PromptDepth,
-        PromptDepth.MINIMAL if intent in (IntentType.CHAT, IntentType.QUERY) else PromptDepth.STANDARD,
+        PromptDepth.MINIMAL
+        if intent in (IntentType.CHAT, IntentType.QUERY)
+        else PromptDepth.STANDARD,
     )
     memory_scope = _parse_enum(
         extracted.get("memory_scope", ""),
         MemoryScope,
-        MemoryScope.PINNED_ONLY if intent in (IntentType.CHAT, IntentType.QUERY) else MemoryScope.RELEVANT,
+        MemoryScope.PINNED_ONLY
+        if intent in (IntentType.CHAT, IntentType.QUERY)
+        else MemoryScope.RELEVANT,
     )
-    catalog_scope = [item.lower().strip() for item in _parse_list(extracted.get("catalog_scope", ""))]
+    catalog_scope = [
+        item.lower().strip() for item in _parse_list(extracted.get("catalog_scope", ""))
+    ]
     requires_tools = _parse_bool(
         extracted.get("requires_tools", ""),
         default=intent == IntentType.TASK and bool(tool_hints or capability_scope),
@@ -851,7 +859,9 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
                 f"suggesting Plan mode"
             )
 
-    if result.intent in (IntentType.CHAT, IntentType.QUERY) and _looks_like_tool_action_request(message):
+    if result.intent in (IntentType.CHAT, IntentType.QUERY) and _looks_like_tool_action_request(
+        message
+    ):
         logger.info(
             "[IntentAnalyzer] Coerced %s to task because message requires external action: %r",
             result.intent.value,

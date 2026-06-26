@@ -10,7 +10,7 @@ from openakita.api.routes.chat import _schedule_background_save
 async def test_background_save_respects_text_replace():
     agent_done = asyncio.Event()
     agent_queue: asyncio.Queue = asyncio.Queue()
-    await agent_queue.put({"type": "text_delta", "content": "[TOOL_CALL] {tool => \"x\"}"})
+    await agent_queue.put({"type": "text_delta", "content": '[TOOL_CALL] {tool => "x"}'})
     await agent_queue.put({"type": "text_replace", "content": ""})
     await agent_queue.put({"type": "text_delta", "content": "最终回复"})
     await agent_queue.put(None)

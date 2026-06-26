@@ -54,4 +54,3 @@ def test_swiss_design_preset_uses_locked_visual_rules() -> None:
     assert spec_lock["theme"]["accent_color"] == "#002FA7"
     assert spec_lock["spacing"]["radius"] == 0
     assert any("one high-saturation accent" in rule for rule in spec_lock["rules"])
-

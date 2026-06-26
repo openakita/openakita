@@ -81,7 +81,9 @@ def _get_bucket() -> oss2.Bucket:
     global _oss_bucket
     if _oss_bucket is None:
         _oss_bucket = oss2.Bucket(
-            _get_auth(), os.environ["OSS_ENDPOINT"], os.environ["OSS_BUCKET"],
+            _get_auth(),
+            os.environ["OSS_ENDPOINT"],
+            os.environ["OSS_BUCKET"],
         )
     return _oss_bucket
 
@@ -100,7 +102,9 @@ def _get_public_bucket() -> oss2.Bucket:
     global _oss_public_bucket
     if _oss_public_bucket is None:
         _oss_public_bucket = oss2.Bucket(
-            _get_auth(), _get_public_endpoint(), os.environ["OSS_BUCKET"],
+            _get_auth(),
+            _get_public_endpoint(),
+            os.environ["OSS_BUCKET"],
         )
     return _oss_public_bucket
 
@@ -158,6 +162,7 @@ _CAPTCHA_ENDPOINT = "https://captcha.cn-shanghai.aliyuncs.com/"
 def _percent_encode(s: str) -> str:
     """Alibaba Cloud percent-encoding (RFC 3986, keep unreserved chars only)."""
     import urllib.parse
+
     return urllib.parse.quote(str(s), safe="")
 
 
@@ -195,9 +200,7 @@ def _verify_captcha(verify_param: str) -> bool:
         params["SceneId"] = scene_id
 
     sorted_params = sorted(params.items())
-    canonicalized = "&".join(
-        f"{_percent_encode(k)}={_percent_encode(v)}" for k, v in sorted_params
-    )
+    canonicalized = "&".join(f"{_percent_encode(k)}={_percent_encode(v)}" for k, v in sorted_params)
     string_to_sign = f"POST&{_percent_encode('/')}&{_percent_encode(canonicalized)}"
 
     signing_key = f"{ak_secret}&".encode("utf-8")
@@ -219,7 +222,8 @@ def _verify_captcha(verify_param: str) -> bool:
 
         logger.error(
             "CAPTCHA API error: Code=%s, Message=%s",
-            result.get("Code"), result.get("Message"),
+            result.get("Code"),
+            result.get("Message"),
         )
         return False
     except Exception as e:
@@ -238,6 +242,7 @@ _CAPTCHA_NONCE_MAX_AGE = 300  # 5 minutes
 def _sign_captcha_nonce() -> str:
     """Create a short-lived HMAC-signed nonce proving CAPTCHA was verified."""
     import time
+
     ts = str(int(time.time()))
     secret = os.environ.get("OSS_ACCESS_KEY_SECRET", "")
     sig = hmac.new(secret.encode(), ts.encode(), hashlib.sha256).hexdigest()[:24]
@@ -247,9 +252,10 @@ def _sign_captcha_nonce() -> str:
 def _verify_captcha_nonce(nonce: str) -> bool:
     """Validate a signed CAPTCHA nonce (timestamp + HMAC)."""
     import time
+
     if not nonce.startswith(_CAPTCHA_NONCE_PREFIX):
         return False
-    payload = nonce[len(_CAPTCHA_NONCE_PREFIX):]
+    payload = nonce[len(_CAPTCHA_NONCE_PREFIX) :]
     parts = payload.split(":")
     if len(parts) != 2:
         return False
@@ -271,8 +277,12 @@ def _verify_captcha_nonce(nonce: str) -> bool:
 
 
 def _create_github_issue(
-    report_id: str, report_type: str, title: str,
-    summary: str, system_info: str, oss_path: str,
+    report_id: str,
+    report_type: str,
+    title: str,
+    summary: str,
+    system_info: str,
+    oss_path: str,
     contact_email: str = "",
     contact_wechat: str = "",
 ) -> str | None:
@@ -289,7 +299,8 @@ def _create_github_issue(
 
     version_match = re.search(
         r"openakita[_ ]version[\"']?\s*[:=]\s*[\"']?([^\s\"',}]+)",
-        system_info, re.I,
+        system_info,
+        re.I,
     )
     if version_match:
         labels.append(f"version:{version_match.group(1)}")
@@ -358,8 +369,11 @@ def _create_github_issue(
 
 
 def _send_notification(
-    report_id: str, title: str, summary: str,
-    report_type: str, issue_url: str | None,
+    report_id: str,
+    title: str,
+    summary: str,
+    report_type: str,
+    issue_url: str | None,
 ) -> None:
     """Send internal dev notification when a new feedback is submitted."""
     api_key = os.environ.get("RESEND_API_KEY", "")
@@ -370,7 +384,9 @@ def _send_notification(
     truncated = (summary[:800] + "...") if len(summary) > 800 else summary
     safe_title = html.escape(title)
     safe_truncated = html.escape(truncated)
-    issue_line = f'<p><a href="{html.escape(issue_url)}">View GitHub Issue</a></p>' if issue_url else ""
+    issue_line = (
+        f'<p><a href="{html.escape(issue_url)}">View GitHub Issue</a></p>' if issue_url else ""
+    )
     try:
         requests.post(
             "https://api.resend.com/emails",
@@ -394,8 +410,12 @@ def _send_notification(
 
 
 def _send_user_reply_notification(
-    report_id: str, feedback_token: str, user_email: str,
-    title: str, comment_author: str, comment_body: str,
+    report_id: str,
+    feedback_token: str,
+    user_email: str,
+    title: str,
+    comment_author: str,
+    comment_body: str,
 ) -> None:
     """Send user-facing email when a developer replies to their feedback."""
     api_key = os.environ.get("RESEND_API_KEY", "")
@@ -405,10 +425,14 @@ def _send_user_reply_notification(
     fc_url = os.environ.get("PUBLIC_URL", "").rstrip("/")
     unsubscribe_url = f"{fc_url}/unsubscribe/{report_id}?token={feedback_token}" if fc_url else ""
     unsub_html = (
-        f'<p style="color:#999;font-size:12px;margin-top:30px;">'
-        f'不想再收到此反馈的通知？<a href="{unsubscribe_url}">点此退订</a> / '
-        f'<a href="{unsubscribe_url}">Unsubscribe</a></p>'
-    ) if unsubscribe_url else ""
+        (
+            f'<p style="color:#999;font-size:12px;margin-top:30px;">'
+            f'不想再收到此反馈的通知？<a href="{unsubscribe_url}">点此退订</a> / '
+            f'<a href="{unsubscribe_url}">Unsubscribe</a></p>'
+        )
+        if unsubscribe_url
+        else ""
+    )
 
     truncated_body = (comment_body[:1200] + "...") if len(comment_body) > 1200 else comment_body
     safe_title = html.escape(title)
@@ -448,7 +472,10 @@ def _send_user_reply_notification(
 
 
 def _write_index_entry(
-    bucket: oss2.Bucket, report_id: str, report_date: str, feedback_token: str,
+    bucket: oss2.Bucket,
+    report_id: str,
+    report_date: str,
+    feedback_token: str,
 ) -> None:
     """Write a small index object: _index/{report_id}.json → {date, token}."""
     index_key = f"_index/{report_id}.json"
@@ -634,7 +661,8 @@ def _extract_description(body: str) -> str:
         return ""
     match = re.search(
         r"## Description\s*\n(.*?)(?=\n## |\Z)",
-        body, re.DOTALL,
+        body,
+        re.DOTALL,
     )
     return match.group(1).strip() if match else ""
 
@@ -653,10 +681,10 @@ def _classify_comment(comment: dict) -> dict | None:
     # would hide them all.
     if body_text.startswith("**[User Reply]**"):
         source = "user_reply"
-        body_text = body_text[len("**[User Reply]**"):].strip()
+        body_text = body_text[len("**[User Reply]**") :].strip()
     elif body_text.startswith("**[Community Reply]**"):
         source = "community"
-        body_text = body_text[len("**[Community Reply]**"):].strip()
+        body_text = body_text[len("**[Community Reply]**") :].strip()
     else:
         source = "developer"
         pat_login = os.environ.get("GITHUB_PAT_LOGIN", "")
@@ -729,8 +757,13 @@ def _handle_issues_search(evt: dict) -> dict:
             resp = requests.get(
                 "https://api.github.com/search/issues",
                 headers=headers,
-                params={"q": search_q, "per_page": per_page, "page": page,
-                        "sort": "created", "order": "desc"},
+                params={
+                    "q": search_q,
+                    "per_page": per_page,
+                    "page": page,
+                    "sort": "created",
+                    "order": "desc",
+                },
                 timeout=10,
             )
         else:
@@ -741,8 +774,10 @@ def _handle_issues_search(evt: dict) -> dict:
                 labels += ",enhancement"
             params: dict = {
                 "labels": labels,
-                "per_page": per_page, "page": page,
-                "sort": "created", "direction": "desc",
+                "per_page": per_page,
+                "page": page,
+                "sort": "created",
+                "direction": "desc",
             }
             if state_filter in ("open", "closed"):
                 params["state"] = state_filter
@@ -751,7 +786,9 @@ def _handle_issues_search(evt: dict) -> dict:
 
             resp = requests.get(
                 f"https://api.github.com/repos/{repo}/issues",
-                headers=headers, params=params, timeout=10,
+                headers=headers,
+                params=params,
+                timeout=10,
             )
 
         if resp.status_code != 200:
@@ -765,21 +802,22 @@ def _handle_issues_search(evt: dict) -> dict:
             total_count = data.get("total_count", 0)
         else:
             raw_items = data if isinstance(data, list) else []
-            items = [_sanitize_issue_item(it) for it in raw_items
-                     if not it.get("pull_request")]
+            items = [_sanitize_issue_item(it) for it in raw_items if not it.get("pull_request")]
             link_header = resp.headers.get("Link", "")
             has_next = 'rel="next"' in link_header
             total_count = None  # Issues API doesn't return total_count
             if not has_next and page == 1:
                 total_count = len(items)
 
-        return _json_response({
-            "items": items,
-            "total_count": total_count,
-            "page": page,
-            "per_page": per_page,
-            "has_next": len(items) == per_page,
-        })
+        return _json_response(
+            {
+                "items": items,
+                "total_count": total_count,
+                "page": page,
+                "per_page": per_page,
+                "has_next": len(items) == per_page,
+            }
+        )
 
     except requests.Timeout:
         return _error("GitHub API timeout", 504)
@@ -808,7 +846,8 @@ def _handle_issue_detail(evt: dict, issue_number: int) -> dict:
     try:
         issue_resp = requests.get(
             f"https://api.github.com/repos/{repo}/issues/{issue_number}",
-            headers=headers, timeout=10,
+            headers=headers,
+            timeout=10,
         )
         if issue_resp.status_code == 404:
             return _error("Issue not found", 404)
@@ -838,18 +877,20 @@ def _handle_issue_detail(evt: dict, issue_number: int) -> dict:
                     if classified:
                         comments.append(classified)
 
-        return _json_response({
-            "number": issue.get("number"),
-            "title": re.sub(r"^\[(Bug|Feature)\]\s*", "", issue.get("title", "")),
-            "type": _map_issue_type(issue),
-            "status": _map_issue_status(issue),
-            "summary": summary,
-            "created_at": issue.get("created_at", ""),
-            "updated_at": issue.get("updated_at", ""),
-            "html_url": issue.get("html_url", ""),
-            "labels": label_names,
-            "comments": comments,
-        })
+        return _json_response(
+            {
+                "number": issue.get("number"),
+                "title": re.sub(r"^\[(Bug|Feature)\]\s*", "", issue.get("title", "")),
+                "type": _map_issue_type(issue),
+                "status": _map_issue_status(issue),
+                "summary": summary,
+                "created_at": issue.get("created_at", ""),
+                "updated_at": issue.get("updated_at", ""),
+                "html_url": issue.get("html_url", ""),
+                "labels": label_names,
+                "comments": comments,
+            }
+        )
 
     except requests.Timeout:
         return _error("GitHub API timeout", 504)
@@ -885,7 +926,8 @@ def _handle_issue_comment(evt: dict, issue_number: int) -> dict:
     try:
         issue_resp = requests.get(
             f"https://api.github.com/repos/{repo}/issues/{issue_number}",
-            headers=headers, timeout=10,
+            headers=headers,
+            timeout=10,
         )
         if issue_resp.status_code == 404:
             return _error("Issue not found", 404)
@@ -905,10 +947,12 @@ def _handle_issue_comment(evt: dict, issue_number: int) -> dict:
             timeout=15,
         )
         if cm_resp.status_code == 201:
-            return _json_response({
-                "status": "ok",
-                "comment_url": cm_resp.json().get("html_url"),
-            })
+            return _json_response(
+                {
+                    "status": "ok",
+                    "comment_url": cm_resp.json().get("html_url"),
+                }
+            )
         logger.error("GitHub comment failed: %s %s", cm_resp.status_code, cm_resp.text[:300])
         return _error(f"GitHub API error ({cm_resp.status_code})", 502)
 
@@ -992,6 +1036,7 @@ def _parse_json_body(evt: dict) -> dict:
         return {}
     if evt.get("isBase64Encoded", False):
         import base64
+
         raw = base64.b64decode(raw).decode("utf-8")
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
@@ -1110,17 +1155,22 @@ def _handle_prepare(evt: dict) -> dict:
     public_bucket = _get_public_bucket()
     try:
         upload_url = public_bucket.sign_url(
-            "PUT", zip_key, PRESIGN_EXPIRE_SECONDS, slash_safe=True,
+            "PUT",
+            zip_key,
+            PRESIGN_EXPIRE_SECONDS,
+            slash_safe=True,
         )
     except Exception as e:
         logger.error("Failed to generate pre-signed URL: %s", e)
         return _error(f"Sign URL error: {e}", 500)
 
-    return _json_response({
-        "upload_url": upload_url,
-        "report_id": report_id,
-        "report_date": date,
-    })
+    return _json_response(
+        {
+            "upload_url": upload_url,
+            "report_id": report_id,
+            "report_date": date,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1188,16 +1238,21 @@ def _handle_complete(evt: dict, report_id: str) -> dict:
 
     # 8. Send dev notification
     _send_notification(
-        report_id, metadata.get("title", ""),
-        metadata.get("summary", ""), metadata.get("type", "bug"), issue_url,
+        report_id,
+        metadata.get("title", ""),
+        metadata.get("summary", ""),
+        metadata.get("type", "bug"),
+        issue_url,
     )
 
-    return _json_response({
-        "status": "ok",
-        "report_id": report_id,
-        "feedback_token": feedback_token,
-        "issue_url": issue_url,
-    })
+    return _json_response(
+        {
+            "status": "ok",
+            "report_id": report_id,
+            "feedback_token": feedback_token,
+            "issue_url": issue_url,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1293,7 +1348,9 @@ def _verify_github_signature(evt: dict, raw_body: bytes) -> bool:
         return False
 
     expected = hmac.new(
-        webhook_secret.encode("utf-8"), raw_body, hashlib.sha256,
+        webhook_secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
     ).hexdigest()
     received = sig_header[7:]  # strip "sha256="
     return hmac.compare_digest(expected, received)
@@ -1304,6 +1361,7 @@ def _get_raw_body(evt: dict) -> bytes:
     raw = evt.get("body", "")
     if evt.get("isBase64Encoded", False):
         import base64
+
         return base64.b64decode(raw)
     if isinstance(raw, str):
         return raw.encode("utf-8")
@@ -1364,34 +1422,48 @@ def _handle_github_webhook(evt: dict) -> dict:
         comment_time = comment.get("created_at", datetime.now(timezone.utc).isoformat())
 
         if comment_user.get("type") == "Bot" or comment_author.endswith("[bot]"):
-            return _json_response({
-                "status": "ignored", "reason": "bot comment skipped",
-            })
+            return _json_response(
+                {
+                    "status": "ignored",
+                    "reason": "bot comment skipped",
+                }
+            )
 
         if comment_body.startswith("**[User Reply]**"):
-            return _json_response({
-                "status": "ignored", "reason": "user reply echo skipped",
-            })
+            return _json_response(
+                {
+                    "status": "ignored",
+                    "reason": "user reply echo skipped",
+                }
+            )
 
         if comment_body.startswith("**[Community Reply]**"):
-            return _json_response({
-                "status": "ignored", "reason": "community reply echo skipped",
-            })
+            return _json_response(
+                {
+                    "status": "ignored",
+                    "reason": "community reply echo skipped",
+                }
+            )
 
         pat_login = os.environ.get("GITHUB_PAT_LOGIN", "")
         if pat_login and comment_author == pat_login:
-            return _json_response({
-                "status": "ignored", "reason": "PAT account echo skipped",
-            })
+            return _json_response(
+                {
+                    "status": "ignored",
+                    "reason": "PAT account echo skipped",
+                }
+            )
 
         if not metadata.get("developer_replies"):
             metadata["developer_replies"] = []
-        metadata["developer_replies"].append({
-            "author": comment_author,
-            "body": comment_body[:2000],
-            "created_at": comment_time,
-            "source": "developer",
-        })
+        metadata["developer_replies"].append(
+            {
+                "author": comment_author,
+                "body": comment_body[:2000],
+                "created_at": comment_time,
+                "source": "developer",
+            }
+        )
         changed = True
 
         if not metadata.get("email_unsubscribed") and metadata.get("contact_email"):
@@ -1515,7 +1587,9 @@ def _handle_reply(evt: dict, report_id: str) -> dict:
             comment_url = resp.json().get("html_url")
         else:
             logger.error(
-                "GitHub comment failed: %s %s", resp.status_code, resp.text[:300],
+                "GitHub comment failed: %s %s",
+                resp.status_code,
+                resp.text[:300],
             )
             return _error(f"GitHub API error ({resp.status_code})", 502)
     except Exception as e:
@@ -1525,12 +1599,14 @@ def _handle_reply(evt: dict, report_id: str) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     if not metadata.get("developer_replies"):
         metadata["developer_replies"] = []
-    metadata["developer_replies"].append({
-        "author": "user",
-        "body": reply_body[:2000],
-        "created_at": now,
-        "source": "user_reply",
-    })
+    metadata["developer_replies"].append(
+        {
+            "author": "user",
+            "body": reply_body[:2000],
+            "created_at": now,
+            "source": "user_reply",
+        }
+    )
 
     if not _write_metadata(bucket, report_id, index_entry["date"], metadata):
         logger.warning("Reply posted to GitHub but metadata write failed for %s", report_id)

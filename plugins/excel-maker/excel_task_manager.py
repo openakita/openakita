@@ -329,7 +329,9 @@ class ExcelTaskManager:
         await self._conn.commit()
         return await self.get_workbook(workbook_id)
 
-    async def replace_sheets(self, workbook_id: str, sheets: list[dict[str, Any]]) -> list[SheetRecord]:
+    async def replace_sheets(
+        self, workbook_id: str, sheets: list[dict[str, Any]]
+    ) -> list[SheetRecord]:
         await self._conn.execute("DELETE FROM sheets WHERE workbook_id = ?", (workbook_id,))
         now = _now()
         for index, sheet in enumerate(sheets):
@@ -642,4 +644,3 @@ class ExcelTaskManager:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
-

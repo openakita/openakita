@@ -30,8 +30,6 @@ export class AgentSprite {
   private tooltipText: Phaser.GameObjects.Text | null = null;
   private scene: Phaser.Scene;
   private config: AgentSpriteConfig;
-  private isMoving = false;
-  private moveTarget: { x: number; y: number } | null = null;
   private _currentTask: string = '';
   private _toolCalls: string[] = [];
 
@@ -154,8 +152,6 @@ export class AgentSprite {
 
   moveTo(targetX: number, targetY: number, onComplete?: () => void) {
     this.scene.tweens.killTweensOf(this.sprite);
-    this.isMoving = true;
-    this.moveTarget = { x: targetX, y: targetY };
 
     const dist = Phaser.Math.Distance.Between(this.sprite.x, this.sprite.y, targetX, targetY);
     const duration = (dist / MOVE_SPEED) * 1000;
@@ -173,8 +169,6 @@ export class AgentSprite {
         }
       },
       onComplete: () => {
-        this.isMoving = false;
-        this.moveTarget = null;
         this.addIdleFloat();
         onComplete?.();
       },

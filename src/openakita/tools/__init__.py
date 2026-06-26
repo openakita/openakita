@@ -85,4 +85,3 @@ def _ensure_desktop_loaded():
             "Install with: pip install mss pyautogui pywinauto"
         )
         return False
-

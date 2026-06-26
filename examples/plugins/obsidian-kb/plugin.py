@@ -28,6 +28,7 @@ from typing import Any
 
 try:
     import yaml
+
     HAS_YAML = True
 except ImportError:
     HAS_YAML = False
@@ -37,9 +38,7 @@ from openakita.plugins.api import PluginAPI, PluginBase
 logger = logging.getLogger(__name__)
 
 _YAML_FRONT_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-_TAG_INLINE_RE = re.compile(
-    r"(?:^|\s)#([a-zA-Z\u4e00-\u9fff][\w\u4e00-\u9fff/\-]*)", re.MULTILINE
-)
+_TAG_INLINE_RE = re.compile(r"(?:^|\s)#([a-zA-Z\u4e00-\u9fff][\w\u4e00-\u9fff/\-]*)", re.MULTILINE)
 _WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 
 DEFAULT_EXCLUDES = [".trash", ".obsidian", "templates", ".git", "node_modules"]
@@ -68,8 +67,7 @@ def _parse_frontmatter(text: str) -> dict[str, Any]:
             if key:
                 if val.startswith("[") and val.endswith("]"):
                     fm[key] = [
-                        v.strip().strip('"').strip("'")
-                        for v in val[1:-1].split(",") if v.strip()
+                        v.strip().strip('"').strip("'") for v in val[1:-1].split(",") if v.strip()
                     ]
                 else:
                     fm[key] = val
@@ -95,7 +93,7 @@ def _extract_wikilinks(text: str) -> list[str]:
 def _strip_frontmatter(text: str) -> str:
     m = _YAML_FRONT_RE.match(text)
     if m:
-        return text[m.end():]
+        return text[m.end() :]
     return text
 
 
@@ -155,9 +153,7 @@ class NoteIndex:
 
         self._full_build(vault, excludes, max_bytes)
 
-    def _full_build(
-        self, vault: Path, excludes: list[str], max_bytes: int
-    ) -> None:
+    def _full_build(self, vault: Path, excludes: list[str], max_bytes: int) -> None:
         notes: list[dict[str, Any]] = []
         mtime_cache: dict[str, float] = {}
 
@@ -175,9 +171,7 @@ class NoteIndex:
         self._built = True
         logger.info("obsidian-kb: indexed %d notes from %s", len(notes), vault)
 
-    def _incremental_update(
-        self, vault: Path, excludes: list[str], max_bytes: int
-    ) -> int:
+    def _incremental_update(self, vault: Path, excludes: list[str], max_bytes: int) -> int:
         current_files: dict[str, Path] = {}
         for md in vault.rglob("*.md"):
             if _should_skip(md, vault, excludes):
@@ -220,9 +214,7 @@ class NoteIndex:
         return changed
 
     @staticmethod
-    def _index_file(
-        md: Path, vault: Path, max_bytes: int
-    ) -> dict[str, Any] | None:
+    def _index_file(md: Path, vault: Path, max_bytes: int) -> dict[str, Any] | None:
         try:
             stat = md.stat()
             if stat.st_size > max_bytes:
@@ -302,15 +294,17 @@ class NoteIndex:
             else:
                 excerpt = body_clean[:excerpt_len]
 
-            results.append({
-                "id": note["path"],
-                "title": note["title"],
-                "content": f"## {note['title']}\n{excerpt}",
-                "tags": note["tags"],
-                "links": note["links"][:10],
-                "mtime": note["mtime"],
-                "relevance": round(min(score, 1.0), 3),
-            })
+            results.append(
+                {
+                    "id": note["path"],
+                    "title": note["title"],
+                    "content": f"## {note['title']}\n{excerpt}",
+                    "tags": note["tags"],
+                    "links": note["links"][:10],
+                    "mtime": note["mtime"],
+                    "relevance": round(min(score, 1.0), 3),
+                }
+            )
 
         ranked = sorted(results, key=lambda x: -x["relevance"])
         return ranked[:limit]
@@ -333,8 +327,7 @@ class NoteIndex:
             "total_size_mb": round(total_size / 1024 / 1024, 2),
             "top_tags": [{"tag": t, "count": c} for t, c in top_tags],
             "recent_notes": [
-                {"path": n["path"], "title": n["title"], "mtime": n["mtime"]}
-                for n in recent
+                {"path": n["path"], "title": n["title"], "mtime": n["mtime"]} for n in recent
             ],
         }
 
@@ -403,8 +396,7 @@ VAULT_INFO_DEF = {
     "function": {
         "name": "obsidian_vault_info",
         "description": (
-            "Get Obsidian vault overview: note count, top tags, "
-            "recently modified notes."
+            "Get Obsidian vault overview: note count, top tags, recently modified notes."
         ),
         "parameters": {"type": "object", "properties": {}},
     },
@@ -414,9 +406,7 @@ OPEN_DEF = {
     "type": "function",
     "function": {
         "name": "obsidian_open",
-        "description": (
-            "Open a note in the Obsidian desktop app via obsidian:// URI."
-        ),
+        "description": ("Open a note in the Obsidian desktop app via obsidian:// URI."),
         "parameters": {
             "type": "object",
             "properties": {
@@ -463,9 +453,7 @@ DAILY_DEF = {
     "type": "function",
     "function": {
         "name": "obsidian_daily",
-        "description": (
-            "Create or open today's daily note (YYYY-MM-DD.md) in Obsidian."
-        ),
+        "description": ("Create or open today's daily note (YYYY-MM-DD.md) in Obsidian."),
         "parameters": {
             "type": "object",
             "properties": {
@@ -552,7 +540,9 @@ class Plugin(PluginBase):
         tag = str(params.get("tag", ""))
         lim = int(params.get("limit", 5))
         results = self._index.search(
-            query, limit=lim, tag=tag,
+            query,
+            limit=lim,
+            tag=tag,
             excerpt_len=cfg.get("excerpt_length", 600),
         )
         if not results:
@@ -571,9 +561,7 @@ class Plugin(PluginBase):
         info = self._index.vault_info()
         if info["total_notes"] == 0:
             return "Vault is empty or path is invalid."
-        tag_lines = ", ".join(
-            f"#{t['tag']}({t['count']})" for t in info["top_tags"][:15]
-        )
+        tag_lines = ", ".join(f"#{t['tag']}({t['count']})" for t in info["top_tags"][:15])
         recent_lines = "\n".join(
             f"  - {n['title']} ({n['mtime'][:10]})" for n in info["recent_notes"]
         )
@@ -654,4 +642,3 @@ class Plugin(PluginBase):
     def on_unload(self) -> None:
         self._index.invalidate()
         self._api = None
-

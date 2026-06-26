@@ -33,6 +33,7 @@ TIMEOUT = 120.0
 @dataclass
 class SSEResult:
     """Parsed SSE stream result for a single conversation."""
+
     conversation_id: str
     events: list[dict] = field(default_factory=list)
     text: str = ""
@@ -55,7 +56,7 @@ class SSEResult:
             f"{status} conv={self.conversation_id[:16]}… | "
             f"{self.duration_s:.1f}s | "
             f"events={len(self.events)} | tools=[{tools}] | "
-            f"text={len(self.text)}c \"{text_preview}…\""
+            f'text={len(self.text)}c "{text_preview}…"'
         )
 
 
@@ -81,7 +82,10 @@ async def stream_chat(
 
     try:
         async with client.stream(
-            "POST", f"{API_BASE}/api/chat", json=body, timeout=TIMEOUT,
+            "POST",
+            f"{API_BASE}/api/chat",
+            json=body,
+            timeout=TIMEOUT,
         ) as resp:
             if resp.status_code != 200:
                 result.errors.append(f"HTTP {resp.status_code}")
@@ -169,7 +173,8 @@ async def get_sub_tasks(client: httpx.AsyncClient, conv_id: str) -> list:
     try:
         resp = await client.get(
             f"{API_BASE}/api/agents/sub-tasks",
-            params={"conversation_id": conv_id}, timeout=5,
+            params={"conversation_id": conv_id},
+            timeout=5,
         )
         return resp.json()
     except Exception:
@@ -187,7 +192,10 @@ async def tc_01_health(c: httpx.AsyncClient) -> tuple[bool, str]:
     """TC-01: 服务健康检查"""
     h = await check_health(c)
     ok = h.get("status") == "ok" and h.get("agent_initialized", False)
-    return ok, f"status={h.get('status')}, agent_initialized={h.get('agent_initialized')}, version={h.get('version')}"
+    return (
+        ok,
+        f"status={h.get('status')}, agent_initialized={h.get('agent_initialized')}, version={h.get('version')}",
+    )
 
 
 async def tc_02_pool_enabled(c: httpx.AsyncClient) -> tuple[bool, str]:
@@ -325,9 +333,7 @@ async def tc_09_insert_isolation(c: httpx.AsyncClient) -> tuple[bool, str]:
     cid_a, cid_b = _uid("ins_a"), _uid("ins_b")
 
     async def run_a():
-        task = asyncio.create_task(
-            stream_chat(c, "写一篇关于太阳系的短文", conversation_id=cid_a)
-        )
+        task = asyncio.create_task(stream_chat(c, "写一篇关于太阳系的短文", conversation_id=cid_a))
         await asyncio.sleep(2)
         ir = await insert_chat(c, cid_a, "补充一下冥王星的信息")
         r = await task
@@ -353,9 +359,7 @@ async def tc_10_context_kept(c: httpx.AsyncClient) -> tuple[bool, str]:
     r2 = await stream_chat(c, "我刚才告诉你的暗号是什么？", conversation_id=cid)
     has_code = "ZETA9988" in r2.text
     detail = (
-        f"Round 1: {r1.summary(40)}\n"
-        f"       Round 2: {r2.summary(40)}\n"
-        f"       暗号保持={has_code}"
+        f"Round 1: {r1.summary(40)}\n       Round 2: {r2.summary(40)}\n       暗号保持={has_code}"
     )
     return r2.ok and has_code, detail
 
@@ -385,8 +389,10 @@ async def tc_12_same_conv_reuse_agent(c: httpx.AsyncClient) -> tuple[bool, str]:
     s2 = {s["session_id"]: s for s in stats2.get("sessions", [])}
 
     in_both = cid in s1 and cid in s2
-    total_unchanged = stats1.get("total", -1) == stats2.get("total", -2) or \
-                      stats2.get("total", 0) <= stats1.get("total", 0) + 1  # allow for other tests
+    total_unchanged = (
+        stats1.get("total", -1) == stats2.get("total", -2)
+        or stats2.get("total", 0) <= stats1.get("total", 0) + 1
+    )  # allow for other tests
 
     detail = (
         f"After 1st: {s1.get(cid)}\n"
@@ -400,7 +406,8 @@ async def tc_13_profile_parameter(c: httpx.AsyncClient) -> tuple[bool, str]:
     """TC-13: 不同 agent_profile_id 参数正常传递"""
     cid = _uid("prof")
     r = await stream_chat(
-        c, "你好，你是什么Agent？",
+        c,
+        "你好，你是什么Agent？",
         conversation_id=cid,
         agent_profile_id="code-assistant",
     )
@@ -491,10 +498,9 @@ async def tc_19_five_concurrent_stress(c: httpx.AsyncClient) -> tuple[bool, str]
         "一句话解释 DNS",
     ]
     t0 = time.monotonic()
-    results = await asyncio.gather(*[
-        stream_chat(c, q, conversation_id=_uid(f"s5_{i}"))
-        for i, q in enumerate(questions)
-    ])
+    results = await asyncio.gather(
+        *[stream_chat(c, q, conversation_id=_uid(f"s5_{i}")) for i, q in enumerate(questions)]
+    )
     wall = time.monotonic() - t0
     serial_est = sum(r.duration_s for r in results)
     all_ok = all(r.ok for r in results)
@@ -576,7 +582,9 @@ async def run_all():
                 elapsed = time.monotonic() - t0
                 print(f"  结果: 💥 ERROR ({elapsed:.1f}s)")
                 print(f"  异常: {e}")
-                import traceback; traceback.print_exc()
+                import traceback
+
+                traceback.print_exc()
                 results.append((tc_id, tc_name, False, elapsed))
 
         total_elapsed = time.monotonic() - total_t0
@@ -599,7 +607,9 @@ async def run_all():
         print(f"  pool_enabled={final_stats.get('pool_enabled')}")
         print(f"  total_entries={final_stats.get('total')}")
         for s in final_stats.get("sessions", [])[:10]:
-            print(f"    {s['session_id'][:20]}… profile={s['profile_id']} idle={s['idle_seconds']}s")
+            print(
+                f"    {s['session_id'][:20]}… profile={s['profile_id']} idle={s['idle_seconds']}s"
+            )
         if final_stats.get("total", 0) > 10:
             print(f"    ... and {final_stats['total'] - 10} more")
 
@@ -613,4 +623,3 @@ async def run_all():
 
 if __name__ == "__main__":
     asyncio.run(run_all())
-

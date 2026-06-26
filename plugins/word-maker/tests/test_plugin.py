@@ -92,7 +92,10 @@ async def test_declared_tools_have_handlers(tmp_path: Path) -> None:
         "word_list_projects": {},
         "word_ingest_sources": {"project_id": project_id, "paths": ["uploads/notes.md"]},
         "word_generate_outline": {"requirement": "生成报告", "doc_type": "research_report"},
-        "word_confirm_outline": {"project_id": project_id, "outline": {"title": "报告", "sections": []}},
+        "word_confirm_outline": {
+            "project_id": project_id,
+            "outline": {"title": "报告", "sections": []},
+        },
         "word_audit": {},
         "word_export": {"project_id": project_id},
         "word_cancel": {"project_id": project_id},
@@ -114,4 +117,3 @@ def test_custom_data_dir_is_used_on_load(tmp_path: Path) -> None:
     instance.on_load(api)
 
     assert instance._require_workspace() == custom
-

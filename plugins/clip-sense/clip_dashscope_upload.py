@@ -107,7 +107,8 @@ async def upload_local_file_for_paraformer(
         )
     except httpx.HTTPError as exc:
         raise DashScopeUploadError(
-            f"getPolicy network error: {exc}", retryable=True,
+            f"getPolicy network error: {exc}",
+            retryable=True,
         ) from exc
 
     if pr.status_code >= 400:
@@ -129,7 +130,10 @@ async def upload_local_file_for_paraformer(
     policy = _policy_field(data, "policy", "Policy")
     x_oss_object_acl = _policy_field(data, "x_oss_object_acl", "x-oss-object-acl", "xOssObjectAcl")
     x_oss_forbid_overwrite = _policy_field(
-        data, "x_oss_forbid_overwrite", "x-oss-forbid-overwrite", "xOssForbidOverwrite",
+        data,
+        "x_oss_forbid_overwrite",
+        "x-oss-forbid-overwrite",
+        "xOssForbidOverwrite",
     )
 
     if not all([upload_host, upload_dir, oss_access_key_id, signature, policy]):
@@ -155,7 +159,8 @@ async def upload_local_file_for_paraformer(
     nbytes = path.stat().st_size
     logger.info(
         "DashScope temp upload starting bytes=%s path=%s",
-        nbytes, path.name,
+        nbytes,
+        path.name,
     )
     try:
         with path.open("rb") as file_obj:
@@ -168,7 +173,8 @@ async def upload_local_file_for_paraformer(
             )
     except httpx.HTTPError as exc:
         raise DashScopeUploadError(
-            f"OSS upload network error: {exc}", retryable=True,
+            f"OSS upload network error: {exc}",
+            retryable=True,
         ) from exc
 
     if up.status_code < 200 or up.status_code >= 300:
@@ -180,6 +186,8 @@ async def upload_local_file_for_paraformer(
     oss_url = f"oss://{object_key}"
     logger.info(
         "DashScope temp upload ok model=%s key=%s bytes=%s",
-        model_name, object_key[:80], nbytes,
+        model_name,
+        object_key[:80],
+        nbytes,
     )
     return oss_url

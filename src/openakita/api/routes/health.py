@@ -27,8 +27,24 @@ _memory_repair_restart_required = False
 
 
 def mark_memory_repair_completed_restart_required() -> None:
+    """Flag the memory subsystem as 'repaired, needs restart'.
+
+    Also clears the matching entry in the cross-subsystem
+    :class:`openakita.storage.degraded.DegradedRegistry` so the unified
+    ``DegradedBanner`` stops surfacing memory as degraded (it would
+    otherwise stay yellow until the user restarts the backend, even
+    though they already took the corrective action via the
+    memory_repair flow).
+    """
     global _memory_repair_restart_required
     _memory_repair_restart_required = True
+    try:
+        from openakita.storage.degraded import registry as _registry
+
+        _registry.unregister("memory")
+    except Exception:
+        # Best-effort: never let registry bookkeeping break the repair flow.
+        pass
 
 
 def clear_memory_repair_restart_required() -> None:
@@ -40,7 +56,9 @@ def _memory_subsystem_status(request: Request) -> dict:
     try:
         agent = getattr(request.app.state, "agent", None)
         mm = getattr(agent, "memory_manager", None) if agent is not None else None
-        if _memory_repair_restart_required or getattr(mm, "repair_completed_restart_required", False):
+        if _memory_repair_restart_required or getattr(
+            mm, "repair_completed_restart_required", False
+        ):
             return {
                 "status": "repair_completed_restart_required",
                 "reason": None,
@@ -154,13 +172,33 @@ def _safe_int(val: str, default: int) -> int:
         return default
 
 
+def _resolve_api_host_display(request: Request) -> str:
+    """Return the host the server is actually bound to (best effort).
+
+    Prefers ``app.state.actual_bind_host`` (set by ``start_api_server``) so
+    that headless-detect / api_lan_mode users see the truth instead of the
+    env-var default.
+    """
+    actual = getattr(request.app.state, "actual_bind_host", None)
+    if isinstance(actual, str) and actual:
+        return actual
+    return os.environ.get("API_HOST", "").strip() or "127.0.0.1"
+
+
+def _resolve_api_port_display(request: Request) -> int:
+    actual = getattr(request.app.state, "actual_bind_port", None)
+    if isinstance(actual, int):
+        return actual
+    return _safe_int(os.environ.get("API_PORT", "18900"), 18900)
+
+
 _VIRTUAL_PREFIXES = (
-    "26.",       # Radmin VPN
-    "25.",       # Hamachi
-    "100.64.",   # CGNAT / Tailscale
-    "172.17.",   # Docker default bridge
-    "172.18.",   # Docker user-defined
-    "172.19.",   # Docker user-defined
+    "26.",  # Radmin VPN
+    "25.",  # Hamachi
+    "100.64.",  # CGNAT / Tailscale
+    "172.17.",  # Docker default bridge
+    "172.18.",  # Docker user-defined
+    "172.19.",  # Docker user-defined
 )
 
 
@@ -248,6 +286,14 @@ async def health(request: Request):
             "ready": bool(gateway is not None),
         }
 
+    # Pull degraded subsystems from the module-level DegradedRegistry. We
+    # use the registry instead of ``app.state`` because token_tracking
+    # (daemon thread) and asset_bus (early lifespan init) register
+    # themselves before ``app.state.*`` is reliably populated. The
+    # registry snapshot is a defensive copy, so callers can mutate it
+    # freely without leaking back into the shared map.
+    from openakita.storage.degraded import registry as _degraded_registry
+
     return {
         "status": "ok",
         "service": "openakita",
@@ -260,13 +306,14 @@ async def health(request: Request):
         and request.app.state.agent is not None,
         "local_ip": _get_lan_ip(),
         "all_ips": _get_all_lan_ips(),
-        "api_host": os.environ.get("API_HOST", "127.0.0.1"),
-        "api_port": _safe_int(os.environ.get("API_PORT", "18900"), 18900),
+        "api_host": _resolve_api_host_display(request),
+        "api_port": _resolve_api_port_display(request),
         "last_link_diagnostic": getattr(request.app.state, "last_link_diagnostic", None),
         "startup_phase": readiness.get("phase", "http_ready"),
         "readiness": readiness,
         "memory_subsystem": _memory_subsystem_status(request),
         "frontend_bundle": _frontend_bundle_status(request, backend_version),
+        "degraded_subsystems": _degraded_registry.snapshot(),
         "last_shutdown": _read_last_shutdown_marker(),
     }
 

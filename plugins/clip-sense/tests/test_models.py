@@ -123,8 +123,16 @@ class TestCostEstimation:
 
 class TestErrorHints:
     EXPECTED_KINDS = [
-        "network", "timeout", "auth", "quota", "moderation",
-        "dependency", "format", "no_speech", "duration", "unknown",
+        "network",
+        "timeout",
+        "auth",
+        "quota",
+        "moderation",
+        "dependency",
+        "format",
+        "no_speech",
+        "duration",
+        "unknown",
     ]
 
     def test_all_ten_kinds_present(self):

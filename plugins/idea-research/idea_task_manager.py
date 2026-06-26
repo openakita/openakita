@@ -494,6 +494,7 @@ class IdeaTaskManager:
                 " ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(platform, external_id) DO UPDATE SET"
                 "   title=excluded.title, score=excluded.score,"
+                "   cover_url=COALESCE(excluded.cover_url, trend_items.cover_url),"
                 "   like_count=excluded.like_count,"
                 "   comment_count=excluded.comment_count,"
                 "   share_count=excluded.share_count,"
@@ -535,6 +536,7 @@ class IdeaTaskManager:
         self,
         *,
         platforms: list[str] | None = None,
+        keywords: list[str] | None = None,
         limit: int = 20,
         sort: str = "score",
         only_saved: bool = False,
@@ -542,6 +544,7 @@ class IdeaTaskManager:
         return await self._run(
             self._list_trend_items_sync,
             platforms,
+            [k.strip() for k in (keywords or []) if k and str(k).strip()],
             max(1, int(limit)),
             sort,
             only_saved,
@@ -550,6 +553,7 @@ class IdeaTaskManager:
     def _list_trend_items_sync(
         self,
         platforms: list[str] | None,
+        keywords: list[str],
         limit: int,
         sort: str,
         only_saved: bool,
@@ -561,6 +565,16 @@ class IdeaTaskManager:
             params.extend(platforms)
         if only_saved:
             clauses.append("saved = 1")
+        if keywords:
+            kw_clauses: list[str] = []
+            for kw in keywords:
+                needle = f"%{kw.lower()}%"
+                kw_clauses.append(
+                    "(LOWER(title) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ?)"
+                )
+                params.extend([needle, needle])
+            if kw_clauses:
+                clauses.append("(" + " OR ".join(kw_clauses) + ")")
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         order = "score DESC, fetched_at DESC" if sort == "score" else "fetched_at DESC"
         with self._conn() as conn:
@@ -580,6 +594,27 @@ class IdeaTaskManager:
                         d[col] = []
             out.append(d)
         return out
+
+    async def get_trend_item(self, item_id: str) -> dict[str, Any] | None:
+        return await self._run(self._get_trend_item_sync, item_id)
+
+    def _get_trend_item_sync(self, item_id: str) -> dict[str, Any] | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM trend_items WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        d = _row_to_dict(row) or {}
+        for col in ("keywords_matched", "mdrm_hits"):
+            v = d.get(col)
+            if isinstance(v, str):
+                try:
+                    d[col] = json.loads(v)
+                except (TypeError, ValueError):
+                    d[col] = []
+        return d
 
     async def mark_item_saved(self, item_id: str, saved: bool = True) -> int:
         return await self._run(self._mark_item_saved_sync, item_id, saved)

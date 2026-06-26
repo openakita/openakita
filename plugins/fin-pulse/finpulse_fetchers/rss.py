@@ -214,9 +214,7 @@ class GenericRSSFetcher(BaseFetcher):
 
     source_id = "rss_generic"
 
-    def __init__(
-        self, *, config: dict[str, str] | None = None, timeout_sec: float = 15.0
-    ) -> None:
+    def __init__(self, *, config: dict[str, str] | None = None, timeout_sec: float = 15.0) -> None:
         super().__init__(config=config, timeout_sec=timeout_sec)
         self._last_via = "none"
         self._last_via_reason: str | None = None
@@ -244,9 +242,7 @@ class GenericRSSFetcher(BaseFetcher):
             return feeds
         feeds_cfg = self._config.get("rss_generic.feeds", "")
         return [
-            {"url": ln.strip(), "name": ln.strip()}
-            for ln in feeds_cfg.splitlines()
-            if ln.strip()
+            {"url": ln.strip(), "name": ln.strip()} for ln in feeds_cfg.splitlines() if ln.strip()
         ]
 
     async def fetch(self, **_: Any) -> list[NormalizedItem]:

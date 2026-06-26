@@ -23,7 +23,9 @@ class _FakeEndpointManager:
         self._exc = exc
         self.called_with: dict | None = None
 
-    def sync_endpoint_models(self, name: str, *, endpoint_type: str = "endpoints", timeout: float = 15.0):
+    def sync_endpoint_models(
+        self, name: str, *, endpoint_type: str = "endpoints", timeout: float = 15.0
+    ):
         self.called_with = {"name": name, "endpoint_type": endpoint_type, "timeout": timeout}
         if self._exc is not None:
             raise self._exc

@@ -43,9 +43,7 @@ def test_lines_trigger_independent_of_chars():
     """大量短行 — 字符可能不超，但行数会超。"""
     short_lines = "\n".join(["- a"] * (MEMORY_MD_MAX_LINES + 50))
     assert len(short_lines) < MEMORY_MD_MAX_CHARS  # 确保只触发 lines
-    truncated, status = truncate_memory_md_with_status(
-        short_lines, max_chars=999_999
-    )
+    truncated, status = truncate_memory_md_with_status(short_lines, max_chars=999_999)
     assert status["truncated"] is True
     assert "lines" in status["triggers"]
     assert truncated.count("\n") + 1 <= MEMORY_MD_MAX_LINES
@@ -55,9 +53,7 @@ def test_bytes_trigger_with_multibyte_chars():
     """全中文场景 — 字符数可能不超，但 UTF-8 字节会膨胀。"""
     cjk_per_line = "重要规则：永远不要直接 push 到 main 分支并且每次提交都要写说明\n"
     content = cjk_per_line * 600  # 600 行 ≈ 35KB UTF-8
-    truncated, status = truncate_memory_md_with_status(
-        content, max_chars=999_999, max_lines=10_000
-    )
+    truncated, status = truncate_memory_md_with_status(content, max_chars=999_999, max_lines=10_000)
     # 这个场景应该至少触发 bytes（也可能同时触发 chars/lines 取决于阈值组合）
     assert status["truncated"] is True
     assert "bytes" in status["triggers"]

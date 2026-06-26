@@ -345,4 +345,3 @@ class Memory:
             context += f"- [{mem.category}] {mem.content}\n"
 
         return context
-

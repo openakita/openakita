@@ -1,5 +1,5 @@
-import { useReducer, useCallback, useRef, useEffect } from "react";
-import type { ChatMessage, ChatConversation, ChainSummaryItem, ChatArtifact } from "../utils/chatTypes";
+import { useReducer, useRef, useEffect } from "react";
+import type { ChatMessage, ChatConversation } from "../utils/chatTypes";
 import {
   loadMessagesFromStorage,
   getWorkspaceStorageKeys,

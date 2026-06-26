@@ -184,12 +184,8 @@ class TestRenderChapterCards:
         ctx = ChapterRenderContext(
             out_dir=tmp_path / "out",
             chapters=[
-                ChapterCardSpec(
-                    chapter_index=1, title="Intro", subtitle="welcome"
-                ),
-                ChapterCardSpec(
-                    chapter_index=2, title="Conclusion", subtitle="thanks"
-                ),
+                ChapterCardSpec(chapter_index=1, title="Intro", subtitle="welcome"),
+                ChapterCardSpec(chapter_index=2, title="Conclusion", subtitle="thanks"),
             ],
             prefer_playwright=False,
             builtin_templates={"modern": "<html></html>"},

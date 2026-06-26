@@ -63,7 +63,9 @@ def test_swiss_generation_artifacts_carry_image_guidance(tmp_path) -> None:
         slide_count=3,
     )
     project = project.model_copy(update={"id": "project_swiss"})
-    outline = OutlineBuilder().build(mode=DeckMode.TOPIC_TO_DECK, title="Swiss Roadmap", slide_count=3)
+    outline = OutlineBuilder().build(
+        mode=DeckMode.TOPIC_TO_DECK, title="Swiss Roadmap", slide_count=3
+    )
     design = DesignBuilder().build(outline=outline, style="swiss_ikb")
     ir = SlideIrBuilder().build(outline=outline, spec_lock=design["spec_lock"])
 
@@ -79,4 +81,3 @@ def test_swiss_generation_artifacts_carry_image_guidance(tmp_path) -> None:
     design_system = json.loads((tmp_path / "design_system.json").read_text(encoding="utf-8"))
     assert design_system["theme_id"] == "swiss_ikb"
     assert "no title, no footer" in design_system["image_style"]
-

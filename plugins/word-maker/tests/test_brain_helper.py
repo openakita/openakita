@@ -85,4 +85,3 @@ async def test_extract_fields_schema() -> None:
 
     assert result.ok is True
     assert result.data["fields"]["company"] == "OpenAkita"
-

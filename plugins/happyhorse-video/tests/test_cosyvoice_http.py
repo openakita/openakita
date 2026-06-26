@@ -42,6 +42,7 @@ def _read_settings_factory(**overrides):
         s = make_default_settings()
         s.update(overrides)
         return s
+
     return _read
 
 
@@ -57,8 +58,11 @@ def _mp3_bytes(payload: bytes = b"\x00" * 16) -> bytes:
     return b"ID3\x03\x00\x00\x00\x00\x00\x00" + payload
 
 
-def _install_capture_transport(monkeypatch, *, status=200, body=b"", content_type="audio/mp3", capture=None):
+def _install_capture_transport(
+    monkeypatch, *, status=200, body=b"", content_type="audio/mp3", capture=None
+):
     """Patch httpx.AsyncClient with a MockTransport that records the request."""
+
     def make_handler():
         def handler(request: httpx.Request) -> httpx.Response:
             if capture is not None:
@@ -66,6 +70,7 @@ def _install_capture_transport(monkeypatch, *, status=200, body=b"", content_typ
                 capture["headers"] = dict(request.headers)
                 capture["body"] = request.content.decode("utf-8") if request.content else ""
             return httpx.Response(status, content=body, headers={"content-type": content_type})
+
         return handler
 
     transport = httpx.MockTransport(make_handler())
@@ -129,8 +134,10 @@ def test_relay_base_url_routes_to_http(monkeypatch):
     "base_url,expected_url",
     [
         ("https://yunwu.example.com/v1", "https://yunwu.example.com/v1/audio/speech"),
-        ("https://dashscope.aliyuncs.com/compatible-mode/v1",
-         "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/speech"),
+        (
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/audio/speech",
+        ),
         ("https://onpremise.example.com", "https://onpremise.example.com/v1/audio/speech"),
         # Trailing slash must be stripped before /v1 detection
         ("https://relay.example.com/v1/", "https://relay.example.com/v1/audio/speech"),

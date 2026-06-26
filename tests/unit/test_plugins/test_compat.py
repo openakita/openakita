@@ -64,12 +64,11 @@ class TestPluginApiCompatibility:
         m = _manifest("legacy-p", plugin_api="~1")
         result = check_compatibility(m)
         assert result.ok is True, (
-            "v1 plugins MUST load — they form the existing ecosystem. "
-            f"Got errors: {result.errors}"
+            f"v1 plugins MUST load — they form the existing ecosystem. Got errors: {result.errors}"
         )
-        assert any(
-            "compatibility window" in w for w in result.warnings
-        ), f"Expected migration warning, got {result.warnings}"
+        assert any("compatibility window" in w for w in result.warnings), (
+            f"Expected migration warning, got {result.warnings}"
+        )
 
     def test_future_v3_plugin_rejected(self) -> None:
         """~3 is outside the window — must be rejected to surface real
@@ -136,6 +135,4 @@ class TestPluginUiApiUnchanged:
 def test_plugin_api_matrix(spec: str, expect_ok: bool) -> None:
     m = _manifest("p", plugin_api=spec)
     result = check_compatibility(m)
-    assert result.ok is expect_ok, (
-        f"spec={spec!r} expected ok={expect_ok}, got {result}"
-    )
+    assert result.ok is expect_ok, f"spec={spec!r} expected ok={expect_ok}, got {result}"

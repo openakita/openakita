@@ -260,4 +260,3 @@ async def test_generate_slide_content_rejects_garbage_json(tmp_path) -> None:
             slide_type=SlideType.CONTENT,
             project_id="ppt_bad_json",
         )
-

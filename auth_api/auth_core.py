@@ -2,6 +2,7 @@
 JWT 认证核心模块
 包含：JWT 生成/验证、密码加密、token 管理
 """
+
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
@@ -12,6 +13,7 @@ import secrets
 
 class Settings(BaseSettings):
     """应用配置"""
+
     SECRET_KEY: str = secrets.token_urlsafe(32)
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
@@ -40,7 +42,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
+
     to_encode.update({"exp": expire, "type": "access"})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
@@ -53,7 +55,7 @@ def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) 
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    
+
     # 添加唯一标识符用于 rotating 机制
     jti = secrets.token_urlsafe(16)
     to_encode.update({"exp": expire, "type": "refresh", "jti": jti})
@@ -78,9 +80,4 @@ def create_token_pair(user_id: str, username: str) -> dict:
     data = {"sub": user_id, "username": username}
     access_token = create_access_token(data)
     refresh_token = create_refresh_token(data)
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer"
-    }
-
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}

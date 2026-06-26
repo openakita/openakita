@@ -63,10 +63,7 @@ class TestMatchedGroup:
         m = compile_matcher("+Fed\n\n+ECB")
         g = m.matched_group("Fed statement")
         assert g is not None
-        assert any(
-            (t if isinstance(t, str) else t.pattern) == "Fed"
-            for t in g.required
-        )
+        assert any((t if isinstance(t, str) else t.pattern) == "Fed" for t in g.required)
 
     def test_returns_none_for_no_match(self) -> None:
         m = compile_matcher("+Fed")

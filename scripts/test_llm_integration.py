@@ -37,9 +37,9 @@ def api(method, path, data=None, params=None):
 
 
 def step(msg):
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {msg}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 def check(condition, msg):
@@ -71,10 +71,14 @@ def main():
         print(f"  使用已有组织: {orgs[0].get('name')} ({org_id})")
     else:
         step("1b. 创建测试组织")
-        from_template = api("post", "/orgs", {
-            "name": "LLM测试公司",
-            "template_id": "startup",
-        })
+        from_template = api(
+            "post",
+            "/orgs",
+            {
+                "name": "LLM测试公司",
+                "template_id": "startup",
+            },
+        )
         if from_template:
             org_id = from_template["id"]
             print(f"  创建组织: {org_id}")
@@ -120,26 +124,36 @@ def main():
         check("per_node" in stats, "stats 包含 per_node 数据")
         if "per_node" in stats:
             for nstat in stats["per_node"][:3]:
-                print(f"    节点 {nstat.get('id')}: status={nstat.get('status')}, "
-                      f"pending={nstat.get('pending_messages', 0)}, "
-                      f"task={nstat.get('current_task_title', '-')}")
+                print(
+                    f"    节点 {nstat.get('id')}: status={nstat.get('status')}, "
+                    f"pending={nstat.get('pending_messages', 0)}, "
+                    f"task={nstat.get('current_task_title', '-')}"
+                )
 
     # 5. 创建项目和任务
     step("5. 创建项目和任务")
-    proj_data = api("post", f"/orgs/{org_id}/projects", {
-        "name": "LLM集成测试项目",
-        "project_type": "temporary",
-        "description": "自动化测试项目",
-    })
+    proj_data = api(
+        "post",
+        f"/orgs/{org_id}/projects",
+        {
+            "name": "LLM集成测试项目",
+            "project_type": "temporary",
+            "description": "自动化测试项目",
+        },
+    )
     if proj_data:
         proj_id = proj_data["id"]
         check(True, f"项目创建成功: {proj_id}")
 
-        task_data = api("post", f"/orgs/{org_id}/projects/{proj_id}/tasks", {
-            "title": "写一个简短的公司介绍",
-            "description": "请为公司写一段50字以内的简短介绍",
-            "priority": 1,
-        })
+        task_data = api(
+            "post",
+            f"/orgs/{org_id}/projects/{proj_id}/tasks",
+            {
+                "title": "写一个简短的公司介绍",
+                "description": "请为公司写一段50字以内的简短介绍",
+                "priority": 1,
+            },
+        )
         if task_data:
             task_id = task_data["id"]
             check(True, f"任务创建成功: {task_id}")
@@ -160,15 +174,19 @@ def main():
         try:
             dispatch = api("post", f"/orgs/{org_id}/projects/{proj_id}/tasks/{task_id}/dispatch")
             if dispatch:
-                check(dispatch.get("ok") or "command_id" in dispatch or "status" in dispatch,
-                      f"任务派发成功: {dispatch}")
+                check(
+                    dispatch.get("ok") or "command_id" in dispatch or "status" in dispatch,
+                    f"任务派发成功: {dispatch}",
+                )
             else:
                 raise Exception("dispatch returned None")
         except Exception as e:
             print(f"  派发超时或失败({e})，改用 command 方式...")
-            dispatch = api("post", f"/orgs/{org_id}/command", {
-                "content": "请为公司写一段50字以内的简短介绍，写好后提交给上级审阅"
-            })
+            dispatch = api(
+                "post",
+                f"/orgs/{org_id}/command",
+                {"content": "请为公司写一段50字以内的简短介绍，写好后提交给上级审阅"},
+            )
             if dispatch:
                 check(True, f"命令发送成功: {dispatch}")
 
@@ -187,19 +205,20 @@ def main():
                 if target:
                     st = target.get("status", "todo")
                     pct = target.get("progress_pct", 0)
-                    print(f"  [{i*5:3d}s] 任务状态: {st}, 进度: {pct}%")
+                    print(f"  [{i * 5:3d}s] 任务状态: {st}, 进度: {pct}%")
                     if st in ("accepted", "delivered", "rejected"):
                         check(True, f"任务已完成: {st}")
                         break
                     if st == "in_progress" and pct > 0:
                         check(True, f"任务正在执行中，进度 {pct}%")
             else:
-                print(f"  [{i*5:3d}s] 等待中...")
+                print(f"  [{i * 5:3d}s] 等待中...")
 
             stats = api("get", f"/orgs/{org_id}/stats")
             if stats and "per_node" in stats:
-                busy_nodes = [ns.get("id") for ns in stats["per_node"]
-                              if ns.get("status") == "busy"]
+                busy_nodes = [
+                    ns.get("id") for ns in stats["per_node"] if ns.get("status") == "busy"
+                ]
                 if busy_nodes:
                     print(f"         忙碌节点: {busy_nodes}")
         else:
@@ -211,8 +230,10 @@ def main():
     if events:
         check(len(events) > 0, f"有 {len(events)} 条事件")
         for ev in events[:5]:
-            print(f"    [{ev.get('event_type')}] by {ev.get('actor')}: "
-                  f"{json.dumps(ev.get('data', {}), ensure_ascii=False)[:80]}")
+            print(
+                f"    [{ev.get('event_type')}] by {ev.get('actor')}: "
+                f"{json.dumps(ev.get('data', {}), ensure_ascii=False)[:80]}"
+            )
 
     # 9. 检查任务详情 API
     step("9. 检查任务详情 API")
@@ -268,9 +289,7 @@ def main():
     # 12. 停止组织
     step("12. 停止组织")
     try:
-        stop_resp = requests.post(
-            f"{BASE}/orgs/{org_id}/stop", headers=HEADERS, timeout=180
-        )
+        stop_resp = requests.post(f"{BASE}/orgs/{org_id}/stop", headers=HEADERS, timeout=180)
         if stop_resp.status_code < 400:
             stop_result = stop_resp.json()
             check(stop_result.get("status") == "dormant", "组织已停止")
@@ -288,4 +307,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

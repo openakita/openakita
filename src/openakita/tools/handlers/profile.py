@@ -100,20 +100,19 @@ class ProfileHandler:
                 parts.append(f"✅ 已更新档案: {', '.join(updated)}")
             if saved_as_memory:
                 parts.append(
-                    f"📝 以下信息不在档案白名单内，已作为长期记忆保存: "
-                    f"{', '.join(saved_as_memory)}"
+                    f"📝 以下信息不在档案白名单内，已作为长期记忆保存: {', '.join(saved_as_memory)}"
                 )
             if rejected:
                 parts.append(
                     f"⚠️ 以下 key 不在档案白名单内，已**拒绝**写入（避免跨会话污染）: "
                     f"{', '.join(rejected)}\n"
-                    f"如确属用户长期偏好，请改用 `add_memory(type=\"preference\", ...)` "
+                    f'如确属用户长期偏好，请改用 `add_memory(type="preference", ...)` '
                     f"明确记录；或使用以下白名单 key 之一: {', '.join(sorted(available_keys)[:20])}…"
                 )
             if parts:
                 return "\n".join(parts)
             return (
-                f"❌ 参数格式错误，正确用法: {{\"key\": \"name\", \"value\": \"小明\"}}\n"
+                f'❌ 参数格式错误，正确用法: {{"key": "name", "value": "小明"}}\n'
                 f"可用的键: {', '.join(available_keys)}"
             )
 
@@ -129,13 +128,15 @@ class ProfileHandler:
                 )
             return (
                 f"❌ 未知的档案项: `{key}`（已拒绝写入，避免跨会话污染）。\n"
-                f"如属用户长期偏好，请改用 `add_memory(type=\"preference\", ...)` 记录。\n"
+                f'如属用户长期偏好，请改用 `add_memory(type="preference", ...)` 记录。\n'
                 f"可用的档案 key: {', '.join(sorted(available_keys)[:20])}…"
             )
 
         self.agent.profile_manager.update_profile(mapped_key, value)
         if mapped_key != key:
-            return f"✅ 已更新档案: {mapped_key} = {value}（输入键 `{key}` 已归一为 `{mapped_key}`）"
+            return (
+                f"✅ 已更新档案: {mapped_key} = {value}（输入键 `{key}` 已归一为 `{mapped_key}`）"
+            )
         return f"✅ 已更新档案: {mapped_key} = {value}"
 
     def _save_unknown_as_memory(self, key: str, value: Any) -> bool:
@@ -164,17 +165,11 @@ class ProfileHandler:
             session = getattr(self.agent, "current_session", None)
             session_id = ""
             if session is not None:
-                session_id = (
-                    getattr(session, "session_key", "")
-                    or getattr(session, "id", "")
-                    or ""
-                )
+                session_id = getattr(session, "session_key", "") or getattr(session, "id", "") or ""
 
             scope = "session" if (ff_enabled and session_id) else "global"
             scope_owner = session_id if (ff_enabled and session_id) else ""
-            expires_at = (
-                datetime.now() + timedelta(days=30) if ff_enabled else None
-            )
+            expires_at = datetime.now() + timedelta(days=30) if ff_enabled else None
 
             content = f"用户档案补充: {key} = {value}"
             mem = Memory(

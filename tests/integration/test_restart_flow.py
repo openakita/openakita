@@ -60,6 +60,7 @@ async def client_no_shutdown(app_no_shutdown):
 class TestRestartWithShutdownEvent:
     async def test_restart_sets_flag_and_triggers_event(self, client, shutdown_event):
         import openakita.config as cfg
+
         cfg._restart_requested = False
 
         resp = await client.post("/api/config/restart")
@@ -77,6 +78,7 @@ class TestRestartWithShutdownEvent:
 class TestRestartWithoutShutdownEvent:
     async def test_restart_returns_error(self, client_no_shutdown):
         import openakita.config as cfg
+
         cfg._restart_requested = False
 
         resp = await client_no_shutdown.post("/api/config/restart")
@@ -124,7 +126,9 @@ class TestRestartOrchestratorRecovery:
     async def test_agent_mode_endpoint_keeps_multi_agent_enabled(self, shutdown_event):
         mock_orchestrator = MagicMock()
         app = create_app(
-            agent=MagicMock(initialized=True, _tools=[], tool_catalog=MagicMock(), handler_registry=MagicMock()),
+            agent=MagicMock(
+                initialized=True, _tools=[], tool_catalog=MagicMock(), handler_registry=MagicMock()
+            ),
             shutdown_event=shutdown_event,
             orchestrator=mock_orchestrator,
         )

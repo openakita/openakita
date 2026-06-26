@@ -110,6 +110,7 @@ from openakita.plugins.api import PluginAPI, PluginBase
 logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "omni-post"
+MP_BROWSER_ACCOUNT_ID = "__multipost_browser__"
 
 
 class OmniPostPlugin(PluginBase):
@@ -368,7 +369,8 @@ class OmniPostPlugin(PluginBase):
             for pid in body.platforms:
                 if pid not in PLATFORMS_BY_ID:
                     issues.append(f"unknown platform {pid}")
-            for aid in body.account_ids:
+            account_ids = [] if body.engine == "mp" else list(body.account_ids)
+            for aid in account_ids:
                 acc = await self._tm.get_account(aid)
                 if acc is None:
                     issues.append(f"account {aid} not found")
@@ -382,7 +384,7 @@ class OmniPostPlugin(PluginBase):
                 "matrix": [
                     {"platform": p, "account_id": a}
                     for p in body.platforms
-                    for a in body.account_ids
+                    for a in (account_ids or [MP_BROWSER_ACCOUNT_ID])
                 ],
             }
 
@@ -506,6 +508,28 @@ class OmniPostPlugin(PluginBase):
             assert self._tm is not None
             removed = await self._tm.delete_asset(asset_id)
             return {"ok": removed}
+
+        @router.get("/assets/{asset_id}/file", response_class=FileResponse)
+        async def serve_asset_file(asset_id: str):
+            self._require_tm()
+            assert self._tm is not None
+            row = await self._tm.get_asset(asset_id)
+            if row is None:
+                raise HTTPException(404, "asset not found")
+            p = Path(row["storage_path"]).resolve()
+            assert self._data_dir is not None
+            base = (self._data_dir / "assets").resolve()
+            try:
+                p.relative_to(base)
+            except ValueError as e:
+                raise HTTPException(403, "forbidden") from e
+            if not p.is_file():
+                raise HTTPException(404, "asset file not found")
+            return FileResponse(
+                str(p),
+                filename=row.get("filename") or p.name,
+                media_type="application/octet-stream",
+            )
 
         # Calendar ─────────────────────────────────────────────────
         # Tab 4 driver. `from`/`to` are ISO strings so the client owns
@@ -764,14 +788,44 @@ class OmniPostPlugin(PluginBase):
         for pid in body.platforms:
             if pid not in PLATFORMS_BY_ID:
                 raise HTTPException(422, f"unknown platform {pid}")
+        if not body.platforms:
+            raise HTTPException(422, "platforms required")
+
+        if body.engine == "mp":
+            payload = body.payload.model_dump()
+            payload["_mp_platforms"] = list(body.platforms)
+            task_id = await self._tm.create_task(
+                platform=body.platforms[0],
+                account_id=MP_BROWSER_ACCOUNT_ID,
+                asset_id=body.asset_id,
+                payload=payload,
+                engine=body.engine,
+                client_trace_id=body.client_trace_id,
+                scheduled_at=body.scheduled_at,
+            )
+            if is_scheduled and body.scheduled_at:
+                await self._tm.create_schedule(
+                    task_id=task_id,
+                    scheduled_at=body.scheduled_at,
+                    jitter_seconds=int(self._settings.get("schedule_jitter_seconds", 900)),
+                )
+            else:
+                self._spawn(run_publish_task(self._deps(), task_id))
+            return {"ok": True, "task_ids": [task_id], "count": 1, "batch_platforms": body.platforms}
+
+        account_ids = [MP_BROWSER_ACCOUNT_ID] if body.engine == "mp" else list(body.account_ids)
+        if not account_ids:
+            raise HTTPException(422, "account_ids required unless engine=mp")
 
         created_tasks: list[str] = []
         for pid in body.platforms:
-            for aid in body.account_ids:
-                acc = await self._tm.get_account(aid)
-                if acc is None:
+            for aid in account_ids:
+                acc = None
+                if aid != MP_BROWSER_ACCOUNT_ID:
+                    acc = await self._tm.get_account(aid)
+                if aid != MP_BROWSER_ACCOUNT_ID and acc is None:
                     raise HTTPException(404, f"account {aid} not found")
-                if acc["platform"] != pid:
+                if acc is not None and acc["platform"] != pid:
                     # Silent skip — don't explode the whole matrix,
                     # just note the mismatch for the UI to render.
                     continue

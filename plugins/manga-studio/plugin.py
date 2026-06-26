@@ -294,7 +294,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "dashscope_region": "beijing",
     "tts_engine": "edge",  # "edge" | "cosyvoice"
     "tts_voice_edge": "zh-CN-XiaoxiaoNeural",  # default Edge voice picker
-
     # ── Default generation preferences (apply to new episodes) ──────
     # ``default_generation_backend`` is the *fallback* for a new series /
     # ad-hoc render request when neither the series nor the request
@@ -304,7 +303,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "default_resolution": "480P",  # "480P" | "720P"
     "default_image_model": "wan2.7-image",  # wan2.7-image | wan2.7-image-pro
     "default_video_model": "seedance-1.0-lite-i2v",
-
     # ── Workflow backend (Phase 3) — RunningHub (cloud) or local ComfyUI
     "comfy_backend": "runninghub",  # "runninghub" | "comfyui_local"
     "runninghub_api_key": "",
@@ -317,7 +315,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "comfyui_workflow_image": "",
     "comfyui_workflow_animate": "",
     "comfyui_workflow_t2v": "",
-
     # ── Aliyun OSS — required for any vendor that fetches via signed URL.
     # All four fields must be set together; partial config is rejected at
     # use-time with a "请到设置 → OSS 完成配置" hint.
@@ -326,17 +323,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "oss_access_key_id": "",
     "oss_access_key_secret": "",
     "oss_path_prefix": "manga-studio",  # default object path prefix
-
     # ── Storage & cleanup (mirror avatar-studio for parity) ─────────
     "custom_data_dir": "",  # blank → host-managed data dir
     "output_subdir_mode": "task",  # task | date | mode | date_mode | flat
     "output_naming_rule": "{filename}",
     "retention_days": 30,  # auto-cleanup window for completed tasks
-
     # ── Advanced HTTP knobs (per-vendor request) ────────────────────
     "timeout_sec": 60,
     "max_retries": 2,
-
     # ── Cost guard — pipeline pauses for confirmation when the estimate
     # exceeds this. ``0`` disables the guard entirely.
     "cost_threshold_cny": 5.0,
@@ -402,8 +396,7 @@ class Plugin(PluginBase):
         import os as _os
 
         _disable_boot = bool(
-            _os.environ.get("PYTEST_CURRENT_TEST")
-            or _os.environ.get("OPENAKITA_DISABLE_DEP_BOOT")
+            _os.environ.get("PYTEST_CURRENT_TEST") or _os.environ.get("OPENAKITA_DISABLE_DEP_BOOT")
         )
         if not _disable_boot:
             try:
@@ -1566,11 +1559,7 @@ class Plugin(PluginBase):
                 try:
                     import shutil  # noqa: PLC0415
 
-                    removed_bytes = sum(
-                        f.stat().st_size
-                        for f in ep_dir.rglob("*")
-                        if f.is_file()
-                    )
+                    removed_bytes = sum(f.stat().st_size for f in ep_dir.rglob("*") if f.is_file())
                     shutil.rmtree(ep_dir)
                 except OSError as exc:
                     cleanup_warning = f"disk cleanup failed: {exc}"
@@ -1868,9 +1857,7 @@ class Plugin(PluginBase):
             try:
                 target.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
-                raise HTTPException(
-                    status_code=500, detail=f"Cannot create folder: {exc}"
-                ) from exc
+                raise HTTPException(status_code=500, detail=f"Cannot create folder: {exc}") from exc
             import subprocess
             import sys
 
@@ -1882,9 +1869,7 @@ class Plugin(PluginBase):
                 else:
                     subprocess.Popen(["xdg-open", str(target)])
             except (OSError, FileNotFoundError) as exc:
-                raise HTTPException(
-                    status_code=500, detail=f"Cannot open folder: {exc}"
-                ) from exc
+                raise HTTPException(status_code=500, detail=f"Cannot open folder: {exc}") from exc
             return {"ok": True, "path": str(target)}
 
         @router.post("/cleanup")
@@ -1976,9 +1961,7 @@ class Plugin(PluginBase):
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     if vendor == "ark":
                         # GET /models — needs nothing in the body.
-                        resp = await client.get(
-                            url, headers={"Authorization": f"Bearer {key}"}
-                        )
+                        resp = await client.get(url, headers={"Authorization": f"Bearer {key}"})
                     else:
                         # DashScope — issue an empty POST; the server returns
                         # 400/401 fast without consuming any tokens.

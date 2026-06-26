@@ -6,12 +6,12 @@ import { invoke, IS_TAURI } from "../platform";
 import { useTranslation } from "react-i18next";
 import type { SkillInfo, SkillConfigField, MarketplaceSkill, EnvMap } from "../types";
 import { envGet, envSet } from "../utils";
-import { IconGear, IconZap, IconPackage, IconStar, IconCheck, IconX, IconDownload, IconSearch, IconConfig, IconFolderOpen, IconEdit, IconTrash, IconEye } from "../icons";
+import { IconGear, IconZap, IconPackage, IconStar, IconCheck, IconX, IconDownload, IconSearch, IconFolderOpen, IconEdit, IconTrash, IconEye } from "../icons";
 import { Loader2, ChevronDown, ChevronRight } from "lucide-react";
 import { safeFetch } from "../providers";
 import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -78,6 +78,41 @@ function friendlyError(e: unknown, t: (key: string) => string, context: ErrorCon
   };
   return t(contextMap[context]);
 }
+
+type CategoryMassAction = "enable" | "disable";
+
+type CategoryMassActionResult = {
+  status?: string;
+  name?: string;
+  added?: number;
+  removed?: number;
+  system_count?: number;
+  total?: number;
+  processed?: number;
+  error?: string;
+  detail?: string;
+};
+
+type CategoryMassProgressEvent = {
+  stage?: string;
+  message?: string;
+  percent?: number;
+  total?: number;
+  processed?: number;
+  finished?: boolean;
+  error?: string;
+  result?: CategoryMassActionResult;
+};
+
+type CategoryMassProgressState = {
+  category: string;
+  action: CategoryMassAction;
+  stage: string;
+  message: string;
+  percent: number;
+  total: number;
+  processed: number;
+};
 
 // ─── 分类对话框（新建 / 编辑） ───
 
@@ -1315,11 +1350,16 @@ export function SkillManager({
   const [categories, setCategories] = useState<CategoryInfo[]>([]);
   const [groupView, setGroupView] = useState(true);
   const [categoryBusy, setCategoryBusy] = useState<string | null>(null);
+  const [categoryMassProgress, setCategoryMassProgress] = useState<CategoryMassProgressState | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [categoryDialogState, setCategoryDialogState] = useState<CategoryDialogState>(null);
   const [categoryDeleteConfirm, setCategoryDeleteConfirm] = useState<string | null>(null);
   const [moveCategoryState, setMoveCategoryState] = useState<MoveCategoryDialogState>(null);
-  const [showSystemCategories, setShowSystemCategories] = useState(false);
+  // 「显示系统技能」开关：默认关闭。语义是 *技能级* 过滤——关闭时系统技能在
+  // 平铺视图、分组视图、混合分类内部以及计数中一律隐藏（修复 #598：搜索时系统
+  // 技能/分类仍然出现）。命名从旧的 showSystemCategories 收敛为 showSystemSkills，
+  // 与 i18n key `skills.category.showSystem`（“显示系统技能”）语义对齐。
+  const [showSystemSkills, setShowSystemSkills] = useState(false);
   // 安装时选择落入的分类（""=不指定，安装到顶层）
   const [installCategory, setInstallCategory] = useState<string>("");
   const [detailSkill, setDetailSkill] = useState<SkillInfo | null>(null);
@@ -1333,45 +1373,86 @@ export function SkillManager({
   const [installStatus, setInstallStatus] = useState<string>("");
   const [uninstallConfirm, setUninstallConfirm] = useState<SkillInfo | null>(null);
   const marketRequestId = useRef(0);
+  // 已安装技能加载的请求时序守卫：并发的 loadSkills 中只有"最新"那次允许写入
+  // 状态，避免较早发出的请求晚到后用旧/坏数据覆盖较新成功结果（last-write-wins 倒灌）。
+  const skillsRequestId = useRef(0);
+  const refreshingRef = useRef(false);
   const detailRequestNameRef = useRef<string | null>(null);
   const { t } = useTranslation();
 
   // ── 加载已安装技能（返回 true 表示成功，false 表示出错） ──
+  //
+  // 失败语义（修复 #614“导入后列表空白”）：
+  //   - 只有当数据源**明确成功**返回 `{skills: [...]}`（数组）时才覆盖列表；
+  //     合法的空数组（res.ok 且 skills=[]）按真·空渲染。
+  //   - 任何**尝试过但失败**的情况（非 2xx、错误体、响应结构异常、网络/超时）
+  //     都只 setError，**不清空**已有列表——避免一次瞬时故障把整页清成空白
+  //     （此前 `data = await res.json()` 不查 res.ok，500 错误体会被当成空列表）。
+  //   - 完全没有可用数据源时（既无服务也非 Tauri 本地模式）才视为真·空。
+  // 并发语义：用 skillsRequestId 做时序守卫，只有最新一次请求允许写状态。
   const loadSkills = useCallback(async (): Promise<boolean> => {
+    const seq = ++skillsRequestId.current;
+    const isLatest = () => seq === skillsRequestId.current;
     setLoading(true);
     setError(null);
     try {
-      let data: { skills: Record<string, unknown>[] } | null = null;
-
-      let httpError: string | null = null;
+      let data: { skills?: Record<string, unknown>[] } | null = null;
+      let loadError: string | null = null;
+      let attempted = false;
 
       // 优先从运行中的服务 HTTP API 获取（远程模式或本地服务运行时）
       if (serviceRunning && apiBaseUrl != null) {
+        attempted = true;
         try {
           const res = await safeFetch(`${apiBaseUrl}/api/skills`, { signal: AbortSignal.timeout(15_000), cache: "no-store" });
-          data = await res.json();
+          let parsed: { skills?: Record<string, unknown>[]; error?: string; detail?: string } | null = null;
+          try {
+            parsed = await res.json();
+          } catch {
+            parsed = null;
+          }
+          if (!res.ok || parsed?.error) {
+            loadError = String(parsed?.error || parsed?.detail || `HTTP ${res.status}`);
+          } else if (parsed && Array.isArray(parsed.skills)) {
+            data = parsed;
+          } else {
+            // 2xx 但响应结构异常：当作软失败处理，不清空现有列表
+            loadError = "unexpected response shape from /api/skills";
+          }
         } catch (e) {
-          httpError = String(e);
+          loadError = String(e);
         }
       }
 
       // Fallback: Tauri 本地命令（仅本地模式，且 HTTP 未成功时）
       if (!data && IS_TAURI && dataMode !== "remote" && venvDir && currentWorkspaceId) {
+        attempted = true;
         try {
           const raw = await invoke<string>("openakita_list_skills", { venvDir, workspaceId: currentWorkspaceId });
-          data = JSON.parse(raw);
-        } catch {
-          // Tauri 也失败了——如果 HTTP 也失败了，显示错误
-          if (httpError) {
-            setError(friendlyError(httpError, t, "load"));
-            return false;
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.skills)) {
+            data = parsed;
+            loadError = null;  // Tauri 兜底成功，清掉 HTTP 阶段的错误
+          } else if (!loadError) {
+            loadError = "unexpected response shape from openakita_list_skills";
           }
+        } catch (e) {
+          if (!loadError) loadError = String(e);
         }
       }
 
+      // 时序守卫：较早发出的请求若已被更新的请求取代，则放弃写入。
+      if (!isLatest()) return false;
+
       if (!data) {
-        setSkills([]);
-        return !httpError;
+        if (loadError) {
+          // 尝试过但失败：保留现有列表，仅提示错误，绝不清空。
+          setError(friendlyError(loadError, t, "load"));
+          return false;
+        }
+        // 没有任何可用数据源（既未尝试 HTTP 也未尝试 Tauri）：真·空。
+        if (attempted === false) setSkills([]);
+        return true;
       }
 
       const list: SkillInfo[] = (data.skills || []).map((s: Record<string, unknown>) => ({
@@ -1390,6 +1471,7 @@ export function SkillManager({
         configComplete: true,  // 由 useMemo 动态计算，这里先占位
       }));
       setSkills(list);
+      setError(null);
       // 同步 enabledDraft 到后端最新状态
       const draft: Record<string, boolean> = {};
       for (const s of list) draft[s.skillId] = s.enabled !== false;
@@ -1397,12 +1479,12 @@ export function SkillManager({
       setEnabledDirty(false);
       return true;
     } catch (e) {
-      setError(friendlyError(e, t, "load"));
+      if (isLatest()) setError(friendlyError(e, t, "load"));
       return false;
     } finally {
-      setLoading(false);
+      if (isLatest()) setLoading(false);
     }
-  }, [venvDir, currentWorkspaceId, serviceRunning, apiBaseUrl, dataMode]);
+  }, [venvDir, currentWorkspaceId, serviceRunning, apiBaseUrl, dataMode, t]);
 
   const reloadRuntimeAfterLocalInstall = useCallback(async () => {
     if (!serviceRunning || apiBaseUrl == null) return true;
@@ -1411,7 +1493,7 @@ export function SkillManager({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(180_000),
       });
       let data: Record<string, unknown> | null = null;
       try {
@@ -1461,8 +1543,12 @@ export function SkillManager({
   // 否则静默 reload 技能与分类列表
   const enabledDirtyRef = useRef(enabledDirty);
   useEffect(() => { enabledDirtyRef.current = enabledDirty; }, [enabledDirty]);
+  useEffect(() => { refreshingRef.current = refreshing; }, [refreshing]);
   useEffect(() => {
     const onChange = () => {
+      if (refreshingRef.current) {
+        return;
+      }
       if (enabledDirtyRef.current) {
         toast.info(t("skills.realtimeDirtyHint"));
         return;
@@ -1491,61 +1577,113 @@ export function SkillManager({
   );
 
   // ── 大类启用/禁用 / 创建 / 删除（mass action over allowlist） ──
-  const handleCategoryEnableAll = useCallback(async (name: string) => {
-    if (apiBaseUrl == null) return;
-    setCategoryBusy(name);
-    try {
-      const res = await safeFetch(`${apiBaseUrl}/api/skill-categories/${encodeURIComponent(name)}/enable`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-        signal: AbortSignal.timeout(15_000),
-      });
-      const data = await res.json().catch(() => ({}));
-      const count = data?.added ?? -1;
-      const sysCount = data?.system_count ?? 0;
-      if (count === 0 && sysCount > 0) {
-        toast.info(t("skills.category.allSystemSkills", { name: displayCategoryName(name), count: sysCount }));
-      } else if (count === 0) {
-        toast.warning(t("skills.category.noSkillsInCategory", { name: displayCategoryName(name) }));
-      } else {
-        toast.success(t("skills.category.enabledAll", { name: displayCategoryName(name) }));
-      }
-      await refreshAfterCategoryMutation();
-    } catch (e) {
-      toast.error(friendlyError(e, t, "save"));
-    } finally {
-      setCategoryBusy(null);
+  const runCategoryMassAction = useCallback(async (
+    name: string,
+    action: CategoryMassAction,
+  ): Promise<CategoryMassActionResult> => {
+    const actionPath = action === "enable" ? "enable" : "disable";
+    const url = `${apiBaseUrl}/api/skill-categories/${encodeURIComponent(name)}/${actionPath}?stream=1`;
+    const res = await safeFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+      body: "{}",
+      signal: AbortSignal.timeout(120_000),
+    });
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("text/event-stream") || !res.body) {
+      return await res.json().catch(() => ({}));
     }
-  }, [apiBaseUrl, t, displayCategoryName, refreshAfterCategoryMutation]);
 
-  const handleCategoryDisableAll = useCallback(async (name: string) => {
-    if (apiBaseUrl == null) return;
-    setCategoryBusy(name);
-    try {
-      const res = await safeFetch(`${apiBaseUrl}/api/skill-categories/${encodeURIComponent(name)}/disable`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-        signal: AbortSignal.timeout(15_000),
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalResult: CategoryMassActionResult | null = null;
+    const applyProgress = (event: CategoryMassProgressEvent) => {
+      if (event.result) finalResult = event.result;
+      const percent = Math.max(0, Math.min(100, Number(event.percent ?? 0)));
+      setCategoryMassProgress({
+        category: name,
+        action,
+        stage: String(event.stage || ""),
+        message: String(event.message || ""),
+        percent,
+        total: Number(event.total || event.result?.total || 0),
+        processed: Number(event.processed || event.result?.processed || 0),
       });
-      const data = await res.json().catch(() => ({}));
-      const count = data?.removed ?? -1;
+      if (event.error) throw new Error(event.error);
+    };
+
+    const parseBlock = (block: string) => {
+      const dataLines = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart());
+      if (dataLines.length === 0) return;
+      const raw = dataLines.join("\n");
+      if (!raw) return;
+      const event = JSON.parse(raw) as CategoryMassProgressEvent;
+      applyProgress(event);
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() || "";
+      for (const block of blocks) parseBlock(block);
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) parseBlock(buffer);
+    return finalResult || {};
+  }, [apiBaseUrl]);
+
+  const handleCategoryMassAction = useCallback(async (name: string, action: CategoryMassAction) => {
+    if (apiBaseUrl == null || categoryBusy) return;
+    setCategoryBusy(name);
+    setCategoryMassProgress({
+      category: name,
+      action,
+      stage: "starting",
+      message: t("skills.category.massStarting"),
+      percent: 5,
+      total: 0,
+      processed: 0,
+    });
+    try {
+      const data = await runCategoryMassAction(name, action);
+      const count = action === "enable" ? data?.added ?? -1 : data?.removed ?? -1;
       const sysCount = data?.system_count ?? 0;
       if (count === 0 && sysCount > 0) {
         toast.info(t("skills.category.allSystemSkills", { name: displayCategoryName(name), count: sysCount }));
       } else if (count === 0) {
         toast.warning(t("skills.category.noSkillsInCategory", { name: displayCategoryName(name) }));
+      } else if (action === "enable") {
+        toast.success(t("skills.category.enabledAll", { name: displayCategoryName(name) }));
       } else {
         toast.success(t("skills.category.disabledAll", { name: displayCategoryName(name) }));
       }
+      setCategoryMassProgress((prev) => prev && prev.category === name
+        ? { ...prev, stage: "syncing", message: t("skills.category.massSyncing"), percent: 95 }
+        : prev);
       await refreshAfterCategoryMutation();
     } catch (e) {
       toast.error(friendlyError(e, t, "save"));
     } finally {
       setCategoryBusy(null);
+      setCategoryMassProgress(null);
     }
-  }, [apiBaseUrl, t, displayCategoryName, refreshAfterCategoryMutation]);
+  }, [apiBaseUrl, categoryBusy, runCategoryMassAction, t, displayCategoryName, refreshAfterCategoryMutation]);
+
+  const handleCategoryEnableAll = useCallback(
+    (name: string) => handleCategoryMassAction(name, "enable"),
+    [handleCategoryMassAction],
+  );
+
+  const handleCategoryDisableAll = useCallback(
+    (name: string) => handleCategoryMassAction(name, "disable"),
+    [handleCategoryMassAction],
+  );
 
   const handleCategoryDialogSubmit = useCallback(async (
     mode: "create" | "edit",
@@ -1701,6 +1839,14 @@ export function SkillManager({
       return i18nValues.some((v) => v.toLowerCase().includes(q));
     });
   }, [skillsWithConfig, installedSearch]);
+
+  // 单一可见性来源：在搜索过滤之上再叠加「显示系统技能」开关。
+  // 平铺视图 / 分组聚合 / 计数 / 空状态都消费这一个派生量，避免在多处各自
+  // 重复 `s.system` 判断而产生不一致（#598）。
+  const visibleSkills = useMemo(
+    () => (showSystemSkills ? filteredSkills : filteredSkills.filter((s) => !s.system)),
+    [filteredSkills, showSystemSkills],
+  );
 
   // ── 保存技能配置 ──
   const handleSaveConfig = useCallback(async (skill: SkillInfo) => {
@@ -2338,7 +2484,7 @@ export function SkillManager({
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({}),
-                  signal: AbortSignal.timeout(15_000),
+                  signal: AbortSignal.timeout(180_000),
                 });
                 const data = await res.json();
                 if (data.error) { setError(friendlyError(data.error, t, "reload")); return; }
@@ -2468,7 +2614,7 @@ export function SkillManager({
             </Card>
           )}
           
-          {installedSearch && filteredSkills.length === 0 && skillsWithConfig.length > 0 && (
+          {installedSearch && visibleSkills.length === 0 && skillsWithConfig.length > 0 && (
             <Card className="border-dashed border-border/80 shadow-sm">
               <CardContent className="flex flex-col items-center justify-center py-14">
                 <IconSearch size={32} className="text-muted-foreground/30 mb-3" />
@@ -2488,16 +2634,14 @@ export function SkillManager({
                 />
                 {t("skills.category.groupView")}
               </label>
-              {groupView && (
-                <label className="flex items-center gap-1.5 text-xs text-muted-foreground select-none">
-                  <input
-                    type="checkbox"
-                    checked={showSystemCategories}
-                    onChange={(e) => setShowSystemCategories(e.target.checked)}
-                  />
-                  {t("skills.category.showSystem")}
-                </label>
-              )}
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground select-none">
+                <input
+                  type="checkbox"
+                  checked={showSystemSkills}
+                  onChange={(e) => setShowSystemSkills(e.target.checked)}
+                />
+                {t("skills.category.showSystem")}
+              </label>
               <Button
                 variant="outline"
                 size="sm"
@@ -2512,7 +2656,7 @@ export function SkillManager({
 
           {!groupView && (
             <div className="flex flex-col gap-3">
-              {filteredSkills.map((skill) => (
+              {visibleSkills.map((skill) => (
                 <SkillCard
                   key={skill.skillId}
                   skill={skill}
@@ -2533,19 +2677,35 @@ export function SkillManager({
           )}
 
           {groupView && (() => {
-            const grouped: Record<string, typeof filteredSkills> = Object.fromEntries(categories.map(c => [c.name, [] as typeof filteredSkills]));
-            for (const s of filteredSkills) {
+            // 用 visibleSkills（已按搜索 + 系统过滤）聚合，使分类成员、计数与
+            // 平铺视图保持同源。系统技能在 showSystemSkills 关闭时此处已被剔除，
+            // 因此混合分类内部不会再渲染系统技能（#598 的第二处缺口）。
+            const grouped: Record<string, typeof visibleSkills> = Object.fromEntries(categories.map(c => [c.name, [] as typeof visibleSkills]));
+            for (const s of visibleSkills) {
               const k = s.category || "Uncategorized";
-              (grouped[k] ||= [] as typeof filteredSkills).push(s);
+              (grouped[k] ||= [] as typeof visibleSkills).push(s);
             }
             const sortedNames = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
-            const visibleNames = showSystemCategories
-              ? sortedNames
-              : sortedNames.filter((catName) => {
-                  const items = grouped[catName];
-                  return items.length === 0 || items.some(s => !s.system);
-                });
             const metaByName = new Map(categories.map(c => [c.name, c]));
+            const searching = installedSearch.trim().length > 0;
+            // 分类显隐规则：
+            //   - 有可见成员的分类：始终显示。
+            //   - 空分类 + 搜索态：隐藏（无匹配的空壳分类是噪声，#598 的根因之一
+            //     正是空的系统分类在搜索时被当成“空”而无条件显示）。
+            //   - 空分类 + 非搜索 + 显示系统技能：保留（含空的系统分类）。
+            //   - 空分类 + 非搜索 + 隐藏系统技能：仅保留“非系统”的空分类，以便用户
+            //     管理自建的空分类；空的系统分类隐藏。
+            // 系统分类的判定依赖 systemCategoryNames（由 system=true 的技能反推），
+            // 因为内置分类的 system_readonly 实际恒为 false，不可作为依据。
+            const isSystemCategory = (catName: string) =>
+              (metaByName.get(catName)?.system_readonly ?? false) || systemCategoryNames.has(catName);
+            const visibleNames = sortedNames.filter((catName) => {
+              const items = grouped[catName];
+              if (items.length > 0) return true;
+              if (searching) return false;
+              if (showSystemSkills) return true;
+              return !isSystemCategory(catName);
+            });
             return (
               <div className="flex flex-col gap-4">
                 {visibleNames.map((catName) => {
@@ -2554,7 +2714,10 @@ export function SkillManager({
                   const readonly = meta?.system_readonly ?? false;
                   const total = items.length;
                   const enabled = items.filter(s => s.enabled).length;
-                  const busy = categoryBusy === catName;
+                  const massProgress = categoryMassProgress?.category === catName ? categoryMassProgress : null;
+                  const massProgressLabel = massProgress
+                    ? t(`skills.category.massStage.${massProgress.stage || "working"}`, massProgress.message || t("skills.category.massWorking"))
+                    : "";
                   const collapsed = !expandedCategories.has(catName);
                   const toggleCollapse = () => setExpandedCategories(prev => {
                     const next = new Set(prev);
@@ -2562,7 +2725,11 @@ export function SkillManager({
                     return next;
                   });
                   return (
-                    <div key={catName} className="flex flex-col rounded-md border border-border/60 bg-card/40 p-3">
+                    <div
+                      key={catName}
+                      className="flex flex-col rounded-md border border-border/60 bg-card/40 p-3"
+                      aria-busy={!!massProgress}
+                    >
                       <div
                         className="flex flex-wrap items-center gap-2 cursor-pointer select-none"
                         onClick={toggleCollapse}
@@ -2593,26 +2760,31 @@ export function SkillManager({
                           const massActionDisabled = readonly || isAllSystem;
                           const editable = meta ? (meta.declared ?? true) : false;
                           const editDeleteDisabled = massActionDisabled || !editable;
+                          const enableBusy = massProgress?.action === "enable";
+                          const disableBusy = massProgress?.action === "disable";
+                          const busyDisabled = !!categoryBusy;
                           return (
                             <div className="flex flex-wrap items-center gap-1" onClick={(e) => e.stopPropagation()}>
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-7 px-2 text-xs"
+                                className="h-7 min-w-[4.75rem] px-2 text-xs"
                                 onClick={() => handleCategoryEnableAll(catName)}
-                                disabled={massActionDisabled}
+                                disabled={massActionDisabled || busyDisabled}
                                 title={t("skills.category.enableAllTitle")}
                               >
+                                {enableBusy && <Loader2 className="animate-spin" size={12} />}
                                 {t("skills.category.enableAll")}
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-7 px-2 text-xs"
+                                className="h-7 min-w-[4.75rem] px-2 text-xs"
                                 onClick={() => handleCategoryDisableAll(catName)}
-                                disabled={massActionDisabled}
+                                disabled={massActionDisabled || busyDisabled}
                                 title={t("skills.category.disableAllTitle")}
                               >
+                                {disableBusy && <Loader2 className="animate-spin" size={12} />}
                                 {t("skills.category.disableAll")}
                               </Button>
                               <Button
@@ -2624,7 +2796,7 @@ export function SkillManager({
                                   originalName: catName,
                                   currentDescription: meta?.description ?? null,
                                 })}
-                                disabled={editDeleteDisabled}
+                                disabled={editDeleteDisabled || busyDisabled}
                                 title={!editable ? t("skills.category.notDeclaredReadonly") : t("skills.category.edit")}
                               >
                                 {t("skills.category.edit")}
@@ -2634,7 +2806,7 @@ export function SkillManager({
                                 size="sm"
                                 className="h-7 px-2 text-xs text-destructive hover:text-destructive"
                                 onClick={() => requestCategoryDelete(catName)}
-                                disabled={editDeleteDisabled || categoryBusy === catName}
+                                disabled={editDeleteDisabled || busyDisabled}
                                 title={!editable ? t("skills.category.notDeclaredReadonly") : t("skills.category.deleteTitle")}
                               >
                                 {t("skills.category.delete")}
@@ -2643,6 +2815,32 @@ export function SkillManager({
                           );
                         })()}
                       </div>
+                      {massProgress && (
+                        <div className="mt-3 grid gap-1.5" aria-live="polite">
+                          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                            <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+                            <span className="min-w-0 flex-1 truncate">{massProgressLabel}</span>
+                            {massProgress.total > 0 && (
+                              <span className="shrink-0 tabular-nums">
+                                {massProgress.processed}/{massProgress.total}
+                              </span>
+                            )}
+                            <span className="shrink-0 tabular-nums">{Math.round(massProgress.percent)}%</span>
+                          </div>
+                          <div
+                            className="h-1.5 overflow-hidden rounded-full bg-muted"
+                            role="progressbar"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={Math.round(massProgress.percent)}
+                          >
+                            <div
+                              className="h-full rounded-full bg-primary transition-[width] duration-300"
+                              style={{ width: `${Math.max(5, Math.min(100, massProgress.percent))}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                       {!collapsed && (
                         <div className="flex flex-col gap-2 mt-2">
                           {items.map((skill) => (
@@ -2904,4 +3102,3 @@ export function SkillManager({
     </div>
   );
 }
-

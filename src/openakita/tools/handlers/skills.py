@@ -39,6 +39,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _record_skill_usage_event(skill_name: str, action: str) -> None:
+    """记录一条技能用量事件（供监控面板「技能用量」统计）。
+
+    埋点是尽力而为的：任何异常都吞掉，绝不影响技能加载/执行主流程。
+    """
+    try:
+        from ...skills.usage_events import get_skill_usage_log
+
+        get_skill_usage_log().record(skill_name, action)
+    except Exception:  # noqa: BLE001
+        logger.debug("skill usage event record failed", exc_info=True)
+
+
 # Skill 内容专用阈值（~32000 tokens），高于通用的 MAX_TOOL_RESULT_CHARS (16000 chars)。
 # Skill body 是高质量结构化指令，截断会严重影响 LLM 执行效果。
 # 部分技能（如 docx）的 SKILL.md 引用了多个同目录子文件，内联后总量可达 50K+。
@@ -138,7 +152,7 @@ class SkillsHandler:
             f"{len(discoverable_external)} 可发现, "
             f"{len(disabled_external)} 禁用):\n\n"
             "默认返回紧凑目录，避免把所有技能说明塞进对话上下文。"
-            "需要完整描述时再次调用 `list_skills({\"verbose\": true})`；"
+            '需要完整描述时再次调用 `list_skills({"verbose": true})`；'
             "需要准确路径时优先用 `get_skill_info(skill_name)`，或显式传 `include_paths: true`。\n\n"
         )
 
@@ -305,6 +319,7 @@ class SkillsHandler:
         usage_tracker = getattr(self.agent, "_skill_usage_tracker", None)
         if usage_tracker:
             usage_tracker.record(skill.skill_id)
+        _record_skill_usage_event(skill.name, "load")
 
         # F7: inject allowed_tools into policy engine
         if skill.allowed_tools:
@@ -439,8 +454,14 @@ class SkillsHandler:
         try:
             import time
 
-            deps = list(getattr(skill_entry, "python_dependencies", []) or []) if skill_entry else []
-            py_env = (getattr(skill_entry, "python_env", "") or "").strip().lower() if skill_entry else ""
+            deps = (
+                list(getattr(skill_entry, "python_dependencies", []) or []) if skill_entry else []
+            )
+            py_env = (
+                (getattr(skill_entry, "python_env", "") or "").strip().lower()
+                if skill_entry
+                else ""
+            )
             spec = None
             if skill_entry and (deps or py_env == "skill"):
                 from ...runtime_manager import (
@@ -836,6 +857,7 @@ class SkillsHandler:
         usage_tracker = getattr(self.agent, "_skill_usage_tracker", None)
         if usage_tracker:
             usage_tracker.record(skill.skill_id)
+        _record_skill_usage_event(skill.name, "load")
 
         # F7: inject temporary tool allowlist
         if skill.allowed_tools:
@@ -897,6 +919,9 @@ class SkillsHandler:
             endpoint_override = skill.model
 
         try:
+            agent_voice = ""
+            if hasattr(self.agent, "_resolve_agent_voice"):
+                agent_voice = self.agent._resolve_agent_voice()
             result = await self.agent.reasoning_engine.run(
                 fork_messages,
                 tools=tools,
@@ -907,6 +932,7 @@ class SkillsHandler:
                 conversation_id=fork_conv_id,
                 is_sub_agent=True,
                 endpoint_override=endpoint_override,
+                agent_voice=agent_voice,
             )
         except Exception as e:
             logger.error("Fork execution of skill '%s' failed: %s", skill_name, e, exc_info=True)

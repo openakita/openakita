@@ -147,8 +147,7 @@ def test_tamper_detected_at_exact_line(tmp_path: Path):
     parsed[4]["decision"] = "DENY"
     # We do NOT recompute the row_hash — that's the whole point.
     audit.write_text(
-        "\n".join(json.dumps(p, sort_keys=True, separators=(",", ":")) for p in parsed)
-        + "\n",
+        "\n".join(json.dumps(p, sort_keys=True, separators=(",", ":")) for p in parsed) + "\n",
         encoding="utf-8",
     )
 
@@ -168,8 +167,7 @@ def test_tamper_on_prev_hash_caught(tmp_path: Path):
     parsed = [json.loads(line) for line in lines]
     parsed[2]["prev_hash"] = "f" * 64
     audit.write_text(
-        "\n".join(json.dumps(p, sort_keys=True, separators=(",", ":")) for p in parsed)
-        + "\n",
+        "\n".join(json.dumps(p, sort_keys=True, separators=(",", ":")) for p in parsed) + "\n",
         encoding="utf-8",
     )
 
@@ -265,9 +263,7 @@ def test_threaded_appends_preserve_chain(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_audit_logger_writes_chained_rows_and_promotes_safety_immune(
-    tmp_path: Path, monkeypatch
-):
+def test_audit_logger_writes_chained_rows_and_promotes_safety_immune(tmp_path: Path, monkeypatch):
     from openakita.core import audit_logger as al
 
     audit_path = tmp_path / "policy_decisions.jsonl"

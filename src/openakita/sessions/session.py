@@ -12,12 +12,62 @@ import logging
 import re
 import threading
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+DEDUP_TIME_WINDOW_SECONDS = 30
+
+
+def is_duplicate_message(
+    existing_messages: list[dict],
+    candidate: dict,
+    *,
+    time_window_seconds: int = DEDUP_TIME_WINDOW_SECONDS,
+) -> bool:
+    """Return whether ``candidate`` is already represented in recent history."""
+    role = candidate.get("role")
+    content = candidate.get("content")
+    if not role or content is None:
+        return False
+
+    candidate_ts = None
+    raw_ts = candidate.get("timestamp")
+    if raw_ts:
+        try:
+            candidate_ts = datetime.fromisoformat(str(raw_ts))
+        except (TypeError, ValueError):
+            candidate_ts = None
+
+    last_message = existing_messages[-1] if existing_messages else None
+    for msg in reversed(existing_messages[-8:]):
+        if msg.get("role") != role or msg.get("content") != content:
+            continue
+
+        if msg is last_message:
+            return True
+
+        if raw_ts and msg.get("timestamp") == raw_ts:
+            return True
+
+        msg_ts = None
+        msg_raw_ts = msg.get("timestamp")
+        if msg_raw_ts:
+            try:
+                msg_ts = datetime.fromisoformat(str(msg_raw_ts))
+            except (TypeError, ValueError):
+                msg_ts = None
+
+        if candidate_ts is None or msg_ts is None:
+            continue
+        if abs((candidate_ts - msg_ts).total_seconds()) < time_window_seconds:
+            return True
+
+    return False
 
 
 class SessionState(Enum):
@@ -155,8 +205,6 @@ class SessionContext:
     precompact_snapshot: dict[str, Any] = field(default_factory=dict)
     _msg_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
-    _DEDUP_TIME_WINDOW_SECONDS = 30
-
     def add_message(self, role: str, content: str, **metadata) -> bool:
         """添加消息（含去重：连续相同 + 时间窗口内相同）。
 
@@ -164,38 +212,53 @@ class SessionContext:
             True if the message was actually added, False if deduped.
         """
         with self._msg_lock:
-            if self.messages:
-                last = self.messages[-1]
-                if last.get("role") == role and last.get("content") == content:
-                    return False
-
             now = datetime.now()
-            for msg in reversed(self.messages[-8:]):
-                if msg.get("role") != role:
-                    continue
-                msg_content = msg.get("content", "") or ""
-                if msg_content != content:
-                    continue
-                ts_str = msg.get("timestamp", "")
-                if ts_str:
-                    try:
-                        msg_time = datetime.fromisoformat(ts_str)
-                        if (now - msg_time).total_seconds() < self._DEDUP_TIME_WINDOW_SECONDS:
-                            return False
-                    except (ValueError, TypeError):
-                        pass
+            metadata = dict(metadata)
+            msg_ts = metadata.get("timestamp") or now.isoformat()
+            metadata["timestamp"] = msg_ts
+            candidate = {"role": role, "content": content, "timestamp": msg_ts}
+            if is_duplicate_message(self.messages, candidate):
+                return False
 
             self.messages.append(
                 {
                     "role": role,
                     "content": content,
-                    "timestamp": now.isoformat(),
                     **metadata,
                 }
             )
             if role == "user" and content:
                 self.update_focus_terms(content)
             return True
+
+    def append_marker(self, role: str, content: str, **metadata) -> None:
+        """直接追加一条消息，**绕过** :meth:`add_message` 的去重逻辑。
+
+        v1.27.14 (plan: conversation concurrency v1.28, S1.8):
+        ``_preempt_or_queue_prev_task`` 抢占 / abandon 老 task 时，需要在
+        会话历史里留一条 ``"[上一条任务被中断]"`` 标记，让前端时间线和
+        后续 LLM 上下文知道这里"老回答没说完"。这种 marker 几秒内连发可能
+        相同（连续被多次抢占），dedup 会把后几条丢掉——但 dedup 丢掉
+        marker 会让会话历史**变得不诚实**（前端"以为"老回答完整结束）。
+
+        本方法保证：每次调用都真的 append 一条，不做任何去重检查。
+
+        Args:
+            role: 通常是 ``"assistant"`` 或 ``"system"``；当作普通消息渲染。
+            content: marker 文本。
+            **metadata: 额外字段（``marker_type``、``preempted_task_id``、
+                ``policy`` 等）一并存入这条消息记录，便于前端按 marker_type
+                决定渲染样式。
+        """
+        with self._msg_lock:
+            self.messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "timestamp": datetime.now().isoformat(),
+                    **metadata,
+                }
+            )
 
     _FOCUS_FILE_RE = re.compile(
         r"(?:[A-Za-z]:[\\/][^\s\"'<>|]+|[\w./\\-]+\.(?:py|ts|tsx|js|jsx|md|json|yaml|yml|toml|rs|go))"
@@ -340,26 +403,29 @@ class SessionContext:
 
     def to_dict(self) -> dict:
         """序列化"""
-        return {
-            "messages": self.messages,
-            "variables": self.variables,
-            "current_task": self.current_task,
-            "memory_scope": self.memory_scope,
-            "summary": self.summary,
-            "topic_boundaries": self.topic_boundaries,
-            "current_topic_start": self.current_topic_start,
-            "agent_profile_id": self.agent_profile_id,
-            "agent_switch_history": self.agent_switch_history,
-            "working_facts": self.working_facts,
-            "handoff_events": self.handoff_events,
-            "active_agents": self.active_agents,
-            "delegation_chain": self.delegation_chain,
-            "sub_agent_records": self.sub_agent_records,
-            "task_checkpoints": self.task_checkpoints,
-            "focus_terms": self.focus_terms,
-            "focus_updated_at": self.focus_updated_at,
-            "precompact_snapshot": self.precompact_snapshot,
-        }
+        with self._msg_lock:
+            return deepcopy(
+                {
+                    "messages": self.messages,
+                    "variables": self.variables,
+                    "current_task": self.current_task,
+                    "memory_scope": self.memory_scope,
+                    "summary": self.summary,
+                    "topic_boundaries": self.topic_boundaries,
+                    "current_topic_start": self.current_topic_start,
+                    "agent_profile_id": self.agent_profile_id,
+                    "agent_switch_history": self.agent_switch_history,
+                    "working_facts": self.working_facts,
+                    "handoff_events": self.handoff_events,
+                    "active_agents": self.active_agents,
+                    "delegation_chain": self.delegation_chain,
+                    "sub_agent_records": self.sub_agent_records,
+                    "task_checkpoints": self.task_checkpoints,
+                    "focus_terms": self.focus_terms,
+                    "focus_updated_at": self.focus_updated_at,
+                    "precompact_snapshot": self.precompact_snapshot,
+                }
+            )
 
     @classmethod
     def from_dict(cls, data: dict) -> "SessionContext":
@@ -480,8 +546,25 @@ class Session:
         )
 
     def touch(self) -> None:
-        """更新活跃时间"""
+        """更新活跃时间
+
+        仅在**真实会话活动**（新增消息等）时调用，使 ``last_active`` 反映
+        用户最后一次交互的时间。纯读取/查询（拉历史、仪表盘轮询、改 UI
+        配置）不得调用本方法，否则 ``last_active`` 会被刷成"刚被访问"的时间，
+        导致会话列表时间与排序失真（见 issue #628）。读取场景请用
+        :meth:`reactivate`。
+        """
         self.last_active = datetime.now()
+        if self.state == SessionState.IDLE:
+            self.state = SessionState.ACTIVE
+
+    def reactivate(self) -> None:
+        """把空闲会话标回活跃，但**不**改动 ``last_active``。
+
+        供 ``get_session`` 等查询路径使用：被访问的会话可以从 IDLE 恢复成
+        ACTIVE，但"被访问"本身不算一次新的会话活动，不应改写它在会话列表
+        里的时间与排序位置。
+        """
         if self.state == SessionState.IDLE:
             self.state = SessionState.ACTIVE
 
@@ -579,10 +662,42 @@ class Session:
             key += f":{self.thread_id}"
         return key
 
-    # 重型元数据键（思考链、工具摘要、代码产物），对旧消息裁剪以控制体积
-    _HEAVY_METADATA_KEYS = ("chain_summary", "tool_summary", "artifacts")
+    # 重型元数据键（思考链、工具摘要、代码产物），对旧消息裁剪以控制体积。
+    #
+    # ``todo`` 计划快照刻意 *不* 列入：它体积很小（id + summary + steps），且是
+    # 计划卡跨重载/多窗口回显（#615）的持久来源，裁掉会让老消息的计划卡再次消失。
+    # ``parts`` 也不在此：它是由扁平字段派生的渲染投影（见 api/message_parts.py），
+    # 从不入库，故不会撑大 sessions.json，也无需裁剪。
+    _HEAVY_METADATA_KEYS = ("chain_summary", "tool_summary", "artifacts", "chain_timeline")
     # 保留最近 N 条消息的完整元数据（前端展示思考链等），更早的仅保留 base content
     _METADATA_PRESERVE_WINDOW = 50
+
+    def append_marker(self, role: str, content: str, **metadata) -> None:
+        """直接追加一条消息（绕过去重）；用于 cancel/preempt marker。
+
+        v1.27.14 (plan v1.28, S1.8). 详见 :meth:`SessionContext.append_marker`.
+
+        FIX 5 (vs v1.27.14 first cut): also persist to SqliteTurnStore so
+        markers survive a process restart.  Without persistence, after a
+        backend restart the frontend timeline silently looks "as if the
+        previous answer finished normally" — defeating the whole point
+        of writing the marker.  We mirror ``Session.add_message``'s
+        best-effort persistence path (history_db_merge_v1 feature-gated,
+        skip on transient_for_llm, swallow exceptions to never block
+        the chat loop).
+        """
+        self.context.append_marker(role, content, **metadata)
+        self.touch()
+
+        # Best-effort SQLite persistence, identical guards to ``add_message``.
+        try:
+            if role in ("user", "assistant", "tool") and not metadata.get("transient_for_llm"):
+                msg_metadata = dict(metadata)
+                if self.context.messages:
+                    msg_metadata.setdefault("timestamp", self.context.messages[-1].get("timestamp"))
+                self._write_turn_to_store(role, content, msg_metadata)
+        except Exception as exc:
+            logger.debug(f"[Session] append_marker write_turn_to_store skipped: {exc}")
 
     def add_message(self, role: str, content: str, **metadata) -> bool:
         """添加消息并更新活跃时间。返回 True 表示消息被添加，False 表示被去重跳过。"""
@@ -597,11 +712,11 @@ class Session:
             # 仅持久化主对话角色（user/assistant），且 transient_for_llm 的
             # 临时消息（如 RiskGate 确认应答）不写盘。
             try:
-                if (
-                    role in ("user", "assistant", "tool")
-                    and not metadata.get("transient_for_llm")
-                ):
-                    self._write_turn_to_store(role, content, metadata)
+                if role in ("user", "assistant", "tool") and not metadata.get("transient_for_llm"):
+                    msg_metadata = dict(metadata)
+                    if self.context.messages:
+                        msg_metadata.setdefault("timestamp", self.context.messages[-1].get("timestamp"))
+                    self._write_turn_to_store(role, content, msg_metadata)
             except Exception as exc:
                 logger.debug(f"[Session] write_turn_to_store skipped: {exc}")
         return added

@@ -97,9 +97,7 @@ def test_real_session_session_role_still_works() -> None:
     ``Session.session_role`` is declared as ``str`` (for sessions.json
     back-compat); from_session coerces it back to enum.
     """
-    s = _make_session(
-        id="s-plan", session_role="plan", confirmation_mode_override="strict"
-    )
+    s = _make_session(id="s-plan", session_role="plan", confirmation_mode_override="strict")
     ctx = PolicyContext.from_session(s)
     assert ctx.session_role == SessionRole.PLAN
     assert ctx.confirmation_mode == ConfirmationMode.STRICT

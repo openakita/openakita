@@ -117,7 +117,10 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
         for s in self.registry.list_enabled():
             if s.disable_model_invocation or s.catalog_hidden:
                 continue
-            if _allowed_levels and getattr(s, "exposure_level", "recommended") not in _allowed_levels:
+            if (
+                _allowed_levels
+                and getattr(s, "exposure_level", "recommended") not in _allowed_levels
+            ):
                 continue
             skills.append(s)
 
@@ -271,11 +274,13 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                         if not when:
                             when = (s.description or "").split("\n")[0].strip()
                         when = when[:when_max]
-                        lines.append(self._safe_format(
-                            "- **{name}**: {when}",
-                            name=s.name,
-                            when=when,
-                        ))
+                        lines.append(
+                            self._safe_format(
+                                "- **{name}**: {when}",
+                                name=s.name,
+                                when=when,
+                            )
+                        )
                     lines.append("")
                 if hidden_count > 0:
                     lines.append(
@@ -330,11 +335,13 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                             if not when:
                                 when = (s.description or "").split("\n")[0].strip()
                             when = when[:when_max]
-                            lines.append(self._safe_format(
-                                "- **{name}**: {when}",
-                                name=s.name,
-                                when=when,
-                            ))
+                            lines.append(
+                                self._safe_format(
+                                    "- **{name}**: {when}",
+                                    name=s.name,
+                                    when=when,
+                                )
+                            )
                         lines.append("")
                     else:
                         # Level C 仅名字 — 用 (index) 后缀提示
@@ -554,7 +561,7 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
         hint = "💡 可能有用的技能: " + ", ".join(parts)
 
         if len(hint) > max_chars:
-            hint = hint[:max_chars - 3] + "..."
+            hint = hint[: max_chars - 3] + "..."
         return hint
 
     def invalidate_cache(self) -> None:
@@ -695,4 +702,3 @@ def generate_skill_catalog(registry: SkillRegistry) -> str:
     """便捷函数：生成技能清单"""
     catalog = SkillCatalog(registry)
     return catalog.generate_catalog()
-

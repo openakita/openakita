@@ -38,9 +38,7 @@ INTERNAL_TRACE_MARKERS: tuple[str, ...] = (
 
 # 历史回放 / UI strip 用的"带 \n\n 前缀"版本：用于在 assistant content
 # 中查找 marker section 起点。保持与旧 _STRIP_MARKERS 列表行为等价。
-INTERNAL_TRACE_SECTION_PREFIXES: tuple[str, ...] = tuple(
-    "\n\n" + m for m in INTERNAL_TRACE_MARKERS
-)
+INTERNAL_TRACE_SECTION_PREFIXES: tuple[str, ...] = tuple("\n\n" + m for m in INTERNAL_TRACE_MARKERS)
 
 # marker section 结束分隔符（下一段的起始符），用于 strip 时判断 trace
 # section 的右边界。与现有 `_STRIP_MARKERS` 切断策略保持一致。
@@ -201,9 +199,7 @@ _INTERNAL_TRACE_SECTION_RE = re.compile(
     r"(?:\A|\n+[ \t]*)"
     r"(?:" + "|".join(re.escape(m) for m in INTERNAL_TRACE_MARKERS) + r")"
     r".*?"
-    r"(?=\Z|"
-    + "|".join(re.escape(t) for t in INTERNAL_TRACE_SECTION_TERMINATORS)
-    + r")",
+    r"(?=\Z|" + "|".join(re.escape(t) for t in INTERNAL_TRACE_SECTION_TERMINATORS) + r")",
     re.DOTALL,
 )
 
@@ -687,7 +683,8 @@ class ResponseHandler:
         # expects_artifact=True，避免 coordinator 收到子节点 markdown 后忘
         # deliver_artifacts 又被 trust-but-verify INSUFFICIENT 兜到 LLM 复核。
         _has_produced_files = bool(delivery_receipts) or any(
-            (tr.get("tool_name") or tr.get("name") or "") in {"write_file", "auto_persist_node_final_answer"}
+            (tr.get("tool_name") or tr.get("name") or "")
+            in {"write_file", "auto_persist_node_final_answer"}
             for tr in (tool_results or [])
             if isinstance(tr, dict) and not tr.get("is_error")
         )
@@ -718,7 +715,8 @@ class ResponseHandler:
                 for tr in tool_results_list:
                     name = tr.get("tool_name") or tr.get("name") or ""
                     if name not in (
-                        "org_submit_deliverable", "deliver_artifacts",
+                        "org_submit_deliverable",
+                        "deliver_artifacts",
                     ):
                         continue
                     if tr.get("is_error"):
@@ -751,9 +749,7 @@ class ResponseHandler:
                 if expects_artifact:
                     pass_ok = submit_ok_run and attachments_count >= 1
                 else:
-                    pass_ok = submit_ok_run and (
-                        deliverable_len >= 200 or attachments_count >= 1
-                    )
+                    pass_ok = submit_ok_run and (deliverable_len >= 200 or attachments_count >= 1)
 
                 if expects_artifact and deliver_artifacts_ok and failed_receipts:
                     logger.info(
@@ -765,7 +761,9 @@ class ResponseHandler:
                         "[TaskVerify] trust-but-verify PASS: "
                         "submit_deliverable executed, deliverable_len=%d files=%d "
                         "expects_artifact=%s",
-                        deliverable_len, attachments_count, expects_artifact,
+                        deliverable_len,
+                        attachments_count,
+                        expects_artifact,
                     )
                     return True
                 if expects_artifact and deliver_artifacts_ok and delivery_receipts:
@@ -779,11 +777,14 @@ class ResponseHandler:
                         "[TaskVerify] trust-but-verify INSUFFICIENT: "
                         "deliverable_len=%d files=%d expects_artifact=%s "
                         "→ fall back to LLM verify",
-                        deliverable_len, attachments_count, expects_artifact,
+                        deliverable_len,
+                        attachments_count,
+                        expects_artifact,
                     )
         except Exception as exc:
             logger.debug(
-                "[TaskVerify] trust-but-verify gate skipped: %s", exc,
+                "[TaskVerify] trust-but-verify gate skipped: %s",
+                exc,
             )
 
         # 宣称已交付但无证据
@@ -1001,9 +1002,7 @@ NEXT: 建议的下一步"""
                         importance_score=0.7,
                         scope=MemoryScope.AGENT,
                     )
-                    self._memory_manager.add_memory(
-                        memory, scope=MemoryScope.AGENT
-                    )
+                    self._memory_manager.add_memory(memory, scope=MemoryScope.AGENT)
                 except Exception as e:
                     logger.warning(f"Failed to save retrospect to memory: {e}")
 
@@ -1084,4 +1083,3 @@ NEXT: 建议的下一步"""
                                 )
                                 return result
         return ""
-

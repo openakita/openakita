@@ -174,9 +174,7 @@ class TestImportHelper:
         # browser 相关包已内置到 core (module_id=None)
         core_packages = ["playwright"]
         for name in core_packages:
-            assert name in _PACKAGE_MODULE_MAP, (
-                f"缺少映射: {name} 不在 _PACKAGE_MODULE_MAP 中"
-            )
+            assert name in _PACKAGE_MODULE_MAP, f"缺少映射: {name} 不在 _PACKAGE_MODULE_MAP 中"
             assert _PACKAGE_MODULE_MAP[name][0] is None, (
                 f"映射错误: {name} 应为核心包 (None)，但映射到 {_PACKAGE_MODULE_MAP[name][0]}"
             )
@@ -381,12 +379,7 @@ class TestMirrorConsistency:
     def test_no_dead_mirrors_in_main_rs(self):
         """main.rs 中不应包含已知失效的镜像"""
         main_rs_path = (
-            Path(__file__).parent.parent
-            / "apps"
-            / "setup-center"
-            / "src-tauri"
-            / "src"
-            / "main.rs"
+            Path(__file__).parent.parent / "apps" / "setup-center" / "src-tauri" / "src" / "main.rs"
         )
         if not main_rs_path.exists():
             pytest.skip("main.rs not found")
@@ -406,28 +399,20 @@ class TestMirrorConsistency:
                 if stripped.startswith("//"):
                     continue  # 跳过注释行
                 if mirror in stripped and "http" in stripped:
-                    pytest.fail(
-                        f"main.rs 第 {i} 行使用了已失效的镜像 {mirror}: {stripped[:100]}"
-                    )
+                    pytest.fail(f"main.rs 第 {i} 行使用了已失效的镜像 {mirror}: {stripped[:100]}")
 
     def test_pip_presets_default_to_domestic(self):
         """前端 PIP_INDEX_PRESETS 默认应选中国内源"""
-        app_tsx_path = (
-            Path(__file__).parent.parent
-            / "apps"
-            / "setup-center"
-            / "src"
-            / "App.tsx"
-        )
+        app_tsx_path = Path(__file__).parent.parent / "apps" / "setup-center" / "src" / "App.tsx"
         if not app_tsx_path.exists():
             pytest.skip("App.tsx not found")
 
         content = app_tsx_path.read_text(encoding="utf-8")
 
         # pipIndexPresetId 默认值应为 "aliyun"
-        assert 'useState<"official" | "tuna" | "ustc" | "aliyun" | "custom">("aliyun")' in content, (
-            "pipIndexPresetId 默认值应为 aliyun"
-        )
+        assert (
+            'useState<"official" | "tuna" | "ustc" | "aliyun" | "custom">("aliyun")' in content
+        ), "pipIndexPresetId 默认值应为 aliyun"
 
         # indexUrl 默认值应为阿里云 URL
         assert 'useState<string>("https://mirrors.aliyun.com/pypi/simple/")' in content, (
@@ -437,11 +422,7 @@ class TestMirrorConsistency:
     def test_official_preset_has_explicit_url(self):
         """官方 PyPI 预设应有显式 URL（不应为空字符串）"""
         constants_path = (
-            Path(__file__).parent.parent
-            / "apps"
-            / "setup-center"
-            / "src"
-            / "constants.ts"
+            Path(__file__).parent.parent / "apps" / "setup-center" / "src" / "constants.ts"
         )
         if not constants_path.exists():
             pytest.skip("constants.ts not found")
@@ -456,21 +437,14 @@ class TestMirrorConsistency:
                 assert 'url: ""' not in stripped, (
                     "官方 PyPI 预设的 url 不应为空，应为 'https://pypi.org/simple/'"
                 )
-                assert "pypi.org" in stripped, (
-                    "官方 PyPI 预设应包含 pypi.org URL"
-                )
+                assert "pypi.org" in stripped, "官方 PyPI 预设应包含 pypi.org URL"
                 break
         assert found, "未找到 official preset 数据行"
 
     def test_bundled_python_contract_in_main_rs(self):
         """契约A：运行时应使用打包内置 Python（不走运行时下载）"""
         main_rs_path = (
-            Path(__file__).parent.parent
-            / "apps"
-            / "setup-center"
-            / "src-tauri"
-            / "src"
-            / "main.rs"
+            Path(__file__).parent.parent / "apps" / "setup-center" / "src-tauri" / "src" / "main.rs"
         )
         if not main_rs_path.exists():
             pytest.skip("main.rs not found")
@@ -480,9 +454,7 @@ class TestMirrorConsistency:
         assert "install_bundled_python_sync" in content, (
             "应存在 install_bundled_python_sync 作为内置 Python 校验入口"
         )
-        assert "install_bundled_python" in content, (
-            "应暴露 install_bundled_python 命令供前端调用"
-        )
+        assert "install_bundled_python" in content, "应暴露 install_bundled_python 命令供前端调用"
         assert 'bundled.join("_internal").join("python.exe")' in content, (
             "Windows 应从 _internal/python.exe 探测内置 Python"
         )
@@ -496,12 +468,7 @@ class TestMirrorConsistency:
     def test_python_diagnostic_contract_model_in_main_rs(self):
         """Python 诊断应使用契约化模型（生产级：可扩展/可导出/可修复）"""
         main_rs_path = (
-            Path(__file__).parent.parent
-            / "apps"
-            / "setup-center"
-            / "src-tauri"
-            / "src"
-            / "main.rs"
+            Path(__file__).parent.parent / "apps" / "setup-center" / "src-tauri" / "src" / "main.rs"
         )
         if not main_rs_path.exists():
             pytest.skip("main.rs not found")
@@ -528,12 +495,7 @@ class TestMirrorConsistency:
     def test_fetch_pypi_versions_has_fallback(self):
         """fetch_pypi_versions 应有多源回退（阿里云不支持 JSON API）"""
         main_rs_path = (
-            Path(__file__).parent.parent
-            / "apps"
-            / "setup-center"
-            / "src-tauri"
-            / "src"
-            / "main.rs"
+            Path(__file__).parent.parent / "apps" / "setup-center" / "src-tauri" / "src" / "main.rs"
         )
         if not main_rs_path.exists():
             pytest.skip("main.rs not found")
@@ -548,12 +510,7 @@ class TestMirrorConsistency:
     def test_pip_install_has_default_mirror(self):
         """pip_install 无 index_url 时应有默认国内镜像"""
         main_rs_path = (
-            Path(__file__).parent.parent
-            / "apps"
-            / "setup-center"
-            / "src-tauri"
-            / "src"
-            / "main.rs"
+            Path(__file__).parent.parent / "apps" / "setup-center" / "src-tauri" / "src" / "main.rs"
         )
         if not main_rs_path.exists():
             pytest.skip("main.rs not found")
@@ -577,12 +534,7 @@ class TestPostInstallHooks:
     def test_playwright_browsers_path_set_at_launch(self):
         """Tauri 启动后端时应设置 PLAYWRIGHT_BROWSERS_PATH"""
         main_rs_path = (
-            Path(__file__).parent.parent
-            / "apps"
-            / "setup-center"
-            / "src-tauri"
-            / "src"
-            / "main.rs"
+            Path(__file__).parent.parent / "apps" / "setup-center" / "src-tauri" / "src" / "main.rs"
         )
         if not main_rs_path.exists():
             pytest.skip("main.rs not found")
@@ -618,18 +570,22 @@ class TestPostInstallHooks:
 
 class _MockEnum:
     """轻量的 enum 模拟，支持相等比较"""
+
     def __init__(self, value: str):
         self.value = value
+
     def __eq__(self, other):
         if isinstance(other, _MockEnum):
             return self.value == other.value
         return NotImplemented
+
     def __hash__(self):
         return hash(self.value)
 
 
-def _make_mock_memory(mid: str, content: str, mtype: str = "fact",
-                      importance: float = 0.7, created_at=None):
+def _make_mock_memory(
+    mid: str, content: str, mtype: str = "fact", importance: float = 0.7, created_at=None
+):
     """构造一个 mock Memory 对象"""
     m = MagicMock()
     m.id = mid
@@ -685,9 +641,12 @@ class TestMemoryRetrievalFallback:
         """get_injection_context 应委托给 retrieval_engine.retrieve"""
         from openakita.memory.manager import MemoryManager
 
-        manager = self._make_manager(vector_enabled=False, memories=[
-            _make_mock_memory("m1", "用户喜欢 Python 编程语言"),
-        ])
+        manager = self._make_manager(
+            vector_enabled=False,
+            memories=[
+                _make_mock_memory("m1", "用户喜欢 Python 编程语言"),
+            ],
+        )
         mock_engine = MagicMock()
         mock_engine.retrieve.return_value = "用户喜欢 Python 编程语言"
         manager.retrieval_engine = mock_engine
@@ -695,7 +654,9 @@ class TestMemoryRetrievalFallback:
         result = MemoryManager.get_injection_context(manager, "Python")
 
         mock_engine.retrieve.assert_called_once_with(
-            query="Python", recent_messages=None, max_tokens=700,
+            query="Python",
+            recent_messages=None,
+            max_tokens=700,
         )
         assert "Python 编程语言" in result
 
@@ -703,9 +664,12 @@ class TestMemoryRetrievalFallback:
         """get_injection_context 应将 task_description 作为 query 传入"""
         from openakita.memory.manager import MemoryManager
 
-        manager = self._make_manager(vector_enabled=True, memories=[
-            _make_mock_memory("m1", "用户喜欢 Python 编程"),
-        ])
+        manager = self._make_manager(
+            vector_enabled=True,
+            memories=[
+                _make_mock_memory("m1", "用户喜欢 Python 编程"),
+            ],
+        )
         mock_engine = MagicMock()
         mock_engine.retrieve.return_value = "用户喜欢 Python 编程"
         manager.retrieval_engine = mock_engine
@@ -836,9 +800,7 @@ class TestVectorStoreRetryReset:
             assert vs_module._sentence_transformers_available is None, (
                 "重试时 _sentence_transformers_available 应被重置为 None"
             )
-            assert vs_module._chromadb is None, (
-                "重试时 _chromadb 应被重置为 None"
-            )
+            assert vs_module._chromadb is None, "重试时 _chromadb 应被重置为 None"
             assert result is False  # 重试仍返回 False（等后台完成）
         finally:
             # 恢复原始值
@@ -872,8 +834,11 @@ class TestVectorStoreRetryReset:
             vs_module._chromadb = None
 
             # 模拟 sentence_transformers 不可用
-            with patch("openakita.memory.vector_store.inject_module_paths_runtime",
-                        create=True, side_effect=Exception("no runtime")):
+            with patch(
+                "openakita.memory.vector_store.inject_module_paths_runtime",
+                create=True,
+                side_effect=Exception("no runtime"),
+            ):
                 vs_module._lazy_import()
 
             # 应该尝试 import 并（因为缺少包）返回 False
@@ -891,10 +856,8 @@ class TestConsolidatorDedupFallback:
 
     def test_string_dedup_catches_exact_duplicates(self):
         """字符串匹配去重应捕获完全相同的记忆"""
-        mem1 = _make_mock_memory("m1", "用户喜欢 Python",
-                                  created_at=datetime(2025, 1, 1))
-        mem2 = _make_mock_memory("m2", "用户喜欢 Python",
-                                  created_at=datetime(2025, 1, 2))
+        mem1 = _make_mock_memory("m1", "用户喜欢 Python", created_at=datetime(2025, 1, 1))
+        mem2 = _make_mock_memory("m2", "用户喜欢 Python", created_at=datetime(2025, 1, 2))
 
         # 验证 manager._strip_common_prefix 被正确调用
         manager = MagicMock()

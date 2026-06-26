@@ -67,9 +67,7 @@ class TestExplicitAnnotation:
         with caplog.at_level("WARNING", logger="openakita.tools.mcp"):
             result = client.get_tool_class("mcp_srv_weird")
         assert result == (ApprovalClass.DESTRUCTIVE, DecisionSource.MCP_ANNOTATION)
-        assert any(
-            "unknown approval_class" in rec.message for rec in caplog.records
-        )
+        assert any("unknown approval_class" in rec.message for rec in caplog.records)
 
 
 class TestHintInference:
@@ -123,9 +121,7 @@ class TestFallback:
         client = MCPClient()
         assert client.get_tool_class("mcp_anything_else") is None
 
-    def test_format_tool_name_consistent_with_get_tool_schemas(
-        self, client_with_tools
-    ):
+    def test_format_tool_name_consistent_with_get_tool_schemas(self, client_with_tools):
         client, add = client_with_tools
         add("srv-with-dash", "tool-x", readOnlyHint=True)
         schemas = client.get_tool_schemas()

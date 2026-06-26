@@ -269,8 +269,7 @@ def _build_default_engine(
             )
         if report.unknown_security_keys:
             logger.warning(
-                "[PolicyV2] POLICIES.yaml has unknown keys under 'security' "
-                "(typo or attack?): %s",
+                "[PolicyV2] POLICIES.yaml has unknown keys under 'security' (typo or attack?): %s",
                 ", ".join(report.unknown_security_keys),
             )
         # C16 Phase B：成功加载 → 记到 LKG，后续 ValidationError 才有救生圈。
@@ -414,9 +413,7 @@ def rebuild_engine_v2(
                 )
             _set_last_known_good(cfg)
         except Exception as exc:
-            cfg = _recover_from_load_failure(
-                exc, source=str(path) if path else "<no path>"
-            )
+            cfg = _recover_from_load_failure(exc, source=str(path) if path else "<no path>")
         if explicit_lookup is not None:
             _explicit_lookup = explicit_lookup
         if skill_lookup is not None:
@@ -489,9 +486,7 @@ def invalidate_classifier_cache(tool: str | None = None) -> None:
     try:
         classifier.invalidate(tool)
     except Exception as exc:
-        logger.debug(
-            "[PolicyV2] invalidate_classifier_cache(%r) failed: %s", tool, exc
-        )
+        logger.debug("[PolicyV2] invalidate_classifier_cache(%r) failed: %s", tool, exc)
 
 
 def reset_policy_v2_layer(scope: str = "all") -> None:

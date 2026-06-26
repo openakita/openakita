@@ -84,20 +84,14 @@ def test_list_returns_enabled_relays_only(workspace_with_relays):
 
 
 def test_list_can_include_disabled_for_settings_ui(workspace_with_relays):
-    names = [
-        r.name for r in list_relay_endpoints(workspace_with_relays, enabled_only=False)
-    ]
+    names = [r.name for r in list_relay_endpoints(workspace_with_relays, enabled_only=False)]
     assert "off-video" in names
 
 
 def test_capability_filter_drops_non_matching(workspace_with_relays):
-    image_refs = list_relay_endpoints(
-        workspace_with_relays, required_capability="image"
-    )
+    image_refs = list_relay_endpoints(workspace_with_relays, required_capability="image")
     assert [r.name for r in image_refs] == ["yunwu-image"]
-    tts_refs = list_relay_endpoints(
-        workspace_with_relays, required_capability="tts"
-    )
+    tts_refs = list_relay_endpoints(workspace_with_relays, required_capability="tts")
     assert [r.name for r in tts_refs] == ["free-tts"]
 
 
@@ -130,9 +124,7 @@ def test_resolve_disabled_relay_raises(workspace_with_relays):
 
 def test_resolve_capability_mismatch_raises(workspace_with_relays):
     with pytest.raises(RelayNotFound):
-        resolve_relay_endpoint(
-            "yunwu-image", workspace_with_relays, required_capability="tts"
-        )
+        resolve_relay_endpoint("yunwu-image", workspace_with_relays, required_capability="tts")
 
 
 def test_supports_model_mirrors_endpoint_config(workspace_with_relays):

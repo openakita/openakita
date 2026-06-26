@@ -28,6 +28,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .defaults import factory_default_confirmation_mode
 from .env_overrides import apply_env_overrides
 from .migration import MigrationReport, migrate_v1_to_v2
 from .schema import PolicyConfigV2
@@ -129,6 +130,28 @@ def _build_config(
             source,
             ", ".join(report.conflicts),
         )
+
+    # v1.27.13 起 schema 默认 confirmation.mode = trust。v1 YAML 升级用户若从
+    # 未显式写过 confirmation.mode，会从 v1 时代等价的 "smart/default" 静默切
+    # 到 trust——这是 BC，但用户主观上没改任何配置。在这里发一条 INFO，让
+    # 升级期的 operator 通过日志就能定位"为什么 confirm 弹窗变少了"，并指出
+    # 如何显式锁回旧行为。注意：v1 schema 检测之外（v2 / mixed / empty）不
+    # 报，避免对从未关心过此项的新用户造成噪音。
+    if report.schema_detected == "v1":
+        sec = v2_dict.get("security") or {}
+        confirm_block = sec.get("confirmation") if isinstance(sec, dict) else None
+        has_explicit_mode = isinstance(confirm_block, dict) and "mode" in confirm_block
+        if not has_explicit_mode:
+            factory_mode = factory_default_confirmation_mode().value
+            logger.info(
+                "[PolicyV2] %s is v1 schema without explicit "
+                "security.confirmation.mode; v1.27.13+ uses factory default "
+                "%r (低打扰档，DESTRUCTIVE/UNKNOWN 仍 CONFIRM). To keep the "
+                "v1.27.x 'protect/default' behaviour add "
+                "`security.confirmation.mode: default` to your YAML.",
+                source,
+                factory_mode,
+            )
 
     merged = _deep_merge_defaults(v2_dict.get("security") or {})
 

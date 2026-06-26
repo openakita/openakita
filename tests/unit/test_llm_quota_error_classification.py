@@ -15,7 +15,7 @@ DEEPSEEK_INSUFFICIENT_BALANCE = (
 XFYUN_APP_NO_AUTH = (
     'API error (500): {"error":{"message":"xunfei response error: '
     "AppIdNoAuthError:`app``astron-code-latest`tokens.total;business.total "
-    "_F`Lacf`20000000`CL#`-1`U`20084551`N\","
+    '_F`Lacf`20000000`CL#`-1`U`20084551`N",'
     '"type":"one_api_error","code":"11200"}}'
 )
 

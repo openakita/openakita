@@ -11,6 +11,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
+    "noUnusedLocals": true,
     "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {

@@ -69,7 +69,8 @@ async def _call_update_settings(p: Plugin, updates: dict[str, str]) -> dict:
     cleaned: dict[str, str] = {k: (v or "").strip() for k, v in body.updates.items()}
     if "ark_base_url" in cleaned:
         cleaned["ark_base_url"] = _normalize_base_url(
-            cleaned["ark_base_url"], field="ARK Base URL",
+            cleaned["ark_base_url"],
+            field="ARK Base URL",
         )
 
     if "ark_api_key" in cleaned and not cleaned["ark_api_key"]:
@@ -204,9 +205,7 @@ async def test_update_settings_passes_through_other_keys() -> None:
     """Non-key updates (output_dir, poll_interval, …) should still flow
     through; the validation guard only fires for ``ark_api_key``."""
     p, tm = _make_plugin()
-    result = await _call_update_settings(
-        p, {"output_dir": "/tmp/seed", "poll_interval": "30"}
-    )
+    result = await _call_update_settings(p, {"output_dir": "/tmp/seed", "poll_interval": "30"})
     assert result["ok"] is True
     assert tm.store["output_dir"] == "/tmp/seed"
     assert tm.store["poll_interval"] == "30"

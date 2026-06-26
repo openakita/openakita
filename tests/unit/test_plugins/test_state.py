@@ -167,9 +167,7 @@ class TestSaveLoad:
         path = tmp_path / "state.json"
         state.save(path)
         loaded = PluginState.load(path)
-        assert loaded.get_entry("p1").install_source == (
-            "/abs/path/to/plugins/avatar-studio"
-        )
+        assert loaded.get_entry("p1").install_source == ("/abs/path/to/plugins/avatar-studio")
 
     def test_install_source_default_empty_for_legacy_files(self, tmp_path):
         # Older state.json files predate install_source; load() must tolerate
@@ -203,4 +201,3 @@ class TestSaveLoad:
         state.ensure_entry("p1")
         state.save(path)
         assert path.exists()
-

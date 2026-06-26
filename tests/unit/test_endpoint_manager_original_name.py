@@ -59,7 +59,12 @@ def test_save_endpoints_batch_shares_one_api_key_env(tmp_path):
     saved = manager.save_endpoints(
         [
             {"name": "openai-gpt-4o", "provider": "openai", "model": "gpt-4o", "priority": 10},
-            {"name": "openai-gpt-4o-mini", "provider": "openai", "model": "gpt-4o-mini", "priority": 20},
+            {
+                "name": "openai-gpt-4o-mini",
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "priority": 20,
+            },
         ],
         api_key="sk-batch",
     )
@@ -71,3 +76,41 @@ def test_save_endpoints_batch_shares_one_api_key_env(tmp_path):
     assert len({ep["api_key_env"] for ep in saved}) == 1
     assert len({ep["api_key_env"] for ep in endpoints}) == 1
     assert "OPENAI_API_KEY=sk-batch" in (tmp_path / ".env").read_text(encoding="utf-8")
+
+
+def test_delete_endpoints_removes_batch_and_cleans_unused_shared_key(tmp_path):
+    manager = EndpointManager(tmp_path, config_path=tmp_path / "data" / "llm_endpoints.json")
+    manager.save_endpoints(
+        [
+            {"name": "openai-a", "provider": "openai", "model": "a", "priority": 10},
+            {"name": "openai-b", "provider": "openai", "model": "b", "priority": 20},
+        ],
+        api_key="sk-batch",
+    )
+
+    removed = manager.delete_endpoints(["openai-a", "openai-b"])
+
+    config = json.loads((tmp_path / "data" / "llm_endpoints.json").read_text(encoding="utf-8"))
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert [ep["name"] for ep in removed] == ["openai-a", "openai-b"]
+    assert config["endpoints"] == []
+    assert "OPENAI_API_KEY=" not in env_text
+
+
+def test_delete_endpoints_keeps_key_when_other_endpoint_still_uses_it(tmp_path):
+    manager = EndpointManager(tmp_path, config_path=tmp_path / "data" / "llm_endpoints.json")
+    manager.save_endpoints(
+        [
+            {"name": "openai-a", "provider": "openai", "model": "a", "priority": 10},
+            {"name": "openai-b", "provider": "openai", "model": "b", "priority": 20},
+        ],
+        api_key="sk-batch",
+    )
+
+    removed = manager.delete_endpoints(["openai-a"])
+
+    config = json.loads((tmp_path / "data" / "llm_endpoints.json").read_text(encoding="utf-8"))
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert [ep["name"] for ep in removed] == ["openai-a"]
+    assert [ep["name"] for ep in config["endpoints"]] == ["openai-b"]
+    assert "OPENAI_API_KEY=sk-batch" in env_text

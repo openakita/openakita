@@ -110,8 +110,10 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
         hints.append("🔑 检测到 API 认证失败，请检查 API Key 是否正确、是否过期。")
     if FailoverReason.TRANSIENT in categories:
         _has_rate_limit = failed_providers and any(
-            any(kw in (getattr(p, "_last_error", "") or "").lower()
-                for kw in ["rate limit", "rate_limit", "too many requests"])
+            any(
+                kw in (getattr(p, "_last_error", "") or "").lower()
+                for kw in ["rate limit", "rate_limit", "too many requests"]
+            )
             for p in failed_providers
             if getattr(p, "error_category", "") == FailoverReason.TRANSIENT
         )
@@ -405,9 +407,7 @@ class LLMClient:
                 )
                 response = await asyncio.wait_for(provider.chat(request), timeout=15.0)
                 if response.usage.output_tokens > 0 and not response.content:
-                    raise RuntimeError(
-                        "endpoint returned output tokens but no visible content"
-                    )
+                    raise RuntimeError("endpoint returned output tokens but no visible content")
                 results[name] = "ok"
                 logger.info(f"[HealthCheck] endpoint={name} status=ok")
             except AuthenticationError as e:
@@ -774,9 +774,8 @@ class LLMClient:
                 # 发射一次端点元信息：vision 降级时让上层（reasoning_engine）能
                 # 转换为 endpoint_notice 给前端显示系统气泡。
                 try:
-                    if (
-                        not provider.config.has_capability("vision")
-                        and self._has_images(request.messages)
+                    if not provider.config.has_capability("vision") and self._has_images(
+                        request.messages
                     ):
                         yield {
                             "type": "endpoint_meta",
@@ -836,6 +835,7 @@ class LLMClient:
                     raise AllEndpointsFailedError(
                         f"Stream: content safety check failed. {hint} Last error: {e}",
                         is_structural=True,
+                        error_categories={"content_safety"},
                     ) from e
 
                 sc = e.status_code
@@ -951,9 +951,12 @@ class LLMClient:
             or "inappropriate content" in last_err_lower
             or "content_filter" in last_err_lower
         )
+        _cats = {getattr(p, "error_category", "") for p in eligible if not p.is_healthy}
+        _cats.discard("")
         raise AllEndpointsFailedError(
             f"Stream: all {len(eligible)} endpoints failed. {hint} Last error: {last_error}",
             is_structural=is_structural,
+            error_categories=_cats or None,
         )
 
     # ==================== 公共降级策略 ====================
@@ -1099,7 +1102,9 @@ class LLMClient:
         # thinking 降级标记 — 不立即修改 request，等确认确实需要降级时再改 (#327)
         _thinking_downgraded = False
         if require_thinking:
-            logger.info("[LLM] All endpoints in cooldown, attempting recovery before disabling thinking.")
+            logger.info(
+                "[LLM] All endpoints in cooldown, attempting recovery before disabling thinking."
+            )
 
         if base_capability_matched:
             unhealthy = [p for p in base_capability_matched if not p.is_healthy]
@@ -1191,16 +1196,20 @@ class LLMClient:
                         f"All endpoints failed with structural errors "
                         f"(cooldown {min_cd}s). {hint} Last error: {last_err}",
                         is_structural=True,
+                        error_categories={"structural"},
                     )
 
                 # ── 全部是配额/认证错误，重试无意义 → 快速报错 ──
                 if quota_or_auth and len(quota_or_auth) == unhealthy_count:
                     last_err = quota_or_auth[0]._last_error or "unknown auth/quota error"
-                    categories = sorted({p.error_category for p in quota_or_auth})
+                    categories = sorted(
+                        {p.error_category for p in quota_or_auth if p.error_category}
+                    )
                     hint = _friendly_error_hint(quota_or_auth)
                     raise AllEndpointsFailedError(
                         f"All endpoints failed with {'/'.join(categories)} errors. "
-                        f"{hint} Last error: {last_err}"
+                        f"{hint} Last error: {last_err}",
+                        error_categories=set(categories),
                     )
 
             # ── 降级 3: "最后防线旁路" — 绕过冷静期（对齐 Portkey） ──
@@ -1224,11 +1233,14 @@ class LLMClient:
 
             # 所有端点都是 quota/auth → 直接报错，不再送回 _try_endpoints 浪费 API 调用
             last_err = base_capability_matched[0]._last_error or "unknown error"
-            categories = sorted({p.error_category for p in base_capability_matched})
+            categories = sorted(
+                {p.error_category for p in base_capability_matched if p.error_category}
+            )
             hint = _friendly_error_hint(base_capability_matched)
             raise AllEndpointsFailedError(
                 f"All endpoints failed with {'/'.join(categories)} errors. "
-                f"{hint} Last error: {last_err}"
+                f"{hint} Last error: {last_err}",
+                error_categories=set(categories),
             )
 
         # ── 降级 4: 最终兜底 — 尝试所有端点 ──
@@ -1747,9 +1759,8 @@ class LLMClient:
                 # 此时图片已在 converter 中被替换为占位文本，给上层一个
                 # endpoint_notice 钩子，让前端能渲染系统气泡告知用户。
                 try:
-                    if (
-                        not provider.config.has_capability("vision")
-                        and self._has_images(request.messages)
+                    if not provider.config.has_capability("vision") and self._has_images(
+                        request.messages
                     ):
                         response._vision_degraded = True  # type: ignore[attr-defined]
                 except Exception:
@@ -1764,7 +1775,7 @@ class LLMClient:
                     not response.content
                     and response.usage.output_tokens > 0
                     and request.enable_thinking
-                    and not getattr(request, '_thinking_silent_retried', False)
+                    and not getattr(request, "_thinking_silent_retried", False)
                 ):
                     logger.warning(
                         f"[LLM] endpoint={provider.name}: thinking mode produced "
@@ -1832,10 +1843,7 @@ class LLMClient:
                     )
                     # 如果还有其他端点，切换过去尝试
                     if i < len(providers) - 1:
-                        logger.info(
-                            f"[LLM] Content lost on {provider.name}, "
-                            f"trying next endpoint"
-                        )
+                        logger.info(f"[LLM] Content lost on {provider.name}, trying next endpoint")
                         failed_providers.append(provider)
                         continue
                     # 最后一个端点也失败了，返回空响应（让上层处理兜底文案）
@@ -2045,6 +2053,7 @@ class LLMClient:
         raise AllEndpointsFailedError(
             f"All endpoints failed: {'; '.join(errors)}\n{hint}",
             is_structural=all_structural,
+            error_categories={fp.error_category for fp in failed_providers if fp.error_category},
         )
 
     def _try_self_heal(self, error: LLMError, request: LLMRequest, provider) -> bool:
@@ -2087,7 +2096,7 @@ class LLMClient:
         # ── 自愈 0: OpenAI-compatible 工具消息链错序 ──
         _tool_sequence_patterns = [
             "messages with role 'tool'",
-            "messages with role \"tool\"",
+            'messages with role "tool"',
             "must be a response to a preceding message with 'tool_calls'",
             "must be a response to a preceeding message with 'tool_calls'",
             "tool_call_id",
@@ -2125,6 +2134,7 @@ class LLMClient:
             "extra_forbidden",
             "extra inputs are not permitted",
             "unsupported parameter",
+            "invalid params",
         ]
         if any(p in error_str for p in _reject_patterns) and (
             "thinking" in error_str or "reasoning_effort" in error_str
@@ -2175,10 +2185,7 @@ class LLMClient:
             if tool_call_names:
                 rebuilt.append(
                     TextBlock(
-                        text=(
-                            "[工具调用记录已转为普通上下文: "
-                            f"{', '.join(tool_call_names)}]"
-                        )
+                        text=(f"[工具调用记录已转为普通上下文: {', '.join(tool_call_names)}]")
                     )
                 )
 
@@ -2698,7 +2705,7 @@ class LLMClient:
         if not self._config_path:
             return
 
-        from ..utils.atomic_io import read_json_safe, safe_json_write
+        from ..utils.atomic_io import atomic_json_write, read_json_safe
 
         config_data = read_json_safe(self._config_path)
         if config_data is None:
@@ -2714,7 +2721,7 @@ class LLMClient:
 
         ep_list.sort(key=lambda e: (int(e.get("priority", 999)), e.get("name", "")))
         config_data["endpoints"] = ep_list
-        safe_json_write(self._config_path, config_data)
+        atomic_json_write(self._config_path, config_data)
 
     async def close(self):
         """关闭所有 Provider"""

@@ -78,8 +78,7 @@ class JinaProvider:
             )
         if resp.status_code == 429:
             raise RateLimitedError(
-                "jina free-tier rate-limited (HTTP 429); "
-                "configure JINA_API_KEY for higher quota",
+                "jina free-tier rate-limited (HTTP 429); configure JINA_API_KEY for higher quota",
                 provider_id=self.id,
             )
         if resp.status_code >= 400:
@@ -92,7 +91,8 @@ class JinaProvider:
             data = resp.json()
         except ValueError as exc:
             raise NetworkUnreachableError(
-                "jina returned non-JSON response", provider_id=self.id,
+                "jina returned non-JSON response",
+                provider_id=self.id,
             ) from exc
 
         # Jina shape: ``{"data": [{"title", "url", "description"}]}`` or sometimes top-level list

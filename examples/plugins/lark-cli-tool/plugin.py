@@ -251,9 +251,7 @@ class _LarkCLIRunner:
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             try:
                 proc.kill()
@@ -311,31 +309,21 @@ class _LarkCLIRunner:
             }
         return await self._exec([cli, *args], timeout=timeout, env_extra=env_extra)
 
-    async def run_npm(
-        self, args: list[str], *, timeout: int = 120
-    ) -> dict[str, Any]:
+    async def run_npm(self, args: list[str], *, timeout: int = 120) -> dict[str, Any]:
         npm = self.find_npm()
         if npm is None:
             return {
                 "success": False,
-                "error": (
-                    "npm is not found. Please install Node.js first: "
-                    "https://nodejs.org/"
-                ),
+                "error": ("npm is not found. Please install Node.js first: https://nodejs.org/"),
             }
         return await self._exec([npm, *args], timeout=timeout)
 
-    async def run_npx(
-        self, args: list[str], *, timeout: int = 120
-    ) -> dict[str, Any]:
+    async def run_npx(self, args: list[str], *, timeout: int = 120) -> dict[str, Any]:
         npx = self.find_npx()
         if npx is None:
             return {
                 "success": False,
-                "error": (
-                    "npx is not found. Please install Node.js first: "
-                    "https://nodejs.org/"
-                ),
+                "error": ("npx is not found. Please install Node.js first: https://nodejs.org/"),
             }
         return await self._exec([npx, *args], timeout=timeout)
 
@@ -355,9 +343,7 @@ class Plugin(PluginBase):
                 if tool_name == "lark_setup":
                     result = await _handle_setup(runner, arguments, default_timeout)
                 elif tool_name == "lark_run":
-                    result = await _handle_run(
-                        runner, arguments, default_timeout, default_format
-                    )
+                    result = await _handle_run(runner, arguments, default_timeout, default_format)
                 elif tool_name == "lark_schema":
                     result = await _handle_schema(runner, arguments, default_timeout)
                 else:
@@ -379,9 +365,8 @@ class Plugin(PluginBase):
 # Setup handler
 # ---------------------------------------------------------------------------
 
-async def _handle_setup(
-    runner: _LarkCLIRunner, args: dict, default_timeout: int
-) -> dict[str, Any]:
+
+async def _handle_setup(runner: _LarkCLIRunner, args: dict, default_timeout: int) -> dict[str, Any]:
     action = args.get("action", "quickstart")
 
     if action == "quickstart":
@@ -417,9 +402,7 @@ async def _handle_setup(
     return {"success": False, "error": f"Unknown setup action: {action}"}
 
 
-async def _quickstart(
-    runner: _LarkCLIRunner, args: dict, default_timeout: int
-) -> dict[str, Any]:
+async def _quickstart(runner: _LarkCLIRunner, args: dict, default_timeout: int) -> dict[str, Any]:
     """One-click setup: install → configure → login, with clear user instructions."""
     steps: list[dict[str, Any]] = []
     user_actions: list[str] = []
@@ -431,8 +414,7 @@ async def _quickstart(
             "success": False,
             "error": "Node.js is not installed.",
             "user_action_required": (
-                "请先安装 Node.js：https://nodejs.org/\n"
-                "安装完成后再次运行此命令。"
+                "请先安装 Node.js：https://nodejs.org/\n安装完成后再次运行此命令。"
             ),
         }
 
@@ -498,9 +480,7 @@ async def _quickstart(
 
     device_code = login_result.get("device_code")
     if device_code:
-        user_actions.append(
-            f"授权完成后，我会自动使用 device_code ({device_code}) 完成登录验证。"
-        )
+        user_actions.append(f"授权完成后，我会自动使用 device_code ({device_code}) 完成登录验证。")
 
     if user_actions:
         return {
@@ -566,14 +546,10 @@ async def _install(runner: _LarkCLIRunner) -> dict[str, Any]:
     if npm is None:
         return {
             "success": False,
-            "error": (
-                "npm not found. Install Node.js first: https://nodejs.org/"
-            ),
+            "error": ("npm not found. Install Node.js first: https://nodejs.org/"),
         }
 
-    install_result = await runner.run_npm(
-        ["install", "-g", _NPM_PACKAGE], timeout=120
-    )
+    install_result = await runner.run_npm(["install", "-g", _NPM_PACKAGE], timeout=120)
     if not install_result.get("success"):
         return {
             "success": False,
@@ -597,24 +573,17 @@ async def _install(runner: _LarkCLIRunner) -> dict[str, Any]:
     }
 
 
-async def _configure(
-    runner: _LarkCLIRunner, default_timeout: int
-) -> dict[str, Any]:
-    result = await runner.run(
-        ["config", "init", "--new"], timeout=max(default_timeout, 60)
-    )
+async def _configure(runner: _LarkCLIRunner, default_timeout: int) -> dict[str, Any]:
+    result = await runner.run(["config", "init", "--new"], timeout=max(default_timeout, 60))
 
     if result.get("urls"):
         result["user_action_required"] = (
-            "请在浏览器中打开以下链接完成应用配置（无需手动输入租户 ID）：\n"
-            + result["urls"][0]
+            "请在浏览器中打开以下链接完成应用配置（无需手动输入租户 ID）：\n" + result["urls"][0]
         )
     return result
 
 
-async def _login(
-    runner: _LarkCLIRunner, args: dict, default_timeout: int
-) -> dict[str, Any]:
+async def _login(runner: _LarkCLIRunner, args: dict, default_timeout: int) -> dict[str, Any]:
     cmd = ["auth", "login", "--recommend", "--no-wait"]
     domain = args.get("domain")
     if domain:
@@ -624,8 +593,7 @@ async def _login(
 
     if result.get("urls"):
         result["user_action_required"] = (
-            "请在浏览器中打开以下链接完成 OAuth 授权登录：\n"
-            + result["urls"][0]
+            "请在浏览器中打开以下链接完成 OAuth 授权登录：\n" + result["urls"][0]
         )
 
     return result
@@ -648,6 +616,7 @@ def _is_logged_in(status_result: dict[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 # Run handler
 # ---------------------------------------------------------------------------
+
 
 async def _handle_run(
     runner: _LarkCLIRunner,
@@ -676,6 +645,7 @@ async def _handle_run(
 # Schema handler
 # ---------------------------------------------------------------------------
 
+
 async def _handle_schema(
     runner: _LarkCLIRunner, args: dict, default_timeout: int
 ) -> dict[str, Any]:
@@ -689,6 +659,7 @@ async def _handle_schema(
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
+
 
 def _split_command(command: str) -> list[str]:
     """Split a command string into tokens, respecting quotes.
@@ -720,4 +691,3 @@ def _split_command(command: str) -> list[str]:
         tokens.append("".join(current))
 
     return tokens
-

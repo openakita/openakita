@@ -12,7 +12,7 @@ import base64
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '_shared'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_shared"))
 from baidu_appbuilder import parse_common_args, run_skill_query
 
 
@@ -51,9 +51,13 @@ def main() -> None:
 
     p_detect = sub.add_parser("detect", help="缺陷检测")
     p_detect.add_argument("--image", required=True, help="产品图片路径")
-    p_detect.add_argument("--type", dest="detect_type", default="",
-                          choices=["surface", "dimension", "assembly", ""],
-                          help="检测类型")
+    p_detect.add_argument(
+        "--type",
+        dest="detect_type",
+        default="",
+        choices=["surface", "dimension", "assembly", ""],
+        help="检测类型",
+    )
 
     p_report = sub.add_parser("report", help="生成质检分析报告")
     p_report.add_argument("--image", required=True, help="产品图片路径")
@@ -70,4 +74,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

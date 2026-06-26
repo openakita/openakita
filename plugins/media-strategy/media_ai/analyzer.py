@@ -210,7 +210,9 @@ def fallback_brief(items: list[dict[str, Any]], *, title: str) -> str:
         summary = item.get("summary") or item.get("ai_summary") or ""
         if summary:
             lines.append(f"   - 摘要：{summary[:180]}")
-        lines.append(f"   - 复核提示：风险等级 {item.get('risk_level', 'medium')}，请打开原文链接确认。")
+        lines.append(
+            f"   - 复核提示：风险等级 {item.get('risk_level', 'medium')}，请打开原文链接确认。"
+        )
     return "\n".join(lines).strip()
 
 
@@ -419,7 +421,9 @@ def markdown_to_html(md: str) -> str:
     def flush_quote() -> None:
         nonlocal quote_lines
         if quote_lines:
-            out.append(f"<blockquote>{'<br>'.join(_inline(line) for line in quote_lines)}</blockquote>")
+            out.append(
+                f"<blockquote>{'<br>'.join(_inline(line) for line in quote_lines)}</blockquote>"
+            )
             quote_lines = []
 
     def flush_blocks() -> None:
@@ -510,7 +514,9 @@ def _is_table_separator(line: str) -> bool:
 
 
 def _is_table_separator_cell(cell: str) -> bool:
-    normalized = re.sub(r"\s+", "", cell.strip().replace("\\-", "-").replace("—", "-").replace("–", "-"))
+    normalized = re.sub(
+        r"\s+", "", cell.strip().replace("\\-", "-").replace("—", "-").replace("–", "-")
+    )
     return bool(re.fullmatch(r":?-+:?", normalized))
 
 
@@ -518,7 +524,9 @@ def _render_table(lines: list[str]) -> str:
     rows = []
     for line in lines:
         cells = _split_table_row(line)
-        if _is_table_separator(line) or (cells and all(_is_table_separator_cell(cell) for cell in cells)):
+        if _is_table_separator(line) or (
+            cells and all(_is_table_separator_cell(cell) for cell in cells)
+        ):
             continue
         rows.append(cells)
     if not rows:
@@ -526,7 +534,6 @@ def _render_table(lines: list[str]) -> str:
     header, *body = rows
     head_html = "".join(f"<th>{_inline(cell)}</th>" for cell in header)
     body_html = "".join(
-        "<tr>" + "".join(f"<td>{_inline(cell)}</td>" for cell in row) + "</tr>"
-        for row in body
+        "<tr>" + "".join(f"<td>{_inline(cell)}</td>" for cell in row) + "</tr>" for row in body
     )
     return f"<table><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>"

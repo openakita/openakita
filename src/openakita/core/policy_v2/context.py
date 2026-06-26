@@ -250,8 +250,7 @@ class PolicyContext:
                 else meta.get("is_unattended", False)
             ),
             unattended_strategy=str(
-                getattr(session, "unattended_strategy", None)
-                or meta.get("unattended_strategy", "")
+                getattr(session, "unattended_strategy", None) or meta.get("unattended_strategy", "")
             ),
             delegate_chain=list(meta.get("delegate_chain", [])),
             replay_authorizations=_coerce_replay_auths(meta.get("replay_authorizations")),

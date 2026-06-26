@@ -12,7 +12,11 @@ def test_tool_event_normalization_adds_stable_aliases():
 
 def test_security_confirm_normalization_adds_confirm_aliases():
     event = normalize_stream_event(
-        {"type": StreamEventType.SECURITY_CONFIRM.value, "tool": "run_powershell", "id": "confirm-1"}
+        {
+            "type": StreamEventType.SECURITY_CONFIRM.value,
+            "tool": "run_powershell",
+            "id": "confirm-1",
+        }
     )
     assert event["tool_name"] == "run_powershell"
     assert event["confirm_id"] == "confirm-1"
@@ -68,7 +72,25 @@ def test_mcp_call_normalization_adds_stable_fields():
     assert event["error"] == ""
 
 
+def test_config_hint_normalization_adds_stable_fields():
+    event = normalize_stream_event(
+        {
+            "type": StreamEventType.CONFIG_HINT.value,
+            "id": "tool-1",
+            "scope": "web_search",
+            "title": "搜索源未配置",
+        }
+    )
+    assert event["tool_use_id"] == "tool-1"
+    assert event["scope"] == "web_search"
+    assert event["error_code"] == "unknown"
+    assert event["title"] == "搜索源未配置"
+    assert event["message"] == ""
+    assert event["actions"] == []
+
+
 def test_python_stream_events_include_frontend_known_enrichments():
     assert StreamEventType.ENDPOINT_NOTICE.value == "endpoint_notice"
+    assert StreamEventType.CONFIG_HINT.value == "config_hint"
     assert StreamEventType.SOURCE_USED.value == "source_used"
     assert StreamEventType.MCP_CALL.value == "mcp_call"

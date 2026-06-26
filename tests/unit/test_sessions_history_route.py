@@ -64,6 +64,51 @@ def test_history_strips_non_ui_system_summaries(tmp_path):
     assert [m["content"] for m in body["messages"]] == ["visible"]
 
 
+def test_history_filters_near_duplicate_user_messages(tmp_path):
+    app = FastAPI()
+    app.include_router(router)
+    manager = SessionManager(storage_path=tmp_path)
+    session = manager.get_session("desktop", "conv1", "desktop_user")
+    session.context.messages = [
+        {"role": "user", "content": "same prompt", "timestamp": "2026-06-25T18:06:53.993669"},
+        {"role": "user", "content": "same prompt", "timestamp": "2026-06-25T18:06:53.999736"},
+        {"role": "assistant", "content": "done", "timestamp": "2026-06-25T18:07:00"},
+    ]
+    app.state.session_manager = manager
+
+    body = TestClient(app).get("/api/sessions/conv1/history").json()
+
+    assert body["total"] == 2
+    assert [m["content"] for m in body["messages"]] == ["same prompt", "done"]
+
+
+def test_history_backfill_skips_near_duplicate_turns(tmp_path):
+    app = FastAPI()
+    app.include_router(router)
+    manager = SessionManager(storage_path=tmp_path)
+    session = manager.get_session("desktop", "conv1", "desktop_user")
+    session.context.messages = [
+        {"role": "user", "content": "same prompt", "timestamp": "2026-06-25T18:06:53.993669"},
+    ]
+    manager.set_turn_loader(
+        lambda _safe_id: [
+            {
+                "role": "user",
+                "content": "same prompt",
+                "timestamp": "2026-06-25T18:06:53.999736",
+            },
+            {"role": "assistant", "content": "done", "timestamp": "2026-06-25T18:07:00"},
+        ]
+    )
+    app.state.session_manager = manager
+
+    body = TestClient(app).get("/api/sessions/conv1/history").json()
+
+    assert body["total"] == 2
+    assert [m["content"] for m in body["messages"]] == ["same prompt", "done"]
+    assert [m["content"] for m in session.context.messages].count("same prompt") == 1
+
+
 def test_session_list_returns_conversation_ui_state(tmp_path):
     app = FastAPI()
     app.include_router(router)
@@ -125,4 +170,6 @@ def test_update_session_ui_state_does_not_create_empty_session(tmp_path):
 
     assert resp.status_code == 200
     assert resp.json() == {"ok": False, "reason": "session_not_found"}
-    assert manager.get_session("desktop", "missing", "desktop_user", create_if_missing=False) is None
+    assert (
+        manager.get_session("desktop", "missing", "desktop_user", create_if_missing=False) is None
+    )

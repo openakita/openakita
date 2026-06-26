@@ -1,6 +1,7 @@
 """
 图片理解模块 - 使用 Dashscope Qwen-VL 模型
 """
+
 import os
 import base64
 import json
@@ -23,19 +24,12 @@ def encode_image(image_path):
 
 def call_dashscope(messages, model="qwen-vl-plus", max_tokens=1000):
     """调用Dashscope API"""
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
 
     payload = {
         "model": model,
-        "input": {
-            "messages": messages
-        },
-        "parameters": {
-            "max_tokens": max_tokens
-        }
+        "input": {"messages": messages},
+        "parameters": {"max_tokens": max_tokens},
     }
 
     response = requests.post(BASE_URL, headers=headers, json=payload)
@@ -57,13 +51,10 @@ def describe_image(image_path, model="qwen-vl-plus"):
             "content": [
                 {
                     "type": "text",
-                    "text": "请详细描述这张图片的内容，包括场景、人物、物体、颜色等所有细节。"
+                    "text": "请详细描述这张图片的内容，包括场景、人物、物体、颜色等所有细节。",
                 },
-                {
-                    "type": "image",
-                    "image": f"data:image/jpeg;base64,{image_b64}"
-                }
-            ]
+                {"type": "image", "image": f"data:image/jpeg;base64,{image_b64}"},
+            ],
         }
     ]
 
@@ -78,15 +69,9 @@ def extract_text(image_path, model="qwen-vl-plus"):
         {
             "role": "user",
             "content": [
-                {
-                    "type": "text",
-                    "text": "请提取图片中的所有文字，保持原格式，不要遗漏任何内容。"
-                },
-                {
-                    "type": "image",
-                    "image": f"data:image/jpeg;base64,{image_b64}"
-                }
-            ]
+                {"type": "text", "text": "请提取图片中的所有文字，保持原格式，不要遗漏任何内容。"},
+                {"type": "image", "image": f"data:image/jpeg;base64,{image_b64}"},
+            ],
         }
     ]
 
@@ -101,15 +86,9 @@ def identify_objects(image_path, model="qwen-vl-plus"):
         {
             "role": "user",
             "content": [
-                {
-                    "type": "text",
-                    "text": "请列出图片中的所有物体、人物、元素，用清晰的列表格式。"
-                },
-                {
-                    "type": "image",
-                    "image": f"data:image/jpeg;base64,{image_b64}"
-                }
-            ]
+                {"type": "text", "text": "请列出图片中的所有物体、人物、元素，用清晰的列表格式。"},
+                {"type": "image", "image": f"data:image/jpeg;base64,{image_b64}"},
+            ],
         }
     ]
 
@@ -124,15 +103,9 @@ def answer_question(image_path, question, model="qwen-vl-plus"):
         {
             "role": "user",
             "content": [
-                {
-                    "type": "text",
-                    "text": question
-                },
-                {
-                    "type": "image",
-                    "image": f"data:image/jpeg;base64,{image_b64}"
-                }
-            ]
+                {"type": "text", "text": question},
+                {"type": "image", "image": f"data:image/jpeg;base64,{image_b64}"},
+            ],
         }
     ]
 
@@ -175,4 +148,3 @@ if __name__ == "__main__":
             print("错误: 请使用 -q 指定问题")
     else:
         print(f"未知模式: {mode}")
-

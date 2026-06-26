@@ -81,4 +81,3 @@ class UserPreference:
     key: str
     value: Any
     updated_at: datetime = field(default_factory=datetime.now)
-

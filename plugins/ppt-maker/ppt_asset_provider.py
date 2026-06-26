@@ -175,7 +175,12 @@ class PptAssetProvider:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.get(
                 PEXELS_ENDPOINT,
-                params={"query": query, "per_page": 1, "size": "medium", "orientation": "landscape"},
+                params={
+                    "query": query,
+                    "per_page": 1,
+                    "size": "medium",
+                    "orientation": "landscape",
+                },
                 headers={"Authorization": api_key},
             )
             resp.raise_for_status()
@@ -183,7 +188,9 @@ class PptAssetProvider:
             photos = data.get("photos") or []
             if not photos:
                 return None
-            url = (photos[0].get("src") or {}).get("large") or (photos[0].get("src") or {}).get("original")
+            url = (photos[0].get("src") or {}).get("large") or (photos[0].get("src") or {}).get(
+                "original"
+            )
             if not url:
                 return None
             return await self._download(client, url, out_dir, suffix=".jpg")
@@ -224,10 +231,9 @@ class PptAssetProvider:
         # Optional relay-station base URL injected by the plugin layer's
         # _apply_relay_overrides — keeps the official DashScope host
         # when empty so existing deployments are unaffected.
-        base_url = (
-            (self._settings.get("dashscope_base_url") or "").strip().rstrip("/")
-            or DASHSCOPE_DEFAULT_BASE_URL
-        )
+        base_url = (self._settings.get("dashscope_base_url") or "").strip().rstrip(
+            "/"
+        ) or DASHSCOPE_DEFAULT_BASE_URL
         submit_url = f"{base_url}{DASHSCOPE_T2I_SUBMIT_PATH}"
         query_url_tpl = f"{base_url}{DASHSCOPE_TASK_QUERY_PATH}"
         import httpx
@@ -272,9 +278,7 @@ class PptAssetProvider:
             return None
 
     @staticmethod
-    async def _download(
-        client: Any, url: str, out_dir: Path, *, suffix: str
-    ) -> str | None:
+    async def _download(client: Any, url: str, out_dir: Path, *, suffix: str) -> str | None:
         resp = await client.get(url)
         if resp.status_code != 200:
             return None

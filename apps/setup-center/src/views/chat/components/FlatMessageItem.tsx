@@ -1,21 +1,15 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ChatMessage, MdModules } from "../utils/chatTypes";
 import { stripLegacySummary } from "../utils/chatHelpers";
+import { resolveMessageParts, hasRenderableBody } from "../utils/messageParts";
 import { formatTime } from "../../../utils";
-import { ThinkingChain, ThinkingBlock, ToolCallsGroup } from "./ThinkingChain";
-import { ArtifactList } from "./Artifacts";
-import { OrgTimelineCard } from "./OrgTimeline";
-import { AskUserBlock } from "./AskUser";
-import { ErrorCard } from "./ErrorCard";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { SpinnerTipDisplay } from "./SpinnerTipDisplay";
-import { SourceStrip } from "./SourceStrip";
-import { PlanCard } from "./PlanCard";
-import { MCPCallStrip } from "./MCPCallStrip";
 import { MarkdownContent } from "./MarkdownContent";
+import { MessageParts } from "./MessageParts";
 import { useSourceTagFormatter, extractTrailingSourceTag, SourceBadge } from "./SourceBadge";
-import { IconClipboard, IconEdit, IconRefresh, IconRewind } from "../../../icons";
+import { IconClipboard, IconEdit, IconRefresh, IconRewind, IconChevronRight } from "../../../icons";
 
 export const FlatMessageItem = memo(function FlatMessageItem({
   msg,
@@ -52,6 +46,7 @@ export const FlatMessageItem = memo(function FlatMessageItem({
 }) {
   const { t } = useTranslation();
   const formatSourceTags = useSourceTagFormatter();
+  const [revealChain, setRevealChain] = useState(false);
   const isUser = msg.role === "user";
   const isAssistant = msg.role === "assistant";
   const isSystem = msg.role === "system";
@@ -74,6 +69,22 @@ export const FlatMessageItem = memo(function FlatMessageItem({
       </div>
     );
   }
+
+  const parts = isAssistant ? resolveMessageParts(msg) : [];
+  // Local "view process" reveal can override the global hide-chain toggle for
+  // this one bubble.
+  const effShowChain = showChain || revealChain;
+  // Keep the streaming loading indicator up only while nothing else renders, so
+  // it never double-stacks under a plan / ask_user / artifact card and never
+  // lingers as a fake spinner when the chain is hidden (showChain=off).
+  const hasBody = isAssistant && hasRenderableBody(msg, parts, effShowChain, bodyContent);
+  // Avoid a blank completed bubble when the only thing produced was a chain the
+  // user chose to hide — surface a plain one-line handle into the process. Gate
+  // it on the chain actually being revealable (non-empty AND carried by a
+  // `reasoning` part) so the handle never becomes a dead click.
+  const canRevealChain =
+    !!msg.thinkingChain && msg.thinkingChain.length > 0 && parts.some((p) => p.kind === "reasoning");
+  const showRevealHandle = isAssistant && !msg.streaming && !hasBody && canRevealChain;
 
   return (
     <div className={`flatMessage flatMsgItem ${isUser ? "flatMsgUser" : "flatMsgAssistant"}`}>
@@ -103,30 +114,29 @@ export const FlatMessageItem = memo(function FlatMessageItem({
             </div>
           )}
 
-          {msg.thinkingChain && msg.thinkingChain.length > 0 && (
-            <ThinkingChain chain={msg.thinkingChain} streaming={!!msg.streaming} showChain={showChain} onSkipStep={onSkipStep} />
-          )}
-
-          {msg.orgTimeline && msg.orgTimeline.length > 0 && (
-            <OrgTimelineCard entries={msg.orgTimeline} streaming={!!msg.streaming} />
-          )}
-
-          {msg.streaming && !msg.content && msg.streamStatus && msg.thinkingChain && msg.thinkingChain.length > 0 && (
+          {msg.streaming && !msg.content && showChain && msg.streamStatus && msg.thinkingChain && msg.thinkingChain.length > 0 && (
             <SpinnerTipDisplay statusText={msg.streamStatus} />
           )}
 
-          {msg.thinking && (!msg.thinkingChain || msg.thinkingChain.length === 0) && (
-            <ThinkingBlock content={msg.thinking} />
-          )}
+          <MessageParts
+            msg={msg}
+            parts={parts}
+            bodyContent={bodyContent}
+            formatSourceTags={formatSourceTags}
+            mdModules={mdModules}
+            showChain={effShowChain}
+            forceExpandChain={revealChain}
+            onSkipStep={onSkipStep}
+            onImagePreview={onImagePreview}
+            onAskAnswer={onAskAnswer}
+            onPlanStepAction={onPlanStepAction}
+            onRetry={onRetry}
+            apiBaseUrl={apiBaseUrl}
+            conversationId={conversationId}
+            httpApiBase={httpApiBase}
+          />
 
-          <SourceStrip sources={msg.sources} conversationId={conversationId} httpApiBase={httpApiBase} />
-          <MCPCallStrip calls={msg.mcpCalls} />
-
-          {msg.todo && msg.todo.steps?.length > 0 && (
-            <PlanCard plan={msg.todo} onStepAction={onPlanStepAction} />
-          )}
-
-          {msg.streaming && !msg.content && (!msg.thinkingChain || msg.thinkingChain.length === 0) && (
+          {msg.streaming && !hasBody && (
             <div style={{ padding: "4px 0" }}>
               <div style={{ display: "flex", gap: 4 }}>
                 <span className="dotBounce" style={{ animationDelay: "0s" }} />
@@ -137,32 +147,15 @@ export const FlatMessageItem = memo(function FlatMessageItem({
             </div>
           )}
 
-          {bodyContent && (
-            <MarkdownContent
-              content={formatSourceTags(bodyContent)}
-              mdModules={mdModules}
-              className="chatMdContent"
-              streaming={!!msg.streaming}
-            />
-          )}
-
-          {msg.toolCalls && msg.toolCalls.length > 0 && (!msg.thinkingChain || msg.thinkingChain.length === 0) && (
-            <ToolCallsGroup toolCalls={msg.toolCalls} />
-          )}
-
-          {msg.artifacts && msg.artifacts.length > 0 && (
-            <ArtifactList artifacts={msg.artifacts} apiBaseUrl={apiBaseUrl} onImagePreview={onImagePreview} />
-          )}
-
-          {msg.askUser && (
-            <AskUserBlock
-              ask={msg.askUser}
-              onAnswer={(ans) => onAskAnswer?.(msg.id, ans)}
-            />
-          )}
-
-          {msg.errorInfo && (
-            <ErrorCard error={msg.errorInfo} onRetry={onRetry ? () => onRetry(msg.id) : undefined} />
+          {showRevealHandle && (
+            <div
+              className="chainCollapsedSummary"
+              onClick={() => setRevealChain(true)}
+              role="button"
+            >
+              <IconChevronRight size={11} />
+              <span>{t("chat.noBodyReveal")}</span>
+            </div>
           )}
         </>
       )}

@@ -37,20 +37,48 @@ class FakeResponse:
 
 def _sample_tools() -> list[dict]:
     return [
-        {"name": "read_file", "category": "File System", "description": "Read a file",
-         "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}}},
-        {"name": "write_file", "category": "File System", "description": "Write a file",
-         "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}}},
-        {"name": "web_search", "category": "Web Search", "description": "Search the web",
-         "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}}},
-        {"name": "browser_navigate", "category": "Browser", "description": "Navigate browser",
-         "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}}},
-        {"name": "run_shell", "category": "File System", "description": "Run shell command",
-         "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}},
-        {"name": "ask_user", "category": "System", "description": "Ask user a question",
-         "input_schema": {"type": "object", "properties": {"question": {"type": "string"}}}},
-        {"name": "memory_search", "category": "Memory", "description": "Search memories",
-         "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}}},
+        {
+            "name": "read_file",
+            "category": "File System",
+            "description": "Read a file",
+            "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}},
+        },
+        {
+            "name": "write_file",
+            "category": "File System",
+            "description": "Write a file",
+            "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}},
+        },
+        {
+            "name": "web_search",
+            "category": "Web Search",
+            "description": "Search the web",
+            "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
+        },
+        {
+            "name": "browser_navigate",
+            "category": "Browser",
+            "description": "Navigate browser",
+            "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}},
+        },
+        {
+            "name": "run_shell",
+            "category": "File System",
+            "description": "Run shell command",
+            "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}},
+        },
+        {
+            "name": "ask_user",
+            "category": "System",
+            "description": "Ask user a question",
+            "input_schema": {"type": "object", "properties": {"question": {"type": "string"}}},
+        },
+        {
+            "name": "memory_search",
+            "category": "Memory",
+            "description": "Search memories",
+            "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
+        },
     ]
 
 
@@ -378,6 +406,7 @@ class TestPromptCompilerNoTooling:
 
     def test_no_compile_agent_tooling_function(self):
         from openakita.prompt import compiler
+
         assert not hasattr(compiler, "compile_agent_tooling") or True
 
 
@@ -391,6 +420,7 @@ class TestPromptCompilerStaleness:
 
     def test_modified_source_detected_outdated(self, tmp_path):
         import time
+
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "AGENT.md").write_text("# Agent\n## Core\nBe good v1.", encoding="utf-8")
@@ -458,11 +488,11 @@ class TestSystemPromptBuild:
 
         catalog = ToolCatalog(_sample_tools())
 
-        prompt_no_tools = build_system_prompt(
-            identity_dir=identity_dir, tools_enabled=False
-        )
+        prompt_no_tools = build_system_prompt(identity_dir=identity_dir, tools_enabled=False)
         prompt_with_tools = build_system_prompt(
-            identity_dir=identity_dir, tools_enabled=True, tool_catalog=catalog,
+            identity_dir=identity_dir,
+            tools_enabled=True,
+            tool_catalog=catalog,
             include_tools_guide=True,
         )
         assert len(prompt_no_tools) < len(prompt_with_tools)
@@ -510,8 +540,7 @@ class TestContextManagerOptimizations:
         cm = ContextManager(mock_brain)
 
         messages = [
-            {"role": "user", "content": f"Message {i}" + " padding" * 100}
-            for i in range(20)
+            {"role": "user", "content": f"Message {i}" + " padding" * 100} for i in range(20)
         ]
         max_tokens = 50
         result = cm._hard_truncate_if_needed(messages, max_tokens)
@@ -672,9 +701,10 @@ memory_keywords: []"""
 class TestIdentityRouteNoTooling:
     def test_budget_map_no_tooling(self):
         from openakita.api.routes.identity import _BUDGET_MAP
+
         assert "runtime/agent.tooling.md" not in _BUDGET_MAP
 
     def test_runtime_files_no_tooling(self):
         from openakita.api.routes.identity import _RUNTIME_FILES
-        assert "runtime/agent.tooling.md" not in _RUNTIME_FILES
 
+        assert "runtime/agent.tooling.md" not in _RUNTIME_FILES

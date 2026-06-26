@@ -31,8 +31,7 @@ class TestHumanizeUpstreamError:
     def test_data_inspection_keyword_preserved(self):
         msg = _humanize_upstream_error(400, DASHSCOPE_DATA_INSPECTION_BODY)
         assert "data_inspection_failed" in msg, (
-            "humanized message must keep the keyword for downstream "
-            "classification to work"
+            "humanized message must keep the keyword for downstream classification to work"
         )
         assert "内容安全审核" in msg
 
@@ -73,15 +72,11 @@ class TestClassifyError:
         assert LLMProvider._classify_error(err) == FailoverReason.CONTENT_SAFETY
 
     def test_structural_400_still_works(self):
-        assert (
-            LLMProvider._classify_error("invalid_parameter (400)")
-            == FailoverReason.STRUCTURAL
-        )
+        assert LLMProvider._classify_error("invalid_parameter (400)") == FailoverReason.STRUCTURAL
 
     def test_invalid_function_response_is_structural(self):
         err = (
-            "API error (400): Invalid function response: "
-            "✅ 计划已创建：plan_20260408_190537_3c9850"
+            "API error (400): Invalid function response: ✅ 计划已创建：plan_20260408_190537_3c9850"
         )
         assert LLMProvider._classify_error(err) == FailoverReason.STRUCTURAL
 

@@ -27,4 +27,3 @@ __all__ = [
     "discover_webmcp_tools",
     "call_webmcp_tool",
 ]
-

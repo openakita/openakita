@@ -374,8 +374,9 @@ class AnthropicProvider(LLMProvider):
             budget = get_thinking_budget(self.config.model, request.thinking_depth)
             if budget <= 0:
                 budget = 8192
+            is_mm = is_minimax_endpoint(self.config.provider, self.base_url, self.config.model)
             body["thinking"] = {
-                "type": "enabled",
+                "type": "adaptive" if is_mm else "enabled",
                 "budget_tokens": budget,
             }
             body.pop("temperature", None)

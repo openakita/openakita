@@ -41,7 +41,7 @@ export function useVersionCheck() {
   const checkForAppUpdate = useCallback(async () => {
     const dismissKey = "openakita_release_dismissed";
     try {
-      const update = await checkForUpdate();
+      const update = await checkForUpdate({ apiBaseUrl: "http://127.0.0.1:18900" });
       if (update) {
         const dismissed = localStorage.getItem(dismissKey);
         if (dismissed !== update.version) {

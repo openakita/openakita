@@ -81,9 +81,7 @@ def test_build_crop_x_expression_under_depth_cap() -> None:
     assert "if(" in expr or "between(" in expr or expr.replace(".", "").isdigit() or len(expr) > 0
 
 
-def test_recompose_end_to_end_9_16(
-    api_key: str, sample_video: Path, tmp_path: Path
-) -> None:
+def test_recompose_end_to_end_9_16(api_key: str, sample_video: Path, tmp_path: Path) -> None:
     """Real key + real ffmpeg + bring-your-own ≤ 30 s clip → 9:16 mp4."""
     from mediapost_recompose import (
         RecomposeContext,

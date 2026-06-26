@@ -56,7 +56,7 @@ _ITEM_RE = re.compile(
 )
 _DATE_RE = re.compile(
     r'<(?:span|p)[^>]*class="[^"]*(?:time|infor)[^"]*"[^>]*>\s*'
-    r'(?P<date>\d{4}-\d{1,2}-\d{1,2}[^<]{0,12})\s*</(?:span|p)>',
+    r"(?P<date>\d{4}-\d{1,2}-\d{1,2}[^<]{0,12})\s*</(?:span|p)>",
     re.IGNORECASE,
 )
 
@@ -69,9 +69,7 @@ class EastmoneyFetcher(BaseFetcher):
     # but there is no working NewsNow mapping for eastmoney yet.
     NEWSNOW_PLATFORM_ID = "eastmoney"
 
-    def __init__(
-        self, *, config: dict[str, str] | None = None, timeout_sec: float = 15.0
-    ) -> None:
+    def __init__(self, *, config: dict[str, str] | None = None, timeout_sec: float = 15.0) -> None:
         super().__init__(config=config, timeout_sec=timeout_sec)
         self._last_via: str = "none"
         self._last_via_reason: str | None = None
@@ -107,12 +105,8 @@ class EastmoneyFetcher(BaseFetcher):
                 self._last_via_reason = f"newsnow:{exc.kind}"
                 primary = []
             except Exception as exc:  # noqa: BLE001
-                logger.info(
-                    "eastmoney via newsnow failed: %s — falling back to direct", exc
-                )
-                self._last_via_reason = (
-                    f"newsnow:error:{exc.__class__.__name__}"
-                )
+                logger.info("eastmoney via newsnow failed: %s — falling back to direct", exc)
+                self._last_via_reason = f"newsnow:error:{exc.__class__.__name__}"
                 primary = []
             if primary:
                 self._last_via = "newsnow"
@@ -235,9 +229,7 @@ class EastmoneyFetcher(BaseFetcher):
                     source_id="eastmoney",
                     title=title,
                     url=href,
-                    published_at=datetime.now(timezone.utc).strftime(
-                        "%Y-%m-%dT%H:%M:%SZ"
-                    ),
+                    published_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     extra={"parser": "bs4"},
                 )
             )
@@ -262,9 +254,7 @@ class EastmoneyFetcher(BaseFetcher):
                     source_id="eastmoney",
                     title=title,
                     url=href,
-                    published_at=datetime.now(timezone.utc).strftime(
-                        "%Y-%m-%dT%H:%M:%SZ"
-                    ),
+                    published_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     extra={"parser": "regex"},
                 )
             )

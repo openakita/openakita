@@ -77,7 +77,7 @@ def _update_pyproject(version: str) -> bool:
 
     vm = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', section)
     if not vm:
-        raise RuntimeError("pyproject.toml 的 [project] 段找不到 version = \"...\"")
+        raise RuntimeError('pyproject.toml 的 [project] 段找不到 version = "..."')
     old_version = vm.group(1)
     new_section = re.sub(
         r'(?m)^version\s*=\s*"([^"]+)"\s*$',
@@ -239,7 +239,9 @@ def sync(version: str) -> int:
 
     changed_any |= _update_pyproject(version)
     changed_any |= _update_json_version(ROOT / "apps/setup-center/package.json", version)
-    changed_any |= _update_json_version(ROOT / "apps/setup-center/src-tauri/tauri.conf.json", version)
+    changed_any |= _update_json_version(
+        ROOT / "apps/setup-center/src-tauri/tauri.conf.json", version
+    )
     changed_any |= _update_cargo_toml(version)
     changed_any |= _update_cargo_lock(version)
     changed_any |= _update_bundled_version(version)
@@ -336,7 +338,9 @@ def main() -> int:
     sub_sync = sub.add_parser("sync", help="从 VERSION 同步到所有文件")
 
     sub_check = sub.add_parser("check", help="校验所有文件版本是否与 VERSION 一致")
-    sub_check.add_argument("--expected", default=None, help="可选：期望版本（支持 v1.2.3 或 1.2.3）")
+    sub_check.add_argument(
+        "--expected", default=None, help="可选：期望版本（支持 v1.2.3 或 1.2.3）"
+    )
 
     args = p.parse_args()
 
@@ -352,5 +356,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-

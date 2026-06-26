@@ -62,6 +62,27 @@ type AddServerForm = {
   auto_connect: boolean;
 };
 
+// MCP connect / add / test-connect can take noticeably longer than the default
+// safeFetch 10s budget: stdio servers launched via `npx -y pkg@latest` need to
+// download the package on first run, and even cached runs include node startup
+// + JSON-RPC `initialize` handshake. The backend caps a single connect attempt
+// at `mcp_connect_timeout` (60s by default), so the frontend signal has to be
+// strictly larger than that plus IPC / proxy round-trip overhead, otherwise
+// the user sees a misleading "signal timed out" while the backend is still
+// working and would have eventually returned a clean error or success.
+const MCP_CONNECT_TIMEOUT_MS = 120_000;
+
+// AbortSignal.timeout produces a DOMException whose message is the raw browser
+// string "signal timed out" (or "The user aborted a request" / "AbortError").
+// Surfacing that verbatim in a toast is unhelpful — replace it with an i18n
+// hint that tells the user it is a timeout and what to try next. Also matches
+// timeouts coming back through the Tauri proxy as plain Error messages.
+const isTimeoutError = (e: unknown): boolean => {
+  if (e instanceof Error && e.name === "TimeoutError") return true;
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  return /AbortError|signal timed out|timed out|timeout/i.test(msg);
+};
+
 const emptyForm: AddServerForm = {
   name: "",
   transport: "stdio",
@@ -256,7 +277,7 @@ function MCPConfigForm({
       const res = await safeFetch(`${apiBaseUrl}/api/mcp/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(MCP_CONNECT_TIMEOUT_MS),
         body: JSON.stringify({ server_name: serverName }),
       });
       const data = await res.json();
@@ -278,7 +299,11 @@ function MCPConfigForm({
         toast.error(`${t("mcp.testConnectFailed") || "测试连接失败"}: ${data.error || ""}`);
       }
     } catch (e) {
-      toast.error(`${t("mcp.testConnectFailed") || "测试连接失败"}: ${e}`);
+      if (isTimeoutError(e)) {
+        toast.error(t("mcp.connectTimeout") || "连接超时，请稍后重试。如果是首次启动 npx/uvx 类 MCP，可能需要先下载依赖包。");
+      } else {
+        toast.error(`${t("mcp.testConnectFailed") || "测试连接失败"}: ${e}`);
+      }
     }
     setTesting(false);
   };
@@ -559,6 +584,7 @@ export function MCPView({
       const res = await safeFetch(`${apiBaseUrl}/api/mcp/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(MCP_CONNECT_TIMEOUT_MS),
         body: JSON.stringify({ server_name: name }),
       });
       const data = await res.json();
@@ -589,7 +615,11 @@ export function MCPView({
       }
     } catch (e) {
       setFailedServers(prev => ({ ...prev, [name]: true }));
-      showMsg(`${t("mcp.connectError")}: ${e}`, false);
+      if (isTimeoutError(e)) {
+        showMsg(t("mcp.connectTimeout") || "连接超时，请稍后重试。如果是首次启动 npx/uvx 类 MCP，可能需要先下载依赖包。", false);
+      } else {
+        showMsg(`${t("mcp.connectError")}: ${e}`, false);
+      }
     }
     setBusyTarget(null);
     setBusyAction(null);
@@ -612,7 +642,9 @@ export function MCPView({
       showMsg(t("mcp.disconnectSuccess", { name }), true);
       await fetchServers();
     } catch (e) {
-      showMsg(`${t("mcp.disconnectError")}: ${e}`, false);
+      showMsg(isTimeoutError(e)
+        ? (t("mcp.disconnectTimeout") || "断开连接超时，请稍后重试")
+        : `${t("mcp.disconnectError")}: ${e}`, false);
     }
     setBusyTarget(null);
     setBusyAction(null);
@@ -631,7 +663,9 @@ export function MCPView({
         showMsg(`${t("mcp.deleteFailed")}: ${data.message || t("mcp.unknownError")}`, false);
       }
     } catch (e) {
-      showMsg(`${t("mcp.deleteFailed")}: ${e}`, false);
+      showMsg(isTimeoutError(e)
+        ? (t("mcp.deleteTimeout") || "删除超时，请稍后重试")
+        : `${t("mcp.deleteFailed")}: ${e}`, false);
     }
     setBusyTarget(null);
     setBusyAction(null);
@@ -659,6 +693,7 @@ export function MCPView({
       const res = await safeFetch(`${apiBaseUrl}/api/mcp/servers/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(MCP_CONNECT_TIMEOUT_MS),
         body: JSON.stringify({
           name,
           transport: form.transport,
@@ -690,7 +725,11 @@ export function MCPView({
         showMsg(`${t("mcp.addFailed")}: ${data.message || data.error || t("mcp.unknownError")}`, false);
       }
     } catch (e) {
-      showMsg(`${t("mcp.addError")}: ${e}`, false);
+      if (isTimeoutError(e)) {
+        showMsg(t("mcp.connectTimeout") || "连接超时，请稍后重试。如果是首次启动 npx/uvx 类 MCP，可能需要先下载依赖包。", false);
+      } else {
+        showMsg(`${t("mcp.addError")}: ${e}`, false);
+      }
     }
     setBusyTarget(null);
     setBusyAction(null);

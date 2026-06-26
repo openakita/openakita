@@ -501,11 +501,17 @@ class ScheduledTask:
         # 用户会以为任务一直在挂掉。同时清掉 last_status_color 之类的派生字段。
         try:
             from openakita.core.feature_flags import is_enabled as _ff_enabled
+
             _scheduler_clean = _ff_enabled("scheduler_metadata_cleanup_v1")
         except Exception:
             _scheduler_clean = True
         if _scheduler_clean and isinstance(self.metadata, dict):
-            for stale_key in ("last_error", "last_error_at", "last_failure_traceback", "last_status_color"):
+            for stale_key in (
+                "last_error",
+                "last_error_at",
+                "last_failure_traceback",
+                "last_status_color",
+            ):
                 self.metadata.pop(stale_key, None)
             self.metadata["last_success_at"] = self.last_run.isoformat()
 

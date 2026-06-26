@@ -120,8 +120,11 @@ async def run_publish_task(deps: PipelineDeps, task_id: str) -> dict[str, Any]:
     if task is None:
         raise OmniPostError(ErrorKind.NOT_FOUND, f"task {task_id} not found")
 
-    account = await deps.task_manager.get_account(task["account_id"])
-    if account is None:
+    effective_engine = _resolve_engine(task, deps)
+    account = None
+    if effective_engine != "mp":
+        account = await deps.task_manager.get_account(task["account_id"])
+    if effective_engine != "mp" and account is None:
         await _terminal_failure(
             deps,
             task,
@@ -148,31 +151,35 @@ async def run_publish_task(deps: PipelineDeps, task_id: str) -> dict[str, Any]:
         {"status": "running", "started_at": _now_iso()},
     )
 
-    try:
-        cookies_plaintext = deps.cookie_pool.open(account["cookie_cipher"])
-    except Exception as e:  # noqa: BLE001
-        logger.warning("cookie decryption failed for %s: %s", account["id"], e)
-        await _terminal_failure(
-            deps,
-            task,
-            ErrorKind.COOKIE_EXPIRED,
-            "cookie decryption failed; re-import this account",
-        )
-        return await deps.task_manager.get_task(task_id) or task
+    cookies_plaintext = ""
+    adapter = None
+    if effective_engine != "mp":
+        assert account is not None
+        try:
+            cookies_plaintext = deps.cookie_pool.open(account["cookie_cipher"])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("cookie decryption failed for %s: %s", account["id"], e)
+            await _terminal_failure(
+                deps,
+                task,
+                ErrorKind.COOKIE_EXPIRED,
+                "cookie decryption failed; re-import this account",
+            )
+            return await deps.task_manager.get_task(task_id) or task
 
-    try:
-        adapter = build_adapter(task["platform"], deps.selectors_dir)
-    except FileNotFoundError as e:
-        await _terminal_failure(
-            deps,
-            task,
-            ErrorKind.PLATFORM_BREAKING_CHANGE,
-            f"missing selector bundle: {e}",
-        )
-        return await deps.task_manager.get_task(task_id) or task
-    except OmniPostError as e:
-        await _terminal_failure(deps, task, e.kind, str(e))
-        return await deps.task_manager.get_task(task_id) or task
+        try:
+            adapter = build_adapter(task["platform"], deps.selectors_dir)
+        except FileNotFoundError as e:
+            await _terminal_failure(
+                deps,
+                task,
+                ErrorKind.PLATFORM_BREAKING_CHANGE,
+                f"missing selector bundle: {e}",
+            )
+            return await deps.task_manager.get_task(task_id) or task
+        except OmniPostError as e:
+            await _terminal_failure(deps, task, e.kind, str(e))
+            return await deps.task_manager.get_task(task_id) or task
 
     max_retries = int(deps.settings.get("retry_max_attempts", 3))
     fail_threshold = int(deps.settings.get("auto_submit_fail_threshold", 3))
@@ -187,7 +194,6 @@ async def run_publish_task(deps: PipelineDeps, task_id: str) -> dict[str, Any]:
             "payload": task.get("payload") or _safe_json(task.get("payload_json")),
             "client_trace_id": task.get("client_trace_id"),
         }
-        effective_engine = _resolve_engine(task, deps)
         try:
             if effective_engine == "mp" and deps.mp_engine is not None:
                 outcome = await deps.mp_engine.dispatch(
@@ -196,6 +202,8 @@ async def run_publish_task(deps: PipelineDeps, task_id: str) -> dict[str, Any]:
                     settings={**deps.settings, "auto_submit": auto_submit},
                 )
             else:
+                assert adapter is not None
+                assert account is not None
                 outcome = await deps.engine.run_task(
                     adapter=adapter,
                     task=engine_payload,

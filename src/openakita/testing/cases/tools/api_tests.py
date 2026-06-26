@@ -155,4 +155,3 @@ API_TESTS = [
 
 def get_tests() -> list[TestCase]:
     return API_TESTS
-

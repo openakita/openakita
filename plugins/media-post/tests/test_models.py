@@ -42,9 +42,9 @@ from mediapost_models import (
 class TestModes:
     def test_four_modes_with_canonical_ids(self) -> None:
         assert len(MODES) == 4
-        assert frozenset(
-            {"cover_pick", "multi_aspect", "seo_pack", "chapter_cards"}
-        ) == ALLOWED_MODES
+        assert (
+            frozenset({"cover_pick", "multi_aspect", "seo_pack", "chapter_cards"}) == ALLOWED_MODES
+        )
 
     def test_modes_by_id_lookup(self) -> None:
         for mode_id in ALLOWED_MODES:
@@ -86,9 +86,10 @@ class TestModes:
 class TestPlatforms:
     def test_five_platforms(self) -> None:
         assert len(PLATFORMS) == 5
-        assert frozenset(
-            {"tiktok", "bilibili", "wechat", "xiaohongshu", "youtube"}
-        ) == ALLOWED_PLATFORMS
+        assert (
+            frozenset({"tiktok", "bilibili", "wechat", "xiaohongshu", "youtube"})
+            == ALLOWED_PLATFORMS
+        )
 
     def test_chapters_only_supported_for_bilibili_and_youtube(self) -> None:
         supports = {p.id for p in PLATFORMS if p.supports_chapters}

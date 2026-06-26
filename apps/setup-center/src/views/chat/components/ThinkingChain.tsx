@@ -109,7 +109,6 @@ function ToolCallsGroupInner({
 
   if (toolCalls.length === 0) return null;
 
-  const doneCount = toolCalls.filter((tc) => tc.status === "done").length;
   const errorCount = toolCalls.filter((tc) => tc.status === "error").length;
   const runningCount = toolCalls.filter((tc) => tc.status === "running").length;
   const hasError = errorCount > 0;
@@ -320,11 +319,18 @@ function ChainGroupItem({ group, onToggle, isLast, streaming, onSkipStep }: {
 
 // ── ThinkingChain (main export) ──
 
-export function ThinkingChain({ chain, streaming, showChain, onSkipStep }: {
+export function ThinkingChain({ chain, streaming, showChain, onSkipStep, forceExpand = false }: {
   chain: ChainGroup[];
   streaming: boolean;
   showChain: boolean;
   onSkipStep?: () => void;
+  /**
+   * One-shot reveal: when this flips to true (e.g. the user clicked "view
+   * process" on an otherwise-empty completed bubble) expand every group so the
+   * timeline is visible in a single click. It only fires on the transition, so
+   * the user can still collapse groups again afterwards.
+   */
+  forceExpand?: boolean;
 }) {
   const { t } = useTranslation();
   const [localChain, setLocalChain] = useState(chain);
@@ -338,6 +344,10 @@ export function ThinkingChain({ chain, streaming, showChain, onSkipStep }: {
       }));
     });
   }, [chain]);
+
+  useEffect(() => {
+    if (forceExpand) setLocalChain(prev => prev.map(g => ({ ...g, collapsed: false })));
+  }, [forceExpand]);
 
   if (!showChain || !localChain || localChain.length === 0) return null;
 

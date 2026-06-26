@@ -11,7 +11,9 @@ from typing import Any
 class PptRepair:
     """Apply deterministic low-risk repairs and record remaining suggestions."""
 
-    def repair(self, slides_ir: dict[str, Any], audit_report: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    def repair(
+        self, slides_ir: dict[str, Any], audit_report: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         repaired = copy.deepcopy(slides_ir)
         issues = audit_report.get("issues") or []
         actions: list[dict[str, Any]] = []
@@ -32,7 +34,9 @@ class PptRepair:
                 rows = content.get("rows") or []
                 content["headers"] = list(headers)[:8]
                 content["rows"] = [list(row)[:8] for row in rows]
-                content.setdefault("bullets", []).append("表格已自动保留前 8 列，完整数据请查看源文件。")
+                content.setdefault("bullets", []).append(
+                    "表格已自动保留前 8 列，完整数据请查看源文件。"
+                )
                 slide["content"] = content
                 actions.append({"slide_id": slide_id, "action": "trim_table_columns"})
 
@@ -79,7 +83,11 @@ class PptRepair:
         hints = []
         for issue in issues:
             code = issue.get("code")
-            if code in {"missing_chart_data", "asset_unresolved", "template_fallback", "layout_variety_low"}:
+            if code in {
+                "missing_chart_data",
+                "asset_unresolved",
+                "template_fallback",
+                "layout_variety_low",
+            }:
                 hints.append(str(issue.get("message") or code))
         return hints[:20]
-

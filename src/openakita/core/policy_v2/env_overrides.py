@@ -99,9 +99,7 @@ def _coerce_bool(raw: str) -> bool:
         return True
     if norm in _FALSE_STRINGS:
         return False
-    raise ValueError(
-        f"expected boolean (true/false/1/0/yes/no/on/off); got {raw!r}"
-    )
+    raise ValueError(f"expected boolean (true/false/1/0/yes/no/on/off); got {raw!r}")
 
 
 def _coerce_unattended_strategy(raw: str) -> str:

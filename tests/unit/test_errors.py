@@ -83,9 +83,13 @@ class TestErrorClassification:
 class TestErrorTypes:
     def test_all_types_exist(self):
         types = [
-            ErrorType.TRANSIENT, ErrorType.PERMANENT, ErrorType.PERMISSION,
-            ErrorType.TIMEOUT, ErrorType.VALIDATION, ErrorType.RESOURCE_NOT_FOUND,
-            ErrorType.RATE_LIMIT, ErrorType.DEPENDENCY,
+            ErrorType.TRANSIENT,
+            ErrorType.PERMANENT,
+            ErrorType.PERMISSION,
+            ErrorType.TIMEOUT,
+            ErrorType.VALIDATION,
+            ErrorType.RESOURCE_NOT_FOUND,
+            ErrorType.RATE_LIMIT,
+            ErrorType.DEPENDENCY,
         ]
         assert len(types) == 8
-

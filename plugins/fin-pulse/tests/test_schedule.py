@@ -77,14 +77,9 @@ class _Task:
 def test_match_rejects_non_finpulse_tasks() -> None:
     assert plugin_mod._is_finpulse_schedule() is False
     assert plugin_mod._is_finpulse_schedule(task=None) is False
+    assert plugin_mod._is_finpulse_schedule(task=_Task(name="system:daily_memory")) is False
     assert (
-        plugin_mod._is_finpulse_schedule(task=_Task(name="system:daily_memory"))
-        is False
-    )
-    assert (
-        plugin_mod._is_finpulse_schedule(
-            task=_Task(name="other-plugin:morning", prompt="whatever")
-        )
+        plugin_mod._is_finpulse_schedule(task=_Task(name="other-plugin:morning", prompt="whatever"))
         is False
     )
 
@@ -95,7 +90,7 @@ def test_match_accepts_finpulse_prefix() -> None:
 
 
 def test_match_accepts_prompt_prefix_even_without_name() -> None:
-    task = _Task(name="", prompt="[fin-pulse] {\"mode\":\"daily_brief\"}")
+    task = _Task(name="", prompt='[fin-pulse] {"mode":"daily_brief"}')
     assert plugin_mod._is_finpulse_schedule(task=task) is True
 
 
@@ -104,14 +99,14 @@ def test_match_accepts_prompt_prefix_even_without_name() -> None:
 
 def test_parse_prompt_strips_prefix_and_decodes_json() -> None:
     data = plugin_mod._parse_schedule_prompt(
-        "[fin-pulse] {\"mode\":\"daily_brief\",\"session\":\"morning\"}"
+        '[fin-pulse] {"mode":"daily_brief","session":"morning"}'
     )
     assert data["mode"] == "daily_brief"
     assert data["session"] == "morning"
 
 
 def test_parse_prompt_accepts_bare_json() -> None:
-    data = plugin_mod._parse_schedule_prompt("{\"mode\":\"hot_radar\"}")
+    data = plugin_mod._parse_schedule_prompt('{"mode":"hot_radar"}')
     assert data == {"mode": "hot_radar"}
 
 
@@ -124,7 +119,7 @@ def test_parse_prompt_rejects_empty() -> None:
 
 def test_parse_prompt_rejects_non_object() -> None:
     with pytest.raises(ValueError):
-        plugin_mod._parse_schedule_prompt("[fin-pulse] \"just-a-string\"")
+        plugin_mod._parse_schedule_prompt('[fin-pulse] "just-a-string"')
     with pytest.raises(ValueError):
         plugin_mod._parse_schedule_prompt("[fin-pulse] [1, 2, 3]")
 
@@ -142,7 +137,7 @@ class _FullTask:
         self.id = "task_abc"
         self.name = "fin-pulse:morning"
         self.description = "morning brief"
-        self.prompt = "[fin-pulse] {\"mode\":\"daily_brief\",\"session\":\"morning\"}"
+        self.prompt = '[fin-pulse] {"mode":"daily_brief","session":"morning"}'
         self.enabled = True
         self.status = "scheduled"
         self.next_run = None

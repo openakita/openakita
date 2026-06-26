@@ -19,7 +19,7 @@ sys.stderr.reconfigure(line_buffering=True)
 
 API_BASE = "http://127.0.0.1:18900"
 DELAY_BETWEEN = 5  # 每个用例之间等待秒数
-TIMEOUT = 120       # 单个请求最大超时
+TIMEOUT = 120  # 单个请求最大超时
 
 # ── 会话管理 ─────────────────────────────────────────────
 # conversation_id=None → 新会话; "SAME" → 复用上一轮的会话
@@ -51,7 +51,6 @@ TESTS = [
         "expect_keywords": ["喵"],
         "description": "设定回复风格规则，后续验证是否遵守",
     },
-
     # ── 第二组: 知识问答 + 任务切换 ──
     {
         "id": 4,
@@ -77,7 +76,6 @@ TESTS = [
         "expect_keywords": ["weather", "walk"],
         "description": "翻译任务，快速切换不同类型任务",
     },
-
     # ── 第三组: 记忆召回测试 ──
     {
         "id": 7,
@@ -96,7 +94,6 @@ TESTS = [
         "expect_tool": "search_memory",
         "description": "验证历史任务记忆是否正常",
     },
-
     # ── 第四组: 浏览器任务 ──
     {
         "id": 9,
@@ -114,7 +111,6 @@ TESTS = [
         "expect_tool": "browser",
         "description": "浏览器搜索+截图，复杂浏览器操作",
     },
-
     # ── 第五组: 多轮对话 + 上下文保持 ──
     {
         "id": 11,
@@ -141,7 +137,6 @@ TESTS = [
         "group": "smart_home",
         "description": "同一会话内切换话题，不应混淆",
     },
-
     # ── 第六组: 文件操作 + Shell ──
     {
         "id": 14,
@@ -168,7 +163,6 @@ TESTS = [
         "expect_keywords": ["记忆系统测试"],
         "description": "读取刚才创建的文件，验证文件操作闭环",
     },
-
     # ── 第七组: 记忆混淆测试 ──
     {
         "id": 17,
@@ -188,7 +182,6 @@ TESTS = [
         "not_expect_keywords": [],
         "description": "验证新称呼是否覆盖旧称呼",
     },
-
     # ── 第八组: 复杂综合任务 ──
     {
         "id": 19,
@@ -210,10 +203,12 @@ TESTS = [
 
 def send_chat(message: str, conversation_id: str | None = None) -> dict:
     """发送聊天请求，收集 SSE 流式响应"""
-    payload = json.dumps({
-        "message": message,
-        "conversation_id": conversation_id,
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "message": message,
+            "conversation_id": conversation_id,
+        }
+    ).encode("utf-8")
 
     req = urllib.request.Request(
         f"{API_BASE}/api/chat",
@@ -252,10 +247,12 @@ def send_chat(message: str, conversation_id: str | None = None) -> dict:
                 elif evt_type == "thinking_delta":
                     result["thinking"] += evt.get("content", "")
                 elif evt_type == "tool_call_start":
-                    result["tools_called"].append({
-                        "tool": evt.get("tool", ""),
-                        "args": evt.get("args", {}),
-                    })
+                    result["tools_called"].append(
+                        {
+                            "tool": evt.get("tool", ""),
+                            "args": evt.get("args", {}),
+                        }
+                    )
                 elif evt_type == "iteration_start":
                     result["iterations"] = evt.get("iteration", 0)
                 elif evt_type == "done":
@@ -368,7 +365,9 @@ def main():
         status = "PASS" if verdict["pass"] else "FAIL"
         warn = " (WARN)" if verdict["issues"] and verdict["pass"] else ""
 
-        print(f"  结果: [{status}{warn}] | {elapsed:.1f}s | {result['iterations']} iters | tools: {tool_names}")
+        print(
+            f"  结果: [{status}{warn}] | {elapsed:.1f}s | {result['iterations']} iters | tools: {tool_names}"
+        )
         if result["full_text"]:
             preview = result["full_text"][:120].replace("\n", " ")
             print(f"  回复: {preview}...")
@@ -377,17 +376,19 @@ def main():
                 print(f"  ⚠ {issue}")
         print()
 
-        results.append({
-            "test_id": test["id"],
-            "name": test["name"],
-            "elapsed": round(elapsed, 2),
-            "iterations": result["iterations"],
-            "tools": tool_names,
-            "text_preview": result["full_text"][:200],
-            "verdict": status,
-            "issues": verdict["issues"],
-            "usage": result["usage"],
-        })
+        results.append(
+            {
+                "test_id": test["id"],
+                "name": test["name"],
+                "elapsed": round(elapsed, 2),
+                "iterations": result["iterations"],
+                "tools": tool_names,
+                "text_preview": result["full_text"][:200],
+                "verdict": status,
+                "issues": verdict["issues"],
+                "usage": result["usage"],
+            }
+        )
 
         # 等待间隔（最后一个不等）
         if i < len(TESTS) - 1:
@@ -429,13 +430,23 @@ def main():
     report_path = Path("data/temp/e2e_test_report.json")
     report_path.parent.mkdir(parents=True, exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as f:
-        json.dump({
-            "timestamp": datetime.now().isoformat(),
-            "summary": {"total": len(results), "passed": passed, "failed": failed, "warned": warned},
-            "total_tokens": total_tokens,
-            "total_time": round(total_time, 2),
-            "results": results,
-        }, f, ensure_ascii=False, indent=2)
+        json.dump(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "summary": {
+                    "total": len(results),
+                    "passed": passed,
+                    "failed": failed,
+                    "warned": warned,
+                },
+                "total_tokens": total_tokens,
+                "total_time": round(total_time, 2),
+                "results": results,
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
     print(f"  详细报告已保存: {report_path}")
     print("=" * 70)
 

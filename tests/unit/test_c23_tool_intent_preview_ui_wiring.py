@@ -38,9 +38,7 @@ SETUP_CENTER = Path("apps/setup-center")
 
 
 def test_chat_types_union_includes_tool_intent_preview() -> None:
-    chat_types = (SETUP_CENTER / "src/views/chat/utils/chatTypes.ts").read_text(
-        encoding="utf-8"
-    )
+    chat_types = (SETUP_CENTER / "src/views/chat/utils/chatTypes.ts").read_text(encoding="utf-8")
     assert 'type: "tool_intent_preview"' in chat_types, (
         "chatTypes.ts must declare a ``tool_intent_preview`` variant "
         "in the SSE event discriminated union (C23 P2-3)."
@@ -64,8 +62,7 @@ def test_chatview_handles_tool_intent_preview() -> None:
         "tool execution."
     )
     assert 'import { toast } from "sonner";' in chat_view, (
-        "ChatView.tsx must import sonner toast for tool_intent_preview "
-        "rendering."
+        "ChatView.tsx must import sonner toast for tool_intent_preview rendering."
     )
 
 
@@ -93,9 +90,7 @@ def test_intent_preview_skips_readonly_classes() -> None:
 
 def test_i18n_strings_present() -> None:
     for locale in ("zh.json", "en.json"):
-        data = json.loads(
-            (SETUP_CENTER / f"src/i18n/{locale}").read_text(encoding="utf-8")
-        )
+        data = json.loads((SETUP_CENTER / f"src/i18n/{locale}").read_text(encoding="utf-8"))
         chat = data.get("chat", {})
         for key in ("toolIntentPreview", "toolIntentPreviewClass"):
             assert key in chat, (
@@ -116,7 +111,7 @@ def test_backend_still_emits_tool_intent_preview() -> None:
         "same commit."
     )
     assert 'fire_event("tool_intent_preview"' in src, (
-        "tool_executor must still call fire_event(\"tool_intent_preview\", "
+        'tool_executor must still call fire_event("tool_intent_preview", '
         "...) — without it the SSE never reaches the WebSocket and the "
         "frontend handler is dead code."
     )

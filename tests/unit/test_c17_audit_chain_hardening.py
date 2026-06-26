@@ -355,7 +355,9 @@ class TestParamMutationAuditorChain:
         weird_before = {"err": ValueError("oops"), "p": Path("/etc")}
         weird_after = {"err": RuntimeError("new"), "p": Path("/tmp")}
         outcome = ParamAuditOutcome(
-            diffs=[ParamDiff("err", before=weird_before["err"], after=weird_after["err"], op="modify")],
+            diffs=[
+                ParamDiff("err", before=weird_before["err"], after=weird_after["err"], op="modify")
+            ],
             allowed=False,
             candidate_plugin_ids=[],
         )
@@ -378,9 +380,7 @@ class TestParamMutationAuditorChain:
         )
 
         auditor = ParamMutationAuditor(audit_dir=tmp_path)
-        outcome = ParamAuditOutcome(
-            diffs=[], allowed=True, candidate_plugin_ids=[]
-        )
+        outcome = ParamAuditOutcome(diffs=[], allowed=True, candidate_plugin_ids=[])
         auditor.write(
             tool_name="shell",
             outcome=outcome,

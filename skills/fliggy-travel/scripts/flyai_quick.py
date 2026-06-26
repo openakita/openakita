@@ -66,10 +66,10 @@ def main():
     p_hotel.add_argument("--checkin", help="入住日期 (YYYY-MM-DD)")
 
     args = parser.parse_args()
-    {"search": cmd_search, "ai-search": cmd_ai_search,
-     "flight": cmd_flight, "hotel": cmd_hotel}[args.command](args)
+    {"search": cmd_search, "ai-search": cmd_ai_search, "flight": cmd_flight, "hotel": cmd_hotel}[
+        args.command
+    ](args)
 
 
 if __name__ == "__main__":
     main()
-

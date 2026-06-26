@@ -34,6 +34,10 @@ export function useQueryGuard() {
   const abortRef = useRef<AbortController | null>(null);
   const slotsRef = useRef<Map<string, ConvSlot>>(new Map());
 
+  const refreshState = useCallback(() => {
+    setState(slotsRef.current.size > 0 || abortRef.current ? "querying" : "idle");
+  }, []);
+
   const startQuery = useCallback((convId?: string): QueryGuardHandle => {
     // Per-conversation slot management
     if (convId) {
@@ -54,29 +58,36 @@ export function useQueryGuard() {
 
     if (convId) {
       slotsRef.current.set(convId, { generation: gen, abort: ctrl });
+    } else {
+      abortRef.current = ctrl;
     }
-    abortRef.current = ctrl;
     setState("querying");
 
     return { generation: gen, signal: ctrl.signal, abort: ctrl };
   }, []);
 
-  const isStale = useCallback((gen: number): boolean => {
+  const isStale = useCallback((gen: number, convId?: string): boolean => {
+    if (convId) {
+      const slot = slotsRef.current.get(convId);
+      return !slot || slot.generation !== gen;
+    }
     return gen !== generationRef.current;
   }, []);
 
   const endQuery = useCallback((gen: number, convId?: string) => {
-    if (gen === generationRef.current) {
-      setState("idle");
-      abortRef.current = null;
-    }
     if (convId) {
       const slot = slotsRef.current.get(convId);
       if (slot && slot.generation === gen) {
         slotsRef.current.delete(convId);
       }
+      refreshState();
+      return;
     }
-  }, []);
+    if (gen === generationRef.current) {
+      abortRef.current = null;
+    }
+    refreshState();
+  }, [refreshState]);
 
   const cancel = useCallback((convId?: string) => {
     if (convId) {
@@ -85,13 +96,19 @@ export function useQueryGuard() {
         slot.abort.abort("user_cancelled");
       }
       slotsRef.current.delete(convId);
+      refreshState();
+      return;
     }
     if (abortRef.current) {
       abortRef.current.abort("user_cancelled");
       abortRef.current = null;
     }
-    setState("idle");
-  }, []);
+    for (const slot of slotsRef.current.values()) {
+      slot.abort?.abort("user_cancelled");
+    }
+    slotsRef.current.clear();
+    refreshState();
+  }, [refreshState]);
 
   return {
     state,

@@ -19,12 +19,12 @@ _ENTRY_URL = "https://www.nbd.com.cn/columns/3"
 
 _ITEM_RE = re.compile(
     r'<a[^>]+href="(?P<url>https?://www\.nbd\.com\.cn/articles/\d{4}-\d{2}-\d{2}/[^"]+)"'
-    r'[^>]*>(?P<title>[^<]+)</a>',
+    r"[^>]*>(?P<title>[^<]+)</a>",
     re.IGNORECASE,
 )
 
 _DATE_RE = re.compile(
-    r'(?P<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})',
+    r"(?P<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
 )
 
 
@@ -49,7 +49,7 @@ def _parse_html(html: str) -> list[NormalizedItem]:
         seen_urls.add(url)
 
         pub = None
-        tail = html[m.end():m.end() + 300]
+        tail = html[m.end() : m.end() + 300]
         dm = _DATE_RE.search(tail)
         if dm:
             pub = dm.group("date").strip().replace(" ", "T") + "Z"

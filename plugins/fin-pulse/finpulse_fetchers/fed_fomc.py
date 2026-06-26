@@ -36,13 +36,9 @@ from finpulse_fetchers._http import fetch_text, make_client
 from finpulse_fetchers.base import BaseFetcher, NormalizedItem
 from finpulse_fetchers.rss import parse_feed
 
-_CALENDAR_FILE = (
-    Path(__file__).resolve().parent.parent / "extra" / "fomc_release_calendar.txt"
-)
+_CALENDAR_FILE = Path(__file__).resolve().parent.parent / "extra" / "fomc_release_calendar.txt"
 _PRESS_RSS = "https://www.federalreserve.gov/feeds/press_monetary.xml"
-_STATEMENTS_URL = (
-    "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
-)
+_STATEMENTS_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +62,7 @@ class FedFOMCFetcher(BaseFetcher):
     def supports_since(self) -> bool:
         return True
 
-    async def fetch(
-        self, *, since: datetime | None = None, **_: Any
-    ) -> list[NormalizedItem]:
+    async def fetch(self, *, since: datetime | None = None, **_: Any) -> list[NormalizedItem]:
         # Opt-in schedule gate — off by default so daily FOMC press
         # items (implementation notes, on-the-record speeches) keep
         # flowing between meeting weeks.
@@ -103,10 +97,7 @@ class FedFOMCFetcher(BaseFetcher):
         parsed = parse_feed(self.source_id, body)
         if not cursor_date:
             return parsed
-        return [
-            it for it in parsed
-            if not it.published_at or it.published_at[:10] > cursor_date
-        ]
+        return [it for it in parsed if not it.published_at or it.published_at[:10] > cursor_date]
 
     async def _fetch_html(self, *, cursor_date: str) -> list[NormalizedItem]:
         async with make_client(timeout=self._timeout_sec) as client:
@@ -155,14 +146,12 @@ class FedFOMCFetcher(BaseFetcher):
         return items
 
     @staticmethod
-    def _parse_html_regex(
-        html: str, *, cursor_date: str = ""
-    ) -> list[NormalizedItem]:
+    def _parse_html_regex(html: str, *, cursor_date: str = "") -> list[NormalizedItem]:
         import re
 
         anchor_re = re.compile(
             r'<a\s+href="(?P<href>[^"]*newsevents/pressreleases[^"]+)"'
-            r'[^>]*>(?P<text>[^<]+)</a>',
+            r"[^>]*>(?P<text>[^<]+)</a>",
             re.IGNORECASE,
         )
         items: list[NormalizedItem] = []

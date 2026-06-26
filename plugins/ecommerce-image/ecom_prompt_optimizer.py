@@ -109,6 +109,7 @@ STYLE_MODIFIERS = {
 # Main optimize function
 # ---------------------------------------------------------------------------
 
+
 async def optimize_prompt(
     brain: Any,
     prompt: str,
@@ -179,7 +180,9 @@ async def enhance_for_batch(
 
         text = result if isinstance(result, str) else getattr(result, "content", str(result))
         lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
-        return lines[:count] if len(lines) >= count else lines + [base_prompt] * (count - len(lines))
+        return (
+            lines[:count] if len(lines) >= count else lines + [base_prompt] * (count - len(lines))
+        )
     except Exception:
         return [base_prompt] * count
 
@@ -365,7 +368,9 @@ async def optimize_video_prompt(
         logger.info("optimize_video_prompt: brain unavailable, returning original prompt")
         return user_prompt
 
-    level_instruction = VIDEO_LEVEL_INSTRUCTIONS.get(level, VIDEO_LEVEL_INSTRUCTIONS["professional"])
+    level_instruction = VIDEO_LEVEL_INSTRUCTIONS.get(
+        level, VIDEO_LEVEL_INSTRUCTIONS["professional"]
+    )
     user_msg = VIDEO_OPTIMIZE_USER_TEMPLATE.format(
         user_prompt=user_prompt,
         mode=mode,
@@ -379,11 +384,14 @@ async def optimize_video_prompt(
     try:
         if hasattr(brain, "think_lightweight"):
             result = await brain.think_lightweight(
-                prompt=user_msg, system=VIDEO_OPTIMIZE_SYSTEM_PROMPT, max_tokens=4096,
+                prompt=user_msg,
+                system=VIDEO_OPTIMIZE_SYSTEM_PROMPT,
+                max_tokens=4096,
             )
         elif hasattr(brain, "think"):
             result = await brain.think(
-                prompt=user_msg, system=VIDEO_OPTIMIZE_SYSTEM_PROMPT,
+                prompt=user_msg,
+                system=VIDEO_OPTIMIZE_SYSTEM_PROMPT,
             )
         else:
             return user_prompt

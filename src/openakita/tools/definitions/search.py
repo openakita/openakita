@@ -46,4 +46,3 @@ SEARCH_TOOLS = [
         },
     },
 ]
-

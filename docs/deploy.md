@@ -240,7 +240,6 @@ ANTHROPIC_API_KEY=sk-your-api-key-here
 | `SILICONFLOW_API_KEY` | | - | SiliconFlow API Key |
 | `LLM_ENDPOINTS_CONFIG` | | `data/llm_endpoints.json` | LLM 端点配置文件路径 |
 | **Agent 配置** | | | |
-| `AGENT_NAME` | | `OpenAkita` | Agent 名称 |
 | `MAX_ITERATIONS` | | `100` | Ralph 循环最大迭代 |
 | `AUTO_CONFIRM` | | `false` | 自动确认危险操作 |
 | `DATABASE_PATH` | | `data/agent.db` | 数据库路径 |

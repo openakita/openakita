@@ -163,7 +163,7 @@ _EXIT_REASON_DISPLAY: dict[str, str] = {
     "ask_user": "等待用户回复",
     "verify_incomplete": "验证未完成",
     # 预算暂停场景：用户对话历史和已有进展都已保留，回复"继续"即可让系统接力完成
-    "budget_paused": "预算暂停（可回复\"继续\"接力）",
+    "budget_paused": '预算暂停（可回复"继续"接力）',
 }
 
 
@@ -196,10 +196,7 @@ class DelegationResult:
             f" | 耗时: {self.elapsed_s}s"
         )
         if self.tools_used:
-            tools_line = (
-                f"工具调用: {len(self.tools_used)} 次"
-                f" ({', '.join(self.tools_used[:8])})"
-            )
+            tools_line = f"工具调用: {len(self.tools_used)} 次 ({', '.join(self.tools_used[:8])})"
         else:
             tools_line = "工具调用: 0 次"
 
@@ -766,9 +763,7 @@ class AgentOrchestrator:
                 try:
                     _re = getattr(agent, "reasoning_engine", None)
                     if _re is not None:
-                        _tokens_used = getattr(
-                            getattr(_re, "_budget", None), "tokens_used", 0
-                        )
+                        _tokens_used = getattr(getattr(_re, "_budget", None), "tokens_used", 0)
                 except Exception:
                     pass
 
@@ -1036,9 +1031,7 @@ class AgentOrchestrator:
                 from openakita.config import settings as _cfg
 
                 _profile = getattr(agent, "_agent_profile", None)
-                _profile_role = (
-                    getattr(_profile, "role", "worker") if _profile else "worker"
-                )
+                _profile_role = getattr(_profile, "role", "worker") if _profile else "worker"
                 _coord_enabled = bool(getattr(_cfg, "coordinator_mode_enabled", False))
                 # Two activation paths for coordinator mode:
                 #
@@ -1176,7 +1169,9 @@ class AgentOrchestrator:
                     elapsed_s=round(time.time() - _start, 2),
                     exit_reason=exit_reason,
                 )
-                return delegation_result.to_tool_response()
+                if is_sub_agent:
+                    return delegation_result.to_tool_response()
+                return _with_budget_guide(delegation_result.text, delegation_result.exit_reason)
             finally:
                 agent._is_sub_agent_call = False
                 _cleanup_sub_agent_resources(agent, session)
@@ -1186,10 +1181,17 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
 
     def _persist_sub_states(self) -> None:
-        """Write _sub_agent_states to disk so they survive restarts."""
+        """Write _sub_agent_states to disk so they survive restarts.
+
+        Uses ``atomic_json_write`` for atomic temp+rename + ``.bak`` backup
+        so kill -9 mid-write can't leave a half-written JSON that would
+        crash next boot.
+        """
         if self._log_dir is None:
             return
         try:
+            from openakita.utils.atomic_io import atomic_json_write
+
             path = self._log_dir.parent / "sub_agent_states.json"
             snapshot = {}
             for key, state in list(self._sub_agent_states.items()):
@@ -1198,27 +1200,34 @@ class AgentOrchestrator:
                     for k, v in state.items()
                     if isinstance(v, (str, int, float, bool, list, dict, type(None)))
                 }
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(snapshot, f, ensure_ascii=False, indent=2, default=str)
+            atomic_json_write(path, snapshot)
         except Exception:
             logger.debug("[Orchestrator] Failed to persist sub-agent states", exc_info=True)
 
     def _load_sub_states(self) -> None:
-        """Load persisted sub-agent states from disk on startup."""
+        """Load persisted sub-agent states from disk on startup.
+
+        Uses ``read_json_safe`` which falls back to the ``.bak`` copy
+        if the primary is corrupted; outer try/except remains as a final
+        safety net.
+        """
         if self._log_dir is None:
             return
         try:
+            from openakita.utils.atomic_io import read_json_safe
+
             path = self._log_dir.parent / "sub_agent_states.json"
-            if path.exists():
-                with open(path, encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    for key, state in data.items():
-                        status = state.get("status", "")
-                        if status in ("running", "starting"):
-                            state["status"] = "interrupted"
-                        self._sub_agent_states[key] = state
-                    logger.info(f"[Orchestrator] Restored {len(data)} sub-agent states from disk")
+            data = read_json_safe(path)
+            if isinstance(data, dict):
+                for key, state in data.items():
+                    status = state.get("status", "")
+                    if status in ("running", "starting"):
+                        state["status"] = "interrupted"
+                    self._sub_agent_states[key] = state
+                logger.info(
+                    "[Orchestrator] Restored %d sub-agent states from disk",
+                    len(data),
+                )
         except Exception:
             logger.debug("[Orchestrator] Failed to load sub-agent states", exc_info=True)
 

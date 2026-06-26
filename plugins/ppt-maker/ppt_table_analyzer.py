@@ -43,10 +43,14 @@ class TableAnalyzer:
             reader = csv.DictReader(handle, delimiter=delimiter)
             if not reader.fieldnames:
                 raise SourceParseError("Table file has no header row")
-            headers = [self._clean_header(name, index) for index, name in enumerate(reader.fieldnames)]
+            headers = [
+                self._clean_header(name, index) for index, name in enumerate(reader.fieldnames)
+            ]
             rows = []
             for index, row in enumerate(reader):
-                rows.append({headers[i]: (row.get(reader.fieldnames[i]) or "") for i in range(len(headers))})
+                rows.append(
+                    {headers[i]: (row.get(reader.fieldnames[i]) or "") for i in range(len(headers))}
+                )
                 if index + 1 >= self.MAX_PROFILE_ROWS:
                     break
         return TableData(headers=headers, rows=rows, source_path=str(path))
@@ -65,7 +69,9 @@ class TableAnalyzer:
         raw_headers = next(rows_iter, None)
         if not raw_headers:
             raise SourceParseError("Workbook has no header row")
-        headers = [self._clean_header(str(name or ""), index) for index, name in enumerate(raw_headers)]
+        headers = [
+            self._clean_header(str(name or ""), index) for index, name in enumerate(raw_headers)
+        ]
         rows = []
         for index, row in enumerate(rows_iter):
             values = list(row)
@@ -98,14 +104,20 @@ class TableAnalyzer:
             "quality_warnings": warnings,
         }
 
-    def chart_specs(self, profile: dict[str, Any], table: TableData | None = None) -> list[dict[str, Any]]:
+    def chart_specs(
+        self, profile: dict[str, Any], table: TableData | None = None
+    ) -> list[dict[str, Any]]:
         metrics = profile.get("candidate_metrics", [])
         dimensions = profile.get("candidate_dimensions", [])
         specs: list[dict[str, Any]] = []
         if metrics and dimensions:
             first_metric = metrics[0]
             first_dimension = dimensions[0]
-            chart_type = ChartType.LINE.value if first_dimension in profile.get("date_columns", []) else ChartType.BAR.value
+            chart_type = (
+                ChartType.LINE.value
+                if first_dimension in profile.get("date_columns", [])
+                else ChartType.BAR.value
+            )
             categories, values = self._series_from_table(table, first_dimension, first_metric)
             specs.append(
                 {
@@ -157,7 +169,9 @@ class TableAnalyzer:
             )
         return specs
 
-    def insights(self, profile: dict[str, Any], chart_specs: list[dict[str, Any]]) -> dict[str, Any]:
+    def insights(
+        self, profile: dict[str, Any], chart_specs: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         row_count = profile.get("row_count", 0)
         column_count = profile.get("column_count", 0)
         metrics = profile.get("candidate_metrics", [])
@@ -187,8 +201,12 @@ class TableAnalyzer:
         insights_path = out / "insights.json"
         chart_specs_path = out / "chart_specs.json"
         profile_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
-        insights_path.write_text(json.dumps(insights, ensure_ascii=False, indent=2), encoding="utf-8")
-        chart_specs_path.write_text(json.dumps(charts, ensure_ascii=False, indent=2), encoding="utf-8")
+        insights_path.write_text(
+            json.dumps(insights, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        chart_specs_path.write_text(
+            json.dumps(charts, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         return {
             "profile": profile,
             "insights": insights,
@@ -205,7 +223,9 @@ class TableAnalyzer:
         non_empty = [value for value in values if value != ""]
         inferred = self._infer_type(non_empty)
         numeric_values = [self._to_float(value) for value in non_empty]
-        numeric_values = [value for value in numeric_values if value is not None and math.isfinite(value)]
+        numeric_values = [
+            value for value in numeric_values if value is not None and math.isfinite(value)
+        ]
         counter = Counter(non_empty)
         profile: dict[str, Any] = {
             "name": header,
@@ -231,7 +251,9 @@ class TableAnalyzer:
         sample = values[:100]
         number_hits = sum(1 for value in sample if self._to_float(value) is not None)
         date_hits = sum(1 for value in sample if self._to_date(value) is not None)
-        bool_hits = sum(1 for value in sample if value.lower() in {"true", "false", "yes", "no", "是", "否"})
+        bool_hits = sum(
+            1 for value in sample if value.lower() in {"true", "false", "yes", "no", "是", "否"}
+        )
         threshold = max(1, int(len(sample) * 0.8))
         if number_hits >= threshold:
             return ColumnType.NUMBER
@@ -325,8 +347,9 @@ class TableAnalyzer:
         return cards
 
     @staticmethod
-    def _table_rows(table: TableData | None, columns: list[str], *, limit: int = 8) -> list[list[str]]:
+    def _table_rows(
+        table: TableData | None, columns: list[str], *, limit: int = 8
+    ) -> list[list[str]]:
         if table is None or not columns:
             return []
         return [[str(row.get(column, "")) for column in columns] for row in table.rows[:limit]]
-

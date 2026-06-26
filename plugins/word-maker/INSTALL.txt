@@ -1,0 +1,35 @@
+﻿Word Maker 鎻掍欢瀹夎璇存槑锛圵indows锛?
+================================
+
+鏈帇缂╁寘涓?OpenAkita 鎻掍欢锛屼笉鑳界嫭绔嬭繍琛屻€?
+
+1. 鐜瑕佹眰
+   - OpenAkita >= 1.27.0
+   - Python >= 3.11锛堥€氬父鐢?OpenAkita 鎻愪緵锛?
+   - 蹇呴渶渚濊禆锛歱ython-docx銆乤iosqlite
+   - 鎺ㄨ崘渚濊禆锛歞ocxtpl
+
+2. 瀹夎姝ラ
+   a) 瑙ｅ帇鍒?OpenAkita 鎻掍欢鐩綍锛屼緥濡傦細
+      %USERPROFILE%\.openakita\workspaces\default\data\plugins\word-maker
+
+   b) 鍦?OpenAkita 浣跨敤鐨?Python 鐜瀹夎渚濊禆锛?
+      pip install -r requirements.txt
+
+   c) 鍦?OpenAkita 涓惎鐢?word-maker 鎻掍欢
+
+   d) 鎵撳紑鎻掍欢 UI -> 璁剧疆 -> 妫€娴嬩緷璧栵紝纭鏍稿績椤瑰彲鐢?
+
+3. AI 鍔熻兘锛堝彲閫夛級
+   - 闇€瑕佹彃浠跺叿澶?brain.access 鏉冮檺
+   - 闇€瑕佸湪 OpenAkita 涓厤缃彲鐢?LLM 绔偣
+   - 鏈厤缃椂浠嶅彲鎵嬪姩濉啓瀛楁骞剁敓鎴?DOCX
+
+4. 鍙€夎兘鍔?
+   - openpyxl锛氳В鏋?xlsx 璧勬枡
+   - pypdf锛氳В鏋?pdf 璧勬枡
+   - python-pptx锛氳В鏋?pptx 璧勬枡
+
+5. 楠岃瘉
+   - 鎵撳紑鍚戝锛屽垱寤洪」鐩苟鐢熸垚 document.docx
+   - 鑻ヤ緷璧栫己澶憋紝璇锋煡鐪嬭缃〉 dependency_report 鎻愮ず

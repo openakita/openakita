@@ -41,9 +41,7 @@ def test_extract_unbacked_still_flags_fresh_unverified_claims():
 
 def test_guard_passes_recap_text_through_unchanged():
     text = (
-        "根据对话历史：\n"
-        "- [17:26] 我已为你保存了项目代号 SEAGULL\n"
-        "- [17:31] 我已记住你居住在重庆\n"
+        "根据对话历史：\n- [17:26] 我已为你保存了项目代号 SEAGULL\n- [17:31] 我已记住你居住在重庆\n"
     )
     out = _guard_unbacked_action_claim(text, executed_tool_names=[], tool_results=None)
     assert out == text, "Pure historical recap must round-trip without warning."

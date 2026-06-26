@@ -24,96 +24,262 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "memory" / "openakit
 
 TESTS = [
     # ── Group 1: Baseline ──
-    {"id": 1, "name": "简单问候", "message": "你好呀", "conv": None,
-     "expect_no_memory_tool": True, "desc": "不应触发记忆搜索"},
-    {"id": 2, "name": "数学问题", "message": "3的5次方等于多少", "conv": None,
-     "expect_no_memory_tool": True, "desc": "纯计算不应搜索记忆"},
-
+    {
+        "id": 1,
+        "name": "简单问候",
+        "message": "你好呀",
+        "conv": None,
+        "expect_no_memory_tool": True,
+        "desc": "不应触发记忆搜索",
+    },
+    {
+        "id": 2,
+        "name": "数学问题",
+        "message": "3的5次方等于多少",
+        "conv": None,
+        "expect_no_memory_tool": True,
+        "desc": "纯计算不应搜索记忆",
+    },
     # ── Group 2: 设定规则 (persona_trait 去重测试) ──
-    {"id": 3, "name": "设定称呼A", "message": "以后叫我老铁", "conv": None,
-     "desc": "设定称呼，写入 persona_trait"},
-    {"id": 4, "name": "覆盖称呼B", "message": "不对，叫我老板比较好", "conv": None,
-     "desc": "覆盖称呼，验证不产生重复 persona_trait"},
-    {"id": 5, "name": "覆盖称呼C", "message": "还是叫我大佬吧", "conv": None,
-     "desc": "再次覆盖称呼，验证 address_style 始终只有一条"},
-    {"id": 6, "name": "设定语气规则", "message": "回复我的时候语气轻松一点，不要太正式", "conv": None,
-     "desc": "设定 formality 偏好"},
-    {"id": 7, "name": "验证称呼记忆", "message": "你应该怎么称呼我？", "conv": None,
-     "expect_keywords": ["大佬"], "desc": "验证最新称呼是否生效"},
-
+    {
+        "id": 3,
+        "name": "设定称呼A",
+        "message": "以后叫我老铁",
+        "conv": None,
+        "desc": "设定称呼，写入 persona_trait",
+    },
+    {
+        "id": 4,
+        "name": "覆盖称呼B",
+        "message": "不对，叫我老板比较好",
+        "conv": None,
+        "desc": "覆盖称呼，验证不产生重复 persona_trait",
+    },
+    {
+        "id": 5,
+        "name": "覆盖称呼C",
+        "message": "还是叫我大佬吧",
+        "conv": None,
+        "desc": "再次覆盖称呼，验证 address_style 始终只有一条",
+    },
+    {
+        "id": 6,
+        "name": "设定语气规则",
+        "message": "回复我的时候语气轻松一点，不要太正式",
+        "conv": None,
+        "desc": "设定 formality 偏好",
+    },
+    {
+        "id": 7,
+        "name": "验证称呼记忆",
+        "message": "你应该怎么称呼我？",
+        "conv": None,
+        "expect_keywords": ["大佬"],
+        "desc": "验证最新称呼是否生效",
+    },
     # ── Group 3: 任务切换 ──
-    {"id": 8, "name": "写代码", "message": "写一个 JavaScript 函数判断回文字符串", "conv": None,
-     "expect_keywords": ["function"], "desc": "代码生成"},
-    {"id": 9, "name": "翻译中->英", "message": "翻译成英文：人工智能正在改变世界", "conv": None,
-     "expect_keywords": ["intelligence", "world"], "desc": "翻译任务"},
-    {"id": 10, "name": "翻译英->中", "message": "Translate to Chinese: The quick brown fox jumps over the lazy dog", "conv": None,
-     "desc": "反向翻译"},
-
+    {
+        "id": 8,
+        "name": "写代码",
+        "message": "写一个 JavaScript 函数判断回文字符串",
+        "conv": None,
+        "expect_keywords": ["function"],
+        "desc": "代码生成",
+    },
+    {
+        "id": 9,
+        "name": "翻译中->英",
+        "message": "翻译成英文：人工智能正在改变世界",
+        "conv": None,
+        "expect_keywords": ["intelligence", "world"],
+        "desc": "翻译任务",
+    },
+    {
+        "id": 10,
+        "name": "翻译英->中",
+        "message": "Translate to Chinese: The quick brown fox jumps over the lazy dog",
+        "conv": None,
+        "desc": "反向翻译",
+    },
     # ── Group 4: 多轮对话 (同一会话) ──
-    {"id": 11, "name": "开始项目讨论", "message": "我想做一个个人博客系统，用什么技术栈好？", "conv": None,
-     "group": "blog", "desc": "启动多轮讨论"},
-    {"id": 12, "name": "追问前端", "message": "前端用 React 还是 Vue？", "conv": "SAME",
-     "group": "blog", "desc": "同会话追问"},
-    {"id": 13, "name": "追问部署", "message": "部署到哪里比较好？", "conv": "SAME",
-     "group": "blog", "desc": "同会话继续"},
-    {"id": 14, "name": "话题切换", "message": "对了，明天天气怎么样？", "conv": "SAME",
-     "group": "blog", "desc": "同会话切换话题"},
-
+    {
+        "id": 11,
+        "name": "开始项目讨论",
+        "message": "我想做一个个人博客系统，用什么技术栈好？",
+        "conv": None,
+        "group": "blog",
+        "desc": "启动多轮讨论",
+    },
+    {
+        "id": 12,
+        "name": "追问前端",
+        "message": "前端用 React 还是 Vue？",
+        "conv": "SAME",
+        "group": "blog",
+        "desc": "同会话追问",
+    },
+    {
+        "id": 13,
+        "name": "追问部署",
+        "message": "部署到哪里比较好？",
+        "conv": "SAME",
+        "group": "blog",
+        "desc": "同会话继续",
+    },
+    {
+        "id": 14,
+        "name": "话题切换",
+        "message": "对了，明天天气怎么样？",
+        "conv": "SAME",
+        "group": "blog",
+        "desc": "同会话切换话题",
+    },
     # ── Group 5: 浏览器任务 ──
-    {"id": 15, "name": "浏览器打开", "message": "用浏览器打开 https://www.bing.com 然后截图", "conv": None,
-     "expect_tool": "browser", "desc": "基础浏览器操作"},
-    {"id": 16, "name": "浏览器搜索", "message": "在bing上搜索 artificial intelligence 然后截图", "conv": None,
-     "expect_tool": "browser", "desc": "浏览器搜索"},
-
+    {
+        "id": 15,
+        "name": "浏览器打开",
+        "message": "用浏览器打开 https://www.bing.com 然后截图",
+        "conv": None,
+        "expect_tool": "browser",
+        "desc": "基础浏览器操作",
+    },
+    {
+        "id": 16,
+        "name": "浏览器搜索",
+        "message": "在bing上搜索 artificial intelligence 然后截图",
+        "conv": None,
+        "expect_tool": "browser",
+        "desc": "浏览器搜索",
+    },
     # ── Group 6: Shell/文件 ──
-    {"id": 17, "name": "Shell 执行", "message": "查一下当前目录下有哪些 .py 文件", "conv": None,
-     "expect_tool": "run_shell", "desc": "Shell 命令"},
-    {"id": 18, "name": "文件写入", "message": "在 data/temp/ 下创建 test_v2.txt，内容写「E2E 测试 v2」", "conv": None,
-     "expect_tool": "write_file", "desc": "文件写入"},
-    {"id": 19, "name": "文件读取", "message": "读取 data/temp/test_v2.txt 的内容", "conv": None,
-     "expect_tool": "read_file", "desc": "文件读取验证"},
-
+    {
+        "id": 17,
+        "name": "Shell 执行",
+        "message": "查一下当前目录下有哪些 .py 文件",
+        "conv": None,
+        "expect_tool": "run_shell",
+        "desc": "Shell 命令",
+    },
+    {
+        "id": 18,
+        "name": "文件写入",
+        "message": "在 data/temp/ 下创建 test_v2.txt，内容写「E2E 测试 v2」",
+        "conv": None,
+        "expect_tool": "write_file",
+        "desc": "文件写入",
+    },
+    {
+        "id": 19,
+        "name": "文件读取",
+        "message": "读取 data/temp/test_v2.txt 的内容",
+        "conv": None,
+        "expect_tool": "read_file",
+        "desc": "文件读取验证",
+    },
     # ── Group 7: 记忆设定与召回 ──
-    {"id": 20, "name": "设定事实", "message": "记住，我的项目代号是 Project-Phoenix", "conv": None,
-     "desc": "设定新的事实信息"},
-    {"id": 21, "name": "设定偏好", "message": "我不喜欢用 Java，更喜欢 Python 和 Go", "conv": None,
-     "desc": "设定编程语言偏好"},
-    {"id": 22, "name": "召回事实", "message": "我的项目代号是什么？", "conv": None,
-     "desc": "验证事实记忆召回"},
-    {"id": 23, "name": "召回偏好", "message": "我喜欢什么编程语言？", "conv": None,
-     "desc": "验证偏好记忆召回"},
-
+    {
+        "id": 20,
+        "name": "设定事实",
+        "message": "记住，我的项目代号是 Project-Phoenix",
+        "conv": None,
+        "desc": "设定新的事实信息",
+    },
+    {
+        "id": 21,
+        "name": "设定偏好",
+        "message": "我不喜欢用 Java，更喜欢 Python 和 Go",
+        "conv": None,
+        "desc": "设定编程语言偏好",
+    },
+    {
+        "id": 22,
+        "name": "召回事实",
+        "message": "我的项目代号是什么？",
+        "conv": None,
+        "desc": "验证事实记忆召回",
+    },
+    {
+        "id": 23,
+        "name": "召回偏好",
+        "message": "我喜欢什么编程语言？",
+        "conv": None,
+        "desc": "验证偏好记忆召回",
+    },
     # ── Group 8: 知识问答 (不触发记忆) ──
-    {"id": 24, "name": "科学问题", "message": "光速是多少？", "conv": None,
-     "expect_no_memory_tool": True, "desc": "科学问答不搜记忆"},
-    {"id": 25, "name": "常识问题", "message": "地球到月球的距离大约是多少？", "conv": None,
-     "expect_no_memory_tool": True, "desc": "常识不搜记忆"},
-
+    {
+        "id": 24,
+        "name": "科学问题",
+        "message": "光速是多少？",
+        "conv": None,
+        "expect_no_memory_tool": True,
+        "desc": "科学问答不搜记忆",
+    },
+    {
+        "id": 25,
+        "name": "常识问题",
+        "message": "地球到月球的距离大约是多少？",
+        "conv": None,
+        "expect_no_memory_tool": True,
+        "desc": "常识不搜记忆",
+    },
     # ── Group 9: 复杂任务 ──
-    {"id": 26, "name": "多步骤任务", "message": "做两件事：1. 查看当前时间 2. 把时间写入 data/temp/timestamp.txt", "conv": None,
-     "desc": "多步骤复合任务"},
-    {"id": 27, "name": "代码解释", "message": "解释一下这段代码: sorted(set(x**2 for x in range(10) if x%2==0))", "conv": None,
-     "desc": "代码解释任务"},
-
+    {
+        "id": 26,
+        "name": "多步骤任务",
+        "message": "做两件事：1. 查看当前时间 2. 把时间写入 data/temp/timestamp.txt",
+        "conv": None,
+        "desc": "多步骤复合任务",
+    },
+    {
+        "id": 27,
+        "name": "代码解释",
+        "message": "解释一下这段代码: sorted(set(x**2 for x in range(10) if x%2==0))",
+        "conv": None,
+        "desc": "代码解释任务",
+    },
     # ── Group 10: 最终验证 ──
-    {"id": 28, "name": "历史回顾", "message": "我之前让你做过什么？", "conv": None,
-     "desc": "历史任务召回"},
-    {"id": 29, "name": "规则验证", "message": "你记得我给你设置过哪些规则吗？", "conv": None,
-     "desc": "规则记忆验证"},
-    {"id": 30, "name": "称呼最终验证", "message": "你该怎么称呼我？快说", "conv": None,
-     "expect_keywords": ["大佬"], "desc": "最终称呼验证，不应回答老铁或老板"},
+    {
+        "id": 28,
+        "name": "历史回顾",
+        "message": "我之前让你做过什么？",
+        "conv": None,
+        "desc": "历史任务召回",
+    },
+    {
+        "id": 29,
+        "name": "规则验证",
+        "message": "你记得我给你设置过哪些规则吗？",
+        "conv": None,
+        "desc": "规则记忆验证",
+    },
+    {
+        "id": 30,
+        "name": "称呼最终验证",
+        "message": "你该怎么称呼我？快说",
+        "conv": None,
+        "expect_keywords": ["大佬"],
+        "desc": "最终称呼验证，不应回答老铁或老板",
+    },
 ]
 
 
 def send_chat(message: str, conversation_id: str | None = None) -> dict:
     payload = json.dumps({"message": message, "conversation_id": conversation_id}).encode("utf-8")
     req = urllib.request.Request(
-        f"{API_BASE}/api/chat", data=payload,
-        headers={"Content-Type": "application/json"}, method="POST",
+        f"{API_BASE}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
-    result = {"full_text": "", "tools_called": [], "thinking": "",
-              "conversation_id": conversation_id, "error": None,
-              "iterations": 0, "usage": {}}
+    result = {
+        "full_text": "",
+        "tools_called": [],
+        "thinking": "",
+        "conversation_id": conversation_id,
+        "error": None,
+        "iterations": 0,
+        "usage": {},
+    }
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             for raw_line in resp:
@@ -294,17 +460,25 @@ def main():
         status = "PASS" if verdict["pass"] else "FAIL"
         warn = " (WARN)" if verdict["issues"] and verdict["pass"] else ""
 
-        print(f"  [{status}{warn}] {elapsed:.1f}s | {result['iterations']} iters | tools: {tools[:5]}")
+        print(
+            f"  [{status}{warn}] {elapsed:.1f}s | {result['iterations']} iters | tools: {tools[:5]}"
+        )
         if result["full_text"]:
             print(f"  回复: {result['full_text'][:100].replace(chr(10), ' ')}...")
         for issue in verdict["issues"]:
             print(f"  ! {issue}")
         print()
 
-        results.append({
-            "id": test["id"], "name": test["name"], "elapsed": round(elapsed, 2),
-            "verdict": status, "issues": verdict["issues"], "usage": result["usage"],
-        })
+        results.append(
+            {
+                "id": test["id"],
+                "name": test["name"],
+                "elapsed": round(elapsed, 2),
+                "verdict": status,
+                "issues": verdict["issues"],
+                "usage": result["usage"],
+            }
+        )
 
         if i < len(TESTS) - 1:
             time.sleep(DELAY)
@@ -334,12 +508,24 @@ def main():
     report_path = Path("data/temp/e2e_v2_report.json")
     report_path.parent.mkdir(parents=True, exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as f:
-        json.dump({
-            "timestamp": datetime.now().isoformat(),
-            "summary": {"total": len(results), "passed": passed, "failed": failed, "warned": warned},
-            "total_tokens": total_tokens, "total_time": round(total_time, 2),
-            "results": results, "sqlite_issues": sqlite_issues,
-        }, f, ensure_ascii=False, indent=2)
+        json.dump(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "summary": {
+                    "total": len(results),
+                    "passed": passed,
+                    "failed": failed,
+                    "warned": warned,
+                },
+                "total_tokens": total_tokens,
+                "total_time": round(total_time, 2),
+                "results": results,
+                "sqlite_issues": sqlite_issues,
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
     print(f"\n  报告: {report_path}")
 
 

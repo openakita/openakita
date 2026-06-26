@@ -41,9 +41,9 @@ class TestDefaultsContainExpectedEntries:
     def test_default_forbidden_paths_contains_system_dirs(self) -> None:
         paths = [p.lower() for p in default_forbidden_paths()]
         blob = "|".join(paths)
-        assert any(
-            k in blob for k in ("windows", "system32", "/etc/", "/sys/", "/proc/")
-        ), "forbidden 必须涵盖系统目录"
+        assert any(k in blob for k in ("windows", "system32", "/etc/", "/sys/", "/proc/")), (
+            "forbidden 必须涵盖系统目录"
+        )
 
     def test_default_controlled_paths_contains_user_dirs(self) -> None:
         paths = [p.lower() for p in default_controlled_paths()]
@@ -153,9 +153,7 @@ class TestSubsystemsReadV2Config:
 
         custom_dir = str(tmp_path / "snapshots")
         cfg = PolicyConfigV2(
-            checkpoint=CheckpointConfig(
-                enabled=True, snapshot_dir=custom_dir, max_snapshots=42
-            ),
+            checkpoint=CheckpointConfig(enabled=True, snapshot_dir=custom_dir, max_snapshots=42),
         )
 
         import openakita.core.checkpoint as ck_mod
@@ -210,7 +208,14 @@ class TestConfigPyDoesNotImportV1Internals:
     def test_no_default_paths_import(self) -> None:
         from pathlib import Path
 
-        path = Path(__file__).parent.parent.parent / "src" / "openakita" / "api" / "routes" / "config.py"
+        path = (
+            Path(__file__).parent.parent.parent
+            / "src"
+            / "openakita"
+            / "api"
+            / "routes"
+            / "config.py"
+        )
         text = path.read_text(encoding="utf-8")
         assert "_default_protected_paths" not in text, (
             "config.py 仍 import _default_protected_paths（v1 私有），"
@@ -223,7 +228,14 @@ class TestConfigPyDoesNotImportV1Internals:
     def test_no_reset_policy_engine_import(self) -> None:
         from pathlib import Path
 
-        path = Path(__file__).parent.parent.parent / "src" / "openakita" / "api" / "routes" / "config.py"
+        path = (
+            Path(__file__).parent.parent.parent
+            / "src"
+            / "openakita"
+            / "api"
+            / "routes"
+            / "config.py"
+        )
         text = path.read_text(encoding="utf-8")
         assert "reset_policy_engine" not in text, (
             "config.py 仍 import reset_policy_engine（v1）；"

@@ -102,12 +102,9 @@ class TestPluginManifestNewFields:
 def _write_plugin(tmp: Path, plugin_id: str, manifest: dict) -> Path:
     plugin_dir = tmp / plugin_id
     plugin_dir.mkdir(parents=True, exist_ok=True)
-    (plugin_dir / "plugin.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (plugin_dir / "plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
     (plugin_dir / "plugin.py").write_text(
-        "from openakita_plugin_sdk import PluginBase\n"
-        "class Plugin(PluginBase):\n    pass\n",
+        "from openakita_plugin_sdk import PluginBase\nclass Plugin(PluginBase):\n    pass\n",
         encoding="utf-8",
     )
     return plugin_dir
@@ -219,9 +216,7 @@ class TestPluginManagerGetToolClass:
         )
         with caplog.at_level("WARNING", logger="openakita.plugins.manager"):
             assert manager.get_tool_class("my_tool") is None
-        assert any(
-            "unknown approval_class" in rec.message for rec in caplog.records
-        )
+        assert any("unknown approval_class" in rec.message for rec in caplog.records)
 
     def test_disabled_plugin_excluded(self, tmp_plugins_dir):
         manager = self._make_manager_with_plugins(

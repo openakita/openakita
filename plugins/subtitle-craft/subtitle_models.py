@@ -719,4 +719,3 @@ def map_vendor_kind_to_error_kind(vendor_kind: str) -> str:
         "unknown": "unknown",
     }
     return mapping.get(vendor_kind, "unknown")
-

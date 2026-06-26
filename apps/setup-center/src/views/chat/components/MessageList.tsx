@@ -1,10 +1,14 @@
 import { useRef, useCallback, useEffect, useLayoutEffect, useMemo, useState, forwardRef, useImperativeHandle } from "react";
+import { useTranslation } from "react-i18next";
 import type { ChatMessage, MdModules, ChatDisplayMode } from "../utils/chatTypes";
 import { MessageBubble } from "./MessageBubble";
 import { FlatMessageItem } from "./FlatMessageItem";
+import { IconChevronDown } from "../../../icons";
 
 const CHAT_RENDER_MESSAGE_LIMIT = 100;
 const CHAT_RENDER_CHAR_BUDGET = 240_000;
+/** Distance (px) from the bottom within which we treat the viewport as "at bottom". */
+const AT_BOTTOM_PX = 40;
 
 function cappedAdd(total: number, amount: number, limit: number) {
   return Math.min(limit, total + Math.max(0, amount));
@@ -26,7 +30,7 @@ function estimateUnknownChars(value: unknown, limit: number, depth = 0): number 
   }
 
   const record = value as Record<string, unknown>;
-  for (const key of ["content", "thinking", "thinkingChain", "toolCalls", "todo", "artifacts", "sources", "mcpCalls", "result", "args", "entries"] as const) {
+  for (const key of ["content", "thinking", "thinkingChain", "toolCalls", "todo", "artifacts", "sources", "mcpCalls", "parts", "result", "args", "entries"] as const) {
     chars = cappedAdd(chars, estimateUnknownChars(record[key], limit - chars, depth + 1), limit);
     if (chars >= limit) break;
   }
@@ -68,11 +72,11 @@ function resolveRenderStartIndex(messages: ChatMessage[]): number {
 export interface MessageListHandle {
   scrollToIndex: (index: number, align?: "start" | "center" | "end") => void;
   scrollToBottom: (behavior?: "auto" | "smooth") => void;
-  /** Keep followOutput returning true until cancelFollow is called, even if user scrolled up. */
+  /** Force a one-shot snap to the bottom and re-arm sticky-bottom (call on user send). */
   forceFollow: () => void;
-  /** Stop forced following (call when streaming ends). */
+  /** Clear the pending one-shot snap (call when streaming ends). */
   cancelFollow: () => void;
-  /** Whether the user is currently scrolled to the bottom. */
+  /** Whether the viewport is currently stuck to the bottom. */
   isAtBottom: () => boolean;
   /** Save current scroll position — call before mutating messages while user is scrolled up. */
   saveScrollPosition: () => void;
@@ -104,6 +108,8 @@ export interface MessageListProps {
   onLoadOlder?: () => void;
   hasMoreBefore?: boolean;
   loadingOlder?: boolean;
+  /** Reports the user message currently anchored near the top of the viewport (drives the outline active state). */
+  onActiveUserMessageChange?: (msgId: string | null) => void;
 }
 
 function applySearchHighlights(container: HTMLElement, query: string) {
@@ -155,18 +161,37 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     onLoadOlder,
     hasMoreBefore = false,
     loadingOlder = false,
+    onActiveUserMessageChange,
   },
   ref,
 ) {
+  const { t } = useTranslation();
   const scrollerElRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef(new Map<string, HTMLDivElement>());
-  const forceFollowRef = useRef(false);
-  const atBottomRef = useRef(true);
+  // Unified sticky-bottom state machine (replaces the old forceFollow||atBottom OR):
+  //   stickToBottomRef — follow new content; cleared on user scroll-up, re-armed at bottom.
+  //   forceSnapRef     — one-shot: snap to bottom on next layout even if not sticky (user send).
+  //   programmaticPinRef — guard counter so scroll events WE cause (pinning) are not
+  //                        misread as the user scrolling up during same-frame growth.
+  const stickToBottomRef = useRef(true);
+  const forceSnapRef = useRef(false);
+  const programmaticPinRef = useRef(0);
+  const lastTopRef = useRef(0);
+  const lastHeightRef = useRef(0);
+  const lastClientHeightRef = useRef(0);
+  const scrolledUpRef = useRef(false);
+  const [scrolledUp, setScrolledUp] = useState(false);
   const savedScrollPositionRef = useRef<{ top: number; height: number } | null>(null);
   const pendingScrollRef = useRef<{ id: string; align: "start" | "center" | "end" } | null>(null);
   const [renderAllMessages, setRenderAllMessages] = useState(false);
   const searchActive = Boolean(searchHighlight?.trim());
+
+  const setScrolledUpState = useCallback((v: boolean) => {
+    if (scrolledUpRef.current === v) return;
+    scrolledUpRef.current = v;
+    setScrolledUp(v);
+  }, []);
 
   const renderWindow = useMemo(() => {
     if (renderAllMessages || searchActive) {
@@ -186,7 +211,13 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     // re-visit doesn't trigger an unrequested scroll if the same msg id is
     // still reachable. itemRefs are torn down by the unmount cycle anyway.
     pendingScrollRef.current = null;
-  }, [conversationId]);
+    // Fresh conversation starts armed at the bottom; clear any leftover
+    // scrolled-up state / pin guard from the previous one.
+    stickToBottomRef.current = true;
+    forceSnapRef.current = false;
+    programmaticPinRef.current = 0;
+    setScrolledUpState(false);
+  }, [conversationId, setScrolledUpState]);
 
   // Consume any pending scroll target queued by scrollToIndex while the
   // target was hidden by the render budget. We run on every renderWindow
@@ -203,20 +234,37 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     pendingScrollRef.current = null;
   }, [renderWindow]);
 
-  const emitAtBottomChange = useCallback((atBottom: boolean) => {
-    atBottomRef.current = atBottom;
-    onAtBottomChange?.(atBottom);
-  }, [onAtBottomChange]);
-
   const computeAtBottom = useCallback(() => {
     const el = scrollerElRef.current;
     if (!el) return true;
-    return el.scrollHeight - el.scrollTop - el.clientHeight <= 80;
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_PX;
   }, []);
 
-  const syncAtBottomState = useCallback(() => {
-    emitAtBottomChange(computeAtBottom());
-  }, [computeAtBottom, emitAtBottomChange]);
+  const recordScrollMetrics = useCallback(() => {
+    const el = scrollerElRef.current;
+    if (!el) return;
+    lastTopRef.current = el.scrollTop;
+    lastHeightRef.current = el.scrollHeight;
+    lastClientHeightRef.current = el.clientHeight;
+  }, []);
+
+  // Pin the viewport to the bottom. Arms the programmatic-scroll guard so the
+  // resulting scroll event is not misread as the user scrolling up.
+  const pinToBottom = useCallback(() => {
+    const el = scrollerElRef.current;
+    if (!el) return;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (dist <= AT_BOTTOM_PX) {
+      // Already parked: writing scrollTop is a no-op and fires NO scroll event,
+      // so do not arm the guard (it would never drain and would later swallow a
+      // genuine user scroll-up). Just refresh the metric baseline.
+      recordScrollMetrics();
+      return;
+    }
+    programmaticPinRef.current = 1;
+    el.scrollTop = el.scrollHeight;
+    recordScrollMetrics();
+  }, [recordScrollMetrics]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -239,10 +287,14 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
   const scrollToAbsoluteBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const el = scrollerElRef.current;
-    if (el) {
-      el.scrollTo({ top: el.scrollHeight, behavior });
-    }
-  }, []);
+    if (!el) return;
+    // Instant scrolls fire a single synchronous scroll event we must claim as
+    // ours. Smooth scrolls fire a burst we cannot reliably count, so we do not
+    // guard them; callers use "auto" on the hot paths (send / conv switch).
+    if (behavior === "auto") programmaticPinRef.current = 1;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+    recordScrollMetrics();
+  }, [recordScrollMetrics]);
 
   useImperativeHandle(ref, () => ({
     scrollToIndex: (index: number, align: "start" | "center" | "end" = "center") => {
@@ -268,13 +320,19 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       }
       onLoadOlder?.();
     },
-    scrollToBottom: scrollToAbsoluteBottom,
-    forceFollow: () => {
-      forceFollowRef.current = true;
-      requestAnimationFrame(() => scrollToAbsoluteBottom());
+    scrollToBottom: (behavior?: "auto" | "smooth") => {
+      stickToBottomRef.current = true;
+      setScrolledUpState(false);
+      scrollToAbsoluteBottom(behavior);
     },
-    cancelFollow: () => { forceFollowRef.current = false; },
-    isAtBottom: () => atBottomRef.current,
+    forceFollow: () => {
+      forceSnapRef.current = true;
+      stickToBottomRef.current = true;
+      setScrolledUpState(false);
+      requestAnimationFrame(() => pinToBottom());
+    },
+    cancelFollow: () => { forceSnapRef.current = false; },
+    isAtBottom: () => stickToBottomRef.current,
     saveScrollPosition: () => {
       const el = scrollerElRef.current;
       if (el) savedScrollPositionRef.current = { top: el.scrollTop, height: el.scrollHeight };
@@ -285,14 +343,18 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
         const prev = savedScrollPositionRef.current;
         el.scrollTop = prev.top + (el.scrollHeight - prev.height);
         savedScrollPositionRef.current = null;
-        syncAtBottomState();
+        // History was prepended above the fold: refresh the metric baseline so
+        // the next scroll event sees the grown height and does not misread this
+        // restore as a user scroll-up. Do not re-arm follow.
+        recordScrollMetrics();
+        onAtBottomChange?.(computeAtBottom());
       }
     },
-  }), [messages, renderWindow.startIndex, onLoadOlder, scrollToAbsoluteBottom, syncAtBottomState]);
+  }), [messages, renderWindow.startIndex, onLoadOlder, scrollToAbsoluteBottom, pinToBottom, recordScrollMetrics, computeAtBottom, onAtBottomChange, setScrolledUpState]);
 
   useEffect(() => {
     if (!isStreaming) {
-      forceFollowRef.current = false;
+      forceSnapRef.current = false;
     }
   }, [isStreaming]);
 
@@ -300,34 +362,120 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     const el = scrollerElRef.current;
     if (!el) return;
 
-    const onScroll = () => {
-      syncAtBottomState();
+    // Authoritative user-intent signals: a wheel-up or any touch-drag means the
+    // user wants to read above the fold, so stop following immediately — before
+    // the resulting scroll event is even processed.
+    const disarm = () => {
+      stickToBottomRef.current = false;
+      programmaticPinRef.current = 0;
+      setScrolledUpState(true);
     };
 
-    el.addEventListener("scroll", onScroll, { passive: true });
-    syncAtBottomState();
-    return () => el.removeEventListener("scroll", onScroll);
-  }, [syncAtBottomState]);
+    const onScroll = () => {
+      const el2 = scrollerElRef.current;
+      if (!el2) return;
+      const top = el2.scrollTop;
 
-  useLayoutEffect(() => {
-    if (forceFollowRef.current || atBottomRef.current) {
-      scrollToAbsoluteBottom();
-      emitAtBottomChange(true);
+      // A scroll event we caused by pinning: keep following and treat a
+      // same-frame content-growth clamp as ours, not as a user scroll-up.
+      if (programmaticPinRef.current > 0) {
+        programmaticPinRef.current -= 1;
+        recordScrollMetrics();
+        stickToBottomRef.current = true;
+        const atBottomNow = el2.scrollHeight - top - el2.clientHeight <= AT_BOTTOM_PX;
+        if (atBottomNow) setScrolledUpState(false);
+        onAtBottomChange?.(atBottomNow);
+        return;
+      }
+
+      // Only a scrollTop *decrease* with an otherwise stable layout is a real
+      // user scroll-up. History prepend, streaming markdown growth, and
+      // composer/viewport resizes move scrollTop as a side effect and must not
+      // disarm follow (wheel/touch already cover genuine intent above).
+      const heightGrew = el2.scrollHeight > lastHeightRef.current;
+      const clientChanged = Math.abs(el2.clientHeight - lastClientHeightRef.current) > 1;
+      if (!heightGrew && !clientChanged && top + 1 < lastTopRef.current) {
+        stickToBottomRef.current = false;
+      }
+      recordScrollMetrics();
+
+      const atBottom = el2.scrollHeight - top - el2.clientHeight <= AT_BOTTOM_PX;
+      if (atBottom) stickToBottomRef.current = true;
+      setScrolledUpState(!stickToBottomRef.current);
+      onAtBottomChange?.(atBottom);
+    };
+
+    const onWheel = (e: WheelEvent) => { if (e.deltaY < 0) disarm(); };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("touchmove", disarm, { passive: true });
+    recordScrollMetrics();
+    onAtBottomChange?.(computeAtBottom());
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchmove", disarm);
+    };
+  }, [recordScrollMetrics, computeAtBottom, onAtBottomChange, setScrolledUpState]);
+
+  // Track which user message is anchored near the top of the viewport so the
+  // conversation outline can highlight the question the reader is currently on.
+  useEffect(() => {
+    const el = scrollerElRef.current;
+    if (!el || !onActiveUserMessageChange) return;
+    const userIds = messages.filter((m) => m.role === "user").map((m) => m.id);
+    if (userIds.length === 0) {
+      onActiveUserMessageChange(null);
       return;
     }
-    syncAtBottomState();
-  }, [messages, scrollToAbsoluteBottom, syncAtBottomState, emitAtBottomChange]);
+    let raf = 0;
+    const compute = () => {
+      raf = 0;
+      // When scrolled to the bottom, the last question often cannot reach the
+      // top anchor line (there isn't enough content below it), so the top-anchor
+      // scan would lock onto the previous question. Force the last one instead.
+      if (el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_PX) {
+        onActiveUserMessageChange(userIds[userIds.length - 1]);
+        return;
+      }
+      const threshold = el.getBoundingClientRect().top + 100;
+      let active: string | null = userIds[0];
+      for (const id of userIds) {
+        const node = itemRefs.current.get(id);
+        if (!node) continue;
+        if (node.getBoundingClientRect().top <= threshold) active = id;
+        else break;
+      }
+      onActiveUserMessageChange(active);
+    };
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(compute); };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    compute();
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [messages, onActiveUserMessageChange]);
+
+  useLayoutEffect(() => {
+    // Follow the bottom while armed (or for a one-shot forced snap). When not
+    // armed, leave the viewport exactly where the user parked it.
+    if (forceSnapRef.current || stickToBottomRef.current) {
+      pinToBottom();
+      forceSnapRef.current = false;
+    }
+  }, [messages, pinToBottom]);
 
   useEffect(() => {
     const el = scrollerElRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
 
     const observer = new ResizeObserver(() => {
-      if (forceFollowRef.current || atBottomRef.current) {
-        scrollToAbsoluteBottom();
-        emitAtBottomChange(true);
-      } else {
-        syncAtBottomState();
+      // Content/viewport grew. Keep pinned only while armed; otherwise leave the
+      // user where they are (the jump button covers getting back).
+      if (forceSnapRef.current || stickToBottomRef.current) {
+        pinToBottom();
       }
     });
 
@@ -335,7 +483,14 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     const firstChild = el.firstElementChild;
     if (firstChild instanceof HTMLElement) observer.observe(firstChild);
     return () => observer.disconnect();
-  }, [messages.length, scrollToAbsoluteBottom, syncAtBottomState, emitAtBottomChange]);
+  }, [messages.length, pinToBottom]);
+
+  const handleJumpToLatest = useCallback(() => {
+    stickToBottomRef.current = true;
+    forceSnapRef.current = true;
+    setScrolledUpState(false);
+    requestAnimationFrame(() => pinToBottom());
+  }, [pinToBottom, setScrolledUpState]);
 
   const computeItemKey = useCallback((_index: number, msg: ChatMessage) => msg.id, []);
 
@@ -371,8 +526,41 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
   const Footer = useCallback(() => <div style={{ height: 32 }} />, []);
 
+  // Show the jump-to-bottom affordance whenever the user is parked above the
+  // fold, regardless of whether a reply is streaming.
+  const showJumpToLatest = scrolledUp;
+
   return (
-    <div ref={containerRef} style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+    <div ref={containerRef} style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", position: "relative" }}>
+      {showJumpToLatest && (
+        <button
+          type="button"
+          onClick={handleJumpToLatest}
+          aria-label={t("chat.jumpToLatest", "回到底部")}
+          style={{
+            position: "absolute",
+            bottom: 16,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 5,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            border: "1px solid var(--border)",
+            background: "var(--brand)",
+            color: "#fff",
+            borderRadius: 999,
+            padding: "6px 14px",
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer",
+            boxShadow: "0 4px 14px rgba(0,0,0,0.18)",
+          }}
+        >
+          <IconChevronDown size={14} />
+          {t("chat.jumpToLatest", "回到底部")}
+        </button>
+      )}
       <div
         ref={scrollerElRef}
         style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" }}

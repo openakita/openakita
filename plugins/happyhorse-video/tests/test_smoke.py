@@ -5,6 +5,7 @@ from __future__ import annotations
 
 def test_models_module_imports_clean():
     import happyhorse_models  # noqa: F401
+
     assert len(happyhorse_models.MODES) == 12
 
 

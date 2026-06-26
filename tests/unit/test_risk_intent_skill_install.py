@@ -100,8 +100,7 @@ def test_shell_command_still_high_risk(message: str) -> None:
     """真正的 shell 高危命令应保持 HIGH + 弹确认，不能被新规则吞掉。"""
     result = classify_risk_intent(message)
     assert result.risk_level is RiskLevel.HIGH, (
-        f"应为 HIGH，但 risk_level={result.risk_level}, reason={result.reason}, "
-        f"message={message!r}"
+        f"应为 HIGH，但 risk_level={result.risk_level}, reason={result.reason}, message={message!r}"
     )
     assert result.requires_confirmation is True, (
         f"应弹高危确认，但 requires_confirmation=False, message={message!r}"
@@ -143,9 +142,7 @@ def test_non_skill_install_not_matched(message: str) -> None:
 
 def test_real_world_log_sample_minimax_skill() -> None:
     """对应用户 2026-05-04 14:48 提供 minimax-docx 技能页面 URL 的场景。"""
-    message = (
-        "帮我装一下这个技能：https://github.com/MiniMax-AI/skills-minimax-docx"
-    )
+    message = "帮我装一下这个技能：https://github.com/MiniMax-AI/skills-minimax-docx"
     result = classify_risk_intent(message)
 
     assert result.target_kind is TargetKind.SKILL_INSTALL

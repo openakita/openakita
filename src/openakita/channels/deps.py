@@ -8,8 +8,8 @@
 
 # 通道名 → [(import_name, pip_package), ...]
 CHANNEL_DEPS: dict[str, list[tuple[str, str]]] = {
-    "feishu": [("lark_oapi", "lark-oapi")],
-    "lark": [("lark_oapi", "lark-oapi")],
+    "feishu": [("lark_oapi", "lark-oapi"), ("Crypto", "pycryptodome")],
+    "lark": [("lark_oapi", "lark-oapi"), ("Crypto", "pycryptodome")],
     "dingtalk": [("dingtalk_stream", "dingtalk-stream")],
     "wework": [("aiohttp", "aiohttp"), ("Crypto", "pycryptodome")],
     "wework_ws": [("websockets", "websockets"), ("cryptography", "cryptography")],

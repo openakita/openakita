@@ -45,13 +45,14 @@ def test_llm_json_parser_basic():
     from clip_sense_inline.llm_json_parser import parse_llm_json
 
     assert parse_llm_json('{"a": 1}') == {"a": 1}
-    assert parse_llm_json('```json\n[1, 2, 3]\n```', expect=list) == [1, 2, 3]
+    assert parse_llm_json("```json\n[1, 2, 3]\n```", expect=list) == [1, 2, 3]
     assert parse_llm_json("no json here", fallback={}) == {}
 
 
 def test_plugin_skeleton_import():
     try:
         from plugin import Plugin
+
         p = Plugin()
         assert hasattr(p, "on_load")
         assert hasattr(p, "on_unload")

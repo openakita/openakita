@@ -284,13 +284,30 @@ def _setup_session_backfill(agent_or_master):
             )
 
             def _write_turn(safe_id, turn_index, role, content, metadata):
+                # v1.27.15 (P1-6): forward metadata so SqliteTurnStore.save_turn
+                # can persist ``marker_type``, ``policy``, etc. — required for
+                # the lifecycle extractor to skip ``preempted`` / ``aborted_partial``
+                # markers when building long-term memory.
+                #
+                # Filter the metadata to what's actually useful for downstream
+                # consumers: timestamp goes via its own arg; the rest is JSON.
                 try:
+                    _meta = None
+                    if isinstance(metadata, dict):
+                        _meta = {
+                            k: v
+                            for k, v in metadata.items()
+                            if k != "timestamp" and v is not None and isinstance(k, str)
+                        }
+                        if not _meta:
+                            _meta = None
                     _mm.store.save_turn(
                         session_id=safe_id,
                         turn_index=turn_index,
                         role=role,
                         content=content if isinstance(content, str) else str(content),
-                        timestamp=metadata.get("timestamp"),
+                        timestamp=(metadata or {}).get("timestamp"),
+                        metadata=_meta,
                     )
                 except Exception as exc:
                     logger.debug(f"[main] turn writer failed: {exc}")
@@ -965,11 +982,17 @@ async def run_interactive():
                     pass
                 agent._cli_session = cs
                 cs.context.focus_terms = list(getattr(cs.context, "focus_terms", []) or [])
-                cs.context.task_checkpoints = list(getattr(cs.context, "task_checkpoints", []) or [])
-                cs.context.delegation_chain = list(getattr(cs.context, "delegation_chain", []) or [])
+                cs.context.task_checkpoints = list(
+                    getattr(cs.context, "task_checkpoints", []) or []
+                )
+                cs.context.delegation_chain = list(
+                    getattr(cs.context, "delegation_chain", []) or []
+                )
                 if getattr(cs.context, "precompact_snapshot", None):
                     try:
-                        agent.memory_manager.save_precompact_snapshot(cs.context.precompact_snapshot)
+                        agent.memory_manager.save_precompact_snapshot(
+                            cs.context.precompact_snapshot
+                        )
                     except Exception:
                         logger.debug("[CLI] precompact snapshot hydration skipped", exc_info=True)
                 mc = len(cs.context.get_messages())
@@ -1277,6 +1300,17 @@ async def run_interactive():
                 await _init_task
         with console.status("[bold yellow]正在停止服务...", spinner="dots"):
             await stop_im_channels(graceful=True, drain_timeout=30.0)
+            if agent is not None and hasattr(agent, "shutdown"):
+                try:
+                    await asyncio.wait_for(agent.shutdown(), timeout=10.0)
+                except (TimeoutError, Exception):
+                    pass
+            try:
+                from .llm.client import get_default_client
+
+                await asyncio.wait_for(get_default_client().close(), timeout=5.0)
+            except (TimeoutError, Exception):
+                pass
         console.print("[green]✓[/green] 服务已停止")
 
 
@@ -1477,7 +1511,7 @@ def main(
             console.print("[yellow]检测到 stdin 非 TTY（管道输入或非交互环境）[/yellow]")
             console.print(
                 "交互式 CLI 需要终端。请改用以下任一非交互入口：\n"
-                "  • [bold]openakita run \"<task>\"[/bold] - 单次任务执行（unattended）\n"
+                '  • [bold]openakita run "<task>"[/bold] - 单次任务执行（unattended）\n'
                 "  • [bold]openakita serve[/bold] - 启动 API 服务并通过 /api/chat 调用"
             )
             raise typer.Exit(1)
@@ -2047,62 +2081,52 @@ def serve(
         )
 
         agent = get_agent()
-
-        console.print("[bold green]正在初始化 Agent...[/bold green]")
-        await agent.initialize()
-        console.print(f"[green]✓[/green] Agent 已初始化 (技能: {agent.skill_registry.count})")
-
         agent_or_master = agent
 
-        # 初始化核心服务（SessionManager、Agent Pool、Orchestrator）
-        console.print("[bold green]正在初始化核心服务...[/bold green]")
-        await init_core_services(agent_or_master)
-        console.print("[green]✓[/green] 核心服务已就绪")
-
-        # 先启动 HTTP API（供 Setup Center/桌面端使用）。
-        # IM 通道依赖安装可能很慢，不能阻塞 /api/health 就绪。
+        # 先启动 HTTP API（供 Setup Center/桌面端使用）。Agent 初始化、
+        # 核心服务和 IM 通道可能很慢，不能阻塞 /api/health 与 Web UI 就绪。
         api_task = None
         _api_fatal = False
         try:
-            from openakita.api.server import API_HOST, API_PORT, start_api_server
+            import sys as _sys
 
-            # PR-L1: 解析 API host / port，按 settings.api_lan_mode 决定绑定范围。
-            # 优先级：环境变量 API_HOST > settings.api_lan_mode 推导 > settings.api_host。
-            # 安全闸：开启 lan_mode 必须有 web_access 密码或 api_token，
-            # 否则 0.0.0.0 暴露后任何同网段设备无认证即可调 API。
-            _api_host = API_HOST  # 已经是 env(API_HOST) > "127.0.0.1"
+            from openakita.api.host_resolution import resolve_api_host
+            from openakita.api.server import API_PORT, start_api_server
+
+            # v1.28: 监听地址完全由 resolve_api_host 决定。优先级链：
+            #   1) 环境变量 API_HOST 显式覆盖
+            #   2) settings.api_lan_mode=True 或 headless 检测 → 0.0.0.0
+            #   3) 否则 → 127.0.0.1
+            # 旧的"api_lan_mode=True 无密码就 raise"安全闸已删除：
+            # 同等保护改由 middleware_setup_gate 在请求层强制 setup，
+            # 这样新装的 headless Linux 用户能直接打开网页完成设置。
+            _api_host = resolve_api_host(
+                env=os.environ,
+                api_lan_mode=bool(getattr(settings, "api_lan_mode", False)),
+                platform=_sys.platform,
+            )
             _api_port = API_PORT
-            try:
-                if getattr(settings, "api_lan_mode", False):
-                    _has_password = bool(os.environ.get("OPENAKITA_WEB_PASSWORD") or _web_password_already_set())
-                    _has_token = bool(getattr(settings, "api_token", "") or "").strip()
-                    if not (_has_password or _has_token):
-                        raise RuntimeError(
-                            "api_lan_mode=True 但既没有 web_access 密码也没有 api_token，"
-                            "拒绝启动以避免裸奔暴露。请先在 Setup Center 设置访问密码，"
-                            "或在 .env 设置 OPENAKITA_API_TOKEN=<32 字符随机串>。"
-                        )
-                    if not os.environ.get("API_HOST"):
-                        _api_host = "0.0.0.0"
-                        console.print(
-                            "[yellow]⚠ 已开启 api_lan_mode，HTTP API 将绑定到 0.0.0.0 ——"
-                            " 同网段所有设备都能看到这个端口。[/yellow]"
-                        )
-                else:
-                    if not os.environ.get("API_HOST"):
-                        _api_host = getattr(settings, "api_host", "127.0.0.1") or "127.0.0.1"
-            except RuntimeError:
-                raise
-            except Exception as _exc:
-                logger.warning(f"[main] api host resolution fallback: {_exc}")
+            if _api_host in ("0.0.0.0", "::"):
+                if (
+                    not _web_password_already_set()
+                    and not (os.environ.get("OPENAKITA_WEB_PASSWORD") or "").strip()
+                ):
+                    console.print(
+                        "[yellow]⚠ HTTP API 将绑定到 "
+                        f"{_api_host}（外部可访问），但当前未设置访问密码。[/yellow]"
+                    )
+                    console.print(
+                        "[yellow]  首次从局域网/外网打开 Web UI 时会强制要求设置密码 "
+                        "(setup 流程)。[/yellow]"
+                    )
 
             api_task = await start_api_server(
-                agent=agent_or_master,
+                agent=None,
                 shutdown_event=shutdown_event,
-                session_manager=_session_manager,
-                gateway=_message_gateway,
-                orchestrator=_orchestrator,
-                agent_pool=_desktop_pool,
+                session_manager=None,
+                gateway=None,
+                orchestrator=None,
+                agent_pool=None,
                 host=_api_host,
                 port=_api_port,
             )
@@ -2111,14 +2135,31 @@ def serve(
                 f"[green]✓[/green] HTTP API 已启动: http://{_display_host}:{_api_port}"
                 + ("  [dim](lan_mode: 0.0.0.0)[/dim]" if _api_host == "0.0.0.0" else "")
             )
-            # HTTP API 已可访问，但 IM 通道、晚绑定 gateway、部分后台服务可能仍在启动。
+            # HTTP API 已可访问，但 Agent、核心服务、IM 通道仍在启动。
             # 不要在这里把 phase 标成 running，否则前端会把"HTTP ready"误解为
-            # "整个后端已完成启动"，这正是状态面板反复出现假运行/未知 IM 的根因。
-            _heartbeat_phase = "http_ready"
+            # "整个后端已完成启动"。
+            _heartbeat_phase = "agent_initializing"
             _heartbeat_http_ready = True
             _heartbeat_im_ready = False
             _heartbeat_ready = False
             _write_heartbeat()  # 立即刷新心跳，标记 HTTP 就绪
+            try:
+                from openakita.api.server import update_runtime_refs
+
+                update_runtime_refs(
+                    api_task,
+                    startup_phase="agent_initializing",
+                    readiness={
+                        "phase": "agent_initializing",
+                        "http_ready": True,
+                        "agent_ready": False,
+                        "core_ready": False,
+                        "im_ready": False,
+                        "ready": False,
+                    },
+                )
+            except Exception:
+                logger.debug("Failed to update API startup readiness", exc_info=True)
         except ImportError:
             console.print("[yellow]⚠[/yellow] HTTP API 未启动（缺少 fastapi/uvicorn 依赖）")
         except Exception as e:
@@ -2135,6 +2176,57 @@ def serve(
             shutdown_event.set()
 
         if not _api_fatal:
+            console.print("[bold green]正在初始化 Agent...[/bold green]")
+            await agent.initialize()
+            console.print(f"[green]✓[/green] Agent 已初始化 (技能: {agent.skill_registry.count})")
+
+            if api_task is not None:
+                try:
+                    from openakita.api.server import update_runtime_refs
+
+                    update_runtime_refs(
+                        api_task,
+                        agent=agent_or_master,
+                        startup_phase="core_initializing",
+                        readiness={
+                            "phase": "core_initializing",
+                            "http_ready": True,
+                            "agent_ready": True,
+                            "core_ready": False,
+                            "im_ready": False,
+                            "ready": False,
+                        },
+                    )
+                except Exception:
+                    logger.debug("Failed to update API agent readiness", exc_info=True)
+
+            # 初始化核心服务（SessionManager、Agent Pool、Orchestrator）
+            console.print("[bold green]正在初始化核心服务...[/bold green]")
+            await init_core_services(agent_or_master)
+            console.print("[green]✓[/green] 核心服务已就绪")
+
+            if api_task is not None:
+                try:
+                    from openakita.api.server import update_runtime_refs
+
+                    update_runtime_refs(
+                        api_task,
+                        session_manager=_session_manager,
+                        orchestrator=_orchestrator,
+                        agent_pool=_desktop_pool,
+                        startup_phase="http_ready",
+                        readiness={
+                            "phase": "http_ready",
+                            "http_ready": True,
+                            "agent_ready": True,
+                            "core_ready": True,
+                            "im_ready": False,
+                            "ready": False,
+                        },
+                    )
+                except Exception:
+                    logger.debug("Failed to update API core readiness", exc_info=True)
+
             # 启动 IM 通道（可选）。放在 HTTP API 之后，避免首次安装通道依赖时
             # 桌面端长时间无法访问本地健康检查。
             _heartbeat_phase = "starting_im"
@@ -2253,6 +2345,25 @@ def serve(
                         stop_im_channels(graceful=True, drain_timeout=30.0),
                         timeout=35.0,
                     )
+                    # Agent 异步关闭（flush memory, close event bus）
+                    # Must run BEFORE LLM client close: pending memory tasks
+                    # (episode generation) may need LLM calls.
+                    if agent_or_master is not None and hasattr(agent_or_master, "shutdown"):
+                        try:
+                            await asyncio.wait_for(agent_or_master.shutdown(), timeout=10.0)
+                        except (TimeoutError, Exception):
+                            pass
+                    # 关闭 LLM client httpx 连接池，释放 TCP 连接。
+                    # Skip on restart: the singleton persists across iterations
+                    # and _reset_globals() does not recreate it — closing here
+                    # would leave the next iteration with a dead client.
+                    if not is_restart:
+                        try:
+                            from .llm.client import get_default_client
+
+                            await asyncio.wait_for(get_default_client().close(), timeout=5.0)
+                        except (TimeoutError, Exception):
+                            pass
                 except TimeoutError:
                     logger.warning("Shutdown timeout, forcing exit")
                 except Exception as e:
@@ -2314,11 +2425,19 @@ def serve(
 
             # 等待端口释放（旧 uvicorn 关闭后 TCP socket 可能处于 TIME_WAIT）
             try:
-                from openakita.api.server import API_HOST, API_PORT, wait_for_port_free
+                import sys as _sys
 
+                from openakita.api.host_resolution import resolve_api_host
+                from openakita.api.server import API_PORT, wait_for_port_free
+
+                _api_host = resolve_api_host(
+                    env=os.environ,
+                    api_lan_mode=bool(getattr(settings, "api_lan_mode", False)),
+                    platform=_sys.platform,
+                )
                 _api_port = int(os.environ.get("API_PORT", API_PORT))
                 console.print(f"[dim]等待端口 {_api_port} 释放...[/dim]")
-                if not wait_for_port_free(API_HOST, _api_port, timeout=15.0):
+                if not wait_for_port_free(_api_host, _api_port, timeout=15.0):
                     console.print(f"[yellow]⚠[/yellow] 端口 {_api_port} 仍被占用，继续尝试启动...")
                 else:
                     console.print(f"[dim]端口 {_api_port} 已就绪[/dim]")
@@ -2578,7 +2697,7 @@ class Plugin(PluginBase):
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>{manifest['name']}</title>
+  <title>{manifest["name"]}</title>
   <script type="module">
     // Replace with: import {{ PluginBridge }} from "@openakita/plugin-ui-sdk";
     const bridge = {{ init: () => window.parent.postMessage({{ __akita_bridge: true, version: 1, type: "bridge:ready" }}, "*") }};
@@ -2586,7 +2705,7 @@ class Plugin(PluginBase):
   </script>
 </head>
 <body>
-  <h1>{manifest['name']}</h1>
+  <h1>{manifest["name"]}</h1>
   <p>Plugin UI scaffold — replace this with your frontend app.</p>
 </body>
 </html>
@@ -2636,6 +2755,71 @@ def run_mcp_module(
     mcp_instance.run()
 
 
+@app.command(name="reset-password")
+def reset_password(
+    yes: bool = typer.Option(False, "--yes", "-y", help="跳过交互确认（脚本/CI 场景）"),
+):
+    """清除 Web 访问密码，下次访问会进入 setup 流程。
+
+    用途：用户忘记密码、密码档损坏、误操作后想重置。会清空
+    ``data/web_access.json`` 中的 password_hash / password_salt /
+    password_plain_hint，但保留 jwt_secret / data_epoch / token_version
+    避免外部工具持有的 token 立即变成"未知签名"造成的混淆。
+
+    如果检测到 backend 还在运行（基于 60 秒内的心跳），会提示用户重启
+    backend，因为 ``WebAccessConfig`` 是进程级单例，加载时间在 import
+    之后，仅文件改动不会让运行中的进程立即生效。
+    """
+    import json as _json
+    import time as _time
+
+    from openakita.api.auth import WebAccessConfig
+
+    ws = settings.user_workspace_path
+    data_dir = Path(ws) / "data"
+    web_file = data_dir / "web_access.json"
+
+    if not web_file.exists():
+        console.print("[yellow]未找到 web_access.json，无需清除。[/yellow]")
+        raise typer.Exit(0)
+
+    if not yes:
+        confirmed = typer.confirm(
+            f"将清除 {web_file} 中的密码哈希，下次访问 Web UI 需重新设置。继续？",
+            default=False,
+        )
+        if not confirmed:
+            console.print("[dim]已取消。[/dim]")
+            raise typer.Exit(0)
+
+    # 复用 WebAccessConfig.clear_password() 走原子写 + fsync 持久化路径，
+    # 避免出现"清密码时因断电留下半截 JSON 让 backend 启动崩"的尴尬。同时
+    # bump token_version 让旧 token 在 backend 重启前就失效。
+    cfg = WebAccessConfig(data_dir)
+    cfg.clear_password()
+
+    console.print(f"[green]✓[/green] 已清除密码：{web_file}")
+
+    # 心跳还活着 → backend 进程在运行，需要重启才能让 setup gate 重新感知"无密码"状态。
+    heartbeat = data_dir / "heartbeat.json"
+    backend_running = False
+    if heartbeat.exists():
+        try:
+            payload = _json.loads(heartbeat.read_text(encoding="utf-8"))
+            ts = payload.get("ts") or payload.get("timestamp")
+            if isinstance(ts, (int, float)) and _time.time() - ts < 60:
+                backend_running = True
+        except Exception:
+            backend_running = False
+
+    if backend_running:
+        console.print(
+            "[yellow]⚠ 检测到 openakita backend 仍在运行。请手动重启 backend "
+            "（关闭 Setup Center / kill 进程后重新启动），新的 setup 流程才会生效。[/yellow]"
+        )
+    else:
+        console.print("[dim]下次启动 openakita 时会进入 setup 流程。[/dim]")
+
+
 if __name__ == "__main__":
     app()
-

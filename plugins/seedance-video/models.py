@@ -32,7 +32,8 @@ SEEDANCE_MODELS: list[SeedanceModel] = [
         resolutions=["480p", "720p"],
         supports_audio=True,
         supports_web_search=True,
-        rpm=600, concurrency=10,
+        rpm=600,
+        concurrency=10,
     ),
     SeedanceModel(
         id="2.0-fast",
@@ -43,7 +44,8 @@ SEEDANCE_MODELS: list[SeedanceModel] = [
         resolutions=["480p", "720p"],
         supports_audio=True,
         supports_web_search=True,
-        rpm=600, concurrency=10,
+        rpm=600,
+        concurrency=10,
         note="Faster and cheaper than 2.0",
     ),
     SeedanceModel(
@@ -56,7 +58,8 @@ SEEDANCE_MODELS: list[SeedanceModel] = [
         supports_draft=True,
         supports_audio=True,
         supports_camera_fixed=True,
-        rpm=300, concurrency=5,
+        rpm=300,
+        concurrency=5,
     ),
     SeedanceModel(
         id="1.0-pro",
@@ -66,7 +69,8 @@ SEEDANCE_MODELS: list[SeedanceModel] = [
         duration_range=(2, 12),
         resolutions=["480p", "720p", "1080p"],
         supports_camera_fixed=True,
-        rpm=300, concurrency=5,
+        rpm=300,
+        concurrency=5,
     ),
     SeedanceModel(
         id="1.0-pro-fast",
@@ -76,7 +80,8 @@ SEEDANCE_MODELS: list[SeedanceModel] = [
         duration_range=(2, 12),
         resolutions=["480p", "720p", "1080p"],
         supports_camera_fixed=True,
-        rpm=300, concurrency=5,
+        rpm=300,
+        concurrency=5,
         note="Faster than 1.0 Pro",
     ),
     SeedanceModel(
@@ -87,7 +92,8 @@ SEEDANCE_MODELS: list[SeedanceModel] = [
         duration_range=(2, 12),
         resolutions=["480p", "720p", "1080p"],
         supports_camera_fixed=True,
-        rpm=300, concurrency=5,
+        rpm=300,
+        concurrency=5,
         note="Text-to-video only",
     ),
     SeedanceModel(
@@ -98,7 +104,8 @@ SEEDANCE_MODELS: list[SeedanceModel] = [
         duration_range=(2, 12),
         resolutions=["480p", "720p", "1080p"],
         supports_camera_fixed=True,
-        rpm=300, concurrency=5,
+        rpm=300,
+        concurrency=5,
         note="Image-to-video and multimodal reference",
     ),
 ]
@@ -108,33 +115,55 @@ MODELS_BY_ID: dict[str, SeedanceModel] = {m.id: m for m in SEEDANCE_MODELS}
 RESOLUTION_PIXEL_MAP: dict[str, dict[str, dict[str, tuple[int, int]]]] = {
     "2.0": {
         "480p": {
-            "21:9": (624, 256), "16:9": (832, 480), "4:3": (624, 480),
-            "1:1": (480, 480), "3:4": (480, 624), "9:16": (480, 832),
+            "21:9": (624, 256),
+            "16:9": (832, 480),
+            "4:3": (624, 480),
+            "1:1": (480, 480),
+            "3:4": (480, 624),
+            "9:16": (480, 832),
         },
         "720p": {
-            "21:9": (1680, 720), "16:9": (1280, 720), "4:3": (960, 720),
-            "1:1": (720, 720), "3:4": (720, 960), "9:16": (720, 1280),
+            "21:9": (1680, 720),
+            "16:9": (1280, 720),
+            "4:3": (960, 720),
+            "1:1": (720, 720),
+            "3:4": (720, 960),
+            "9:16": (720, 1280),
         },
     },
     "2.0-fast": {
         "480p": {
-            "21:9": (624, 256), "16:9": (832, 480), "4:3": (624, 480),
-            "1:1": (480, 480), "3:4": (480, 624), "9:16": (480, 832),
+            "21:9": (624, 256),
+            "16:9": (832, 480),
+            "4:3": (624, 480),
+            "1:1": (480, 480),
+            "3:4": (480, 624),
+            "9:16": (480, 832),
         },
         "720p": {
-            "21:9": (1680, 720), "16:9": (1280, 720), "4:3": (960, 720),
-            "1:1": (720, 720), "3:4": (720, 960), "9:16": (720, 1280),
+            "21:9": (1680, 720),
+            "16:9": (1280, 720),
+            "4:3": (960, 720),
+            "1:1": (720, 720),
+            "3:4": (720, 960),
+            "9:16": (720, 1280),
         },
     },
     "1.5-pro": {
         "480p": {
-            "16:9": (848, 480), "1:1": (544, 544), "9:16": (480, 848),
+            "16:9": (848, 480),
+            "1:1": (544, 544),
+            "9:16": (480, 848),
         },
         "720p": {
-            "16:9": (1280, 720), "1:1": (720, 720), "9:16": (720, 1280),
+            "16:9": (1280, 720),
+            "1:1": (720, 720),
+            "9:16": (720, 1280),
         },
         "1080p": {
-            "16:9": (1920, 1080), "1:1": (1080, 1080), "9:16": (1080, 1920),
+            "16:9": (1920, 1080),
+            "1:1": (1080, 1080),
+            "9:16": (1080, 1920),
         },
     },
 }
@@ -164,4 +193,3 @@ def model_to_dict(m: SeedanceModel) -> dict:
         "concurrency": m.concurrency,
         "note": m.note,
     }
-

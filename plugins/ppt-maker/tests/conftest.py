@@ -25,4 +25,3 @@ def isolate_plugin_imports() -> None:
     sys.modules.pop("plugin", None)
     yield
     sys.modules.pop("plugin", None)
-

@@ -349,7 +349,8 @@ class PowerShellHandler:
         cleaned = re.sub(r"#< CLIXML[\s\S]*?(?=\r?\n(?!<)|$)", "", cleaned)
         cleaned = re.sub(r"<Obj[^>]*>\s*<TN[^>]*>[\s\S]*?</Obj>", "", cleaned)
         return "\n".join(
-            line for line in cleaned.splitlines()
+            line
+            for line in cleaned.splitlines()
             if line.strip() and not line.lstrip().startswith(("#< CLIXML", "<Objs", "</Objs>"))
         ).strip()
 

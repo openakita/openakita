@@ -185,9 +185,7 @@ async def generate_seo_pack(
 
     excerpt = (subtitle_excerpt or "")[:SUBTITLE_EXCERPT_LIMIT]
     chapters_json = (
-        json.dumps(chapter_timestamps or [], ensure_ascii=False)
-        if include_chapters
-        else "[]"
+        json.dumps(chapter_timestamps or [], ensure_ascii=False) if include_chapters else "[]"
     )
 
     if progress_cb:

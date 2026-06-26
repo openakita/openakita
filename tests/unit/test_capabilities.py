@@ -83,7 +83,10 @@ class TestProviderSlugFromURL:
         assert get_provider_slug_from_base_url("https://api.anthropic.com") == "anthropic"
 
     def test_dashscope_url(self):
-        assert get_provider_slug_from_base_url("https://dashscope.aliyuncs.com/compatible-mode/v1") == "dashscope"
+        assert (
+            get_provider_slug_from_base_url("https://dashscope.aliyuncs.com/compatible-mode/v1")
+            == "dashscope"
+        )
 
     def test_localhost_ollama(self):
         assert get_provider_slug_from_base_url("http://localhost:11434/v1") == "ollama"
@@ -136,4 +139,3 @@ class TestProviderLists:
     def test_unknown_provider_returns_empty(self):
         models = get_models_by_provider("nonexistent-provider")
         assert models == []
-

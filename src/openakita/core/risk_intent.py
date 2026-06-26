@@ -427,9 +427,7 @@ def derive_authorized_intent(
     )
 
 
-_MEMORY_KEYWORDS_RE = re.compile(
-    r"(记忆|memory|印象|档案|profile|偏好|preference)", re.IGNORECASE
-)
+_MEMORY_KEYWORDS_RE = re.compile(r"(记忆|memory|印象|档案|profile|偏好|preference)", re.IGNORECASE)
 _DELETE_KEYWORDS_RE = re.compile(
     r"(删除|删掉|清掉|清除|忘记|忘掉|remove|delete|clear|forget|drop)",
     re.IGNORECASE,
@@ -444,8 +442,7 @@ def _infer_operation_and_scope(
 
     # Memory deletion is the canonical case the incident hit.
     if _MEMORY_KEYWORDS_RE.search(text) and (
-        op_lower in ("delete", "reset", "overwrite", "disable")
-        or _DELETE_KEYWORDS_RE.search(text)
+        op_lower in ("delete", "reset", "overwrite", "disable") or _DELETE_KEYWORDS_RE.search(text)
     ):
         return "memory_delete", {
             "query": _extract_quoted_or_topic(text),
@@ -652,22 +649,24 @@ class RiskIntentClassifier:
         if _NON_ACTION_DISCUSSION_RE.search(text):
             return True
 
-        if (
-            operation
-            in {
-                OperationKind.DELETE,
-                OperationKind.RESET,
-                OperationKind.DISABLE,
-                OperationKind.OVERWRITE,
-                OperationKind.EXECUTE,
-            }
-            or cls._is_sensitive_target(target)
-        ):
+        if operation in {
+            OperationKind.DELETE,
+            OperationKind.RESET,
+            OperationKind.DISABLE,
+            OperationKind.OVERWRITE,
+            OperationKind.EXECUTE,
+        } or cls._is_sensitive_target(target):
             return False
 
         requires_tools = getattr(intent, "requires_tools", None)
         risk_hint = str(getattr(intent, "risk_level_hint", "") or "").lower()
-        if requires_tools is False and risk_hint in {"", "none", "low", "risklevelhint.none", "risklevelhint.low"}:
+        if requires_tools is False and risk_hint in {
+            "",
+            "none",
+            "low",
+            "risklevelhint.none",
+            "risklevelhint.low",
+        }:
             return True
 
         return False

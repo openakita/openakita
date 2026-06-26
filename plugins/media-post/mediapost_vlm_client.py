@@ -224,16 +224,12 @@ class MediaPostVlmClient:
         try:
             user_text = prompt_template.format(**kwargs)
         except (KeyError, IndexError, ValueError) as exc:
-            raise MediaPostError(
-                "format", f"prompt_template format error: {exc}"
-            ) from exc
+            raise MediaPostError("format", f"prompt_template format error: {exc}") from exc
 
         user_content: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
         for b64 in frames_b64:
             data_uri = f"data:image/png;base64,{b64}"
-            user_content.append(
-                {"type": "image_url", "image_url": {"url": data_uri}}
-            )
+            user_content.append({"type": "image_url", "image_url": {"url": data_uri}})
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -250,10 +246,7 @@ class MediaPostVlmClient:
             messages.clear()
             gc.collect()
 
-        raw = (
-            (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-            or ""
-        )
+        raw = (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
         return _parse_vlm_json_list(raw, expected_len=len(frame_indices))
 
     # ------------------------------------------------------------------
@@ -306,9 +299,7 @@ class MediaPostVlmClient:
                 f"call_vlm_concurrent: batch_size must be 1..{MAX_VLM_BATCH_FRAMES}",
             )
         if concurrency < 1:
-            raise MediaPostError(
-                "format", "call_vlm_concurrent: concurrency must be >= 1"
-            )
+            raise MediaPostError("format", "call_vlm_concurrent: concurrency must be >= 1")
 
         n = len(all_indices)
         if n == 0:
@@ -321,9 +312,7 @@ class MediaPostVlmClient:
 
         sem = asyncio.Semaphore(concurrency)
 
-        async def _one(
-            b_frames: list[str], b_indices: list[int]
-        ) -> list[dict[str, Any]] | None:
+        async def _one(b_frames: list[str], b_indices: list[int]) -> list[dict[str, Any]] | None:
             async with sem:
                 try:
                     return await self.call_vlm_batch(
@@ -394,10 +383,7 @@ class MediaPostVlmClient:
             "temperature": float(temperature),
         }
         data = await self._post_chat(body, timeout=timeout)
-        content = (
-            (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-            or ""
-        )
+        content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
         return str(content)
 
     # ------------------------------------------------------------------
@@ -429,9 +415,7 @@ class MediaPostVlmClient:
                     timeout=per_request_timeout,
                 )
             except httpx.TimeoutException as exc:
-                last_exc = MediaPostError(
-                    "timeout", f"DashScope request timeout: {exc}"
-                )
+                last_exc = MediaPostError("timeout", f"DashScope request timeout: {exc}")
             except httpx.HTTPError as exc:
                 vendor_kind = _classify_transport_error(exc)
                 last_exc = MediaPostError(
@@ -456,7 +440,7 @@ class MediaPostVlmClient:
                         raise last_exc
 
             if attempt < self._max_retries:
-                await asyncio.sleep(_BACKOFF_BASE_SEC ** attempt)
+                await asyncio.sleep(_BACKOFF_BASE_SEC**attempt)
                 continue
             break
 
@@ -482,9 +466,7 @@ def _strip_json_fence(raw: str) -> str:
     return raw.strip()
 
 
-def _parse_vlm_json_list(
-    raw: str, *, expected_len: int
-) -> list[dict[str, Any]] | None:
+def _parse_vlm_json_list(raw: str, *, expected_len: int) -> list[dict[str, Any]] | None:
     """Parse a VLM ``content`` string into a list[dict] of the expected length.
 
     Returns ``None`` (not raises) when:

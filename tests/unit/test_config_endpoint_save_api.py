@@ -18,6 +18,7 @@ class _FakeEndpointManager:
         self.enabled = False
         self.endpoints = []
         self.deleted_endpoint = None
+        self.deleted_endpoints = None
 
     def save_endpoint(
         self,
@@ -76,6 +77,20 @@ class _FakeEndpointManager:
         }
         return {"name": name, "api_key_env": "STT_API_KEY"}
 
+    def delete_endpoints(
+        self,
+        names: list[str],
+        endpoint_type: str = "endpoints",
+        clean_env: bool = True,
+    ) -> list[dict]:
+        self.deleted_endpoints = {
+            "names": names,
+            "endpoint_type": endpoint_type,
+            "clean_env": clean_env,
+        }
+        wanted = set(names)
+        return [dict(ep) for ep in self.endpoints if ep.get("name") in wanted]
+
 
 @pytest.mark.asyncio
 async def test_save_endpoint_returns_ok_when_runtime_reload_fails(monkeypatch):
@@ -107,7 +122,9 @@ async def test_path_policy_writes_v2_fields_without_legacy_zones(monkeypatch):
     state = {"security": {"zones": {"workspace": ["old"], "default_zone": "controlled"}}}
     written = {}
     monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
-    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+    monkeypatch.setattr(
+        config_routes, "_write_policies_yaml", lambda data: written.update(data) or True
+    )
 
     response = await config_routes.write_security_path_policy(
         config_routes.SecurityPathPolicyUpdate(
@@ -141,10 +158,14 @@ async def test_security_profile_off_disables_security_enabled(monkeypatch):
     state = {"security": {"profile": {"current": "protect"}, "enabled": True}}
     written = {}
     monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
-    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+    monkeypatch.setattr(
+        config_routes, "_write_policies_yaml", lambda data: written.update(data) or True
+    )
 
     response = await config_routes.write_security_profile(
-        config_routes.SecurityProfileUpdate(profile="off", ack_phrase=config_routes._SECURITY_PROFILE_OFF_ACK)
+        config_routes.SecurityProfileUpdate(
+            profile="off", ack_phrase=config_routes._SECURITY_PROFILE_OFF_ACK
+        )
     )
 
     assert response["status"] == "ok"
@@ -158,7 +179,9 @@ async def test_security_profile_trust_reenables_security_enabled(monkeypatch):
     state = {"security": {"profile": {"current": "off", "base": "protect"}, "enabled": False}}
     written = {}
     monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
-    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+    monkeypatch.setattr(
+        config_routes, "_write_policies_yaml", lambda data: written.update(data) or True
+    )
 
     response = await config_routes.write_security_profile(
         config_routes.SecurityProfileUpdate(profile="trust")
@@ -193,7 +216,11 @@ async def test_security_preview_uses_current_yaml_not_stale_global_engine(monkey
     response = await config_routes.preview_security_config({})
 
     assert response["preview_uses_proposed"] is False
-    run_shell = next(item for item in response["decisions"] if item["tool"] == "run_shell" and "ls" in item["params_preview"])
+    run_shell = next(
+        item
+        for item in response["decisions"]
+        if item["tool"] == "run_shell" and "ls" in item["params_preview"]
+    )
     assert run_shell["effective_confirmation_mode"] == "trust"
     assert run_shell["security_profile"] == "trust"
     assert run_shell["decision"] == "allow"
@@ -204,12 +231,17 @@ async def test_commands_api_writes_shell_risk_not_legacy(monkeypatch):
     """write_security_commands 必须写到 security.shell_risk，并彻底清理 legacy command_patterns。"""
     state = {
         "security": {
-            "command_patterns": {"custom_critical": ["legacy-only"], "blocked_commands": ["legacy"]},
+            "command_patterns": {
+                "custom_critical": ["legacy-only"],
+                "blocked_commands": ["legacy"],
+            },
         }
     }
     written = {}
     monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
-    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+    monkeypatch.setattr(
+        config_routes, "_write_policies_yaml", lambda data: written.update(data) or True
+    )
 
     response = await config_routes.write_security_commands(
         config_routes.SecurityCommandsUpdate(
@@ -261,7 +293,9 @@ async def test_self_protection_api_writes_v2_blocks(monkeypatch):
     }
     written = {}
     monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
-    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+    monkeypatch.setattr(
+        config_routes, "_write_policies_yaml", lambda data: written.update(data) or True
+    )
 
     response = await config_routes.write_self_protection(
         config_routes._SelfProtectionUpdate(
@@ -298,7 +332,9 @@ async def test_granular_write_during_off_leaves_audit_event(monkeypatch):
     written = {}
     audit_calls: list[tuple[str, str | None]] = []
     monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
-    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+    monkeypatch.setattr(
+        config_routes, "_write_policies_yaml", lambda data: written.update(data) or True
+    )
     monkeypatch.setattr(
         config_routes,
         "_write_profile_event",
@@ -334,7 +370,9 @@ async def test_permission_mode_escape_from_off_is_audited(monkeypatch):
     written = {}
     audit_calls: list[tuple[str, str | None]] = []
     monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
-    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+    monkeypatch.setattr(
+        config_routes, "_write_policies_yaml", lambda data: written.update(data) or True
+    )
     monkeypatch.setattr(
         config_routes,
         "_write_profile_event",
@@ -347,15 +385,17 @@ async def test_permission_mode_escape_from_off_is_audited(monkeypatch):
         raising=False,
     )
 
-    result = await config_routes.write_permission_mode(config_routes._PermissionModeBody(mode="smart"))
+    result = await config_routes.write_permission_mode(
+        config_routes._PermissionModeBody(mode="smart")
+    )
 
     assert result["status"] == "ok"
     # 状态被强行拉到 protect（=smart 的 v2 等价）
     assert written["security"]["profile"]["current"] == "protect"
     assert written["security"]["enabled"] is True
-    assert any(
-        target == "protect" and prev == "off" for (target, prev) in audit_calls
-    ), f"off → protect 必须有 profile_change 事件, got {audit_calls}"
+    assert any(target == "protect" and prev == "off" for (target, prev) in audit_calls), (
+        f"off → protect 必须有 profile_change 事件, got {audit_calls}"
+    )
 
 
 @pytest.mark.asyncio
@@ -531,12 +571,8 @@ async def test_save_endpoints_batch_returns_saved_endpoints(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_save_endpoints_rejects_below_two_chat_endpoints_when_flag(monkeypatch):
-    """P1-5: batch save 至少需要 2 条启用的 chat endpoint（可被 feature flag 关闭）。"""
-    from openakita.core.feature_flags import clear_overrides, set_flag
-
-    clear_overrides()
-    set_flag("llm_view_min_endpoints_v1", True)
+async def test_save_endpoints_batch_allows_single_chat_endpoint(monkeypatch):
+    """Single-endpoint setups are valid; fallback endpoints are optional."""
     manager = _FakeEndpointManager()
     monkeypatch.setattr(config_routes, "_get_endpoint_manager", lambda: manager)
     monkeypatch.setattr(
@@ -544,21 +580,28 @@ async def test_save_endpoints_rejects_below_two_chat_endpoints_when_flag(monkeyp
         "_trigger_reload",
         lambda request: {"status": "ok", "reloaded": True},
     )
-    try:
-        resp = await config_routes.save_endpoints(
-            config_routes.SaveEndpointsRequest(
-                endpoints=[
-                    {"name": "solo", "provider": "openai", "model": "gpt-4o"},
-                ],
-                api_key="sk-x",
-            ),
-            SimpleNamespace(),
-        )
-        assert resp["status"] == "error"
-        assert "2" in resp.get("error", "")
-        assert manager.endpoints == []
-    finally:
-        clear_overrides()
+
+    resp = await config_routes.save_endpoints(
+        config_routes.SaveEndpointsRequest(
+            endpoints=[
+                {"name": "solo", "provider": "openai", "model": "gpt-4o"},
+            ],
+            api_key="sk-x",
+        ),
+        SimpleNamespace(),
+    )
+
+    assert resp["status"] == "ok"
+    assert resp["count"] == 1
+    assert manager.endpoints == [
+        {
+            "name": "solo",
+            "provider": "openai",
+            "model": "gpt-4o",
+            "api_key_env": "OPENAI_API_KEY",
+            "endpoint_type": "endpoints",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -610,11 +653,7 @@ def test_delete_stt_endpoint_accepts_slash_in_name(monkeypatch):
     }
 
 
-def test_delete_last_chat_endpoint_is_allowed_when_min_endpoint_flag_is_on(monkeypatch):
-    from openakita.core.feature_flags import clear_overrides, set_flag
-
-    clear_overrides()
-    set_flag("llm_view_min_endpoints_v1", True)
+def test_delete_last_chat_endpoint_is_allowed(monkeypatch):
     manager = _FakeEndpointManager()
     manager.endpoints = [{"name": "solo", "provider": "dashscope", "model": "qwen3"}]
     monkeypatch.setattr(config_routes, "_get_endpoint_manager", lambda: manager)
@@ -624,18 +663,53 @@ def test_delete_last_chat_endpoint_is_allowed_when_min_endpoint_flag_is_on(monke
     app.include_router(config_routes.router)
     client = TestClient(app)
 
-    try:
-        response = client.delete("/api/config/endpoint/solo?endpoint_type=endpoints")
+    response = client.delete("/api/config/endpoint/solo?endpoint_type=endpoints")
 
-        assert response.status_code == 200
-        assert response.json()["status"] == "ok"
-        assert manager.deleted_endpoint == {
-            "name": "solo",
-            "endpoint_type": "endpoints",
-            "clean_env": True,
-        }
-    finally:
-        clear_overrides()
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert manager.deleted_endpoint == {
+        "name": "solo",
+        "endpoint_type": "endpoints",
+        "clean_env": True,
+    }
+
+
+def test_delete_endpoints_batches_names_and_reloads_once(monkeypatch):
+    manager = _FakeEndpointManager()
+    manager.endpoints = [
+        {"name": "one", "provider": "openai", "model": "gpt-4o"},
+        {"name": "two", "provider": "openai", "model": "gpt-4o-mini"},
+    ]
+    reload_calls = []
+    monkeypatch.setattr(config_routes, "_get_endpoint_manager", lambda: manager)
+    monkeypatch.setattr(
+        config_routes,
+        "_trigger_reload",
+        lambda request: reload_calls.append(request) or {"status": "ok"},
+    )
+
+    app = FastAPI()
+    app.include_router(config_routes.router)
+    client = TestClient(app)
+
+    response = client.request(
+        "DELETE",
+        "/api/config/endpoints",
+        json={"names": ["one", "missing"], "endpoint_type": "compiler_endpoints"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["removed_count"] == 1
+    assert data["removed"][0]["name"] == "one"
+    assert data["not_found"] == ["missing"]
+    assert len(reload_calls) == 1
+    assert manager.deleted_endpoints == {
+        "names": ["one", "missing"],
+        "endpoint_type": "compiler_endpoints",
+        "clean_env": True,
+    }
 
 
 def test_apply_llm_runtime_config_refreshes_all_runtime_components(tmp_path, monkeypatch):

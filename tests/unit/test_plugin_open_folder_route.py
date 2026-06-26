@@ -26,7 +26,9 @@ def test_open_plugin_folder_returns_nested_payload(tmp_path, monkeypatch):
 def test_export_plugin_returns_zip_payload(tmp_path, monkeypatch):
     plugin_dir = tmp_path / "data" / "plugins" / "avatar-studio"
     plugin_dir.mkdir(parents=True)
-    (plugin_dir / "plugin.yaml").write_text("id: avatar-studio\nname: Avatar Studio\n", encoding="utf-8")
+    (plugin_dir / "plugin.yaml").write_text(
+        "id: avatar-studio\nname: Avatar Studio\n", encoding="utf-8"
+    )
     (plugin_dir / "README.md").write_text("# Avatar Studio\n", encoding="utf-8")
     monkeypatch.setattr(settings, "project_root", str(tmp_path))
 

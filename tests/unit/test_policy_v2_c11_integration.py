@@ -317,9 +317,7 @@ class TestStep6Matrix:
             _ctx(role=SessionRole.PLAN),
         )
         assert decision.action == DecisionAction.DENY
-        assert "matrix_deny" in _step_names(decision) or "matrix" in _step_names(
-            decision
-        )
+        assert "matrix_deny" in _step_names(decision) or "matrix" in _step_names(decision)
 
     def test_c11_08_ask_mode_blocks_mutating(self):
         """Case 08 — ASK 角色 × DEFAULT × MUTATING_SCOPED → DENY."""
@@ -453,9 +451,7 @@ class TestStep7Replay:
         replay_steps = [
             s for s in decision.chain if s.name == "replay" and s.action == DecisionAction.ALLOW
         ]
-        assert not replay_steps, (
-            f"expired replay must not produce ALLOW step; got {replay_steps}"
-        )
+        assert not replay_steps, f"expired replay must not produce ALLOW step; got {replay_steps}"
 
 
 # =============================================================================
@@ -509,9 +505,7 @@ class TestStep8TrustedPath:
             expires_at=time.time() + 3600,
         )
         decision = engine.evaluate_tool_call(
-            ToolCallEvent(
-                tool="write_file", params={"path": "config.yaml", "content": "x"}
-            ),
+            ToolCallEvent(tool="write_file", params={"path": "config.yaml", "content": "x"}),
             _ctx(mode=ConfirmationMode.DEFAULT, trusted_paths=[override]),
         )
         assert decision.action == DecisionAction.CONFIRM
@@ -543,9 +537,7 @@ class TestStep9UserAllowlist:
         )
         engine = _make_engine(config=cfg)
         decision = engine.evaluate_tool_call(
-            ToolCallEvent(
-                tool="write_file", params={"path": "x.txt", "content": "x"}
-            ),
+            ToolCallEvent(tool="write_file", params={"path": "x.txt", "content": "x"}),
             _ctx(mode=ConfirmationMode.DEFAULT),
         )
         assert decision.action == DecisionAction.ALLOW, (
@@ -565,9 +557,7 @@ class TestStep9UserAllowlist:
 class TestStep10DeathSwitch:
     def test_c11_18_below_threshold_unaffected(self):
         """Case 18 — death_switch 计数低于 threshold → 决策不变."""
-        cfg = PolicyConfigV2(
-            death_switch=DeathSwitchConfig(enabled=True, threshold=10)
-        )
+        cfg = PolicyConfigV2(death_switch=DeathSwitchConfig(enabled=True, threshold=10))
         engine = _make_engine(config=cfg)
         decision = engine.evaluate_tool_call(
             ToolCallEvent(tool="list_directory", params={"path": "."}),
@@ -588,9 +578,7 @@ class TestStep10DeathSwitch:
         死开关 step 10 应吃掉 CONFIRM, 落到 DENY.
         """
         cfg = PolicyConfigV2(
-            death_switch=DeathSwitchConfig(
-                enabled=True, threshold=2, total_multiplier=10
-            )
+            death_switch=DeathSwitchConfig(enabled=True, threshold=2, total_multiplier=10)
         )
         engine = _make_engine(config=cfg)
         for _ in range(5):
@@ -678,8 +666,7 @@ class TestStep11Unattended:
             ),
         )
         assert decision.action == DecisionAction.CONFIRM, (
-            f"ask_owner must return CONFIRM (not DEFER, not ALLOW); got "
-            f"{decision.action}"
+            f"ask_owner must return CONFIRM (not DEFER, not ALLOW); got {decision.action}"
         )
         assert decision.is_unattended_path is True
         assert "unattended" in _step_names(decision)
@@ -931,8 +918,7 @@ def test_c11_completeness_gate():
                 nn_values.add(int(m.group(1)))
     expected_count = 31
     assert len(names) == expected_count, (
-        f"Expected exactly {expected_count} c11_NN_ cases, found {len(names)}: "
-        f"{sorted(names)}"
+        f"Expected exactly {expected_count} c11_NN_ cases, found {len(names)}: {sorted(names)}"
     )
     expected_set = set(range(1, expected_count + 1))
     missing = expected_set - nn_values

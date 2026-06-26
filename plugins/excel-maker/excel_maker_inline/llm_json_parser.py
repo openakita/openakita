@@ -24,4 +24,3 @@ def parse_json_object(text: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("Expected a JSON object")
     return value
-

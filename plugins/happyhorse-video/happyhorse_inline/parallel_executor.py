@@ -138,7 +138,9 @@ async def run_parallel(
     async def _wrapped(idx: int, item: ItemT) -> None:
         if fail_event is not None and fail_event.is_set():
             results[idx] = ParallelResult(
-                index=idx, item=item, status="cancelled",
+                index=idx,
+                item=item,
+                status="cancelled",
             )
             _bump_progress()
             return
@@ -148,7 +150,9 @@ async def run_parallel(
         async with semaphore:
             if fail_event is not None and fail_event.is_set():
                 results[idx] = ParallelResult(
-                    index=idx, item=item, status="cancelled",
+                    index=idx,
+                    item=item,
+                    status="cancelled",
                     elapsed_sec=loop.time() - start,
                 )
                 _bump_progress()
@@ -157,13 +161,18 @@ async def run_parallel(
                 value = await runner(item)
             except asyncio.CancelledError:
                 results[idx] = ParallelResult(
-                    index=idx, item=item, status="cancelled",
+                    index=idx,
+                    item=item,
+                    status="cancelled",
                     elapsed_sec=loop.time() - start,
                 )
                 raise
             except Exception as e:  # noqa: BLE001
                 results[idx] = ParallelResult(
-                    index=idx, item=item, status="failed", error=e,
+                    index=idx,
+                    item=item,
+                    status="failed",
+                    error=e,
                     elapsed_sec=loop.time() - start,
                 )
                 if fail_event is not None:
@@ -171,7 +180,10 @@ async def run_parallel(
                 _bump_progress()
                 return
             results[idx] = ParallelResult(
-                index=idx, item=item, status="ok", value=value,
+                index=idx,
+                item=item,
+                status="ok",
+                value=value,
                 elapsed_sec=loop.time() - start,
             )
             _bump_progress()
@@ -185,10 +197,7 @@ async def run_parallel(
         except Exception:  # noqa: BLE001
             pass
 
-    tasks = [
-        asyncio.create_task(_wrapped(i, item))
-        for i, item in enumerate(materialised)
-    ]
+    tasks = [asyncio.create_task(_wrapped(i, item)) for i, item in enumerate(materialised)]
     try:
         await asyncio.gather(*tasks, return_exceptions=True)
     except asyncio.CancelledError:
@@ -199,14 +208,18 @@ async def run_parallel(
         for i, slot in enumerate(results):
             if slot is None:
                 results[i] = ParallelResult(
-                    index=i, item=materialised[i], status="cancelled",
+                    index=i,
+                    item=materialised[i],
+                    status="cancelled",
                 )
         raise
 
     for i, slot in enumerate(results):
         if slot is None:
             results[i] = ParallelResult(
-                index=i, item=materialised[i], status="cancelled",
+                index=i,
+                item=materialised[i],
+                status="cancelled",
             )
 
     final: list[ParallelResult[T]] = [r for r in results if r is not None]

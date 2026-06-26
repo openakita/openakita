@@ -22,9 +22,7 @@ def _make_plugin_dir(base, plugin_id, *, ptype="python", extra_manifest=None):
     if extra_manifest:
         manifest.update(extra_manifest)
 
-    (d / "plugin.json").write_text(
-        json.dumps(manifest, indent=2), encoding="utf-8"
-    )
+    (d / "plugin.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     if ptype == "python":
         (d / "plugin.py").write_text(
             textwrap.dedent("""\
@@ -119,12 +117,14 @@ class TestLoadAll:
         d = plugins_dir / "bad-plugin"
         d.mkdir()
         (d / "plugin.json").write_text(
-            json.dumps({
-                "id": "bad-plugin",
-                "name": "Bad",
-                "version": "1.0.0",
-                "type": "python",
-            }),
+            json.dumps(
+                {
+                    "id": "bad-plugin",
+                    "name": "Bad",
+                    "version": "1.0.0",
+                    "type": "python",
+                }
+            ),
             encoding="utf-8",
         )
         (d / "plugin.py").write_text(
@@ -153,13 +153,15 @@ class TestLoadAll:
         d = plugins_dir / "missing-dep"
         d.mkdir()
         (d / "plugin.json").write_text(
-            json.dumps({
-                "id": "missing-dep",
-                "name": "Missing Dep",
-                "version": "1.0.0",
-                "type": "python",
-                "requires": {"pip": ["missing-package>=1.0.0"]},
-            }),
+            json.dumps(
+                {
+                    "id": "missing-dep",
+                    "name": "Missing Dep",
+                    "version": "1.0.0",
+                    "type": "python",
+                    "requires": {"pip": ["missing-package>=1.0.0"]},
+                }
+            ),
             encoding="utf-8",
         )
         (d / "plugin.py").write_text(
@@ -192,9 +194,13 @@ class TestLoadAll:
         """Verify that a plugin whose _load_single exceeds load_timeout is recorded as failed."""
         plugins_dir = tmp_path / "plugins"
         plugins_dir.mkdir()
-        _make_plugin_dir(plugins_dir, "slow-plugin", extra_manifest={
-            "load_timeout": 0.01,
-        })
+        _make_plugin_dir(
+            plugins_dir,
+            "slow-plugin",
+            extra_manifest={
+                "load_timeout": 0.01,
+            },
+        )
 
         import asyncio as _asyncio
 
@@ -288,9 +294,13 @@ class TestPermissionResolution:
     async def test_basic_always_granted(self, tmp_path):
         plugins_dir = tmp_path / "plugins"
         plugins_dir.mkdir()
-        _make_plugin_dir(plugins_dir, "basic-perms", extra_manifest={
-            "permissions": ["tools.register", "hooks.basic"],
-        })
+        _make_plugin_dir(
+            plugins_dir,
+            "basic-perms",
+            extra_manifest={
+                "permissions": ["tools.register", "hooks.basic"],
+            },
+        )
         mgr = PluginManager(plugins_dir, state_path=tmp_path / "state.json")
         await mgr.load_all()
         loaded = mgr.get_loaded("basic-perms")
@@ -301,9 +311,13 @@ class TestPermissionResolution:
     async def test_advanced_not_granted_without_approval(self, tmp_path):
         plugins_dir = tmp_path / "plugins"
         plugins_dir.mkdir()
-        _make_plugin_dir(plugins_dir, "adv-perms", extra_manifest={
-            "permissions": ["tools.register", "brain.access"],
-        })
+        _make_plugin_dir(
+            plugins_dir,
+            "adv-perms",
+            extra_manifest={
+                "permissions": ["tools.register", "brain.access"],
+            },
+        )
         mgr = PluginManager(plugins_dir, state_path=tmp_path / "state.json")
         await mgr.load_all()
         loaded = mgr.get_loaded("adv-perms")
@@ -313,9 +327,13 @@ class TestPermissionResolution:
     async def test_advanced_granted_when_previously_approved(self, tmp_path):
         plugins_dir = tmp_path / "plugins"
         plugins_dir.mkdir()
-        _make_plugin_dir(plugins_dir, "approved-perms", extra_manifest={
-            "permissions": ["tools.register", "brain.access"],
-        })
+        _make_plugin_dir(
+            plugins_dir,
+            "approved-perms",
+            extra_manifest={
+                "permissions": ["tools.register", "brain.access"],
+            },
+        )
         mgr = PluginManager(plugins_dir, state_path=tmp_path / "state.json")
         entry = mgr.state.ensure_entry("approved-perms")
         entry.granted_permissions = ["brain.access"]
@@ -335,14 +353,19 @@ class TestPartialRegistrationCleanup:
         plugins_dir.mkdir()
         d = plugins_dir / "crash-partial"
         d.mkdir()
-        (d / "plugin.json").write_text(json.dumps({
-            "id": "crash-partial",
-            "name": "Crash Partial",
-            "version": "1.0.0",
-            "type": "python",
-            "permissions": ["tools.register", "hooks.basic"],
-        }))
-        (d / "plugin.py").write_text(textwrap.dedent("""\
+        (d / "plugin.json").write_text(
+            json.dumps(
+                {
+                    "id": "crash-partial",
+                    "name": "Crash Partial",
+                    "version": "1.0.0",
+                    "type": "python",
+                    "permissions": ["tools.register", "hooks.basic"],
+                }
+            )
+        )
+        (d / "plugin.py").write_text(
+            textwrap.dedent("""\
             from openakita.plugins.api import PluginAPI, PluginBase
 
             class Plugin(PluginBase):
@@ -352,7 +375,8 @@ class TestPartialRegistrationCleanup:
 
                 def on_unload(self) -> None:
                     pass
-        """))
+        """)
+        )
 
         mgr = PluginManager(plugins_dir, state_path=tmp_path / "state.json")
         await mgr.load_all()
@@ -366,14 +390,19 @@ class TestPartialRegistrationCleanup:
         plugins_dir.mkdir()
         d = plugins_dir / "crash-tools"
         d.mkdir()
-        (d / "plugin.json").write_text(json.dumps({
-            "id": "crash-tools",
-            "name": "Crash Tools",
-            "version": "1.0.0",
-            "type": "python",
-            "permissions": ["tools.register"],
-        }))
-        (d / "plugin.py").write_text(textwrap.dedent("""\
+        (d / "plugin.json").write_text(
+            json.dumps(
+                {
+                    "id": "crash-tools",
+                    "name": "Crash Tools",
+                    "version": "1.0.0",
+                    "type": "python",
+                    "permissions": ["tools.register"],
+                }
+            )
+        )
+        (d / "plugin.py").write_text(
+            textwrap.dedent("""\
             from openakita.plugins.api import PluginAPI, PluginBase
 
             class Plugin(PluginBase):
@@ -386,9 +415,11 @@ class TestPartialRegistrationCleanup:
 
                 def on_unload(self) -> None:
                     pass
-        """))
+        """)
+        )
 
         from unittest.mock import MagicMock
+
         mock_registry = MagicMock()
         tool_defs: list[dict] = []
         mgr = PluginManager(
@@ -411,13 +442,17 @@ class TestPartialRegistrationCleanup:
         plugins_dir.mkdir()
         d = plugins_dir / "bad-syntax"
         d.mkdir()
-        (d / "plugin.json").write_text(json.dumps({
-            "id": "bad-syntax",
-            "name": "Bad Syntax",
-            "version": "1.0.0",
-            "type": "python",
-            "permissions": ["tools.register"],
-        }))
+        (d / "plugin.json").write_text(
+            json.dumps(
+                {
+                    "id": "bad-syntax",
+                    "name": "Bad Syntax",
+                    "version": "1.0.0",
+                    "type": "python",
+                    "permissions": ["tools.register"],
+                }
+            )
+        )
         (d / "plugin.py").write_text("def broken(\n")
 
         mgr = PluginManager(plugins_dir, state_path=tmp_path / "state.json")
@@ -425,4 +460,3 @@ class TestPartialRegistrationCleanup:
         assert mgr.get_loaded("bad-syntax") is None
         assert str(d) not in sys.path
         assert "openakita_plugin_bad_syntax" not in sys.modules
-

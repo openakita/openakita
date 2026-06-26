@@ -28,4 +28,3 @@ async def test_real_ppt_smoke(tmp_path) -> None:
 
     assert result["audit_ok"] is True
     assert result["export_path"].endswith(".pptx")
-

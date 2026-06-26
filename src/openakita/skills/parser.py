@@ -82,8 +82,7 @@ def invalidate_global_parse_cache(path: Path | str | None = None) -> int:
             return 0
         prefix = target + _os.sep
         keys_to_drop = [
-            k for k in list(_GLOBAL_PARSE_CACHE.keys())
-            if k[0] == target or k[0].startswith(prefix)
+            k for k in list(_GLOBAL_PARSE_CACHE.keys()) if k[0] == target or k[0].startswith(prefix)
         ]
         for k in keys_to_drop:
             _GLOBAL_PARSE_CACHE.pop(k, None)
@@ -520,9 +519,7 @@ class SkillParser:
         hooks = hooks_raw if isinstance(hooks_raw, dict) else {}
         model = data.get("model") or None
         fbt_raw = data.get("fallback-for-toolsets", [])
-        fallback_for_toolsets = (
-            [str(t) for t in fbt_raw] if isinstance(fbt_raw, list) else []
-        )
+        fallback_for_toolsets = [str(t) for t in fbt_raw] if isinstance(fbt_raw, list) else []
 
         approval_class = self._parse_approval_class(data, path)
 

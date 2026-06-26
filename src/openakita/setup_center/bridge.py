@@ -143,7 +143,8 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
         ]
 
     def _minimax_fallback_models() -> list[dict]:
-        # MiniMax Anthropic/OpenAI 兼容文档仅列出固定模型，且未提供 /models 列表接口。
+        # 内置候选：仅在上游 /v1/models 拉取失败时回退使用。
+        # 不含 M3 —— 列表里出现 M3 即说明用的是在线列表，否则是这份内置回退。
         ids = [
             "MiniMax-M2.7",
             "MiniMax-M2.5",
@@ -248,9 +249,8 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
     if _is_longcat_provider():
         return _longcat_fallback_models()
 
-    # MiniMax 兼容接口无模型列表端点，直接返回文档内置候选，避免无效探测和误报。
-    if _is_minimax_provider():
-        return _minimax_fallback_models()
+    # MiniMax 现已提供 OpenAI 兼容的 /v1/models 端点，正常流程即可拉取。
+    # 拉取失败（旧网关无该端点 / 网络错误等）时回退到内置候选，详见下方 except。
 
     from openakita.llm.types import normalize_base_url
 
@@ -284,7 +284,10 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
                     f"\n响应预览: {preview}"
                 )
             data = resp.json()
-        except httpx.HTTPStatusError:
+        except Exception:
+            # MiniMax：在线拉取失败时回退到内置候选（列表里因此不会出现 M3）。
+            if _is_minimax_provider():
+                return _minimax_fallback_models()
             raise
 
     out: list[dict] = _openrouter_router_models() if _is_openrouter_provider() else []
@@ -302,6 +305,9 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
             }
         )
     out.sort(key=lambda x: x["id"])
+    # MiniMax：在线端点返回空列表时也回退内置候选，避免空选择框。
+    if not out and _is_minimax_provider():
+        return _minimax_fallback_models()
     return out
 
 
@@ -360,6 +366,8 @@ async def _list_models_anthropic(
         ]
 
     def _minimax_fallback_models() -> list[dict]:
+        # 内置候选：仅在上游 /v1/models 拉取失败时回退使用。
+        # 不含 M3 —— 列表里出现 M3 即说明用的是在线列表，否则是这份内置回退。
         ids = [
             "MiniMax-M2.7",
             "MiniMax-M2.5",
@@ -458,9 +466,7 @@ async def _list_models_anthropic(
     if _is_longcat_provider():
         return _longcat_fallback_models()
 
-    # MiniMax 兼容接口无模型列表端点，直接返回文档内置候选，避免无效探测和误报。
-    if _is_minimax_provider():
-        return _minimax_fallback_models()
+    # MiniMax 现已提供模型列表端点，正常流程即可拉取；失败时回退内置候选（见下方 except）。
 
     b = base_url.rstrip("/")
     url = b + "/models" if b.endswith("/v1") else b + "/v1/models"
@@ -484,7 +490,10 @@ async def _list_models_anthropic(
             )
             resp.raise_for_status()
             data = resp.json()
-        except httpx.HTTPStatusError:
+        except Exception:
+            # MiniMax：在线拉取失败时回退到内置候选（列表里因此不会出现 M3）。
+            if _is_minimax_provider():
+                return _minimax_fallback_models()
             raise
 
     out: list[dict] = []
@@ -499,6 +508,9 @@ async def _list_models_anthropic(
                 "capabilities": infer_capabilities(mid, provider_slug=provider_slug),
             }
         )
+    # MiniMax：在线端点返回空列表时也回退内置候选，避免空选择框。
+    if not out and _is_minimax_provider():
+        return _minimax_fallback_models()
     return out
 
 

@@ -236,4 +236,3 @@ class Settings(BaseModel):
     font_family: str = "Microsoft YaHei"
     number_format: str = "#,##0.00"
     updated_at: Optional[float] = None
-

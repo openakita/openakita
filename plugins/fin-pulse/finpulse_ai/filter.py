@@ -199,9 +199,7 @@ async def score_batch(
         try:
             parsed = _parse_json(_brain_content(response))
         except Exception as exc:  # noqa: BLE001 — malformed JSON is per-batch
-            logger.warning(
-                "score_batch parse failed @%s: %s", start, exc
-            )
+            logger.warning("score_batch parse failed @%s: %s", start, exc)
             for it in batch:
                 results[it["id"]] = {
                     "id": it["id"],

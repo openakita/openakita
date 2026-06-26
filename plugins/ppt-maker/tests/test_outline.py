@@ -18,7 +18,9 @@ def test_table_to_deck_outline_contains_data_pages(tmp_path) -> None:
     slide_types = [slide["slide_type"] for slide in outline["slides"]]
     # Cover always comes first; data-oriented pages must follow.
     assert slide_types[0] == "cover"
-    assert {"data_overview", "metric_cards", "chart_line", "insight_summary"}.issubset(set(slide_types))
+    assert {"data_overview", "metric_cards", "chart_line", "insight_summary"}.issubset(
+        set(slide_types)
+    )
     assert outline["table_insights_summary"] == ["收入增长 12%"]
     assert json.loads(path.read_text(encoding="utf-8"))["needs_confirmation"] is True
     # Rich fallback contract: every slide ships a body and >=1 bullet (cover may be empty).
@@ -47,4 +49,3 @@ def test_confirm_outline_marks_gate_complete() -> None:
     assert confirmed["confirmed"] is True
     assert confirmed["needs_confirmation"] is False
     assert confirmed["audience"] == "executives"
-

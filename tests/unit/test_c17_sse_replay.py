@@ -99,6 +99,85 @@ class TestSSESession:
 
 
 # ---------------------------------------------------------------------------
+# Turn-boundary replay floor — the cross-turn replay guard.
+#
+# Regression cover for the "finished turn's answer reappears on top of my new
+# question" bug. The ringbuffer + seq persist across turns; without a floor a
+# stale Last-Event-ID (POST door) or since_seq (resume door) would replay the
+# previous, completed turn's tail into the new turn.
+# ---------------------------------------------------------------------------
+
+
+class TestTurnBoundaryReplayFloor:
+    def test_begin_turn_advances_floor_to_current_seq(self) -> None:
+        s = SSESession(session_id="conv_turn_a")
+        s.add_event("text_delta", {"i": 1})
+        s.add_event("done", {})  # seq=2 — turn A ends here
+        assert s.begin_turn() == 2  # floor sealed at end of turn A
+        # Turn B produces new events.
+        s.add_event("text_delta", {"i": 3})  # seq=3
+        assert s.current_seq == 3
+
+    def test_begin_turn_is_monotonic(self) -> None:
+        s = SSESession(session_id="conv_turn_mono")
+        s.add_event("text_delta", {})  # seq=1
+        assert s.begin_turn() == 1
+        # A second begin_turn with no new events keeps the floor put — it never
+        # rewinds, even if called spuriously.
+        assert s.begin_turn() == 1
+        s.add_event("text_delta", {})  # seq=2
+        assert s.begin_turn() == 2
+
+    def test_stale_last_event_id_cannot_replay_previous_turn(self) -> None:
+        """POST door: a stale Last-Event-ID from turn A must not replay it."""
+        s = SSESession(session_id="conv_turn_post")
+        # Turn A: client saw seq 1, then dropped; backend buffered the tail 2..4.
+        for _ in range(4):
+            s.add_event("text_delta", {})
+        assert s.current_seq == 4
+        # Turn B begins (POST). Floor seals at 4.
+        s.begin_turn()
+        # A stale Last-Event-ID=1 (client's last seen seq from turn A) must NOT
+        # flush turn A's buffered tail (2..4) into turn B.
+        assert s.replay_from(1) == []
+        assert s.replay_from(0) == []  # "seen nothing" is clamped too
+
+    def test_stale_since_seq_cannot_replay_previous_turn(self) -> None:
+        """Resume door: a stale since_seq from turn A must not replay it."""
+        s = SSESession(session_id="conv_turn_resume")
+        for _ in range(4):  # turn A → seq 1..4
+            s.add_event("text_delta", {})
+        s.begin_turn()  # turn B starts, floor=4
+        s.add_event("text_delta", {})  # turn B seq=5
+        s.add_event("text_delta", {})  # turn B seq=6
+        # Resume with a stale since_seq=2 (from turn A) only gets turn B's
+        # events (5, 6) — never turn A's tail (3, 4).
+        replayed = s.replay_from(2)
+        assert [e.seq for e in replayed] == [5, 6]
+
+    def test_within_turn_catchup_still_works(self) -> None:
+        """The floor must NOT break legitimate mid-turn resume catch-up."""
+        s = SSESession(session_id="conv_turn_within")
+        for _ in range(4):  # turn A → seq 1..4
+            s.add_event("text_delta", {})
+        s.begin_turn()  # turn B, floor=4
+        for _ in range(3):  # turn B → seq 5..7
+            s.add_event("text_delta", {})
+        # Client is mid-turn-B at seq 5 and reconnects: it correctly catches up
+        # on 6, 7 (since_seq=5 is past the floor, so the floor is a no-op here).
+        replayed = s.replay_from(5)
+        assert [e.seq for e in replayed] == [6, 7]
+
+    def test_first_turn_floor_is_zero_no_behavior_change(self) -> None:
+        """Before any begin_turn the floor is 0 — legacy replay behavior."""
+        s = SSESession(session_id="conv_turn_first")
+        for _ in range(3):
+            s.add_event("text_delta", {})
+        # No begin_turn() yet → floor 0 → replay_from(0) returns everything.
+        assert [e.seq for e in s.replay_from(0)] == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
 # SSESessionRegistry
 # ---------------------------------------------------------------------------
 
@@ -262,9 +341,7 @@ class TestUIConfirmBusBroadcast:
     def test_active_confirms_for_session(self) -> None:
         bus = UIConfirmBus(ttl_seconds=300)
         bus.store_pending("tu_1", "shell", {"command": "ls"}, session_id="conv_a")
-        bus.store_pending(
-            "tu_2", "write_file", {"path": "/tmp/x"}, session_id="conv_a"
-        )
+        bus.store_pending("tu_2", "write_file", {"path": "/tmp/x"}, session_id="conv_a")
         bus.store_pending("tu_3", "shell", {}, session_id="conv_b")
         a = bus.active_confirms_for_session("conv_a")
         assert {c["confirm_id"] for c in a} == {"tu_1", "tu_2"}

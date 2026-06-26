@@ -496,9 +496,7 @@ class DailyConsolidator:
                     user_id,
                     workspace_id,
                     list(
-                        self.memory_manager.iter_cached(
-                            user_id=user_id, workspace_id=workspace_id
-                        )
+                        self.memory_manager.iter_cached(user_id=user_id, workspace_id=workspace_id)
                     ),
                 )
                 for user_id, workspace_id in tenants_iter
@@ -509,11 +507,10 @@ class DailyConsolidator:
         # 把 (None, None) 那组也跑一遍以兜底"未登记 session 但写到 default 桶"的旧数据：
         # 否则升级前已有的 default 桶记忆永远不会被这次循环覆盖到。
         if tenants_iter and not any(
-            user_id == "default" and workspace_id == "default" for user_id, workspace_id, _ in tenant_groups
+            user_id == "default" and workspace_id == "default"
+            for user_id, workspace_id, _ in tenant_groups
         ):
-            extra = list(
-                self.memory_manager.iter_cached(user_id="default", workspace_id="default")
-            )
+            extra = list(self.memory_manager.iter_cached(user_id="default", workspace_id="default"))
             if extra:
                 tenant_groups.append(("default", "default", extra))
 
@@ -523,7 +520,9 @@ class DailyConsolidator:
                 continue
             logger.info(
                 "Checking %d memories for duplicates (tenant=%s/%s)...",
-                len(memories), user_id or "*", workspace_id or "*",
+                len(memories),
+                user_id or "*",
+                workspace_id or "*",
             )
             checked_pairs: set[tuple[str, str]] = set()
             for memory in memories:
@@ -585,11 +584,10 @@ class DailyConsolidator:
                 if other_scope in {"legacy_quarantine", "pending_consolidation"}:
                     continue
                 # 兜底 tenant 一致性 —— 向量库 search() 是全库召回，可能跨 tenant。
-                if (
-                    (getattr(other_memory, "user_id", "default") or "default")
-                    != (getattr(memory, "user_id", "default") or "default")
-                    or (getattr(other_memory, "workspace_id", "default") or "default")
-                    != (getattr(memory, "workspace_id", "default") or "default")
+                if (getattr(other_memory, "user_id", "default") or "default") != (
+                    getattr(memory, "user_id", "default") or "default"
+                ) or (getattr(other_memory, "workspace_id", "default") or "default") != (
+                    getattr(memory, "workspace_id", "default") or "default"
                 ):
                     continue
                 is_dup = await mm._check_duplicate_with_llm(memory.content, other_memory.content)
@@ -597,7 +595,8 @@ class DailyConsolidator:
                     keep, remove = self._decide_which_to_keep(memory, other_memory)
                     logger.info(
                         "Duplicate found: '%s' -> keeping '%s'",
-                        remove.content, keep.content,
+                        remove.content,
+                        keep.content,
                     )
                     mm.delete_memory(remove.id)
                     newly.add(remove.id)
@@ -619,7 +618,8 @@ class DailyConsolidator:
                     keep, remove = self._decide_which_to_keep(memory, other)
                     logger.info(
                         "Duplicate found (string match): '%s' -> keeping '%s'",
-                        remove.content, keep.content,
+                        remove.content,
+                        keep.content,
                     )
                     mm.delete_memory(remove.id)
                     newly.add(remove.id)

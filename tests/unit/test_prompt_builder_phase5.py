@@ -201,9 +201,7 @@ def test_normal_query_still_triggers_active_retrieval(tmp_path: Path, monkeypatc
     assert "FAKE-RETRIEVED-CONTENT" in section
 
 
-def test_explicit_memory_keywords_force_retrieval_even_for_short_input(
-    tmp_path: Path, monkeypatch
-):
+def test_explicit_memory_keywords_force_retrieval_even_for_short_input(tmp_path: Path, monkeypatch):
     """即便输入是 "ok"，只要 IntentAnalyzer 拿出了关键词，Layer 4 还是要跑。"""
     md = tmp_path / "MEMORY.md"
     md.write_text("# core\n", encoding="utf-8")

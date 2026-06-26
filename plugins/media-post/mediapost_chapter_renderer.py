@@ -36,9 +36,7 @@ DEFAULT_TEMPLATE_WIDTH = 1280
 DEFAULT_TEMPLATE_HEIGHT = 720
 
 # DSL: ``{{name:type=default}}`` — type is one of: text / int / color / image.
-_PARAM_RE = re.compile(
-    r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z_]+)\s*(?:=\s*([^}]*))?\}\}"
-)
+_PARAM_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z_]+)\s*(?:=\s*([^}]*))?\}\}")
 
 # ``<meta name="media-size" content="WxH">`` — case-insensitive.
 _META_SIZE_RE = re.compile(
@@ -307,8 +305,7 @@ def _load_template(template_id: str, ctx: ChapterRenderContext) -> str:
         return ctx.builtin_templates[template_id]
     raise MediaPostError(
         "format",
-        f"unknown template_id={template_id!r}; available: "
-        f"{sorted(ctx.builtin_templates.keys())}",
+        f"unknown template_id={template_id!r}; available: {sorted(ctx.builtin_templates.keys())}",
     )
 
 
@@ -335,9 +332,7 @@ async def _render_one_drawtext(
             "x=(w-text_w)/2:y=(h-text_h)/2+40"
         )
     if ctx.drawtext_font:
-        parts = [
-            f"{p}:fontfile='{_escape_drawtext(ctx.drawtext_font)}'" for p in parts
-        ]
+        parts = [f"{p}:fontfile='{_escape_drawtext(ctx.drawtext_font)}'" for p in parts]
     vf = ",".join(parts)
     cmd = [
         "ffmpeg",
@@ -373,11 +368,7 @@ def _escape_drawtext(text: str) -> str:
     if not text:
         return ""
     # Per ffmpeg docs: backslash-escape ``\``, ``:``, ``'``.
-    return (
-        text.replace("\\", r"\\")
-        .replace(":", r"\:")
-        .replace("'", r"\\'")
-    )
+    return text.replace("\\", r"\\").replace(":", r"\:").replace("'", r"\\'")
 
 
 def _row_for(
@@ -434,9 +425,7 @@ async def probe_playwright_runtime() -> dict[str, Any]:
         from playwright.async_api import async_playwright
 
         async with async_playwright() as pw:
-            browser = await asyncio.wait_for(
-                pw.chromium.launch(headless=True), timeout=10.0
-            )
+            browser = await asyncio.wait_for(pw.chromium.launch(headless=True), timeout=10.0)
             try:
                 result["browser_ok"] = True
             finally:

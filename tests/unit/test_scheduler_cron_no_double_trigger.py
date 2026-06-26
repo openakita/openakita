@@ -64,8 +64,7 @@ def test_cron_next_run_using_advance_window_baseline_skips_today():
 
     tomorrow_09 = today_09 + timedelta(days=1)
     assert next_run == tomorrow_09, (
-        f"修复后必须跳到次日 09:00（{tomorrow_09}），"
-        f"实际拿到 {next_run}"
+        f"修复后必须跳到次日 09:00（{tomorrow_09}），实际拿到 {next_run}"
     )
 
 
@@ -106,9 +105,7 @@ async def test_execute_task_success_path_does_not_reschedule_in_current_window(t
 
         await scheduler._execute_task(task)
 
-    assert task.status == TaskStatus.SCHEDULED, (
-        f"成功后任务应回到 SCHEDULED，实际 {task.status}"
-    )
+    assert task.status == TaskStatus.SCHEDULED, f"成功后任务应回到 SCHEDULED，实际 {task.status}"
     assert task.next_run is not None, "成功后必须有 next_run"
 
     tomorrow_09 = today_09 + timedelta(days=1)
@@ -149,9 +146,7 @@ async def test_execute_task_success_clears_missed_count(tmp_path: Path):
     assert task.metadata.get("missed_count") == 0, (
         f"成功后 missed_count 应被清零，实际 {task.metadata.get('missed_count')}"
     )
-    assert "missed_count_cleared_at" in task.metadata, (
-        "应记录清零时间戳，便于历史排查"
-    )
+    assert "missed_count_cleared_at" in task.metadata, "应记录清零时间戳，便于历史排查"
 
 
 @pytest.mark.asyncio
@@ -173,12 +168,12 @@ async def test_execute_task_failure_does_not_clear_missed_count(tmp_path: Path):
 
     await scheduler._execute_task(task)
 
-    assert task.metadata.get("missed_count") == 12, (
-        "失败路径不应清零 missed_count"
-    )
+    assert task.metadata.get("missed_count") == 12, "失败路径不应清零 missed_count"
 
 
 if __name__ == "__main__":
-    asyncio.run(test_execute_task_success_path_does_not_reschedule_in_current_window(
-        Path("/tmp/test_scheduler_cron")
-    ))
+    asyncio.run(
+        test_execute_task_success_path_does_not_reschedule_in_current_window(
+            Path("/tmp/test_scheduler_cron")
+        )
+    )

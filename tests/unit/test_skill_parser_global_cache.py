@@ -80,8 +80,7 @@ def test_second_parser_reuses_global_cache_without_reading_disk(tmp_path: Path, 
     skill = parser_b.parse_directory(skill_dir)
 
     assert calls == [], (
-        "second parse must serve from the global cache without reading "
-        "SKILL.md from disk again"
+        "second parse must serve from the global cache without reading SKILL.md from disk again"
     )
     assert skill.metadata.name == "cache-probe"
 
@@ -165,6 +164,7 @@ def test_mtime_change_bypasses_cache_naturally(tmp_path: Path):
     (skill_dir / "SKILL.md").write_text(new_body, encoding="utf-8")
     # Force-bump mtime to defeat sub-second granularity on Windows.
     import os
+
     new_t = (skill_dir / "SKILL.md").stat().st_mtime + 1
     os.utime(skill_dir / "SKILL.md", (new_t, new_t))
 

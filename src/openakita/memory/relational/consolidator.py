@@ -106,4 +106,3 @@ class RelationalConsolidator:
 
         resolved = await self.entity_resolver.resolve_batch_with_llm(names)
         return len([v for k, v in resolved.items() if k != v])
-

@@ -37,9 +37,7 @@ Note: Slide indices are 0-based (first slide is 0, second is 1, etc.)
 
     parser.add_argument("template", help="Path to template PPTX file")
     parser.add_argument("output", help="Path for output PPTX file")
-    parser.add_argument(
-        "sequence", help="Comma-separated sequence of slide indices (0-based)"
-    )
+    parser.add_argument("sequence", help="Comma-separated sequence of slide indices (0-based)")
 
     args = parser.parse_args()
 
@@ -47,9 +45,7 @@ Note: Slide indices are 0-based (first slide is 0, second is 1, etc.)
     try:
         slide_sequence = [int(x.strip()) for x in args.sequence.split(",")]
     except ValueError:
-        print(
-            "Error: Invalid sequence format. Use comma-separated integers (e.g., 0,34,34,50,52)"
-        )
+        print("Error: Invalid sequence format. Use comma-separated integers (e.g., 0,34,34,50,52)")
         sys.exit(1)
 
     # Check template exists
@@ -108,9 +104,7 @@ def duplicate_slide(pres, index):
                 # Create a new relationship in the destination slide for this image
                 old_rel = image_rels[old_rId]
                 # get_or_add returns the rId directly, or adds and returns new rId
-                new_rId = new_slide.part.rels.get_or_add(
-                    old_rel.reltype, old_rel._target
-                )
+                new_rId = new_slide.part.rels.get_or_add(old_rel.reltype, old_rel._target)
                 # Update the blip's embed reference to use the new relationship ID
                 blip.set(
                     "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed",
@@ -185,9 +179,7 @@ def rearrange_presentation(template_path, output_path, slide_sequence):
             slide_map.append(template_idx)
             duplicates = []
             count = slide_sequence.count(template_idx) - 1
-            print(
-                f"  [{i}] Using original slide {template_idx}, creating {count} duplicate(s)"
-            )
+            print(f"  [{i}] Using original slide {template_idx}, creating {count} duplicate(s)")
             for _ in range(count):
                 duplicate_slide(prs, template_idx)
                 duplicates.append(len(prs.slides) - 1)
@@ -229,4 +221,3 @@ def rearrange_presentation(template_path, output_path, slide_sequence):
 
 if __name__ == "__main__":
     main()
-

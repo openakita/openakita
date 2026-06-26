@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -119,7 +120,7 @@ class AsyncBatchAuditWriter:
         # the same value regardless of OS separator. Without this the
         # singleton path lookup fails on Windows because ``Path(...)``
         # stringifies with ``\`` while the caller passed ``/``.
-        self._path = str(Path(path))
+        self._path = os.path.normpath(str(path).replace("\\", os.sep))
         self._writer: ChainedJsonlWriter = get_writer(self._path)
         self._max_batch_size = max(1, max_batch_size)
         self._max_batch_delay_s = max_batch_delay_ms / 1000.0
@@ -203,7 +204,8 @@ class AsyncBatchAuditWriter:
         except asyncio.QueueFull:
             try:
                 await asyncio.wait_for(
-                    queue.put(None), timeout=sentinel_budget  # type: ignore[arg-type]
+                    queue.put(None),
+                    timeout=sentinel_budget,  # type: ignore[arg-type]
                 )
                 sentinel_delivered = True
             except TimeoutError:
@@ -243,8 +245,7 @@ class AsyncBatchAuditWriter:
             self._queue = None
             self._loop = None
             logger.info(
-                "[audit_writer] stopped %s (enqueued=%d, written=%d, "
-                "batches=%d, sync_fallback=%d)",
+                "[audit_writer] stopped %s (enqueued=%d, written=%d, batches=%d, sync_fallback=%d)",
                 self._path,
                 self._stat_enqueued,
                 self._stat_written,
@@ -255,9 +256,7 @@ class AsyncBatchAuditWriter:
     def is_running(self) -> bool:
         with self._state_lock:
             return (
-                self._worker_task is not None
-                and not self._worker_task.done()
-                and not self._stopped
+                self._worker_task is not None and not self._worker_task.done() and not self._stopped
             )
 
     # ------------------------------------------------------------------
@@ -415,9 +414,7 @@ class AsyncBatchAuditWriter:
         with self._state_lock:
             queue = self._queue
             running = (
-                self._worker_task is not None
-                and not self._worker_task.done()
-                and not self._stopped
+                self._worker_task is not None and not self._worker_task.done() and not self._stopped
             )
         if not running or queue is None:
             return

@@ -70,9 +70,7 @@ def test_normalize_image_bytes_downscales_oversized() -> None:
 
     # User-reported case: 4541×6812 JPEG blew past the i2i 5000-px cap.
     buf = BytesIO()
-    Image.new("RGB", (4541, 6812), color=(123, 45, 67)).save(
-        buf, format="JPEG", quality=85
-    )
+    Image.new("RGB", (4541, 6812), color=(123, 45, 67)).save(buf, format="JPEG", quality=85)
     out = _normalize_image_bytes(buf.getvalue(), "jpg")
     assert out is not None, "oversized image should be normalised"
     new_bytes, new_ext = out
@@ -124,4 +122,3 @@ def test_assets_present() -> None:
     expected = {"bootstrap.js", "styles.css", "icons.js", "i18n.js", "markdown-mini.js"}
     actual = {p.name for p in assets.iterdir() if p.is_file()}
     assert expected.issubset(actual), f"missing assets: {expected - actual}"
-

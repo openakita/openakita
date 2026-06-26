@@ -34,6 +34,20 @@ DEFAULT_OUTPUT_ROOT = ROOT / "build" / "bootstrap-output"
 WEB_ASSETS_DIR = ROOT / "apps" / "setup-center" / "dist-web"
 DOCS_ASSETS_DIR = ROOT / "docs-site" / ".vitepress" / "dist"
 
+
+def configure_utf8_stdio() -> None:
+    """Keep CI logs writable when paths contain non-ASCII characters."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+            except OSError:
+                pass
+
+
+configure_utf8_stdio()
+
 # uv release pin —— **必须**显式版本号，禁止 `latest`。
 # 原因：CI 缓存 key 需要 uv 版本作为锚点；`latest` 滚动会出现"key 不动、内容变"，
 # 让缓存命中老版本但代码已经升级。升级 uv 时改这里的常量并跑全平台 release-dryrun。
@@ -83,7 +97,7 @@ def _has_real_asset_tree(path: Path) -> bool:
     return any(item.is_file() and item.name != ".keep" for item in path.rglob("*"))
 
 
-def validate_force_include_assets(*, require_real_assets: bool, allow_placeholder_assets: bool) -> None:
+def validate_package_assets(*, require_real_assets: bool, allow_placeholder_assets: bool) -> None:
     missing: list[str] = []
     for label, path, command in (
         (
@@ -106,7 +120,7 @@ def validate_force_include_assets(*, require_real_assets: bool, allow_placeholde
     if missing and not allow_placeholder_assets:
         details = "\n  - ".join(missing)
         raise RuntimeError(
-            "Required force-include assets are missing or empty:\n"
+            "Required package assets are missing or empty:\n"
             f"  - {details}\n"
             "Release/dry-run packaging must pass --require-real-assets after building web/docs. "
             "For CI contract-only validation, pass --allow-placeholder-assets explicitly."
@@ -118,7 +132,7 @@ def validate_force_include_assets(*, require_real_assets: bool, allow_placeholde
             keep = path / ".keep"
             if not keep.exists():
                 keep.write_text("", encoding="utf-8")
-        print("Using placeholder force-include assets for bootstrap contract validation only.")
+        print("Using placeholder package assets for bootstrap contract validation only.")
 
 
 def sha256(path: Path) -> str:
@@ -315,15 +329,34 @@ def build_wheel() -> Path:
     out_dir = BUILD_BOOTSTRAP_WHEELS
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [sys.executable, "-m", "build", "--wheel", "--outdir", str(out_dir)],
-        cwd=ROOT,
-        check=True,
-    )
+    with tempfile.TemporaryDirectory(prefix="openakita-wheel-build-") as tmp:
+        # Running `python -m build` from repo root imports the local build/
+        # script directory instead of PyPA's build package.
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "build",
+                "--wheel",
+                "--outdir",
+                str(out_dir),
+                str(ROOT),
+            ],
+            cwd=tmp,
+            check=True,
+        )
     wheels = sorted(out_dir.glob("openakita-*.whl"), key=lambda item: item.stat().st_mtime)
     if not wheels:
         raise RuntimeError("python -m build --wheel completed but no openakita wheel was found")
     return wheels[-1]
+
+
+def stage_package_assets() -> None:
+    subprocess.run(
+        [sys.executable, "scripts/stage_package_assets.py"],
+        cwd=ROOT,
+        check=True,
+    )
 
 
 def copy_wheel(wheel: Path, wheels_dir: Path) -> Path:
@@ -604,6 +637,9 @@ def _smoke_test_seed(seed_python: Path) -> None:
     result = subprocess.run(
         [str(seed_python), "-c", code],
         capture_output=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
+        errors="replace",
         text=True,
         timeout=30,
     )
@@ -822,12 +858,60 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
+def _is_dangerous_clean_target(path: Path) -> bool:
+    resolved = path.resolve()
+    anchors = {Path(resolved.anchor).resolve()} if resolved.anchor else set()
+    protected = {
+        ROOT.resolve(),
+        Path.home().resolve(),
+        *anchors,
+    }
+    if resolved in protected:
+        return True
+    # Refuse shallow paths such as /tmp or C:\Users. Legit staging paths have
+    # at least one specific child directory beyond those roots.
+    return len(resolved.parts) < 3
+
+
+def _is_empty_dir(path: Path) -> bool:
+    if not path.exists():
+        return True
+    if not path.is_dir():
+        return False
+    return next(path.iterdir(), None) is None
+
+
+def _has_bootstrap_manifest(path: Path) -> bool:
+    manifest_path = path / "manifest.json"
+    if not manifest_path.is_file():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        manifest.get("schema_version") == 1
+        and manifest.get("app_name") == "openakita"
+        and isinstance(manifest.get("wheel"), dict)
+        and isinstance(manifest.get("uv"), dict)
+    )
+
+
 def clean_output_dir(output_dir: Path) -> None:
     if output_dir.resolve() == BOOTSTRAP_DIR.resolve():
         return
-    if not _is_within(output_dir, ROOT / "build"):
-        raise RuntimeError(f"Refusing to clean non-build output directory: {output_dir}")
-    shutil.rmtree(output_dir, ignore_errors=True)
+    if _is_within(output_dir, ROOT / "build"):
+        shutil.rmtree(output_dir, ignore_errors=True)
+        return
+    if _is_dangerous_clean_target(output_dir):
+        raise RuntimeError(f"Refusing to clean unsafe output directory: {output_dir}")
+    if _is_empty_dir(output_dir) or _has_bootstrap_manifest(output_dir):
+        shutil.rmtree(output_dir, ignore_errors=True)
+        return
+    raise RuntimeError(
+        "Refusing to clean non-build output directory without an OpenAkita "
+        f"bootstrap manifest: {output_dir}"
+    )
 
 
 def print_output_summary(output_dir: Path, generated: list[Path], *, commit_resources: bool) -> None:
@@ -952,10 +1036,13 @@ def main() -> int:
     bootstrap_dir, bin_dir, wheels_dir, wheelhouse_dir = bootstrap_paths(output_dir)
     bootstrap_dir.mkdir(parents=True, exist_ok=True)
     wheelhouse_dir.mkdir(parents=True, exist_ok=True)
-    validate_force_include_assets(
+    validate_package_assets(
         require_real_assets=args.require_real_assets,
         allow_placeholder_assets=args.allow_placeholder_assets,
     )
+
+    if args.require_real_assets and not args.skip_wheel_build:
+        stage_package_assets()
 
     wheel = sorted(DIST_DIR.glob("openakita-*.whl"), key=lambda item: item.stat().st_mtime)[-1] if args.skip_wheel_build else build_wheel()
     packaged_wheel = copy_wheel(wheel, wheels_dir)

@@ -16,10 +16,16 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ..channels.base import ChannelDeliveryUnavailable
 from ..memory.json_utils import coerce_text
 from .task import ScheduledTask
 
 logger = logging.getLogger(__name__)
+
+CHANNEL_UNAVAILABLE_MARKER = "[channel_unavailable]"
+CHANNEL_UNAVAILABLE_MESSAGE = (
+    "IM 通道不可投递：微信会话或 context_token 已失效，请在微信中发送一条新消息刷新会话，或重新扫码登录。"
+)
 
 
 class TaskExecutor:
@@ -48,6 +54,12 @@ class TaskExecutor:
         self.persona_manager = None
         self.memory_manager = None
         self.proactive_engine = None  # 复用 agent 上的实例，保留 _last_user_interaction 状态
+
+    @staticmethod
+    def _format_channel_unavailable_error(exc: ChannelDeliveryUnavailable) -> str:
+        if exc.channel.startswith("wechat"):
+            return CHANNEL_UNAVAILABLE_MESSAGE
+        return f"IM 通道不可投递：{exc.reason or str(exc)}"
 
     @staticmethod
     def _metadata_bool(task: ScheduledTask, key: str, default: bool) -> bool:
@@ -130,10 +142,19 @@ class TaskExecutor:
                     )
 
         # 根据任务类型选择执行策略
-        if task.is_reminder:
-            return await self._execute_reminder(task)
-        else:
-            return await self._execute_complex_task(task)
+        try:
+            if task.is_reminder:
+                return await self._execute_reminder(task)
+            else:
+                return await self._execute_complex_task(task)
+        except ChannelDeliveryUnavailable as exc:
+            error_msg = self._format_channel_unavailable_error(exc)
+            logger.warning(
+                "TaskExecutor: task %s skipped because channel is unavailable: %s",
+                task.id,
+                error_msg,
+            )
+            return False, f"{CHANNEL_UNAVAILABLE_MARKER} {error_msg}"
 
     async def _execute_reminder(self, task: ScheduledTask) -> tuple[bool, str]:
         """
@@ -214,6 +235,8 @@ class TaskExecutor:
                 chat_id=chat_id,
                 text=message,
             )
+        except ChannelDeliveryUnavailable:
+            raise
         except Exception as e:
             logger.warning(f"TaskExecutor: reminder {task.id} primary send error: {e}")
             msg_id = None
@@ -263,6 +286,8 @@ class TaskExecutor:
                         f"{channel}/{chat_id} (msg_id={msg_id})"
                     )
                     return True
+            except ChannelDeliveryUnavailable:
+                raise
             except Exception as e:
                 logger.warning(f"TaskExecutor: fallback send failed for {channel}/{chat_id}: {e}")
                 continue
@@ -328,9 +353,7 @@ class TaskExecutor:
 
 只回复 NO_ACTION 或 NEEDS_ACTION，不要有其他内容。"""
 
-                response = await brain.think(
-                    check_prompt, enable_thinking=False, max_tokens=16
-                )
+                response = await brain.think(check_prompt, enable_thinking=False, max_tokens=16)
                 result = response.content.strip().upper()
 
                 needs_action = "NEEDS_ACTION" in result
@@ -357,7 +380,16 @@ class TaskExecutor:
         logger.info(f"TaskExecutor: executing complex task {task.id}")
 
         if not task.silent:
-            await self._send_start_notification(task)
+            try:
+                await self._send_start_notification(task)
+            except ChannelDeliveryUnavailable as exc:
+                error_msg = self._format_channel_unavailable_error(exc)
+                logger.warning(
+                    "TaskExecutor: task %s skipped before execution because channel is unavailable: %s",
+                    task.id,
+                    error_msg,
+                )
+                return False, f"{CHANNEL_UNAVAILABLE_MARKER} {error_msg}"
 
         return await self._execute_complex_task_core(task, skip_end_notification=task.silent)
 
@@ -380,14 +412,20 @@ class TaskExecutor:
             if task.action and task.action.startswith("system:"):
                 system_success, system_result = await self._execute_system_task(task)
                 if not skip_end_notification:
-                    delivered = await self._send_end_notification(
+                    delivered, unavailable_marker = await self._send_end_notification_or_marker(
                         task,
                         success=system_success,
                         message=system_result,
                     )
+                    if unavailable_marker and system_success:
+                        return False, unavailable_marker
+                    if unavailable_marker:
+                        return system_success, system_result
                     if not delivered:
                         error_msg = "任务已完成，但结果通知发送失败，请检查 IM 通道连接状态。"
-                        logger.warning(f"TaskExecutor: system task {task.id} result delivery failed")
+                        logger.warning(
+                            f"TaskExecutor: system task {task.id} result delivery failed"
+                        )
                         return False, error_msg
                 return system_success, system_result
 
@@ -397,8 +435,10 @@ class TaskExecutor:
             # 1.5. 防递归：禁止任务内再创建定时任务
             if task.no_schedule_tools:
                 agent._cron_disabled_tools = {
-                    "schedule_task", "update_scheduled_task",
-                    "cancel_scheduled_task", "trigger_scheduled_task",
+                    "schedule_task",
+                    "update_scheduled_task",
+                    "cancel_scheduled_task",
+                    "trigger_scheduled_task",
                 }
 
             # 2. 如果任务有 IM 通道信息，注入 IM 上下文
@@ -451,9 +491,7 @@ class TaskExecutor:
                 raw = task.metadata.get("unattended_strategy")
                 if isinstance(raw, str):
                     _strategy = raw
-                _replay_auths_raw = list(
-                    task.metadata.get("replay_authorizations", []) or []
-                )
+                _replay_auths_raw = list(task.metadata.get("replay_authorizations", []) or [])
 
             # C12 §14.7: only lift NON-expired replay auths into the
             # PolicyContext. Engine step 7 ignores expired entries
@@ -473,9 +511,7 @@ class TaskExecutor:
                     try:
                         _exp = float(ra.get("expires_at", 0))
                     except (TypeError, ValueError):
-                        logger.warning(
-                            "TaskExecutor: skipping malformed replay auth %r", ra
-                        )
+                        logger.warning("TaskExecutor: skipping malformed replay auth %r", ra)
                         continue
                     if _exp <= _now_for_replay:
                         continue
@@ -489,9 +525,7 @@ class TaskExecutor:
                             )
                         )
                     except (TypeError, ValueError):
-                        logger.warning(
-                            "TaskExecutor: skipping malformed replay auth %r", ra
-                        )
+                        logger.warning("TaskExecutor: skipping malformed replay auth %r", ra)
 
             # workspace_roots = security.workspace.paths（用户配置）∪ task cwd。
             # 不再用单一 cwd 覆盖用户配置——计划任务必须遵守安全页定义的工作区
@@ -537,7 +571,8 @@ class TaskExecutor:
                 error_msg = f"任务执行超时（超过 {timeout_display} 未完成）"
                 logger.error(f"TaskExecutor: task {task.id} timed out after {task_timeout}s")
                 if not skip_end_notification:
-                    await self._send_end_notification(task, success=False, message=error_msg)
+                    with contextlib.suppress(ChannelDeliveryUnavailable):
+                        await self._send_end_notification(task, success=False, message=error_msg)
                 return False, error_msg
             except Exception as exc:  # noqa: BLE001
                 # C12 §14.5: catch DeferredApprovalRequired before the generic
@@ -569,13 +604,18 @@ class TaskExecutor:
             # 5. 发送结果通知（如果需要）
             if not agent_success:
                 if not skip_end_notification:
-                    await self._send_end_notification(task, success=False, message=result)
+                    with contextlib.suppress(ChannelDeliveryUnavailable):
+                        await self._send_end_notification(task, success=False, message=result)
                 logger.warning(f"TaskExecutor: task {task.id} failed via agent result: {result}")
                 return False, result
 
             agent_sent = getattr(agent, "_task_message_sent", False)
             if not agent_sent and not skip_end_notification:
-                delivered = await self._send_end_notification(task, success=True, message=result)
+                delivered, unavailable_marker = await self._send_end_notification_or_marker(
+                    task, success=True, message=result
+                )
+                if unavailable_marker:
+                    return False, unavailable_marker
                 if not delivered:
                     error_msg = "任务已完成，但结果通知发送失败，请检查 IM 通道连接状态。"
                     logger.warning(f"TaskExecutor: task {task.id} result delivery failed")
@@ -588,7 +628,8 @@ class TaskExecutor:
             error_msg = str(e)
             logger.error(f"TaskExecutor: task {task.id} failed: {error_msg}", exc_info=True)
             if not skip_end_notification:
-                await self._send_end_notification(task, success=False, message=error_msg)
+                with contextlib.suppress(ChannelDeliveryUnavailable):
+                    await self._send_end_notification(task, success=False, message=error_msg)
             return False, error_msg
         finally:
             # 清理 IM 上下文
@@ -599,15 +640,15 @@ class TaskExecutor:
                 with contextlib.suppress(Exception):
                     await self._cleanup_agent(agent)
 
-    async def _send_start_notification(self, task: ScheduledTask) -> None:
+    async def _send_start_notification(self, task: ScheduledTask) -> bool:
         """发送任务开始通知"""
         if not task.channel_id or not task.chat_id or not self.gateway:
-            return
+            return True
 
         # 检查是否启用开始通知
         if not self._metadata_bool(task, "notify_on_start", True):
             logger.debug(f"Task {task.id} has start notification disabled")
-            return
+            return True
 
         try:
             notification = f"🚀 开始执行任务: {task.name}\n\n请稍候，我正在处理中..."
@@ -622,9 +663,31 @@ class TaskExecutor:
                 logger.info(f"Sent start notification for task {task.id}")
             else:
                 logger.info(f"Start notification for task {task.id} was not immediately delivered")
+            return delivered
 
+        except ChannelDeliveryUnavailable:
+            raise
         except Exception as e:
             logger.error(f"Failed to send start notification: {e}")
+            return False
+
+    async def _send_end_notification_or_marker(
+        self,
+        task: ScheduledTask,
+        success: bool,
+        message: str,
+    ) -> tuple[bool, str | None]:
+        try:
+            delivered = await self._send_end_notification(task, success=success, message=message)
+            return delivered, None
+        except ChannelDeliveryUnavailable as exc:
+            error_msg = self._format_channel_unavailable_error(exc)
+            logger.warning(
+                "TaskExecutor: task %s notification skipped because channel is unavailable: %s",
+                task.id,
+                error_msg,
+            )
+            return False, f"{CHANNEL_UNAVAILABLE_MARKER} {error_msg}"
 
     async def _send_end_notification(
         self,
@@ -687,25 +750,35 @@ class TaskExecutor:
     async def _deliver_task_notification(self, task: ScheduledTask, text: str) -> bool:
         """投递任务通知；主通道失败时尝试已知 IM 目标，保持单一通知入口。"""
         primary = (task.channel_id, task.chat_id)
+        last_unavailable: ChannelDeliveryUnavailable | None = None
         if task.channel_id and task.chat_id:
-            if await self._send_gateway_text(
-                channel=task.channel_id,
-                chat_id=task.chat_id,
-                text=text,
-                user_id=task.user_id or "system",
-            ):
-                return True
+            try:
+                if await self._send_gateway_text(
+                    channel=task.channel_id,
+                    chat_id=task.chat_id,
+                    text=text,
+                    user_id=task.user_id or "system",
+                ):
+                    return True
+            except ChannelDeliveryUnavailable as exc:
+                last_unavailable = exc
 
         for channel, chat_id in self._find_all_im_targets():
             if (channel, chat_id) == primary:
                 continue
-            if await self._send_gateway_text(channel=channel, chat_id=chat_id, text=text):
-                logger.info(
-                    f"TaskExecutor: notification for {task.id} delivered via fallback "
-                    f"{channel}/{chat_id}"
-                )
-                return True
+            try:
+                if await self._send_gateway_text(channel=channel, chat_id=chat_id, text=text):
+                    logger.info(
+                        f"TaskExecutor: notification for {task.id} delivered via fallback "
+                        f"{channel}/{chat_id}"
+                    )
+                    return True
+            except ChannelDeliveryUnavailable as exc:
+                last_unavailable = exc
+                continue
 
+        if last_unavailable is not None:
+            raise last_unavailable
         return False
 
     async def _send_gateway_text(
@@ -735,6 +808,8 @@ class TaskExecutor:
             if isinstance(result, str):
                 return bool(result)
             return result is not None
+        except ChannelDeliveryUnavailable:
+            raise
         except Exception as e:
             logger.warning(f"TaskExecutor: send failed for {channel}/{chat_id}: {e}")
             return False

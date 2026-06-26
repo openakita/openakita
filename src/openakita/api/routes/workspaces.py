@@ -131,8 +131,7 @@ def _copy_template_files(ws_dir: Path) -> None:
             shutil.copy2(src, llm_dest)
 
 
-def _copy_dir_templates(ws_dir: Path, repo_root: Path | None,
-                        pkg_root: Path, rel_dir: str) -> None:
+def _copy_dir_templates(ws_dir: Path, repo_root: Path | None, pkg_root: Path, rel_dir: str) -> None:
     src_dir = None
     if repo_root:
         candidate = repo_root / rel_dir
@@ -158,8 +157,7 @@ def _copy_dir_templates(ws_dir: Path, repo_root: Path | None,
             shutil.copy2(f, dest)
 
 
-def _resolve_template(repo_root: Path | None, pkg_root: Path,
-                      rel_path: str) -> Path | None:
+def _resolve_template(repo_root: Path | None, pkg_root: Path, rel_path: str) -> Path | None:
     if repo_root:
         candidate = repo_root / rel_path
         if candidate.exists():
@@ -174,6 +172,7 @@ def _find_repo_root() -> Path | None:
     """Walk up from the current settings.project_root to find the repo root."""
     try:
         from openakita.config import settings
+
         p = settings.project_root.resolve()
     except Exception:
         p = Path.cwd().resolve()
@@ -205,16 +204,19 @@ async def list_workspaces():
     for ws in state.get("workspaces", []):
         ws_id = ws.get("id", "")
         ws_path = str(_workspace_dir(ws_id))
-        result.append({
-            "id": ws_id,
-            "name": ws.get("name", ws_id),
-            "path": ws_path,
-            "isCurrent": ws_id == current_id,
-        })
+        result.append(
+            {
+                "id": ws_id,
+                "name": ws.get("name", ws_id),
+                "path": ws_path,
+                "isCurrent": ws_id == current_id,
+            }
+        )
 
     if not result:
         try:
             from openakita.config import settings
+
             pr = settings.project_root.resolve()
             ws_dir = _workspaces_dir().resolve()
             try:
@@ -222,12 +224,14 @@ async def list_workspaces():
                 ws_id = rel.parts[0] if rel.parts else "default"
             except ValueError:
                 ws_id = "default"
-            result.append({
-                "id": ws_id,
-                "name": ws_id,
-                "path": str(pr),
-                "isCurrent": True,
-            })
+            result.append(
+                {
+                    "id": ws_id,
+                    "name": ws_id,
+                    "path": str(pr),
+                    "isCurrent": True,
+                }
+            )
         except Exception:
             pass
 
@@ -239,6 +243,7 @@ async def get_current_workspace():
     """Return info about the workspace the backend is currently running in."""
     try:
         from openakita.config import settings
+
         pr = settings.project_root.resolve()
     except Exception:
         pr = Path.cwd().resolve()
@@ -274,7 +279,10 @@ async def create_workspace(body: CreateWorkspaceRequest, request: Request):
     ws_id = body.id.strip().lower()
 
     if not _WS_ID_RE.match(ws_id):
-        return {"status": "error", "message": f"Invalid workspace ID: must match {_WS_ID_RE.pattern}"}
+        return {
+            "status": "error",
+            "message": f"Invalid workspace ID: must match {_WS_ID_RE.pattern}",
+        }
 
     ws_dir = _workspace_dir(ws_id)
     if ws_dir.exists():
@@ -298,7 +306,9 @@ async def create_workspace(body: CreateWorkspaceRequest, request: Request):
 
     _write_state(state)
 
-    logger.info(f"[Workspaces] Created workspace '{ws_id}' (name={ws_name}, set_current={body.set_current})")
+    logger.info(
+        f"[Workspaces] Created workspace '{ws_id}' (name={ws_name}, set_current={body.set_current})"
+    )
 
     return {
         "status": "ok",
@@ -348,6 +358,7 @@ async def switch_workspace(body: SwitchWorkspaceRequest, request: Request):
     os.chdir(ws_dir)
 
     from openakita import config as cfg
+
     cfg._restart_requested = True
     shutdown_event = getattr(request.app.state, "shutdown_event", None)
     if shutdown_event is not None:

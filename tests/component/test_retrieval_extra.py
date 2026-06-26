@@ -26,24 +26,32 @@ def engine(store):
 
 @pytest.fixture
 def store_with_attachments(store):
-    store.save_attachment(Attachment(
-        id="att-cat",
-        filename="cat.jpg",
-        mime_type="image/jpeg",
-        description="一只橘猫趴在沙发上",
-        direction=AttachmentDirection.INBOUND,
-    ))
-    store.save_attachment(Attachment(
-        id="att-report",
-        filename="report.pdf",
-        mime_type="application/pdf",
-        description="月度销售报告",
-        direction=AttachmentDirection.OUTBOUND,
-    ))
-    store.save_semantic(SemanticMemory(
-        content="用户养了一只橘猫", type=MemoryType.FACT,
-        subject="用户", predicate="宠物",
-    ))
+    store.save_attachment(
+        Attachment(
+            id="att-cat",
+            filename="cat.jpg",
+            mime_type="image/jpeg",
+            description="一只橘猫趴在沙发上",
+            direction=AttachmentDirection.INBOUND,
+        )
+    )
+    store.save_attachment(
+        Attachment(
+            id="att-report",
+            filename="report.pdf",
+            mime_type="application/pdf",
+            description="月度销售报告",
+            direction=AttachmentDirection.OUTBOUND,
+        )
+    )
+    store.save_semantic(
+        SemanticMemory(
+            content="用户养了一只橘猫",
+            type=MemoryType.FACT,
+            subject="用户",
+            predicate="宠物",
+        )
+    )
     return store
 
 
@@ -73,13 +81,15 @@ class TestAttachmentRetrieval:
     def test_attachment_candidate_structure(self, store_with_attachments):
         """直接用 store 层确认结构, 再经 engine 转换."""
         engine = RetrievalEngine(store_with_attachments)
-        store_with_attachments.save_attachment(Attachment(
-            id="att-test-struct",
-            filename="structure_test.png",
-            mime_type="image/png",
-            description="图片结构测试",
-            direction=AttachmentDirection.INBOUND,
-        ))
+        store_with_attachments.save_attachment(
+            Attachment(
+                id="att-test-struct",
+                filename="structure_test.png",
+                mime_type="image/png",
+                description="图片结构测试",
+                direction=AttachmentDirection.INBOUND,
+            )
+        )
         candidates = engine._search_attachments("structure_test 照片")
         assert len(candidates) >= 1
         for c in candidates:
@@ -101,14 +111,20 @@ class TestReranking:
     def test_higher_relevance_wins(self, engine):
         candidates = [
             RetrievalCandidate(
-                memory_id="low", content="low relevance",
-                relevance=0.2, recency_score=0.5,
-                importance_score=0.5, access_frequency_score=0.5,
+                memory_id="low",
+                content="low relevance",
+                relevance=0.2,
+                recency_score=0.5,
+                importance_score=0.5,
+                access_frequency_score=0.5,
             ),
             RetrievalCandidate(
-                memory_id="high", content="high relevance",
-                relevance=0.9, recency_score=0.5,
-                importance_score=0.5, access_frequency_score=0.5,
+                memory_id="high",
+                content="high relevance",
+                relevance=0.9,
+                recency_score=0.5,
+                importance_score=0.5,
+                access_frequency_score=0.5,
             ),
         ]
         ranked = engine._rerank(candidates, "test")
@@ -117,14 +133,22 @@ class TestReranking:
     def test_tech_persona_boosts_skill(self, engine):
         candidates = [
             RetrievalCandidate(
-                memory_id="skill", content="skill item", memory_type="skill",
-                relevance=0.5, recency_score=0.5,
-                importance_score=0.5, access_frequency_score=0.5,
+                memory_id="skill",
+                content="skill item",
+                memory_type="skill",
+                relevance=0.5,
+                recency_score=0.5,
+                importance_score=0.5,
+                access_frequency_score=0.5,
             ),
             RetrievalCandidate(
-                memory_id="fact", content="fact item", memory_type="fact",
-                relevance=0.5, recency_score=0.5,
-                importance_score=0.5, access_frequency_score=0.5,
+                memory_id="fact",
+                content="fact item",
+                memory_type="fact",
+                relevance=0.5,
+                recency_score=0.5,
+                importance_score=0.5,
+                access_frequency_score=0.5,
             ),
         ]
         ranked = engine._rerank(candidates, "test", persona="tech_expert")
@@ -132,9 +156,12 @@ class TestReranking:
 
     def test_score_is_weighted_sum(self, engine):
         c = RetrievalCandidate(
-            memory_id="test", content="test",
-            relevance=1.0, recency_score=1.0,
-            importance_score=1.0, access_frequency_score=1.0,
+            memory_id="test",
+            content="test",
+            relevance=1.0,
+            recency_score=1.0,
+            importance_score=1.0,
+            access_frequency_score=1.0,
         )
         engine._rerank([c], "test")
         expected = 1.0 * 0.4 + 1.0 * 0.25 + 1.0 * 0.2 + 1.0 * 0.15
@@ -247,16 +274,12 @@ class TestQueryDecomposition:
 
 class TestAttachmentSearchTerms:
     def test_filters_media_stop_words(self):
-        terms = RetrievalEngine._get_attachment_search_terms(
-            "给我那张猫的照片", ["猫", "照片"]
-        )
+        terms = RetrievalEngine._get_attachment_search_terms("给我那张猫的照片", ["猫", "照片"])
         assert "猫" in terms
         assert "照片" not in terms
 
     def test_fallback_to_raw_split(self):
-        terms = RetrievalEngine._get_attachment_search_terms(
-            "橘猫沙发上", None
-        )
+        terms = RetrievalEngine._get_attachment_search_terms("橘猫沙发上", None)
         assert len(terms) >= 1
 
     def test_returns_raw_if_nothing_extracted(self):
@@ -303,13 +326,15 @@ class TestDecomposeWithLLM:
         """LLM 拆解 → 逐关键词搜索 → 找到附件."""
         from dataclasses import dataclass
 
-        store.save_attachment(Attachment(
-            id="att-cat-llm",
-            filename="cat.jpg",
-            mime_type="image/jpeg",
-            description="一只橘猫趴在沙发上",
-            direction=AttachmentDirection.INBOUND,
-        ))
+        store.save_attachment(
+            Attachment(
+                id="att-cat-llm",
+                filename="cat.jpg",
+                mime_type="image/jpeg",
+                description="一只橘猫趴在沙发上",
+                direction=AttachmentDirection.INBOUND,
+            )
+        )
 
         @dataclass
         class _Resp:
@@ -331,6 +356,7 @@ class TestScoringHelpers:
 
     def test_compute_recency_old(self, engine):
         from datetime import timedelta
+
         old = datetime.now() - timedelta(days=30)
         score = engine._compute_recency(old)
         assert score < 0.2
@@ -346,4 +372,3 @@ class TestScoringHelpers:
 
     def test_format_empty(self, engine):
         assert engine._format_within_budget([], 100) == ""
-

@@ -332,8 +332,7 @@ def record_decision(
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except OSError as fallback_exc:
         logger.warning(
-            "[C15 evolution_window] fallback raw append also failed for "
-            "%s fix_id=%s: %s",
+            "[C15 evolution_window] fallback raw append also failed for %s fix_id=%s: %s",
             audit_path,
             fix_id,
             fallback_exc,

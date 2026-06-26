@@ -440,7 +440,16 @@ MODEL_CAPABILITIES = {
             "thinking": True,
             "thinking_only": True,
         },
-        # DashScope 第三方模型 — MiniMax（thinking-only，不接受 enable_thinking=False）
+        # DashScope 第三方模型 — MiniMax
+        # M3 起原生多模态（图像/视频），且 thinking 可按请求开关（非 thinking-only）
+        "MiniMax-M3": {
+            "text": True,
+            "vision": True,
+            "video": True,
+            "tools": True,
+            "thinking": True,
+        },
+        # M2 系列为 thinking-only 模型，不接受 enable_thinking=False
         "MiniMax-M2.7": {
             "text": True,
             "vision": False,
@@ -485,7 +494,15 @@ MODEL_CAPABILITIES = {
     },
     "minimax": {
         # MiniMax 官方（不支持 /v1/models 端点）
-        # M2+ 系列均为 thinking-only 模型，不接受 enable_thinking=False
+        # M3 起原生多模态（图像/视频），thinking 可按请求开关
+        "minimax-m3": {
+            "text": True,
+            "vision": True,
+            "video": True,
+            "tools": True,
+            "thinking": True,
+        },
+        # M2 系列均为 thinking-only 模型，不接受 enable_thinking=False
         "minimax-m2.5": {
             "text": True,
             "vision": False,

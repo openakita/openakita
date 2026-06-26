@@ -185,4 +185,3 @@ def test_ui_assets_present():
     missing = expected - actual
     assert not missing, f"Missing UI assets: {missing}"
     assert (PLUGIN_DIR / "ui" / "dist" / "index.html").is_file()
-

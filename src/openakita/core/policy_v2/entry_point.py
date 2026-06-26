@@ -268,11 +268,7 @@ def apply_classification_to_session(session, classification: EntryClassification
     except Exception:
         current_strategy = ""
 
-    if (
-        classification.default_strategy
-        and not current_strategy
-        and current_unattended
-    ):
+    if classification.default_strategy and not current_strategy and current_unattended:
         try:
             session.unattended_strategy = classification.default_strategy
             mutated = True

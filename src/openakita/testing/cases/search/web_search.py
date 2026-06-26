@@ -109,4 +109,3 @@ WEB_SEARCH_TESTS = [
 
 def get_tests() -> list[TestCase]:
     return WEB_SEARCH_TESTS
-

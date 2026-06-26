@@ -40,6 +40,8 @@ export interface AdvancedViewProps {
     running: boolean;
     pid: number | null;
     pidFile: string;
+    managedBy?: "tauri" | "external" | "unknown";
+    isManagedChild?: boolean;
     port?: number;
     heartbeatPhase?: string;
     heartbeatHttpReady?: boolean;
@@ -64,7 +66,7 @@ export interface AdvancedViewProps {
 export function AdvancedView(props: AdvancedViewProps) {
   const {
     envDraft, setEnvDraft, busy,
-    workspaces, currentWorkspaceId, serviceStatus, dataMode, info,
+    workspaces, currentWorkspaceId, serviceStatus, info,
     storeVisible, setStoreVisible, desktopVersion,
     shouldUseHttpApi, httpApiBase,
     backendBootPhase, onOpenRuntimeEnvironment,

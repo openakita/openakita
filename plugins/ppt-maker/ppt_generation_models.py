@@ -177,4 +177,3 @@ class RenderModel(BaseModel):
     design_system: DesignSystem
     slides: list[RenderSlide] = Field(default_factory=list)
     exporter: Literal["pptxgenjs", "python-pptx", "creative-image"] = "python-pptx"
-

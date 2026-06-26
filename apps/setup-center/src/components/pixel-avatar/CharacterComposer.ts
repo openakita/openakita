@@ -1,5 +1,4 @@
 import {
-  type PixelAppearance,
   type CharacterRenderOptions,
   SKIN_TONES,
   HAIR_COLORS,

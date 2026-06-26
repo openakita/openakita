@@ -204,7 +204,9 @@ def extract_output_token_upper_bound(error: Exception) -> int | None:
 
     raw_body = getattr(error, "raw_body", None)
     error_str = "\n".join(part for part in (str(error), str(raw_body or "")) if part).lower()
-    if not any(key in error_str for key in ("max_tokens", "max_completion_tokens", "max_output_tokens")):
+    if not any(
+        key in error_str for key in ("max_tokens", "max_completion_tokens", "max_output_tokens")
+    ):
         return None
 
     patterns = [

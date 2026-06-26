@@ -17,7 +17,7 @@ def test_format_user_friendly_error_hides_plugin_cache_permission_path():
 
 def test_format_user_friendly_error_hides_traceback_path():
     raw = (
-        'Traceback (most recent call last):\n'
+        "Traceback (most recent call last):\n"
         '  File "D:\\OpenAkita\\src\\openakita\\foo.py", line 12, in run\n'
         "RuntimeError: boom"
     )

@@ -24,7 +24,9 @@ _SECRET_PATTERNS = [
 def _redact(text: str, *, limit: int = 1200) -> str:
     value = str(text or "")
     for pat in _SECRET_PATTERNS:
-        value = pat.sub(lambda m: f"{m.group(1)}{m.group(2) if len(m.groups()) > 1 else ''}[REDACTED]", value)
+        value = pat.sub(
+            lambda m: f"{m.group(1)}{m.group(2) if len(m.groups()) > 1 else ''}[REDACTED]", value
+        )
     value = value.replace("\x00", "")
     if len(value) > limit:
         return value[:limit] + "...[truncated]"
@@ -65,7 +67,9 @@ class ToolExperienceTracker:
             "duration_ms": round(duration_ms, 2) if duration_ms is not None else None,
             "error_type": error_type,
             "exit_code": exit_code,
-            "input_summary": _redact(json.dumps(input_summary, ensure_ascii=False, default=str), limit=600)
+            "input_summary": _redact(
+                json.dumps(input_summary, ensure_ascii=False, default=str), limit=600
+            )
             if input_summary is not None
             else "",
             "output_summary": _redact(output, limit=1200),
@@ -163,7 +167,9 @@ def summarize_recent_failures(
 
     tracker = tracker or get_tool_experience_tracker()
     path = tracker.path
-    cache_key = f"{window}:{min_failures}:{min_failure_rate}:{max_results}:{agent_profile_id or '*'}"
+    cache_key = (
+        f"{window}:{min_failures}:{min_failure_rate}:{max_results}:{agent_profile_id or '*'}"
+    )
 
     # mtime + size + cache_key + 60s TTL guard. We re-read on either content
     # change OR after 60s so a "cold" failure never lingers indefinitely.
@@ -214,10 +220,7 @@ def summarize_recent_failures(
         rate = fail_count / total if total else 0.0
         if fail_count < min_failures or rate < min_failure_rate:
             continue
-        common = [
-            {"error_type": et, "count": cnt}
-            for et, cnt in error_types[tool].most_common(2)
-        ]
+        common = [{"error_type": et, "count": cnt} for et, cnt in error_types[tool].most_common(2)]
         summary.append(
             {
                 "tool_name": tool,

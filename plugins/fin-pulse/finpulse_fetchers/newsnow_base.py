@@ -130,9 +130,7 @@ async def _call_newsnow(url: str, *, timeout_sec: float) -> Any:
     last_exc: Exception | None = None
     for attempt in range(2):
         try:
-            async with make_client(
-                timeout=timeout_sec, extra_headers=headers
-            ) as client:
+            async with make_client(timeout=timeout_sec, extra_headers=headers) as client:
                 resp = await client.get(url)
             # Surface Cloudflare challenge pages (403/503 + HTML body)
             # as a distinct error — swallowing them as "empty" hid the
@@ -179,9 +177,7 @@ async def _call_newsnow(url: str, *, timeout_sec: float) -> Any:
     raise last_exc
 
 
-def _parse_envelope(
-    payload: Any, *, platform_id: str, source_id: str
-) -> list[NormalizedItem]:
+def _parse_envelope(payload: Any, *, platform_id: str, source_id: str) -> list[NormalizedItem]:
     """Turn a NewsNow response body into :class:`NormalizedItem` rows.
 
     Guard rails: skip ``None`` / ``float`` / empty titles, use ``url`` with
@@ -285,9 +281,7 @@ def _coerce_published(value: Any) -> str | None:
         if ts > 1e12:
             ts /= 1000.0
 
-        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     s = str(value).strip()
     if not s:
         return None

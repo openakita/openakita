@@ -76,9 +76,7 @@ def _reset_state() -> None:
 
 
 class TestBugA1HotReloadFailureWhenLkgNone:
-    def test_invalid_reload_with_no_lkg_reports_failure(
-        self, tmp_path: Path
-    ) -> None:
+    def test_invalid_reload_with_no_lkg_reports_failure(self, tmp_path: Path) -> None:
         """Process starts with broken YAML → LKG stays None → operator
         tries to edit it (with another typo) → reload must be marked
         failed, not silently called 'engine rebuilt'."""
@@ -114,14 +112,10 @@ class TestBugA1HotReloadFailureWhenLkgNone:
 
         assert len(events) == 1, "exactly one reload event expected"
         ok, reason = events[0]
-        assert ok is False, (
-            "BUG-A1 regression: invalid reload with LKG=None must report ok=False"
-        )
+        assert ok is False, "BUG-A1 regression: invalid reload with LKG=None must report ok=False"
         assert "no last-known-good" in reason or "validation" in reason
 
-    def test_valid_first_promotion_still_reports_success(
-        self, tmp_path: Path
-    ) -> None:
+    def test_valid_first_promotion_still_reports_success(self, tmp_path: Path) -> None:
         """Sanity: when LKG was None and the edit is VALID, the first
         successful reload must still report ok=True (LKG gets promoted
         for the first time)."""
@@ -160,17 +154,13 @@ class TestBugA1HotReloadFailureWhenLkgNone:
 
 
 class TestBugC1AuditLoggerSingletonRefresh:
-    def test_rebuild_with_changed_audit_path_resets_singleton(
-        self, tmp_path: Path
-    ) -> None:
+    def test_rebuild_with_changed_audit_path_resets_singleton(self, tmp_path: Path) -> None:
         """A rebuild that flips ``audit.log_path`` must cause the next
         ``get_audit_logger()`` to construct a fresh logger pointing at
         the new path."""
         policies = tmp_path / "POLICIES.yaml"
         policies.write_text(
-            "security:\n"
-            "  audit:\n"
-            f"    log_path: '{(tmp_path / 'first.jsonl').as_posix()}'\n",
+            f"security:\n  audit:\n    log_path: '{(tmp_path / 'first.jsonl').as_posix()}'\n",
             encoding="utf-8",
         )
         global_engine.rebuild_engine_v2(yaml_path=policies)
@@ -181,9 +171,7 @@ class TestBugC1AuditLoggerSingletonRefresh:
         # singleton must be invalidated so the next get returns a
         # logger pointing at the new path.
         policies.write_text(
-            "security:\n"
-            "  audit:\n"
-            f"    log_path: '{(tmp_path / 'second.jsonl').as_posix()}'\n",
+            f"security:\n  audit:\n    log_path: '{(tmp_path / 'second.jsonl').as_posix()}'\n",
             encoding="utf-8",
         )
         global_engine.rebuild_engine_v2(yaml_path=policies)
@@ -195,17 +183,13 @@ class TestBugC1AuditLoggerSingletonRefresh:
         )
         assert logger_v2._path == tmp_path / "second.jsonl"
 
-    def test_rebuild_with_unchanged_audit_keeps_singleton(
-        self, tmp_path: Path
-    ) -> None:
+    def test_rebuild_with_unchanged_audit_keeps_singleton(self, tmp_path: Path) -> None:
         """Don't churn the singleton when audit didn't actually change
         — keeps log file handle warm + avoids open-file storms on
         rapid hot-reload cycles."""
         policies = tmp_path / "POLICIES.yaml"
         policies.write_text(
-            "security:\n"
-            "  audit:\n"
-            f"    log_path: '{(tmp_path / 'pinned.jsonl').as_posix()}'\n",
+            f"security:\n  audit:\n    log_path: '{(tmp_path / 'pinned.jsonl').as_posix()}'\n",
             encoding="utf-8",
         )
         global_engine.rebuild_engine_v2(yaml_path=policies)
@@ -240,16 +224,12 @@ class TestBugC1AuditLoggerSingletonRefresh:
         policies.write_text("security: {}\n", encoding="utf-8")
         first_log = tmp_path / "first.jsonl"
         policies.write_text(
-            "security:\n"
-            "  audit:\n"
-            f"    log_path: '{first_log.as_posix()}'\n",
+            f"security:\n  audit:\n    log_path: '{first_log.as_posix()}'\n",
             encoding="utf-8",
         )
         global_engine.rebuild_engine_v2(yaml_path=policies)
         # Force first write to confirm path.
-        al.get_audit_logger().log(
-            tool_name="probe", decision="allow", reason="warmup"
-        )
+        al.get_audit_logger().log(tool_name="probe", decision="allow", reason="warmup")
         assert first_log.exists()
         rows_before = first_log.read_text(encoding="utf-8").splitlines()
 
@@ -257,9 +237,7 @@ class TestBugC1AuditLoggerSingletonRefresh:
         second_log = tmp_path / "second.jsonl"
         monkeypatch.setenv("OPENAKITA_AUDIT_LOG_PATH", str(second_log))
         global_engine.rebuild_engine_v2(yaml_path=policies)
-        al.get_audit_logger().log(
-            tool_name="probe2", decision="allow", reason="after env"
-        )
+        al.get_audit_logger().log(tool_name="probe2", decision="allow", reason="after env")
 
         assert second_log.exists(), "audit must land in ENV-overridden path"
         # Old file must not have grown beyond what we wrote earlier
@@ -271,11 +249,10 @@ class TestBugC1AuditLoggerSingletonRefresh:
         # demonstrated via the probe2 row.)
         rows_after = first_log.read_text(encoding="utf-8").splitlines()
         # probe2 must NOT be in first.jsonl.
-        for r in rows_after[len(rows_before):]:
+        for r in rows_after[len(rows_before) :]:
             parsed = json.loads(r)
             assert parsed["tool"] != "probe2", (
-                "BUG-C1 regression: writes after ENV change leaked into "
-                "the previous audit file"
+                "BUG-C1 regression: writes after ENV change leaked into the previous audit file"
             )
 
 
@@ -355,23 +332,18 @@ class TestBugC2NoDeadlockOnEnvOverrideUnderLock:
         for _i in range(10):
             al.reset_audit_logger()
             done = threading.Event()
-            t = threading.Thread(
-                target=_rebuild_once, args=(policies, done), daemon=True
-            )
+            t = threading.Thread(target=_rebuild_once, args=(policies, done), daemon=True)
             t.start()
             if done.wait(timeout=3.0):
                 success_count += 1
 
         assert success_count == 10, (
-            f"expected 10/10 rebuilds, got {success_count} — "
-            "lock leak or partial deadlock"
+            f"expected 10/10 rebuilds, got {success_count} — lock leak or partial deadlock"
         )
 
 
 class TestRegularFlowStillWorks:
-    def test_valid_reload_with_existing_lkg_still_succeeds(
-        self, tmp_path: Path
-    ) -> None:
+    def test_valid_reload_with_existing_lkg_still_succeeds(self, tmp_path: Path) -> None:
         policies = tmp_path / "POLICIES.yaml"
         policies.write_text(_VALID_YAML, encoding="utf-8")
         global_engine.rebuild_engine_v2(yaml_path=policies)
@@ -390,10 +362,7 @@ class TestRegularFlowStillWorks:
         import time
 
         policies.write_bytes(
-            b"version: 2\n"
-            b"security:\n"
-            b"  workspace:\n"
-            b"    paths: ['${CWD}', '/tmp']\n"
+            b"version: 2\nsecurity:\n  workspace:\n    paths: ['${CWD}', '/tmp']\n"
         )
         new_mtime = time.time() + 2.0
         os.utime(policies, (new_mtime, new_mtime))
@@ -405,9 +374,7 @@ class TestRegularFlowStillWorks:
         assert ok is True
         assert "rebuilt" in reason
 
-    def test_invalid_reload_with_existing_lkg_keeps_lkg(
-        self, tmp_path: Path
-    ) -> None:
+    def test_invalid_reload_with_existing_lkg_keeps_lkg(self, tmp_path: Path) -> None:
         policies = tmp_path / "POLICIES.yaml"
         policies.write_text(_VALID_YAML, encoding="utf-8")
         global_engine.rebuild_engine_v2(yaml_path=policies)

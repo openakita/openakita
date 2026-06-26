@@ -7,16 +7,26 @@ to view submission history and check progress without re-contacting the cloud.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from pathlib import Path
 
 import aiosqlite
+from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
 _DB_PATH: Path | None = None
 _MAX_RECORDS = 500
+# Per-process flag: once we've successfully opened the feedback DB at
+# least once we trust it and skip ``PRAGMA quick_check`` on subsequent
+# per-call connects. Running quick_check on every feedback API call is
+# wasted I/O — the file isn't shared with anything else and we'd notice
+# corruption immediately through any actual query failing. The flag is
+# reset only when the process restarts (which is also when a corrupted
+# file would be re-detected anyway).
+_FEEDBACK_DB_VERIFIED: bool = False
 
 
 def _resolve_db_path() -> Path:
@@ -24,6 +34,7 @@ def _resolve_db_path() -> Path:
     if _DB_PATH is None:
         try:
             from openakita.config import settings
+
             _DB_PATH = settings.data_dir / "feedback.db"
         except Exception:
             _DB_PATH = Path.cwd() / "data" / "feedback.db"
@@ -32,11 +43,48 @@ def _resolve_db_path() -> Path:
 
 
 async def _get_conn() -> aiosqlite.Connection:
+    """Open a feedback DB connection with safe_sqlite hardening.
+
+    On a corrupted / unavailable database we raise HTTPException(503)
+    *and* register the subsystem as degraded so the /api/health banner
+    surfaces. The per-call connect pattern (no long-lived conn) means we
+    don't have to implement a quiesce() handle here — every caller closes
+    its own connection in the ``finally`` block.
+
+    quick_check runs only on the first successful open per process to
+    keep the hot path fast (see ``_FEEDBACK_DB_VERIFIED`` above).
+    """
+    global _FEEDBACK_DB_VERIFIED
+    from openakita.storage.degraded import registry as _degraded_registry
+    from openakita.storage.safe_sqlite import SQLiteUnavailable, safe_open_async
+
     db_path = _resolve_db_path()
-    conn = await aiosqlite.connect(db_path)
     try:
-        conn.row_factory = aiosqlite.Row
-        await conn.execute("PRAGMA journal_mode=WAL")
+        conn = await safe_open_async(
+            db_path,
+            want_wal=True,
+            run_quick_check=not _FEEDBACK_DB_VERIFIED,
+            foreign_keys=False,
+            row_factory=aiosqlite.Row,
+        )
+    except SQLiteUnavailable as e:
+        logger.error(
+            "[FeedbackStore] DB unavailable: reason=%s details=%s",
+            e.reason,
+            e.details or "",
+        )
+        _degraded_registry.register(
+            "feedback",
+            e.reason,
+            repair="quarantine_feedback_db",
+            details=e.details or None,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=f"feedback_store_degraded:{e.reason}",
+        ) from e
+
+    try:
         await conn.executescript("""
             CREATE TABLE IF NOT EXISTS feedback_records (
                 report_id       TEXT PRIMARY KEY,
@@ -50,9 +98,26 @@ async def _get_conn() -> aiosqlite.Connection:
                 cached_status   TEXT DEFAULT 'pending'
             );
         """)
-    except Exception:
-        await conn.close()
-        raise
+    except Exception as e:
+        with contextlib.suppress(Exception):
+            await conn.close()
+        logger.error("[FeedbackStore] schema init failed: %s", e)
+        _degraded_registry.register(
+            "feedback",
+            "schema_init_failed",
+            repair="quarantine_feedback_db",
+            details=str(e)[:200],
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="feedback_store_degraded:schema_init_failed",
+        ) from e
+
+    # Open + schema init both succeeded — flip the per-process verified
+    # flag so subsequent calls skip ``PRAGMA quick_check``. Done here
+    # (not right after ``safe_open_async``) so a half-initialised DB
+    # that fails the schema step doesn't poison the flag.
+    _FEEDBACK_DB_VERIFIED = True
     return conn
 
 
@@ -78,9 +143,7 @@ async def save_record(
             (report_id, feedback_token, title, report_type, contact_email, now),
         )
         await conn.commit()
-        count_row = await conn.execute(
-            "SELECT COUNT(*) as cnt FROM feedback_records"
-        )
+        count_row = await conn.execute("SELECT COUNT(*) as cnt FROM feedback_records")
         row = await count_row.fetchone()
         if row and row["cnt"] > _MAX_RECORDS:
             excess = row["cnt"] - _MAX_RECORDS
@@ -113,22 +176,21 @@ async def get_all_records() -> list[dict]:
         for r in rows:
             has_unread = bool(
                 r["last_reply_at"]
-                and (
-                    not r["last_checked_at"]
-                    or r["last_reply_at"] > r["last_checked_at"]
-                )
+                and (not r["last_checked_at"] or r["last_reply_at"] > r["last_checked_at"])
             )
-            results.append({
-                "report_id": r["report_id"],
-                "has_token": r["feedback_token"] is not None,
-                "feedback_token": r["feedback_token"],
-                "title": r["title"],
-                "type": r["type"],
-                "contact_email": r["contact_email"] or "",
-                "submitted_at": r["submitted_at"],
-                "cached_status": r["cached_status"] or "pending",
-                "has_unread": has_unread,
-            })
+            results.append(
+                {
+                    "report_id": r["report_id"],
+                    "has_token": r["feedback_token"] is not None,
+                    "feedback_token": r["feedback_token"],
+                    "title": r["title"],
+                    "type": r["type"],
+                    "contact_email": r["contact_email"] or "",
+                    "submitted_at": r["submitted_at"],
+                    "cached_status": r["cached_status"] or "pending",
+                    "has_unread": has_unread,
+                }
+            )
         return results
     finally:
         await conn.close()
@@ -173,8 +235,7 @@ async def update_status(
             return
         vals.append(report_id)
         await conn.execute(
-            f"UPDATE feedback_records SET {', '.join(sets)} "
-            "WHERE report_id = ?",
+            f"UPDATE feedback_records SET {', '.join(sets)} WHERE report_id = ?",
             vals,
         )
         await conn.commit()

@@ -13,4 +13,3 @@ __all__ = [
     "get_mouse",
     "get_keyboard",
 ]
-

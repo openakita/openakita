@@ -1,6 +1,5 @@
 """L1 Unit Tests: Token budget estimation and allocation."""
 
-
 from openakita.prompt.budget import (
     BudgetConfig,
     BudgetResult,

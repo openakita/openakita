@@ -378,16 +378,15 @@ def parse_single_article(
         author = _normalized_text(str(first.get("name") if isinstance(first, dict) else first))
     elif raw_author:
         author = _normalized_text(str(raw_author))
-    published_text = (
-        str(json_article.get("datePublished") or json_article.get("dateModified") or "")
-        or _meta_content(
-            soup,
-            "article:published_time",
-            "article:modified_time",
-            "pubdate",
-            "publishdate",
-            "date",
-        )
+    published_text = str(
+        json_article.get("datePublished") or json_article.get("dateModified") or ""
+    ) or _meta_content(
+        soup,
+        "article:published_time",
+        "article:modified_time",
+        "pubdate",
+        "publishdate",
+        "date",
     )
     if not published_text:
         time_node = soup.find("time")
@@ -528,7 +527,11 @@ def _extract_heuristic(
                 url=absolute,
                 summary="",
                 published_at=published_at,
-                raw={"parser": "html_heuristic", "source_final_url": base_url, "date_source": "url"},
+                raw={
+                    "parser": "html_heuristic",
+                    "source_final_url": base_url,
+                    "date_source": "url",
+                },
             )
         )
         if len(items) >= max_items:
@@ -557,14 +560,10 @@ def parse_html_listing(
     soup = BeautifulSoup(html, "html.parser")
     seen_urls: set[str] = set()
 
-    items = _extract_with_selectors(
-        soup, base_url, selectors, seen_urls, source_id, max_items
-    )
+    items = _extract_with_selectors(soup, base_url, selectors, seen_urls, source_id, max_items)
     if len(items) < 5:
         items.extend(
-            _extract_heuristic(
-                soup, base_url, seen_urls, source_id, max_items - len(items)
-            )
+            _extract_heuristic(soup, base_url, seen_urls, source_id, max_items - len(items))
         )
     items.sort(key=lambda item: item.published_at or "", reverse=True)
     return items[:max_items]

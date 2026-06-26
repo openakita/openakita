@@ -114,6 +114,7 @@ def test_photo_speak_3s_end_to_end(tmp_data_dir: Path) -> None:
         await tm.init()
         try:
             client = AvatarDashScopeClient(read_settings=lambda: settings)
+
             # ``params['assets']`` is the canonical input contract;
             # ``image_url``/``audio_url``/etc are the keys the pipeline
             # reads after _step_prepare_assets. The earlier draft of

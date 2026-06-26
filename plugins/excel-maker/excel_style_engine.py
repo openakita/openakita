@@ -59,4 +59,3 @@ def apply_title_style(ws) -> None:
     ws["A1"].alignment = Alignment(vertical="center")
     ws.row_dimensions[1].height = 28
     autofit_columns(ws)
-

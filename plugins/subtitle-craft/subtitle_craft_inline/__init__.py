@@ -27,4 +27,3 @@ Modules:
   the module is dep-agnostic (parameterised by ``dep_id``) so it sits
   comfortably in any plugin that needs to gate on a system binary.
 """
-

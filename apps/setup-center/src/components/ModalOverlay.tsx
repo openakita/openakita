@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, type ReactNode, type CSSProperties } from "react";
+import { useRef, useEffect, type ReactNode, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
 export function ModalOverlay({

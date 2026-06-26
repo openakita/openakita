@@ -40,9 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 # v1 ``_on_allow`` 不重置计数的"只读"工具集；v2 沿用。
-_NON_RESETTING_READ_TOOLS = frozenset(
-    {"read_file", "list_directory", "grep", "glob"}
-)
+_NON_RESETTING_READ_TOOLS = frozenset({"read_file", "list_directory", "grep", "glob"})
 
 
 BroadcastHook = Callable[[dict[str, Any]], None]
@@ -110,12 +108,9 @@ class DeathSwitchTracker:
 
                 if self._readonly_mode:
                     return False  # 已经是 readonly，无需再触发
-                total_threshold = (
-                    threshold * total_multiplier if threshold > 0 else 0
-                )
-                should_trigger = (
-                    (threshold > 0 and self._consecutive_denials >= threshold)
-                    or (total_threshold > 0 and self._total_denials >= total_threshold)
+                total_threshold = threshold * total_multiplier if threshold > 0 else 0
+                should_trigger = (threshold > 0 and self._consecutive_denials >= threshold) or (
+                    total_threshold > 0 and self._total_denials >= total_threshold
                 )
                 if should_trigger:
                     self._readonly_mode = True
@@ -134,8 +129,7 @@ class DeathSwitchTracker:
 
         if action == "deny" and triggered:
             logger.warning(
-                "[PolicyV2 DeathSwitch] 触发: 连续拒绝=%d, 累计拒绝=%d, "
-                "Agent 进入只读模式",
+                "[PolicyV2 DeathSwitch] 触发: 连续拒绝=%d, 累计拒绝=%d, Agent 进入只读模式",
                 triggered_consec,
                 triggered_total,
             )
@@ -179,9 +173,7 @@ class DeathSwitchTracker:
         try:
             hook(payload)
         except Exception as exc:
-            logger.warning(
-                "[PolicyV2 DeathSwitch] broadcast hook raised: %s", exc
-            )
+            logger.warning("[PolicyV2 DeathSwitch] broadcast hook raised: %s", exc)
 
 
 # ---------------------------------------------------------------------------

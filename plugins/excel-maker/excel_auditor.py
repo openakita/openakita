@@ -8,11 +8,21 @@ from typing import Any
 
 from excel_formula import explain_formula
 
-REQUIRED_SHEETS = ["README", "Raw_Data", "Clean_Data", "Summary", "Charts", "Formula_Check", "Audit_Log"]
+REQUIRED_SHEETS = [
+    "README",
+    "Raw_Data",
+    "Clean_Data",
+    "Summary",
+    "Charts",
+    "Formula_Check",
+    "Audit_Log",
+]
 
 
 class WorkbookAuditor:
-    def audit(self, workbook_path: str | Path, output_path: str | Path | None = None) -> dict[str, Any]:
+    def audit(
+        self, workbook_path: str | Path, output_path: str | Path | None = None
+    ) -> dict[str, Any]:
         try:
             import openpyxl  # type: ignore
         except ImportError as exc:
@@ -77,8 +87,13 @@ class WorkbookAuditor:
                     "suggestion": "Open the workbook and review business口径 before delivery.",
                 }
             )
-        result = {"workbook_path": str(path), "items": items, "ok": not any(i["severity"] == "error" for i in items)}
+        result = {
+            "workbook_path": str(path),
+            "items": items,
+            "ok": not any(i["severity"] == "error" for i in items),
+        }
         if output_path:
-            Path(output_path).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            Path(output_path).write_text(
+                json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
         return result
-

@@ -47,9 +47,7 @@ class TestStrictness:
 
     def test_unknown_treated_as_high(self) -> None:
         """UNKNOWN 应当 ≥ MUTATING_GLOBAL（safety-by-default）。"""
-        assert strictness(ApprovalClass.UNKNOWN) >= strictness(
-            ApprovalClass.MUTATING_GLOBAL
-        )
+        assert strictness(ApprovalClass.UNKNOWN) >= strictness(ApprovalClass.MUTATING_GLOBAL)
 
     def test_readonly_lower_than_mutating(self) -> None:
         for ro in (
@@ -131,9 +129,7 @@ class TestHeuristic:
             ("setup_organization", ApprovalClass.CONTROL_PLANE),
         ],
     )
-    def test_known_prefix_classifications(
-        self, tool: str, expected: ApprovalClass
-    ) -> None:
+    def test_known_prefix_classifications(self, tool: str, expected: ApprovalClass) -> None:
         assert _heuristic_classify(tool) == expected
 
     @pytest.mark.parametrize(
@@ -153,9 +149,7 @@ class TestHeuristic:
         实际工具 update_scheduled_task 的 CONTROL_PLANE 分类应通过 explicit
         register（C8 实施），不靠启发式特例。
         """
-        assert (
-            _heuristic_classify("update_scheduled_task") == ApprovalClass.MUTATING_SCOPED
-        )
+        assert _heuristic_classify("update_scheduled_task") == ApprovalClass.MUTATING_SCOPED
 
 
 # ---- _is_inside_workspace ----
@@ -191,7 +185,9 @@ class TestPathInWorkspace:
 
 class TestClassifierChain:
     def test_explicit_register_param_wins_over_heuristic(self) -> None:
-        explicit = {"my_destroyer": (ApprovalClass.DESTRUCTIVE, DecisionSource.EXPLICIT_REGISTER_PARAM)}
+        explicit = {
+            "my_destroyer": (ApprovalClass.DESTRUCTIVE, DecisionSource.EXPLICIT_REGISTER_PARAM)
+        }
         clf = ApprovalClassifier(
             explicit_lookup=lambda t: explicit.get(t),
         )
@@ -201,9 +197,11 @@ class TestClassifierChain:
 
     def test_skill_metadata_passed_through(self) -> None:
         clf = ApprovalClassifier(
-            skill_lookup=lambda t: (ApprovalClass.MUTATING_GLOBAL, DecisionSource.SKILL_METADATA)
-            if t == "execute_skill"
-            else None,
+            skill_lookup=lambda t: (
+                (ApprovalClass.MUTATING_GLOBAL, DecisionSource.SKILL_METADATA)
+                if t == "execute_skill"
+                else None
+            ),
         )
         klass, src = clf.classify_with_source("execute_skill")
         assert klass == ApprovalClass.MUTATING_GLOBAL
@@ -274,14 +272,10 @@ class TestRefine:
     def test_write_file_inside_workspace_stays_scoped(self, tmp_path: Path) -> None:
         ctx = self._make_ctx(tmp_path)
         clf = ApprovalClassifier()
-        klass, _ = clf.classify_with_source(
-            "write_file", {"path": str(tmp_path / "x.txt")}, ctx
-        )
+        klass, _ = clf.classify_with_source("write_file", {"path": str(tmp_path / "x.txt")}, ctx)
         assert klass == ApprovalClass.MUTATING_SCOPED
 
-    def test_write_file_outside_workspace_upgrades_to_global(
-        self, tmp_path: Path
-    ) -> None:
+    def test_write_file_outside_workspace_upgrades_to_global(self, tmp_path: Path) -> None:
         ctx = self._make_ctx(tmp_path)
         clf = ApprovalClassifier()
         outside = tmp_path.parent / "_outside_dir_99" / "x.txt"
@@ -405,9 +399,7 @@ class TestCache:
         """同一 tool 不同 params/ctx 应得到不同 refined 分类。"""
         clf = ApprovalClassifier()
         ctx = PolicyContext(session_id="t", workspace_roots=(tmp_path,))
-        inside, _ = clf.classify_with_source(
-            "write_file", {"path": str(tmp_path / "a.txt")}, ctx
-        )
+        inside, _ = clf.classify_with_source("write_file", {"path": str(tmp_path / "a.txt")}, ctx)
         outside, _ = clf.classify_with_source(
             "write_file", {"path": str(tmp_path.parent / "b.txt")}, ctx
         )
@@ -700,9 +692,7 @@ class TestShellRefineInClassifier:
 
     def test_run_powershell_recursive_remove_destructive(self) -> None:
         clf = ApprovalClassifier()
-        result = clf.classify_full(
-            "run_powershell", {"command": "Remove-Item -Recurse C:\\foo"}
-        )
+        result = clf.classify_full("run_powershell", {"command": "Remove-Item -Recurse C:\\foo"})
         assert result.approval_class == ApprovalClass.DESTRUCTIVE
 
     def test_run_shell_empty_command_keeps_base(self) -> None:

@@ -421,12 +421,8 @@ class QQBotAdapter(ChannelAdapter):
                     raw = await asyncio.wait_for(ws.recv(), timeout=30)
                     hello = json.loads(raw)
                     if hello.get("op") != 10:
-                        raise RuntimeError(
-                            f"Expected Hello (op 10), got op {hello.get('op')}"
-                        )
-                    heartbeat_interval_ms = hello.get("d", {}).get(
-                        "heartbeat_interval", 41250
-                    )
+                        raise RuntimeError(f"Expected Hello (op 10), got op {hello.get('op')}")
+                    heartbeat_interval_ms = hello.get("d", {}).get("heartbeat_interval", 41250)
                     heartbeat_interval = heartbeat_interval_ms / 1000.0
 
                     # ---- Start heartbeat ----
@@ -437,10 +433,7 @@ class QQBotAdapter(ChannelAdapter):
 
                     try:
                         # ---- Identify (op 2) or Resume (op 6) ----
-                        if (
-                            self._ws_session_id is not None
-                            and self._ws_last_seq is not None
-                        ):
+                        if self._ws_session_id is not None and self._ws_last_seq is not None:
                             token = await self._get_access_token()
                             await ws.send(
                                 json.dumps(
@@ -485,8 +478,7 @@ class QQBotAdapter(ChannelAdapter):
                                     self._ws_session_id = d.get("session_id")
                                     user = d.get("user", {})
                                     logger.info(
-                                        f"QQ Official Bot ready "
-                                        f"(user: {user.get('username', '?')})"
+                                        f"QQ Official Bot ready (user: {user.get('username', '?')})"
                                     )
                                     self._retry_delay = 5
                                     consecutive_fatal = 0
@@ -494,22 +486,16 @@ class QQBotAdapter(ChannelAdapter):
                                     logger.info("QQ WS session resumed successfully")
                                     self._retry_delay = 5
                                 else:
-                                    asyncio.create_task(
-                                        self._handle_webhook_event(t, d)
-                                    )
+                                    asyncio.create_task(self._handle_webhook_event(t, d))
 
                             elif op == 11:  # Heartbeat ACK
                                 self._ws_heartbeat_ack = True
 
                             elif op == 1:  # Server heartbeat request
-                                await ws.send(
-                                    json.dumps({"op": 1, "d": self._ws_last_seq})
-                                )
+                                await ws.send(json.dumps({"op": 1, "d": self._ws_last_seq}))
 
                             elif op == 7:  # Reconnect
-                                logger.info(
-                                    "QQ WS: server requested reconnect (op 7)"
-                                )
+                                logger.info("QQ WS: server requested reconnect (op 7)")
                                 break
 
                             elif op == 9:  # Invalid Session
@@ -517,10 +503,7 @@ class QQBotAdapter(ChannelAdapter):
                                 if not can_resume:
                                     self._ws_session_id = None
                                     self._ws_last_seq = None
-                                logger.warning(
-                                    f"QQ WS: invalid session "
-                                    f"(can_resume={can_resume})"
-                                )
+                                logger.warning(f"QQ WS: invalid session (can_resume={can_resume})")
                                 await asyncio.sleep(2)
                                 break
 
@@ -737,8 +720,7 @@ class QQBotAdapter(ChannelAdapter):
                     age_s = _time.time() - dt.timestamp()
                     if age_s > self.STALE_MESSAGE_THRESHOLD_S:
                         logger.info(
-                            f"QQ: stale message discarded "
-                            f"(age={age_s:.0f}s): {data.get('id', '?')}"
+                            f"QQ: stale message discarded (age={age_s:.0f}s): {data.get('id', '?')}"
                         )
                         return
                 except (ValueError, OSError):
@@ -1313,9 +1295,7 @@ class QQBotAdapter(ChannelAdapter):
             async with hx.AsyncClient(timeout=30.0) as client:
                 with open(image_path, "rb") as f:
                     files = {"file_image": (Path(image_path).name, f, "image/png")}
-                    resp = await client.post(
-                        url, data=form_data, files=files, headers=auth_headers
-                    )
+                    resp = await client.post(url, data=form_data, files=files, headers=auth_headers)
                 resp.raise_for_status()
                 return str(resp.json().get("id", ""))
 
@@ -1406,19 +1386,18 @@ class QQBotAdapter(ChannelAdapter):
             if msg_id and self._is_msg_expired_error(e):
                 event_id = self._last_event_id.get(message.chat_id)
                 if event_id:
-                    logger.info(
-                        f"QQ: msg_id expired for {message.chat_id}, "
-                        f"retrying with event_id"
-                    )
+                    logger.info(f"QQ: msg_id expired for {message.chat_id}, retrying with event_id")
                     try:
                         return await self._send_message_via_http(
-                            message, chat_type, None, parse_mode,
+                            message,
+                            chat_type,
+                            None,
+                            parse_mode,
                             event_id=event_id,
                         )
                     except Exception as retry_exc:
                         logger.warning(
-                            f"QQ: event_id retry also failed for "
-                            f"{message.chat_id}: {retry_exc}"
+                            f"QQ: event_id retry also failed for {message.chat_id}: {retry_exc}"
                         )
             raise
 
@@ -1678,11 +1657,7 @@ class QQBotAdapter(ChannelAdapter):
             file_data=file_data,
             srv_send_msg=False,
         )
-        file_info = (
-            upload_result.get("file_info")
-            if isinstance(upload_result, dict)
-            else None
-        )
+        file_info = upload_result.get("file_info") if isinstance(upload_result, dict) else None
         if not file_info:
             raise RuntimeError(f"Voice upload did not return file_info: {upload_result}")
 
@@ -1934,4 +1909,3 @@ class QQBotAdapter(ChannelAdapter):
             filename=path.name,
             mime_type=mime_type,
         )
-

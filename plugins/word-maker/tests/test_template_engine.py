@@ -59,4 +59,3 @@ def test_render_template_happy_path(tmp_path: Path) -> None:
     assert "验收报告" in rendered
     assert "OpenAkita" in rendered
     assert "{{" not in rendered
-

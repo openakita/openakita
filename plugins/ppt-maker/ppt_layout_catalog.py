@@ -31,8 +31,18 @@ class LayoutCatalog:
             },
         }
 
-    def pick_layout(self, *, slide_type: str, has_image: bool = False, has_data: bool = False) -> str:
-        if slide_type in {"cover", "agenda", "comparison", "timeline", "metric_cards", "data_table", "insight_summary"}:
+    def pick_layout(
+        self, *, slide_type: str, has_image: bool = False, has_data: bool = False
+    ) -> str:
+        if slide_type in {
+            "cover",
+            "agenda",
+            "comparison",
+            "timeline",
+            "metric_cards",
+            "data_table",
+            "insight_summary",
+        }:
             return slide_type
         if slide_type.startswith("chart") or has_data:
             return "chart"
@@ -51,4 +61,3 @@ class LayoutCatalog:
         except (OSError, ValueError):
             return {}
         return payload if isinstance(payload, dict) else {}
-

@@ -126,9 +126,8 @@ async def estimate_cost_step(ctx: MediaPostContext) -> None:
         cost_kind=preview.cost_kind,
     )
 
-    requires_approval = (
-        preview.total_cny >= COST_THRESHOLD_WARN_CNY
-        and not bool(ctx.params.get("cost_approved"))
+    requires_approval = preview.total_cny >= COST_THRESHOLD_WARN_CNY and not bool(
+        ctx.params.get("cost_approved")
     )
     if requires_approval:
         ctx.approval_required = True
@@ -198,9 +197,7 @@ async def run_multi_aspect(ctx: MediaPostContext) -> None:
         ) -> None:
             base = _i / len(aspects)
             scale = 1.0 / len(aspects)
-            await _broadcast_progress(
-                ctx, base + scale * progress, f"{_aspect}: {label}"
-            )
+            await _broadcast_progress(ctx, base + scale * progress, f"{_aspect}: {label}")
 
         result = await smart_recompose(rec_ctx, ctx.vlm_client, progress_cb=_on_progress)
         duration_sec = await ffprobe_duration(out)
@@ -229,9 +226,7 @@ async def run_multi_aspect(ctx: MediaPostContext) -> None:
 
 async def run_seo_pack(ctx: MediaPostContext) -> None:
     platforms = list(ctx.params.get("platforms") or [])
-    platforms = [p for p in platforms if p in ALLOWED_PLATFORMS] or sorted(
-        ALLOWED_PLATFORMS
-    )
+    platforms = [p for p in platforms if p in ALLOWED_PLATFORMS] or sorted(ALLOWED_PLATFORMS)
     excerpt = str(ctx.params.get("subtitle_excerpt") or "")
     instruction = str(ctx.params.get("instruction") or "")
     title_hint = str(ctx.params.get("video_title_hint") or "")
@@ -263,9 +258,7 @@ async def run_seo_pack(ctx: MediaPostContext) -> None:
             payload = {"_error": "platform call failed"}
         else:
             successes += 1
-        await ctx.tm.insert_seo_result(
-            task_id=ctx.task_id, platform=platform, payload=payload
-        )
+        await ctx.tm.insert_seo_result(task_id=ctx.task_id, platform=platform, payload=payload)
         rows.append({"platform": platform, "ok": "_error" not in payload})
     if successes == 0:
         raise MediaPostError("format", "all SEO platforms failed")
@@ -300,9 +293,7 @@ async def run_chapter_cards(ctx: MediaPostContext) -> None:
     ctx.chapter_rows = rows
 
 
-def _build_chapter_specs(
-    chapters: list[Any], params: dict[str, Any]
-) -> list[ChapterCardSpec]:
+def _build_chapter_specs(chapters: list[Any], params: dict[str, Any]) -> list[ChapterCardSpec]:
     template_id = str(params.get("template_id", "modern"))
     width = int(params.get("width", 1280))
     height = int(params.get("height", 720))
@@ -415,9 +406,7 @@ async def run_pipeline(ctx: MediaPostContext) -> None:
             )
             return
 
-        await ctx.tm.update_task_safe(
-            ctx.task_id, status="running", pipeline_step=step_name
-        )
+        await ctx.tm.update_task_safe(ctx.task_id, status="running", pipeline_step=step_name)
         await _broadcast_event(
             ctx,
             "task_update",
@@ -484,9 +473,7 @@ async def _record_error(ctx: MediaPostContext, kind: str, message: str) -> None:
     )
 
 
-async def _broadcast_progress(
-    ctx: MediaPostContext, progress: float, label: str
-) -> None:
+async def _broadcast_progress(ctx: MediaPostContext, progress: float, label: str) -> None:
     progress = max(0.0, min(1.0, float(progress)))
     await ctx.tm.update_task_safe(ctx.task_id, progress=progress)
     await _broadcast_event(
@@ -501,9 +488,7 @@ async def _broadcast_progress(
     )
 
 
-async def _broadcast_event(
-    ctx: MediaPostContext, event_type: str, data: dict[str, Any]
-) -> None:
+async def _broadcast_event(ctx: MediaPostContext, event_type: str, data: dict[str, Any]) -> None:
     api = ctx.api
     if api is None:
         return

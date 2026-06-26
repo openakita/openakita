@@ -18,6 +18,7 @@ Prompt Compiler (v2) — LLM 辅助编译 + 缓存 + 规则降级
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -143,7 +144,7 @@ class PromptCompiler:
                 )
             results[target] = output_path
 
-        (runtime_dir / ".compiled_at").write_text(datetime.now().isoformat(), encoding="utf-8")
+        _write_compiled_timestamp(identity_dir, runtime_dir)
         return results
 
     async def _compile_with_llm(self, content: str, config: dict) -> str:
@@ -205,8 +206,30 @@ def compile_all(identity_dir: Path, use_llm: bool = False) -> dict[str, Path]:
 
     _cleanup_orphan_files(runtime_dir)
 
-    (runtime_dir / ".compiled_at").write_text(datetime.now().isoformat(), encoding="utf-8")
+    _write_compiled_timestamp(identity_dir, runtime_dir)
     return results
+
+
+def _source_paths(identity_dir: Path) -> list[Path]:
+    return [
+        identity_dir / source_file
+        for source_file in set(_SOURCE_MAP.values())
+        if (identity_dir / source_file).exists()
+    ]
+
+
+def _write_compiled_timestamp(identity_dir: Path, runtime_dir: Path) -> None:
+    timestamp_file = runtime_dir / ".compiled_at"
+    timestamp_file.write_text(datetime.now().isoformat(), encoding="utf-8")
+    try:
+        max_source_mtime_ns = max(
+            (source.stat().st_mtime_ns for source in _source_paths(identity_dir)),
+            default=timestamp_file.stat().st_mtime_ns,
+        )
+        target_ns = max(max_source_mtime_ns + 1, timestamp_file.stat().st_mtime_ns)
+        os.utime(timestamp_file, ns=(target_ns, target_ns))
+    except OSError:
+        pass
 
 
 def _cleanup_orphan_files(runtime_dir: Path) -> None:
@@ -453,7 +476,7 @@ def _is_relevant_section(section: str, target: str) -> bool:
 _STATIC_FALLBACKS: dict[str, str] = {
     "identity_core": """\
 ## 身份核心
-- 你是 OpenAkita，全能自进化 AI 助手。
+- 你是 {{agent_name}}，由 OpenAkita 项目驱动的全能自进化 AI 助手。
 - 优先保持安全、诚实、支持人类监督。
 - 真正帮助用户完成任务，但不越权、不欺骗、不操纵用户。
 - 对不确定信息保持校准，必要时说明限制。""",
@@ -548,7 +571,7 @@ def _is_up_to_date(source: Path, output: Path) -> bool:
     if not output.exists():
         return False
     try:
-        return output.stat().st_mtime > source.stat().st_mtime
+        return output.stat().st_mtime_ns >= source.stat().st_mtime_ns
     except Exception:
         return False
 
@@ -566,11 +589,20 @@ def check_compiled_outdated(identity_dir: Path, max_age_hours: int = 24) -> bool
     except Exception:
         return True
 
+    try:
+        compiled_mtime_ns = timestamp_file.stat().st_mtime_ns
+    except OSError:
+        return True
+
     # Source file mtime check: recompile if any source changed after last compilation
     for target, source_file in _SOURCE_MAP.items():
         source_path = identity_dir / source_file
         output_path = runtime_dir / _OUTPUT_MAP[target]
-        if source_path.exists() and not _is_up_to_date(source_path, output_path):
+        if not source_path.exists():
+            continue
+        if source_path.stat().st_mtime_ns > compiled_mtime_ns:
+            return True
+        if not _is_up_to_date(source_path, output_path):
             return True
 
     return False
@@ -618,4 +650,3 @@ def compile_user(content: str) -> str:
 
 def compile_persona(content: str) -> str:
     return _compile_with_rules(content, _COMPILE_PROMPTS["persona_custom"])
-

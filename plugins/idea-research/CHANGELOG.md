@@ -9,7 +9,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 ### Added — 4 工作模式
 
 - **`radar_pull`（热点雷达）**: 5 平台并发抓取（B站 / YouTube / 抖音 / 小红书 / 快手 / 微博 6 选 5），关键词过滤，时间窗口 (24h / 7d / 30d)，热度评分。
-- **`breakdown_url`（爆款拆解）**: 8 步流水线 — 环境校验 → 源解析 → 媒体下载（yt-dlp + ffmpeg）→ ASR 转写（Faster-Whisper 或 DashScope Paraformer-v2）→ 关键帧抽取 + VLM 描述（Qwen-VL-max）→ 多模态结构化分析 → 评论聚类总结 → metadata + JSON 报告 + handoff。
+- **`breakdown_url`（爆款拆解）**: 7 步流水线 — 环境校验 → 源解析 → 媒体下载（yt-dlp + ffmpeg）→ 关键帧抽取 + VLM 描述（Qwen-VL-max）→ 多模态结构化分析 → 评论聚类总结 → metadata + JSON 报告 + handoff。
 - **`compare_accounts`（账号对比）**: 跨账号 hook 模式分布，封面风格雷达，发布节奏时间线。
 - **`script_remix`（脚本改写）**: 12 内置 PERSONAS × 1-5 变体并发，注入 MDRM 历史成功 hook 加权。
 

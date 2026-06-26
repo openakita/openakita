@@ -160,7 +160,8 @@ def _try_recover_env_from_backup(env_path: Path) -> bool:
         reason = "missing" if env_missing else "empty/truncated"
         logger.warning(
             "[env recovery] .env is %s, restoring from .env.bak (%s)",
-            reason, bak,
+            reason,
+            bak,
         )
         try:
             shutil.copy2(bak, env_path)
@@ -241,6 +242,7 @@ def get_default_config_path() -> Path:
     #    无条件返回（不做 exists() 探测），因为单工作区下文件就应该在这里
     try:
         from openakita.config import settings
+
         return Path(settings.project_root) / "data" / "llm_endpoints.json"
     except Exception:
         pass

@@ -60,13 +60,13 @@ ModeId = Literal[
 # how to render width/height (the new protocol uses ``resolution: "720P"``
 # while Wan 2.6 legacy uses ``size: "1280*720"``).
 EndpointFamily = Literal[
-    "video_synthesis",   # HappyHorse + Wan 2.6/2.7 video gen
-    "image2video",       # wan2.2-s2v / wan2.2-s2v-detect
+    "video_synthesis",  # HappyHorse + Wan 2.6/2.7 video gen
+    "image2video",  # wan2.2-s2v / wan2.2-s2v-detect
     "videoretalk",
-    "animate",           # wan2.2-animate-mix / wan2.2-animate-move
-    "image_synthesis",   # wan2.7-image / wan2.5-i2i-preview
-    "cosyvoice",         # cosyvoice-v2 TTS (SDK-only)
-    "qwen_vl",           # qwen-vl-max prompt assist
+    "animate",  # wan2.2-animate-mix / wan2.2-animate-move
+    "image_synthesis",  # wan2.7-image / wan2.5-i2i-preview
+    "cosyvoice",  # cosyvoice-v2 TTS (SDK-only)
+    "qwen_vl",  # qwen-vl-max prompt assist
 ]
 ProtocolVersion = Literal["new_async", "legacy_async", "sdk"]
 SizeFormat = Literal["resolution_p", "size_star", "size_x"]
@@ -92,9 +92,7 @@ SizeFormat = Literal["resolution_p", "size_star", "size_x"]
 #   element array of ``{"type": "reference_image", "url": "..."}``
 #   entries. Prompt uses ``[Image N]`` placeholders to refer to the
 #   N-th entry in array order.
-InputProtocol = Literal[
-    "url_fields", "media_array_i2v", "media_array_v2v", "media_array_r2v"
-]
+InputProtocol = Literal["url_fields", "media_array_i2v", "media_array_v2v", "media_array_r2v"]
 
 
 @dataclass(frozen=True)
@@ -294,10 +292,7 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="legacy_async",
         size_format="size_star",
-        cost_note=(
-            "有声：720P 0.30 / 1080P 0.50 元/秒；"
-            "无声：720P 0.15 / 1080P 0.25 元/秒"
-        ),
+        cost_note=("有声：720P 0.30 / 1080P 0.50 元/秒；无声：720P 0.15 / 1080P 0.25 元/秒"),
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
         supports_prompt_extend=True,
@@ -314,8 +309,7 @@ REGISTRY: tuple[ModelEntry, ...] = (
         protocol_version="new_async",
         size_format="resolution_p",
         cost_note=(
-            "720P 0.60 元/秒；1080P 1.00 元/秒"
-            "（支持首帧 / 首尾帧 / 视频续写 input.media[]）"
+            "720P 0.60 元/秒；1080P 1.00 元/秒（支持首帧 / 首尾帧 / 视频续写 input.media[]）"
         ),
         resolutions=_WAN_NEW_RES,
         duration_range=(2, 15),
@@ -403,10 +397,7 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="legacy_async",
         size_format="size_star",
-        cost_note=(
-            "有声：720P 0.30 / 1080P 0.50 元/秒；"
-            "无声：720P 0.15 / 1080P 0.25 元/秒"
-        ),
+        cost_note=("有声：720P 0.30 / 1080P 0.50 元/秒；无声：720P 0.15 / 1080P 0.25 元/秒"),
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
         supports_prompt_extend=True,
@@ -567,9 +558,7 @@ REGISTRY: tuple[ModelEntry, ...] = (
 # ── Public lookup helpers ─────────────────────────────────────────────
 
 
-REGISTRY_BY_KEY: dict[tuple[str, str], ModelEntry] = {
-    (e.mode, e.model_id): e for e in REGISTRY
-}
+REGISTRY_BY_KEY: dict[tuple[str, str], ModelEntry] = {(e.mode, e.model_id): e for e in REGISTRY}
 REGISTRY_BY_MODEL_ID: dict[str, ModelEntry] = {e.model_id: e for e in REGISTRY}
 
 

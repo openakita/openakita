@@ -76,19 +76,26 @@ class NewsNowFetcher(BaseFetcher):
                     )
                     logger.info(
                         "newsnow channel %s (%s): %d items",
-                        sid, newsnow_id, len(items),
+                        sid,
+                        newsnow_id,
+                        len(items),
                     )
                     return sid, newsnow_id, items, None
                 except NewsNowTransportError as exc:
                     logger.warning(
                         "newsnow channel %s (%s) failed: [%s] %s",
-                        sid, newsnow_id, exc.kind, exc,
+                        sid,
+                        newsnow_id,
+                        exc.kind,
+                        exc,
                     )
                     return sid, newsnow_id, [], exc.kind
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "newsnow channel %s (%s) unexpected error: %s",
-                        sid, newsnow_id, exc,
+                        sid,
+                        newsnow_id,
+                        exc,
                     )
                     return sid, newsnow_id, [], str(exc)[:120]
 
@@ -97,10 +104,7 @@ class NewsNowFetcher(BaseFetcher):
         # and mark the rest as per-channel timeouts; the outer pipeline
         # can then persist partial results instead of collapsing the
         # entire NewsNow source to ``TimeoutError``.
-        task_map = {
-            asyncio.create_task(_one(sid, nid)): (sid, nid)
-            for sid, nid in channels
-        }
+        task_map = {asyncio.create_task(_one(sid, nid)): (sid, nid) for sid, nid in channels}
         done, pending = await asyncio.wait(
             task_map.keys(),
             timeout=total_budget_sec,
@@ -132,11 +136,7 @@ class NewsNowFetcher(BaseFetcher):
             sid, nid = task_map[task]
             result_by_sid[sid] = (sid, nid, [], "timeout")
 
-        results = [
-            result_by_sid[sid]
-            for sid, _nid in channels
-            if sid in result_by_sid
-        ]
+        results = [result_by_sid[sid] for sid, _nid in channels if sid in result_by_sid]
 
         # Preserve the original channel order in `_channel_reports` so
         # the UI's per-source drawer renders in the same priority the
@@ -155,11 +155,7 @@ class NewsNowFetcher(BaseFetcher):
                     "source_id": sid,
                     "count": len(items),
                     "error": error,
-                    "empty_reason": (
-                        "newsnow:empty_payload"
-                        if not error and not items
-                        else None
-                    ),
+                    "empty_reason": ("newsnow:empty_payload" if not error and not items else None),
                 }
             )
 
@@ -230,7 +226,11 @@ def _resolve_channels(config: dict[str, str]) -> list[tuple[str, str]]:
     for sid, defn in SOURCE_DEFS.items():
         if defn.get("kind") != "newsnow":
             continue
-        if only_sources and sid not in only_sources and str(defn.get("newsnow_id") or "") not in only_sources:
+        if (
+            only_sources
+            and sid not in only_sources
+            and str(defn.get("newsnow_id") or "") not in only_sources
+        ):
             continue
         newsnow_id = defn.get("newsnow_id")
         if not newsnow_id:

@@ -68,7 +68,10 @@ IM_CHANNEL_TOOLS = [
                             },
                             "caption": {"type": "string", "description": "说明文字（可选）"},
                             "mime": {"type": "string", "description": "MIME 类型（可选）"},
-                            "name": {"type": "string", "description": "展示文件名（含扩展名，建议提供）"},
+                            "name": {
+                                "type": "string",
+                                "description": "展示文件名（含扩展名，建议提供）",
+                            },
                             "dedupe_key": {"type": "string", "description": "去重键（可选）"},
                         },
                         "required": ["type", "path"],

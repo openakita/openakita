@@ -270,7 +270,9 @@ class TestSendMessageConsumesCard:
 
         content = MessageContent(
             text="look at this",
-            images=[MediaFile(id="img1", filename="img.png", mime_type="image/png", file_id="@lAL123")],
+            images=[
+                MediaFile(id="img1", filename="img.png", mime_type="image/png", file_id="@lAL123")
+            ],
         )
         msg = OutgoingMessage(chat_id="conv_group", content=content)
 

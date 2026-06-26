@@ -87,13 +87,15 @@ class TestToolLookup:
 class TestToolMutation:
     def test_add_tool(self):
         catalog = ToolCatalog(_sample_tools())
-        catalog.add_tool({
-            "name": "new_tool",
-            "category": "custom",
-            "description": "New tool",
-            "detail": "Detail",
-            "input_schema": {"type": "object", "properties": {}},
-        })
+        catalog.add_tool(
+            {
+                "name": "new_tool",
+                "category": "custom",
+                "description": "New tool",
+                "detail": "Detail",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        )
         assert catalog.has_tool("new_tool") is True
 
     def test_remove_tool(self):
@@ -130,4 +132,3 @@ class TestCatalogGeneration:
         catalog = ToolCatalog(_sample_tools())
         schemas = catalog.get_direct_tool_schemas()
         assert isinstance(schemas, list)
-

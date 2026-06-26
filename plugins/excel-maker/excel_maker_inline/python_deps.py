@@ -161,4 +161,3 @@ class PythonDepsManager:
             return 0.0
         end = job.completed_at or time.time()
         return round(max(0.0, end - job.started_at), 1)
-

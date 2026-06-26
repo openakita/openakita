@@ -167,7 +167,9 @@ def ensure_importable(
                     }
                 )
                 _log(dep_id, f"install failed: {exc}")
-                raise DepInstallFailed(f"{dep_id} is not importable and install failed") from first_exc
+                raise DepInstallFailed(
+                    f"{dep_id} is not importable and install failed"
+                ) from first_exc
             ensure_runtime_paths(plugin_dir)
             importlib.invalidate_caches()
             try:

@@ -12,4 +12,3 @@ __all__ = [
     "PromptTemplates",
     "get_vision_analyzer",
 ]
-

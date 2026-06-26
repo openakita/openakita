@@ -76,6 +76,13 @@ _PYTHON_DEPS: dict[str, PythonDepSpec] = {
         install_args=("install", "chromium"),
         can_uninstall=False,
     ),
+    "local_asr": PythonDepSpec(
+        id="local_asr",
+        display_name="本地 ASR（Faster-Whisper）",
+        packages=("faster-whisper>=1.0.3",),
+        import_names=("faster_whisper",),
+        description="用于本地音频转写。YouTube 无字幕时，需要它才能在本机生成转写，避免云端 ASR 无法读取本地文件。",
+    ),
 }
 
 

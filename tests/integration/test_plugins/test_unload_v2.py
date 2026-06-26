@@ -165,9 +165,7 @@ async def test_submodule_evicted_on_unload(tmp_path: Path) -> None:
                     pass
         """),
     )
-    (plugin_dir / "helper_lib.py").write_text(
-        "HELPER_VALUE = 'first'\n", encoding="utf-8"
-    )
+    (plugin_dir / "helper_lib.py").write_text("HELPER_VALUE = 'first'\n", encoding="utf-8")
     _write_state_file(state_path, {"with-submod": {}})
 
     pm = PluginManager(plugins_dir, state_path=state_path)
@@ -281,9 +279,7 @@ def test_uninstall_returns_dict_and_purges_data(tmp_path: Path) -> None:
     plugin_data.mkdir(parents=True)
     (plugin_data / "store.db").write_bytes(b"sqlite-blob")
 
-    result = installer.uninstall(
-        pid, plugins_dir, purge_data=True, data_root=data_root
-    )
+    result = installer.uninstall(pid, plugins_dir, purge_data=True, data_root=data_root)
     assert isinstance(result, dict)
     assert result["removed"] is True
     assert result["partial"] is False
@@ -473,9 +469,7 @@ async def test_sync_on_unload_create_task_runs_on_main_loop(tmp_path: Path) -> N
     await pm.unload_plugin("loop-check")
     txt = marker.read_text(encoding="utf-8")
     load_id_str, cleanup_id_str = txt.split("=", 1)
-    assert int(load_id_str) == main_loop_id, (
-        "on_load ran on a non-main loop, test setup is broken"
-    )
+    assert int(load_id_str) == main_loop_id, "on_load ran on a non-main loop, test setup is broken"
     assert int(cleanup_id_str) == main_loop_id, (
         "cleanup coroutine scheduled by sync on_unload must execute on the "
         "main loop — otherwise httpx/aiosqlite close() across loops will "
@@ -573,11 +567,7 @@ def test_uninstall_partial_keeps_disabled_state_via_route_logic(
     if fake_result["removed"]:
         state.remove_plugin("ghost-plugin")
     else:
-        reason = (
-            "pending_removal_partial"
-            if fake_result["partial"]
-            else "pending_removal_failed"
-        )
+        reason = "pending_removal_partial" if fake_result["partial"] else "pending_removal_failed"
         state.disable("ghost-plugin", reason=reason)
     # --- End simulated route logic ---
 
@@ -642,8 +632,13 @@ def test_list_locked_files_detects_delete_share_denied(tmp_path: Path) -> None:
     CreateFileW = ctypes.windll.kernel32.CreateFileW
     CreateFileW.restype = wintypes.HANDLE
     CreateFileW.argtypes = [
-        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
-        ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
     ]
     CloseHandle = ctypes.windll.kernel32.CloseHandle
     CloseHandle.argtypes = [wintypes.HANDLE]
@@ -652,7 +647,10 @@ def test_list_locked_files_detects_delete_share_denied(tmp_path: Path) -> None:
         str(locked_file),
         GENERIC_READ,
         FILE_SHARE_READ | FILE_SHARE_WRITE,  # NOTE: no FILE_SHARE_DELETE
-        None, OPEN_EXISTING, 0, None,
+        None,
+        OPEN_EXISTING,
+        0,
+        None,
     )
     assert handle and handle != INVALID_HANDLE_VALUE, "Failed to open test handle"
     try:

@@ -1,2 +1,1 @@
 """excel-maker plugin package."""
-

@@ -97,7 +97,9 @@ class ArkClient(BaseVendorClient):
             body["execution_expires_after"] = {"seconds": execution_expires_after}
 
         return await self.post_json(
-            "/contents/generations/tasks", json_body=body, timeout=120.0,
+            "/contents/generations/tasks",
+            json_body=body,
+            timeout=120.0,
         )
 
     async def get_task(self, task_id: str) -> dict:
@@ -116,12 +118,14 @@ class ArkClient(BaseVendorClient):
         if filter_status:
             params["filter"] = f'{{"status":"{filter_status}"}}'
         return await self.get_json(
-            "/contents/generations/tasks", params=params,
+            "/contents/generations/tasks",
+            params=params,
         )
 
     async def delete_task(self, task_id: str) -> dict:
         return await self.request(
-            "DELETE", f"/contents/generations/tasks/{task_id}",
+            "DELETE",
+            f"/contents/generations/tasks/{task_id}",
         )
 
     async def validate_key(self) -> bool:

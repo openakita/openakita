@@ -24,9 +24,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        success = pack_document(
-            args.input_directory, args.output_file, validate=not args.force
-        )
+        success = pack_document(args.input_directory, args.output_file, validate=not args.force)
 
         # Show warning if validation was skipped
         if args.force:
@@ -157,4 +155,3 @@ def condense_xml(xml_file):
 
 if __name__ == "__main__":
     main()
-

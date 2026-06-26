@@ -72,7 +72,7 @@ class TestBudgetConfigForContextWindow:
         for ctx in [4096, 8192, 16384, 32000]:
             config = BudgetConfig.for_context_window(ctx)
             assert config.total_budget <= int(ctx * 0.40), (
-                f"ctx={ctx}: total_budget={config.total_budget} > 40% of ctx={int(ctx*0.40)}"
+                f"ctx={ctx}: total_budget={config.total_budget} > 40% of ctx={int(ctx * 0.40)}"
             )
 
     def test_no_discontinuity_at_boundaries(self):
@@ -188,4 +188,3 @@ class TestEndToEndScenario:
             + config.memory_budget
         )
         assert max_prompt <= 8192, f"Prompt budget sum {max_prompt} exceeds 8K"
-

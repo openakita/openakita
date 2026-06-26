@@ -31,7 +31,9 @@ def test_browser_page_read_requires_navigation_to_current_url():
     assert blocked is not None
     assert "browser_navigate" in blocked
 
-    assert turn.validate_tool_call("browser_navigate", {"url": "https://example.com/current"}) is None
+    assert (
+        turn.validate_tool_call("browser_navigate", {"url": "https://example.com/current"}) is None
+    )
     turn.observe_tool_result("browser_navigate", {"url": "https://example.com/current"}, "✅ OK")
 
     assert turn.validate_tool_call("browser_get_content", {}) is None
@@ -225,9 +227,7 @@ async def test_tool_executor_applies_current_turn_guard_before_handler():
     )
 
     # tuple unpack: current-turn grounding gate returns (text, None)
-    result, hint = await executor.execute_tool(
-        "web_fetch", {"url": "https://example.com/old"}
-    )
+    result, hint = await executor.execute_tool("web_fetch", {"url": "https://example.com/old"})
 
     assert "正在使用其它 URL" in result
     assert "handled" not in result

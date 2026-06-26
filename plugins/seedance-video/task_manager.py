@@ -121,9 +121,7 @@ class TaskManager:
 
     async def get_config(self, key: str) -> str:
         assert self._db
-        row = await self._db.execute_fetchall(
-            "SELECT value FROM config WHERE key = ?", (key,)
-        )
+        row = await self._db.execute_fetchall("SELECT value FROM config WHERE key = ?", (key,))
         if row:
             return row[0][0]
         return DEFAULT_CONFIG.get(key, "")
@@ -150,7 +148,9 @@ class TaskManager:
         await self._db.commit()
         if "ark_api_key" in updates:
             saved = await self.get_config("ark_api_key")
-            logger.info("API key saved, verify read-back matches: %s", saved == updates["ark_api_key"])
+            logger.info(
+                "API key saved, verify read-back matches: %s", saved == updates["ark_api_key"]
+            )
 
     # ── Tasks ──
 
@@ -184,9 +184,7 @@ class TaskManager:
 
     async def get_task(self, task_id: str) -> dict | None:
         assert self._db
-        rows = await self._db.execute_fetchall(
-            "SELECT * FROM tasks WHERE id = ?", (task_id,)
-        )
+        rows = await self._db.execute_fetchall("SELECT * FROM tasks WHERE id = ?", (task_id,))
         if not rows:
             return None
         return self._row_to_task(rows[0])
@@ -233,9 +231,7 @@ class TaskManager:
             args.append(service_tier)
         where_sql = " WHERE " + " AND ".join(wheres) if wheres else ""
 
-        count_rows = await self._db.execute_fetchall(
-            f"SELECT COUNT(*) FROM tasks{where_sql}", args
-        )
+        count_rows = await self._db.execute_fetchall(f"SELECT COUNT(*) FROM tasks{where_sql}", args)
         total = count_rows[0][0] if count_rows else 0
 
         rows = await self._db.execute_fetchall(
@@ -293,9 +289,7 @@ class TaskManager:
         sets.append("updated_at = ?")
         args.append(time.time())
         args.append(task_id)
-        result = await self._db.execute(
-            f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", args
-        )
+        result = await self._db.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", args)
         await self._db.commit()
         return (result.rowcount or 0) > 0
 
@@ -385,9 +379,7 @@ class TaskManager:
 
     async def get_asset(self, asset_id: str) -> dict | None:
         assert self._db
-        rows = await self._db.execute_fetchall(
-            "SELECT * FROM assets WHERE id = ?", (asset_id,)
-        )
+        rows = await self._db.execute_fetchall("SELECT * FROM assets WHERE id = ?", (asset_id,))
         return dict(rows[0]) if rows else None
 
     async def delete_asset(self, asset_id: str) -> bool:
@@ -403,4 +395,3 @@ class TaskManager:
             (asset_id,),
         )
         return rows[0][0] if rows else 0
-

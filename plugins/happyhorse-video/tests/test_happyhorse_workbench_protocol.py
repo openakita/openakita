@@ -136,10 +136,12 @@ def _make_plugin(asset_lookup: dict[str, dict | None]):
 
 @pytest.mark.asyncio
 async def test_expand_i2v_assigns_first_then_reference():
-    plugin = _make_plugin({
-        "a1": {"preview_url": "https://oss/x.png"},
-        "a2": {"preview_url": "https://oss/y.png"},
-    })
+    plugin = _make_plugin(
+        {
+            "a1": {"preview_url": "https://oss/x.png"},
+            "a2": {"preview_url": "https://oss/y.png"},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["a1", "a2"], mode="i2v")
     assert out == {
         "first_frame_url": "https://oss/x.png",
@@ -149,10 +151,12 @@ async def test_expand_i2v_assigns_first_then_reference():
 
 @pytest.mark.asyncio
 async def test_expand_i2v_end_uses_first_and_last():
-    plugin = _make_plugin({
-        "a1": {"preview_url": "https://oss/first.png"},
-        "a2": {"preview_url": "https://oss/last.png"},
-    })
+    plugin = _make_plugin(
+        {
+            "a1": {"preview_url": "https://oss/first.png"},
+            "a2": {"preview_url": "https://oss/last.png"},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["a1", "a2"], mode="i2v_end")
     assert out == {
         "first_frame_url": "https://oss/first.png",
@@ -162,11 +166,13 @@ async def test_expand_i2v_end_uses_first_and_last():
 
 @pytest.mark.asyncio
 async def test_expand_r2v_uses_reference_urls_for_all():
-    plugin = _make_plugin({
-        "a1": {"preview_url": "https://oss/1.png"},
-        "a2": {"preview_url": "https://oss/2.png"},
-        "a3": {"preview_url": "https://oss/3.png"},
-    })
+    plugin = _make_plugin(
+        {
+            "a1": {"preview_url": "https://oss/1.png"},
+            "a2": {"preview_url": "https://oss/2.png"},
+            "a3": {"preview_url": "https://oss/3.png"},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["a1", "a2", "a3"], mode="r2v")
     assert out == {
         "reference_urls": [
@@ -179,19 +185,23 @@ async def test_expand_r2v_uses_reference_urls_for_all():
 
 @pytest.mark.asyncio
 async def test_expand_video_extend_uses_source_video_url():
-    plugin = _make_plugin({
-        "v1": {"preview_url": "https://oss/v.mp4", "asset_kind": "video"},
-    })
+    plugin = _make_plugin(
+        {
+            "v1": {"preview_url": "https://oss/v.mp4", "asset_kind": "video"},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["v1"], mode="video_extend")
     assert out["source_video_url"] == "https://oss/v.mp4"
 
 
 @pytest.mark.asyncio
 async def test_expand_video_edit_carries_extra_references():
-    plugin = _make_plugin({
-        "v1": {"preview_url": "https://oss/v.mp4"},
-        "i1": {"preview_url": "https://oss/i.png"},
-    })
+    plugin = _make_plugin(
+        {
+            "v1": {"preview_url": "https://oss/v.mp4"},
+            "i1": {"preview_url": "https://oss/i.png"},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["v1", "i1"], mode="video_edit")
     assert out["source_video_url"] == "https://oss/v.mp4"
     assert out["reference_urls"] == ["https://oss/i.png"]
@@ -199,10 +209,12 @@ async def test_expand_video_edit_carries_extra_references():
 
 @pytest.mark.asyncio
 async def test_expand_photo_speak_uses_image_url_and_image_urls():
-    plugin = _make_plugin({
-        "p1": {"preview_url": "https://oss/face.png"},
-        "p2": {"preview_url": "https://oss/scene.png"},
-    })
+    plugin = _make_plugin(
+        {
+            "p1": {"preview_url": "https://oss/face.png"},
+            "p2": {"preview_url": "https://oss/scene.png"},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["p1", "p2"], mode="photo_speak")
     assert out == {
         "image_url": "https://oss/face.png",
@@ -212,25 +224,27 @@ async def test_expand_photo_speak_uses_image_url_and_image_urls():
 
 @pytest.mark.asyncio
 async def test_expand_avatar_compose_same_as_photo_speak():
-    plugin = _make_plugin({
-        "p1": {"preview_url": "https://oss/1.png"},
-        "p2": {"preview_url": "https://oss/2.png"},
-        "p3": {"preview_url": "https://oss/3.png"},
-    })
-    out = await plugin._expand_from_asset_ids(
-        ["p1", "p2", "p3"], mode="avatar_compose"
+    plugin = _make_plugin(
+        {
+            "p1": {"preview_url": "https://oss/1.png"},
+            "p2": {"preview_url": "https://oss/2.png"},
+            "p3": {"preview_url": "https://oss/3.png"},
+        }
     )
+    out = await plugin._expand_from_asset_ids(["p1", "p2", "p3"], mode="avatar_compose")
     assert out["image_url"] == "https://oss/1.png"
     assert out["image_urls"] == ["https://oss/2.png", "https://oss/3.png"]
 
 
 @pytest.mark.asyncio
 async def test_expand_skips_missing_assets():
-    plugin = _make_plugin({
-        "a1": {"preview_url": "https://oss/x.png"},
-        # a2: lookup returns None — must be skipped
-        "a3": {},
-    })
+    plugin = _make_plugin(
+        {
+            "a1": {"preview_url": "https://oss/x.png"},
+            # a2: lookup returns None — must be skipped
+            "a3": {},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["a1", "a2", "a3"], mode="r2v")
     assert out == {"reference_urls": ["https://oss/x.png"]}
 

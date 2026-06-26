@@ -1,6 +1,5 @@
 """L1 Unit Tests: Skill registry, loader, and parser."""
 
-
 from openakita.skills.loader import SkillLoader
 from openakita.skills.registry import SkillEntry, SkillRegistry
 
@@ -109,6 +108,7 @@ class TestSkillLoader:
 class TestSkillParser:
     def test_parse_skill_file(self, tmp_path):
         from openakita.skills.parser import parse_skill
+
         skill_file = tmp_path / "SKILL.md"
         skill_file.write_text(
             "---\nname: parser-test\ndescription: Parse test\n---\n# Parser Test\nContent here.",
@@ -119,6 +119,7 @@ class TestSkillParser:
 
     def test_parse_skill_directory(self, tmp_path):
         from openakita.skills.parser import parse_skill_directory
+
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -127,4 +128,3 @@ class TestSkillParser:
         )
         result = parse_skill_directory(skill_dir)
         assert result.metadata.name == "dir-skill"
-

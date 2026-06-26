@@ -65,4 +65,3 @@ class TestUserPreference:
         p = UserPreference(key="theme", value="dark")
         assert p.key == "theme"
         assert p.value == "dark"
-

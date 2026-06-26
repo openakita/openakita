@@ -63,13 +63,9 @@ def test_base_header_prepends_to_followups() -> None:
     header = "[cont.]\n"
     out = split_by_lines(content, max_bytes=60, base_header=header)
     assert len(out) >= 2
-    assert not out[0].startswith("[cont.]"), (
-        "first chunk must not carry the follow-up header"
-    )
+    assert not out[0].startswith("[cont.]"), "first chunk must not carry the follow-up header"
     for chunk in out[1:]:
-        assert chunk.startswith("[cont.]"), (
-            f"follow-up chunk missing header: {chunk!r}"
-        )
+        assert chunk.startswith("[cont.]"), f"follow-up chunk missing header: {chunk!r}"
 
 
 def test_base_header_not_applied_when_single_chunk() -> None:
@@ -101,9 +97,7 @@ def test_max_bytes_too_small_raises() -> None:
 
 def test_max_bytes_below_footer_plus_header_raises() -> None:
     with pytest.raises(ValueError):
-        split_by_lines(
-            "hello\n", max_bytes=40, footer="=" * 20, base_header="=" * 20
-        )
+        split_by_lines("hello\n", max_bytes=40, footer="=" * 20, base_header="=" * 20)
 
 
 # ── Helpers + defaults table ────────────────────────────────────────

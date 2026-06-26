@@ -69,4 +69,3 @@ class TestVerifyTaskCompletionBypass:
             has_recent_accepted_signal=True,
         )
         assert ok is True
-

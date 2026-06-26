@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef, lazy, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import { IconBrain } from "../icons";
 import { safeFetch } from "../providers";
@@ -562,7 +562,6 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
     );
   }
 
-  const isGraph = viewMode === "graph";
   const graphPanelHeight = isMobile ? "max(560px, calc(100vh - 22rem))" : "max(620px, calc(100vh - 18rem))";
   const currentOwner = migrationStatus?.current_owner;
   const defaultGraphNodes = migrationStatus?.graph.by_owner.find(

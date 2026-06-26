@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { EventBus } from './EventBus';
 import { TilesetManager, TILE_SIZE, TILESET_CELL } from './TilesetManager';
-import { generateLayout, generateSoloLayout, type RoomDef, type LayoutResult } from './RoomGenerator';
+import { generateLayout, generateSoloLayout, type LayoutResult } from './RoomGenerator';
 import { AgentSprite, type AgentSpriteConfig } from './AgentSprite';
 import { ActivitySystem, type Activity } from './ActivitySystem';
 import { getTheme, type SceneTheme } from './SceneTheme';

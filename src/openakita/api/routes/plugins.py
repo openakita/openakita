@@ -35,7 +35,9 @@ _plugin_op_lock = asyncio.Lock()
 class PendingUpdateApplyError(RuntimeError):
     """Pending update could not be applied while preserving rollback context."""
 
-    def __init__(self, message: str, *, live_dir: Path | None = None, backup_dir: Path | None = None):
+    def __init__(
+        self, message: str, *, live_dir: Path | None = None, backup_dir: Path | None = None
+    ):
         super().__init__(message)
         self.live_dir = live_dir
         self.backup_dir = backup_dir
@@ -475,7 +477,9 @@ def _pending_update_root(plugin_id: str, revision: str) -> Path:
     return _plugin_updates_dir() / _safe_plugin_dir_name(plugin_id) / revision
 
 
-def _install_plugin_source(src: str, plugins_dir: Path, progress: InstallProgress | None, *, dev_mode: bool) -> str:
+def _install_plugin_source(
+    src: str, plugins_dir: Path, progress: InstallProgress | None, *, dev_mode: bool
+) -> str:
     if installer._is_git_url(src):
         return installer.install_from_git(src, plugins_dir, progress=progress)
     if src.startswith(("http://", "https://")):
@@ -520,7 +524,9 @@ async def _stage_plugin_update(
     return revision, staged_dir
 
 
-def _restore_pending_rollback(plugin_id: str, live_dir: Path | None, backup_dir: Path | None) -> bool:
+def _restore_pending_rollback(
+    plugin_id: str, live_dir: Path | None, backup_dir: Path | None
+) -> bool:
     if live_dir is None or backup_dir is None:
         return False
     try:
@@ -635,7 +641,11 @@ def _promote_staged_plugin_to_live(staged_dir: Path, plugin_id: str, plugins_dir
         shutil.rmtree(backup_dir, ignore_errors=True)
     except OSError as exc:
         try:
-            if not live_dir.exists() and not live_dir.is_symlink() and (backup_dir.exists() or backup_dir.is_symlink()):
+            if (
+                not live_dir.exists()
+                and not live_dir.is_symlink()
+                and (backup_dir.exists() or backup_dir.is_symlink())
+            ):
                 backup_dir.rename(live_dir)
         except OSError:
             logger.exception("Failed to restore plugin backup for %s", plugin_id)
@@ -979,9 +989,7 @@ async def uninstall_plugin(
                 try:
                     swept = await pm.purge_plugin_assets(plugin_id)
                     if swept:
-                        warnings.append(
-                            f"已清理 {swept} 条跨插件资产记录"
-                        )
+                        warnings.append(f"已清理 {swept} 条跨插件资产记录")
                 except Exception as e:
                     warnings.append(f"asset_bus sweep 失败: {e}")
             else:
@@ -1355,7 +1363,11 @@ async def reload_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
                     _plugins_dir() / _safe_plugin_dir_name(plugin_id),
                     rollback_backup,
                 )
-                if pending_preserved and pending_dir_after_apply is not None and pending_dir_after_apply.is_dir():
+                if (
+                    pending_preserved
+                    and pending_dir_after_apply is not None
+                    and pending_dir_after_apply.is_dir()
+                ):
                     pm.state.mark_pending_update(
                         plugin_id,
                         pending_revision,
@@ -1713,4 +1725,3 @@ async def list_plugin_tasks(plugin_id: str, request: Request) -> dict[str, Any]:
             "tasks": tasks,
         },
     }
-

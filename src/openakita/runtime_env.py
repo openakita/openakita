@@ -75,9 +75,7 @@ OPENAKITA_SECRET_ENV_BLOCKLIST = {
     "ACTIONS_RUNTIME_URL",
 }
 
-OPENAKITA_SECRET_ENV_PREFIXES = (
-    "OPENAKITA_FORCE_",
-)
+OPENAKITA_SECRET_ENV_PREFIXES = ("OPENAKITA_FORCE_",)
 
 
 def _find_python_in_dir(directory: Path) -> Path | None:
@@ -460,7 +458,12 @@ def get_managed_python_seed() -> str | None:
         candidates = (
             [base / "python.exe", base / "bin" / "python.exe"]
             if sys.platform == "win32"
-            else [base / "bin" / "python3", base / "bin" / "python", base / "python3", base / "python"]
+            else [
+                base / "bin" / "python3",
+                base / "bin" / "python",
+                base / "python3",
+                base / "python",
+            ]
         )
         for candidate in candidates:
             if candidate.exists() and verify_python_executable(str(candidate)):
@@ -600,7 +603,9 @@ def resolve_pip_index() -> dict[str, str]:
         return {
             "id": str(pip_index.get("id") or "custom"),
             "url": str(pip_index["url"]),
-            "trusted_host": str(pip_index.get("trusted_host") or _trusted_host_for_url(pip_index["url"])),
+            "trusted_host": str(
+                pip_index.get("trusted_host") or _trusted_host_for_url(pip_index["url"])
+            ),
         }
 
     env_url = os.environ.get("OPENAKITA_PIP_INDEX_URL", "").strip()
@@ -632,7 +637,11 @@ def get_pip_install_args(packages: list[str], *, index_url: str | None = None) -
     """Return common pip install args without choosing the Python executable."""
     index = resolve_pip_index()
     effective_index = index_url or index["url"]
-    trusted_host = index["trusted_host"] if effective_index == index["url"] else _trusted_host_for_url(effective_index)
+    trusted_host = (
+        index["trusted_host"]
+        if effective_index == index["url"]
+        else _trusted_host_for_url(effective_index)
+    )
     args = ["-m", "pip", "install", "-i", effective_index]
     if trusted_host:
         args.extend(["--trusted-host", trusted_host])
@@ -714,7 +723,7 @@ def apply_subprocess_secret_scrub(env: dict[str, str]) -> dict[str, str]:
     for key, value in env.items():
         force_prefix = next((p for p in OPENAKITA_SECRET_ENV_PREFIXES if key.startswith(p)), "")
         if force_prefix:
-            real_key = key[len(force_prefix):]
+            real_key = key[len(force_prefix) :]
             merged[real_key] = value
             continue
         if key in OPENAKITA_SECRET_ENV_BLOCKLIST:
@@ -898,7 +907,8 @@ def get_runtime_environment_report() -> dict:
         "bootstrap_node_seed_packaged": bool(
             isinstance(bootstrap_node_seed, dict) and bootstrap_node_seed.get("packaged")
         ),
-        "python_abi": bootstrap_manifest.get("python_abi") or bootstrap_manifest.get("python_version"),
+        "python_abi": bootstrap_manifest.get("python_abi")
+        or bootstrap_manifest.get("python_version"),
         "wheel_tag": bootstrap_manifest.get("wheel_tag", ""),
         "pip_install_target": "agent-venv" if agent_py else "unavailable",
         "pip_index_id": pip_index.get("id"),
@@ -992,8 +1002,7 @@ def log_runtime_environment_report() -> None:
             report.get("last_error"),
         )
         logger.info(
-            "[runtime] versions: host=%s app=%s agent=%s host_pip=%s app_pip=%s "
-            "agent_pip=%s uv=%s",
+            "[runtime] versions: host=%s app=%s agent=%s host_pip=%s app_pip=%s agent_pip=%s uv=%s",
             _probe_python_tool(host_py, ["--version"]),
             _probe_python_tool(app_py, ["--version"]),
             _probe_python_tool(agent_py, ["--version"]),

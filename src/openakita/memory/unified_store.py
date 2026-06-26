@@ -286,7 +286,9 @@ class UnifiedStore:
                 },
             )
 
-    def get_semantic(self, memory_id: str, *, include_inactive: bool = False) -> SemanticMemory | None:
+    def get_semantic(
+        self, memory_id: str, *, include_inactive: bool = False
+    ) -> SemanticMemory | None:
         d = self.db.get_memory(memory_id)
         if d is None:
             return None
@@ -543,9 +545,7 @@ class UnifiedStore:
     # Session Tenants (v4) — lifecycle 反查租户用
     # ======================================================================
 
-    def upsert_session_tenant(
-        self, session_id: str, user_id: str, workspace_id: str
-    ) -> None:
+    def upsert_session_tenant(self, session_id: str, user_id: str, workspace_id: str) -> None:
         self.db.upsert_session_tenant(session_id, user_id, workspace_id)
 
     def get_session_tenant(self, session_id: str) -> tuple[str, str] | None:

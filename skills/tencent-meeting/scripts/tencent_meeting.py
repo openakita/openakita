@@ -25,8 +25,11 @@ def get_config():
     secret = os.environ.get("TENCENT_MEETING_SECRET_KEY", "")
     sdk_id = os.environ.get("TENCENT_MEETING_SDK_ID", "")
     if not all([appid, secret, sdk_id]):
-        print("错误: 请设置 TENCENT_MEETING_APPID, TENCENT_MEETING_SECRET_KEY, "
-              "TENCENT_MEETING_SDK_ID", file=sys.stderr)
+        print(
+            "错误: 请设置 TENCENT_MEETING_APPID, TENCENT_MEETING_SECRET_KEY, "
+            "TENCENT_MEETING_SDK_ID",
+            file=sys.stderr,
+        )
         sys.exit(1)
     return appid, secret, sdk_id
 
@@ -101,15 +104,18 @@ def cmd_list(args):
 def main():
     parser = argparse.ArgumentParser(
         description="腾讯会议 REST API (env: TENCENT_MEETING_APPID, "
-                    "TENCENT_MEETING_SECRET_KEY, TENCENT_MEETING_SDK_ID)")
+        "TENCENT_MEETING_SECRET_KEY, TENCENT_MEETING_SDK_ID)"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_create = sub.add_parser("create", help="创建会议")
     p_create.add_argument("--subject", required=True, help="会议主题")
-    p_create.add_argument("--start-time", dest="start_time", required=True,
-                          help="开始时间 (Unix 时间戳)")
-    p_create.add_argument("--end-time", dest="end_time", required=True,
-                          help="结束时间 (Unix 时间戳)")
+    p_create.add_argument(
+        "--start-time", dest="start_time", required=True, help="开始时间 (Unix 时间戳)"
+    )
+    p_create.add_argument(
+        "--end-time", dest="end_time", required=True, help="结束时间 (Unix 时间戳)"
+    )
     p_create.add_argument("--userid", help="发起人用户 ID")
 
     p_get = sub.add_parser("get", help="查询会议")
@@ -123,10 +129,10 @@ def main():
     p_list.add_argument("--userid", help="用户 ID (筛选)")
 
     args = parser.parse_args()
-    {"create": cmd_create, "get": cmd_get,
-     "cancel": cmd_cancel, "list": cmd_list}[args.command](args)
+    {"create": cmd_create, "get": cmd_get, "cancel": cmd_cancel, "list": cmd_list}[args.command](
+        args
+    )
 
 
 if __name__ == "__main__":
     main()
-

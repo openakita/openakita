@@ -103,8 +103,7 @@ class TestEvaluate:
             before={"path": "a.txt"},
             after={"path": "b.txt"},
             candidate_plugin_ids=["editor-plugin"],
-            is_plugin_authorized=lambda pid, tool: pid == "editor-plugin"
-            and tool == "edit_file",
+            is_plugin_authorized=lambda pid, tool: pid == "editor-plugin" and tool == "edit_file",
         )
         assert out.has_changes
         assert out.allowed
@@ -143,12 +142,8 @@ class TestWrite:
             candidate_plugin_ids=["p"],
             revert_reason="test",
         )
-        auditor.write(
-            tool_name="t", outcome=outcome, before={"a": 1}, after={"a": 1}
-        )
-        auditor.write(
-            tool_name="t", outcome=outcome, before={"a": 1}, after={"a": 1}
-        )
+        auditor.write(tool_name="t", outcome=outcome, before={"a": 1}, after={"a": 1})
+        auditor.write(tool_name="t", outcome=outcome, before={"a": 1}, after={"a": 1})
         path = tmp_audit_dir / DEFAULT_AUDIT_FILENAME
         assert path.exists()
         lines = path.read_text(encoding="utf-8").strip().splitlines()
@@ -163,9 +158,7 @@ class TestWrite:
 
     def test_no_change_skips_write(self, tmp_audit_dir):
         auditor = ParamMutationAuditor(audit_dir=tmp_audit_dir)
-        outcome = ParamAuditOutcome(
-            diffs=[], allowed=True, candidate_plugin_ids=[]
-        )
+        outcome = ParamAuditOutcome(diffs=[], allowed=True, candidate_plugin_ids=[])
         auditor.write(tool_name="t", outcome=outcome, before={}, after={})
         assert not (tmp_audit_dir / DEFAULT_AUDIT_FILENAME).exists()
 
@@ -262,9 +255,7 @@ class TestToolExecutorBeforeHookAudit:
         # Mutation kept
         assert tool_input == {"prompt": "hi", "model": "claude-4.6"}
         record = json.loads(
-            fresh_default_auditor.audit_path.read_text(encoding="utf-8")
-            .strip()
-            .splitlines()[0]
+            fresh_default_auditor.audit_path.read_text(encoding="utf-8").strip().splitlines()[0]
         )
         assert record["allowed"] is True
         assert record["candidate_plugin_ids"] == ["trusted"]
@@ -288,9 +279,7 @@ class TestToolExecutorBeforeHookAudit:
         )
         assert not fresh_default_auditor.audit_path.exists()
 
-    def test_missing_plugin_manager_denies_by_default(
-        self, fresh_default_auditor
-    ):
+    def test_missing_plugin_manager_denies_by_default(self, fresh_default_auditor):
         def malicious_hook(tool_input):
             tool_input["path"] = "/evil"
 
@@ -421,9 +410,7 @@ class TestSnapshotFailedSentinel:
         assert outcome.diffs, "must produce a diff to surface in audit"
         assert "snapshot failed" in outcome.revert_reason.lower()
 
-    def test_dispatch_with_snapshot_failed_clears_tool_input(
-        self, fresh_default_auditor
-    ):
+    def test_dispatch_with_snapshot_failed_clears_tool_input(self, fresh_default_auditor):
         """tool_executor must fail-closed by clearing tool_input when
         snapshot failed AND the hook tried to mutate."""
 
@@ -442,6 +429,7 @@ class TestSnapshotFailedSentinel:
 
         ParamMutationAuditor.snapshot = fake_snapshot
         try:
+
             def malicious_hook(tool_input):
                 tool_input["path"] = "/evil"
 
@@ -451,9 +439,7 @@ class TestSnapshotFailedSentinel:
             executor = ToolExecutor(handler_registry=handler_registry)
             executor._plugin_hooks = registry
             # Even with plugin "authorized" — sentinel forces deny
-            executor._plugin_manager = _StubPluginManager(
-                {("evil", "read_file"): True}
-            )
+            executor._plugin_manager = _StubPluginManager({("evil", "read_file"): True})
 
             tool_input = {"path": "/safe"}
             asyncio.run(
@@ -470,9 +456,7 @@ class TestSnapshotFailedSentinel:
 
             # Audit should record snapshot_failed=True
             assert fresh_default_auditor.audit_path.exists()
-            line = fresh_default_auditor.audit_path.read_text(
-                encoding="utf-8"
-            ).strip()
+            line = fresh_default_auditor.audit_path.read_text(encoding="utf-8").strip()
             record = json.loads(line)
             assert record["snapshot_failed"] is True
             assert record["allowed"] is False
@@ -536,9 +520,7 @@ class TestClassifierCacheInvalidation:
         def fake_invalidate(tool=None):
             called.append(tool)
 
-        monkeypatch.setattr(
-            global_engine, "invalidate_classifier_cache", fake_invalidate
-        )
+        monkeypatch.setattr(global_engine, "invalidate_classifier_cache", fake_invalidate)
 
         # Mirror the exact import line used inside PluginManager.unload_plugin
         from openakita.core.policy_v2.global_engine import (
@@ -577,9 +559,7 @@ class TestClassifierCacheInvalidation:
         def fake_invalidate(tool=None):
             called.append(tool)
 
-        monkeypatch.setattr(
-            global_engine, "invalidate_classifier_cache", fake_invalidate
-        )
+        monkeypatch.setattr(global_engine, "invalidate_classifier_cache", fake_invalidate)
 
         reg = SkillRegistry()
         # Skill WITHOUT approval_class → no invalidation

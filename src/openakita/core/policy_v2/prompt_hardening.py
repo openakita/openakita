@@ -33,9 +33,7 @@ _END_TOKEN: Final[str] = "EXTERNAL_CONTENT_END"
 
 _BEGIN_RE: Final[re.Pattern[str]] = re.compile(r"EXTERNAL_CONTENT_BEGIN")
 _END_RE: Final[re.Pattern[str]] = re.compile(r"EXTERNAL_CONTENT_END")
-_ANY_MARKER_RE: Final[re.Pattern[str]] = re.compile(
-    r"<<<EXTERNAL_CONTENT_(?:BEGIN|END)[^>]*>>>"
-)
+_ANY_MARKER_RE: Final[re.Pattern[str]] = re.compile(r"<<<EXTERNAL_CONTENT_(?:BEGIN|END)[^>]*>>>")
 
 
 def _make_nonce() -> str:

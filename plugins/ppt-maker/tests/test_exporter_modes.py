@@ -19,7 +19,9 @@ def test_pptxgenjs_exporter_falls_back_when_node_renderer_missing(tmp_path) -> N
         ]
     }
 
-    path = exporter.export(render_model={}, legacy_slides_ir=ir, output_path=tmp_path / "fallback.pptx")
+    path = exporter.export(
+        render_model={}, legacy_slides_ir=ir, output_path=tmp_path / "fallback.pptx"
+    )
 
     assert path.exists()
 
@@ -47,4 +49,3 @@ def test_creative_image_exporter_writes_image_backed_pptx(tmp_path) -> None:
 
     assert path.exists()
     assert (tmp_path / "creative_creative_assets" / "slide_01.png").exists()
-

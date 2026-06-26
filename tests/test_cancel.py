@@ -418,6 +418,7 @@ class TestStreamCancelFarewell:
 
         def slow_llm(**kwargs):
             import time
+
             time.sleep(20)
 
         mock_brain = MagicMock()
@@ -796,4 +797,3 @@ class TestGatewayInterruptRouting:
         assert hasattr(Agent, "classify_interrupt")
         assert hasattr(Agent, "is_stop_command")
         assert hasattr(Agent, "is_skip_command")
-

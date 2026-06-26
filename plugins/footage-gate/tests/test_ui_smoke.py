@@ -78,30 +78,22 @@ def test_ui_self_contained_assets(ui_text: str) -> None:
         r'href="/_sdk/',
     ]
     for pat in forbidden_patterns:
-        assert not re.search(pat, ui_text), (
-            f"forbidden host-mounted SDK reference present: {pat}"
-        )
+        assert not re.search(pat, ui_text), f"forbidden host-mounted SDK reference present: {pat}"
 
 
 def test_ui_under_line_budget(ui_text: str) -> None:
     line_count = ui_text.count("\n") + 1
-    assert line_count <= MAX_LINES, (
-        f"UI bundle is {line_count} lines, ceiling is {MAX_LINES}"
-    )
+    assert line_count <= MAX_LINES, f"UI bundle is {line_count} lines, ceiling is {MAX_LINES}"
 
 
 @pytest.mark.parametrize("token,description", HARD_CONTRACTS)
 def test_ui_hard_contracts_present(ui_text: str, token: str, description: str) -> None:
-    assert token in ui_text, (
-        f"hard contract missing — {description!r} (token={token!r})"
-    )
+    assert token in ui_text, f"hard contract missing — {description!r} (token={token!r})"
 
 
 @pytest.mark.parametrize("section_key", SETTINGS_SECTIONS)
 def test_ui_settings_sections_present(ui_text: str, section_key: str) -> None:
-    assert f'"{section_key}"' in ui_text, (
-        f"settings section i18n key missing: {section_key}"
-    )
+    assert f'"{section_key}"' in ui_text, f"settings section i18n key missing: {section_key}"
 
 
 def test_ui_modes_listed(ui_text: str) -> None:
@@ -146,9 +138,7 @@ def test_ui_i18n_keys_have_translations(ui_text: str) -> None:
     zh_keys = set(re.findall(r'^\s*"([a-zA-Z][a-zA-Z0-9_.]+)":', ui_text, re.MULTILINE))
 
     missing = sorted(static_refs - zh_keys)
-    assert not missing, (
-        f"i18n keys referenced but not defined ({len(missing)}): {missing[:8]}"
-    )
+    assert not missing, f"i18n keys referenced but not defined ({len(missing)}): {missing[:8]}"
 
 
 def test_ui_react_18_mount_pattern(ui_text: str) -> None:

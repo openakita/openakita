@@ -23,9 +23,7 @@ MINIMAL_MANIFEST = {
 
 
 def _write_manifest(plugin_dir, data: dict) -> None:
-    (plugin_dir / "plugin.json").write_text(
-        json.dumps(data, ensure_ascii=False), encoding="utf-8"
-    )
+    (plugin_dir / "plugin.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
 # ---------- Valid manifest ----------
@@ -210,4 +208,3 @@ class TestTimeouts:
         _write_manifest(tmp_path, data)
         m = parse_manifest(tmp_path)
         assert m.hook_timeout == 15.0
-

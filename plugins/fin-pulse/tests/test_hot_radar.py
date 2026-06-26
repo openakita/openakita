@@ -114,7 +114,8 @@ def test_evaluate_radar_respects_block_tokens(tmp_path: Path) -> None:
         try:
             await _seed(tm)
             result = await evaluate_radar(
-                tm, rules_text="美联储\n欧央行\n\n[GLOBAL_FILTER]\n广告\n",
+                tm,
+                rules_text="美联储\n欧央行\n\n[GLOBAL_FILTER]\n广告\n",
                 since_hours=72,
             )
             assert result["ok"] is True

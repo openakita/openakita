@@ -29,11 +29,13 @@ DOC_OFFICE_URL = "https://aip.baidubce.com/rest/2.0/ocr/v1/doc_analysis_office"
 
 
 def get_access_token(ak: str, sk: str) -> str:
-    params = urllib.parse.urlencode({
-        "grant_type": "client_credentials",
-        "client_id": ak,
-        "client_secret": sk,
-    })
+    params = urllib.parse.urlencode(
+        {
+            "grant_type": "client_credentials",
+            "client_id": ak,
+            "client_secret": sk,
+        }
+    )
     url = f"{TOKEN_URL}?{params}"
     req = urllib.request.Request(url, method="POST", data=b"")
     with urllib.request.urlopen(req, timeout=15) as resp:
@@ -65,7 +67,8 @@ def ocr_request(token: str, api_url: str, input_path: str) -> dict:
     url = f"{api_url}?access_token={token}"
     body = _build_body(input_path).encode()
     req = urllib.request.Request(
-        url, data=body,
+        url,
+        data=body,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
@@ -77,16 +80,15 @@ def main():
         description="百度 OCR 文档识别 CLI — 支持文档识别和表格识别",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例:\n"
-               "  python3 baidu_ocr_doc.py doc /path/to/document.jpg\n"
-               "  python3 baidu_ocr_doc.py doc https://example.com/doc.png\n"
-               "  python3 baidu_ocr_doc.py table /path/to/table.jpg",
+        "  python3 baidu_ocr_doc.py doc /path/to/document.jpg\n"
+        "  python3 baidu_ocr_doc.py doc https://example.com/doc.png\n"
+        "  python3 baidu_ocr_doc.py table /path/to/table.jpg",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_doc = sub.add_parser("doc", help="通用文档识别")
     p_doc.add_argument("input", help="图片文件路径或 URL")
-    p_doc.add_argument("--office", action="store_true",
-                       help="使用办公文档识别接口")
+    p_doc.add_argument("--office", action="store_true", help="使用办公文档识别接口")
 
     p_table = sub.add_parser("table", help="表格识别")
     p_table.add_argument("input", help="图片文件路径或 URL")
@@ -117,8 +119,10 @@ def main():
         sys.exit(1)
     except urllib.error.HTTPError as e:
         body = e.read().decode() if e.fp else ""
-        print(json.dumps({"error": str(e), "detail": body}, ensure_ascii=False, indent=2),
-              file=sys.stderr)
+        print(
+            json.dumps({"error": str(e), "detail": body}, ensure_ascii=False, indent=2),
+            file=sys.stderr,
+        )
         sys.exit(1)
     except Exception as e:
         print(json.dumps({"error": str(e)}, ensure_ascii=False, indent=2), file=sys.stderr)
@@ -127,4 +131,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

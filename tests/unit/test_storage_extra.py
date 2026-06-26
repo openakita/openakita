@@ -18,7 +18,9 @@ def storage(tmp_path):
 class TestConnectionDegradation:
     def test_save_after_close(self, storage):
         storage.close()
-        storage.save_memory({"id": "m1", "content": "test", "created_at": datetime.now().isoformat()})
+        storage.save_memory(
+            {"id": "m1", "content": "test", "created_at": datetime.now().isoformat()}
+        )
 
     def test_query_after_close(self, storage):
         storage.close()
@@ -39,7 +41,9 @@ class TestConnectionDegradation:
 
     def test_save_attachment_after_close(self, storage):
         storage.close()
-        storage.save_attachment({"id": "a1", "filename": "test.txt", "created_at": datetime.now().isoformat()})
+        storage.save_attachment(
+            {"id": "a1", "filename": "test.txt", "created_at": datetime.now().isoformat()}
+        )
 
     def test_search_attachments_after_close(self, storage):
         storage.close()
@@ -60,10 +64,14 @@ class TestConnectionDegradation:
 
 class TestFTS5Rebuild:
     def test_rebuild_fts_index(self, storage):
-        storage.save_memory({
-            "id": "m1", "content": "Python 是编程语言",
-            "type": "FACT", "created_at": datetime.now().isoformat(),
-        })
+        storage.save_memory(
+            {
+                "id": "m1",
+                "content": "Python 是编程语言",
+                "type": "FACT",
+                "created_at": datetime.now().isoformat(),
+            }
+        )
         storage.rebuild_fts_index()
         results = storage.search_fts("Python")
         assert len(results) >= 1
@@ -76,8 +84,8 @@ class TestSanitizeFtsQuery:
     def test_special_chars_cleaned(self, storage):
         result = storage._sanitize_fts_query('hello "world" (test)')
         assert '"' not in result
-        assert '(' not in result
-        assert ')' not in result
+        assert "(" not in result
+        assert ")" not in result
 
     def test_empty_query(self, storage):
         result = storage._sanitize_fts_query("")
@@ -116,26 +124,31 @@ class TestSchemaVersion:
 class TestExpiryCleanup:
     def test_cleanup_expired(self, storage):
         from datetime import timedelta
+
         past = (datetime.now() - timedelta(days=1)).isoformat()
-        storage.save_memory({
-            "id": "expired",
-            "content": "old stuff",
-            "created_at": past,
-            "expires_at": past,
-        })
+        storage.save_memory(
+            {
+                "id": "expired",
+                "content": "old stuff",
+                "created_at": past,
+                "expires_at": past,
+            }
+        )
         cleaned = storage.cleanup_expired()
         assert cleaned >= 1
         assert storage.get_memory("expired") is None
 
     def test_cleanup_not_expired(self, storage):
         from datetime import timedelta
+
         future = (datetime.now() + timedelta(days=30)).isoformat()
-        storage.save_memory({
-            "id": "fresh",
-            "content": "new stuff",
-            "created_at": datetime.now().isoformat(),
-            "expires_at": future,
-        })
+        storage.save_memory(
+            {
+                "id": "fresh",
+                "content": "new stuff",
+                "created_at": datetime.now().isoformat(),
+                "expires_at": future,
+            }
+        )
         storage.cleanup_expired()
         assert storage.get_memory("fresh") is not None
-

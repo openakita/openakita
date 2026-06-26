@@ -72,4 +72,3 @@ class Plugin(PluginBase):
 
     def on_unload(self) -> None:
         pass
-

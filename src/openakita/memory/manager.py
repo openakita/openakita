@@ -183,12 +183,14 @@ class MemoryManager:
         embedding_api_key: str = "",
         embedding_api_model: str = "",
         agent_id: str = "",
+        identity_dir: Path | None = None,
     ):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.agent_id = agent_id
 
         self.memory_md_path = Path(memory_md_path)
+        self.identity_dir = Path(identity_dir) if identity_dir else self.memory_md_path.parent
         self.brain = brain
         self._ensure_memory_md_exists()
 
@@ -234,9 +236,11 @@ class MemoryManager:
         self._session_turns_var: contextvars.ContextVar[list[ConversationTurn] | None] = (
             contextvars.ContextVar(f"openakita_memory_session_turns_{id(self)}", default=None)
         )
-        self._recent_messages_var: contextvars.ContextVar[list[dict] | None] = contextvars.ContextVar(
-            f"openakita_memory_recent_messages_{id(self)}",
-            default=None,
+        self._recent_messages_var: contextvars.ContextVar[list[dict] | None] = (
+            contextvars.ContextVar(
+                f"openakita_memory_recent_messages_{id(self)}",
+                default=None,
+            )
         )
         self._session_cited_memories_var: contextvars.ContextVar[list[dict] | None] = (
             contextvars.ContextVar(f"openakita_memory_cited_{id(self)}", default=None)
@@ -307,6 +311,32 @@ class MemoryManager:
             with contextlib.suppress(Exception):
                 record_health_event("memory_degraded", {"reason": e.reason})
             emit_memory_health_event("degraded", {"reason": e.reason})
+            # Also mirror into the cross-subsystem DegradedRegistry so the
+            # unified ``DegradedBanner`` in the UI sees memory failures
+            # alongside token_tracking / feedback / asset_bus. Without
+            # this the user gets a banner for the trivial subsystems but
+            # has to dig into the Status view for the most important one.
+            # The legacy ``memory_repair`` flow in StatusView keeps
+            # working in parallel — it reads ``memory_subsystem`` (a
+            # superset payload with backup/snapshot lists), not the
+            # registry, so this is purely additive.
+            #
+            # ONLY the main MemoryManager (no ``agent_id`` set) maps to
+            # the global ``memory`` key — that's the one StatusView's
+            # memory_subsystem block tracks and the one mark_repair_*
+            # clears. Isolated sub-agent / profile managers use a
+            # namespaced key so a sub-agent's broken DB doesn't make the
+            # banner imply the user's primary memory is degraded.
+            with contextlib.suppress(Exception):
+                from openakita.storage.degraded import registry as _degraded
+
+                key = "memory" if not self.agent_id else f"memory:{self.agent_id}"
+                _degraded.register(
+                    key,
+                    e.reason or "unknown",
+                    repair="memory_repair_flow" if key == "memory" else "manual_quarantine",
+                    details=e.details or None,
+                )
 
     def _on_store_event(self, kind: str, payload: Any) -> None:
         """Observer mirror for ``UnifiedStore`` semantic writes.
@@ -530,9 +560,7 @@ class MemoryManager:
 
         # backfill 流程完成（无论是否真的导入了行）→ 归档 memories.json 文件 +
         # 写入 sentinel，永久切断 dual-write 路径。
-        self._archive_legacy_memories_json(
-            f"backfilled_{migrated}_skipped_{skipped}"
-        )
+        self._archive_legacy_memories_json(f"backfilled_{migrated}_skipped_{skipped}")
         with contextlib.suppress(Exception):
             self.store.set_meta(
                 self._LEGACY_JSON_BACKFILL_SENTINEL,
@@ -548,13 +576,12 @@ class MemoryManager:
             if not self.memories_file.exists():
                 return
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            archived = self.memories_file.with_name(
-                f"{self.memories_file.name}.archived.{ts}"
-            )
+            archived = self.memories_file.with_name(f"{self.memories_file.name}.archived.{ts}")
             os.replace(self.memories_file, archived)
             logger.info(
                 "[Manager] Archived legacy memories.json → %s (reason=%s)",
-                archived.name, reason,
+                archived.name,
+                reason,
             )
         except Exception as e:
             logger.warning(f"[Manager] Failed to archive legacy memories.json: {e}")
@@ -603,12 +630,16 @@ class MemoryManager:
                 "[Memory] start_session(%s) using fallback user_id=%r workspace_id=%r — "
                 "long-term memories will be shared across all 'default' callers; "
                 "upstream channel/API entry should pass a real user_id to enforce tenant isolation.",
-                session_id, self._current_user_id, self._current_workspace_id,
+                session_id,
+                self._current_user_id,
+                self._current_workspace_id,
             )
         else:
             logger.info(
                 "[Memory] start_session(%s) tenant=(user=%s workspace=%s)",
-                session_id, self._current_user_id, self._current_workspace_id,
+                session_id,
+                self._current_user_id,
+                self._current_workspace_id,
             )
         self._session_turns = []
         self._recent_messages = []
@@ -1088,11 +1119,7 @@ class MemoryManager:
         _task_marker_re = self._task_marker_re_for_extraction()
         _looks_like_task = bool(_task_marker_re.search(content)) if content else False
 
-        if (
-            importance >= 0.9
-            and mem_type in _persona_types
-            and not _looks_like_task
-        ):
+        if importance >= 0.9 and mem_type in _persona_types and not _looks_like_task:
             priority = MemoryPriority.PERMANENT
         elif importance >= 0.6:
             priority = MemoryPriority.LONG_TERM
@@ -1298,6 +1325,7 @@ class MemoryManager:
 
             try:
                 from openakita.config import settings as _cfg
+
                 ui_lang = getattr(_cfg, "ui_language", "zh")
             except Exception:
                 ui_lang = "zh"
@@ -1309,9 +1337,7 @@ class MemoryManager:
                 language=ui_lang,
             )
             self.relational_graph = GraphEngine(self.relational_store)
-            resolver = EntityResolver(
-                self.relational_store, brain=self.brain, language=ui_lang
-            )
+            resolver = EntityResolver(self.relational_store, brain=self.brain, language=ui_lang)
             self.relational_consolidator = RelationalConsolidator(
                 self.relational_store, entity_resolver=resolver
             )
@@ -1737,13 +1763,10 @@ class MemoryManager:
                             if (
                                 (getattr(existing_mem, "scope", "global") or "global") != scope
                                 or (getattr(existing_mem, "scope_owner", "") or "") != scope_owner
-                                    or (getattr(existing_mem, "user_id", "default") or "default")
-                                    != user_id
-                                    or (
-                                        getattr(existing_mem, "workspace_id", "default")
-                                        or "default"
-                                    )
-                                    != workspace_id
+                                or (getattr(existing_mem, "user_id", "default") or "default")
+                                != user_id
+                                or (getattr(existing_mem, "workspace_id", "default") or "default")
+                                != workspace_id
                             ):
                                 continue
                             existing_core = self._strip_common_prefix(existing_mem.content)
@@ -1892,9 +1915,17 @@ class MemoryManager:
         now = datetime.now()
         if scope == "global":
             scope = "user"
-        user_id = user_id or (
-            "system" if scope == "system" else "legacy" if scope == "legacy_quarantine" else self._current_user_id
-        ) or "default"
+        user_id = (
+            user_id
+            or (
+                "system"
+                if scope == "system"
+                else "legacy"
+                if scope == "legacy_quarantine"
+                else self._current_user_id
+            )
+            or "default"
+        )
         workspace_id = workspace_id or self._current_workspace_id or "default"
 
         def _collect(target_workspace_id: str) -> list[Memory]:
@@ -1930,11 +1961,7 @@ class MemoryManager:
 
         # Phase 2a：可选 workspace fallback。仅在主 workspace 命中不足 limit
         # 且 fallback_workspace_id 与主不同时触发，按 id 去重再合并。
-        if (
-            fallback_workspace_id
-            and fallback_workspace_id != workspace_id
-            and len(results) < limit
-        ):
+        if fallback_workspace_id and fallback_workspace_id != workspace_id and len(results) < limit:
             seen_ids = {m.id for m in results}
             for mem in _collect(fallback_workspace_id):
                 if mem.id in seen_ids:
@@ -2123,17 +2150,20 @@ class MemoryManager:
                     continue
                 if scope is not None and mem_scope != scope:
                     continue
-                if scope_owner is not None and (
-                    getattr(memory, "scope_owner", "") or ""
-                ) != scope_owner:
+                if (
+                    scope_owner is not None
+                    and (getattr(memory, "scope_owner", "") or "") != scope_owner
+                ):
                     continue
-                if user_id is not None and (
-                    getattr(memory, "user_id", "default") or "default"
-                ) != user_id:
+                if (
+                    user_id is not None
+                    and (getattr(memory, "user_id", "default") or "default") != user_id
+                ):
                     continue
-                if workspace_id is not None and (
-                    getattr(memory, "workspace_id", "default") or "default"
-                ) != workspace_id:
+                if (
+                    workspace_id is not None
+                    and (getattr(memory, "workspace_id", "default") or "default") != workspace_id
+                ):
                     continue
                 yield memory
 
@@ -2165,13 +2195,12 @@ class MemoryManager:
     ) -> dict:
         """每日归纳 (v2: 委托给 LifecycleManager)"""
         try:
-            from ..config import settings
             from .lifecycle import LifecycleManager
 
             lifecycle = LifecycleManager(
                 store=self.store,
                 extractor=self.extractor,
-                identity_dir=settings.identity_path,
+                identity_dir=self.identity_dir,
             )
             result = await lifecycle.consolidate_daily(
                 checkpoint=checkpoint,
@@ -2197,7 +2226,6 @@ class MemoryManager:
                 self._reload_from_sqlite()
                 raise  # LLM unavailable — legacy fallback would fail too
             logger.error(f"[Manager] Daily consolidation failed, using legacy: {e}")
-            from ..config import settings
             from .daily_consolidator import DailyConsolidator
 
             dc = DailyConsolidator(
@@ -2205,7 +2233,7 @@ class MemoryManager:
                 memory_md_path=self.memory_md_path,
                 memory_manager=self,
                 brain=self.brain,
-                identity_dir=settings.identity_path,
+                identity_dir=self.identity_dir,
             )
             result = await dc.consolidate_daily()
 

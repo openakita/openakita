@@ -2,7 +2,36 @@
 
 ## [Unreleased]
 
-- No pending changes.
+### Added
+
+- `MULTIPOST_BRIDGE_NOTES.md` records the current MultiPost-Extension
+  bridge constraints: top-level Chrome/Edge page required for stable
+  extension calls, iframe/desktop limitations, trusted-domain handling,
+  and the recommended publish-entry flow.
+- Publish UI now supports per-run engine selection, scheduled publishes,
+  top-level handoff for MultiPost extension publishing, template reuse,
+  and calendar rescheduling against the existing plugin routes.
+- MultiPost engine dispatch is now wired end-to-end: the backend emits
+  the extension's popup-oriented `MULTIPOST_EXTENSION_PUBLISH` SyncData
+  payload with typed MultiPost platform keys such as `ARTICLE_WEIXIN`
+  and `VIDEO_WEIXINCHANNEL`, serves selected assets over HTTP for the
+  browser extension, and the top-level UI polls `/mp/pending` then
+  acknowledges `/mp/ack` so `mp` tasks no longer remain stuck in
+  `running`.
+- MultiPost bridge notes now document the extension publish popup
+  lifecycle and the current limitation that popup "publish complete"
+  is not emitted back to the originating web page as a final platform
+  callback.
+- Explicit `engine=mp` publishes no longer depend on the backend's
+  in-memory extension probe cache; the task is exposed through
+  `/mp/pending` and the top-level browser page performs the live
+  extension check before opening the MultiPost popup.
+- `engine=mp` publishes can now omit `account_ids` and `asset_id`.
+  MultiPost owns browser login state, and text/article-only publishes
+  do not require an uploaded media asset.
+- MultiPost publishes are batched: one omni-post task now carries all
+  selected platforms in `SyncData.platforms`, matching MultiPost's
+  native popup behavior instead of opening one popup per platform.
 
 ## [0.2.0] — 2026-04-25
 

@@ -59,9 +59,7 @@ class PluginState:
 
     def set_dev_mode(self, mode: str) -> None:
         if mode not in _VALID_DEV_MODES:
-            raise ValueError(
-                f"Invalid dev_mode {mode!r}; expected one of {_VALID_DEV_MODES}"
-            )
+            raise ValueError(f"Invalid dev_mode {mode!r}; expected one of {_VALID_DEV_MODES}")
         self.dev_mode = mode
 
     @property
@@ -221,4 +219,3 @@ class PluginState:
             )
             state.dev_mode = "off"
         return state
-

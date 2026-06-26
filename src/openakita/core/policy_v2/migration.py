@@ -34,12 +34,8 @@ _V2_BLOCKS: frozenset[str] = frozenset(PolicyConfigV2.model_fields) - {"enabled"
 # 任何不在这个集合里的键被识别为"未知"——可能是 typo，也可能是攻击者
 # 注入的伪字段。loader 会把它们记到 ``MigrationReport.unknown_security_keys``
 # 并打 WARN，不静默丢。
-_V1_LEGACY_KEYS: frozenset[str] = frozenset(
-    {"zones", "command_patterns", "self_protection"}
-)
-_KNOWN_SECURITY_KEYS: frozenset[str] = (
-    frozenset(PolicyConfigV2.model_fields) | _V1_LEGACY_KEYS
-)
+_V1_LEGACY_KEYS: frozenset[str] = frozenset({"zones", "command_patterns", "self_protection"})
+_KNOWN_SECURITY_KEYS: frozenset[str] = frozenset(PolicyConfigV2.model_fields) | _V1_LEGACY_KEYS
 
 
 @dataclass(slots=True)

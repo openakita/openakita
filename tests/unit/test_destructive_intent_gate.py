@@ -102,7 +102,9 @@ def test_pending_confirmation_consumes_known_answers():
     pending = store.create(
         conversation_id="conv-test",
         original_message="删除 security user_allowlist 第 0 条",
-        classification=_classify_risk_intent(None, "删除 security user_allowlist 第 0 条").to_dict(),
+        classification=_classify_risk_intent(
+            None, "删除 security user_allowlist 第 0 条"
+        ).to_dict(),
         request_id="req-test",
     )
 
@@ -231,9 +233,7 @@ def test_synth_prefix_with_leading_whitespace_still_skipped():
     """允许消息有前导空白（trim 之后还是 [xxx] 开头）。"""
     intent = SimpleNamespace(complexity=SimpleNamespace(destructive_potential=False))
 
-    result = _classify_risk_intent(
-        intent, "  \n[收到任务交付] 请执行 Phase 1"
-    )
+    result = _classify_risk_intent(intent, "  \n[收到任务交付] 请执行 Phase 1")
 
     assert not result.requires_confirmation
     assert result.reason == "org_synthesized_message"
@@ -250,9 +250,7 @@ def test_index_regex_does_not_grab_year_from_date():
 
     # 删除场景命中 _WRITE_RE，会走到 _extract_parameters；但句子里只有
     # 「2026-04-28」这种日期年份，不应被识别成 index=2026
-    result = _classify_risk_intent(
-        intent, "删除 security user_allowlist 中 2026-04-28 之前的条目"
-    )
+    result = _classify_risk_intent(intent, "删除 security user_allowlist 中 2026-04-28 之前的条目")
 
     assert "index" not in result.parameters
 
@@ -289,9 +287,7 @@ def test_index_regex_rejects_4_digit_numbers():
 
     # 即便写成「第 1234 条」，1234 是 4 位也不抓——这里是防御性约束，
     # 实际业务里 allowlist index 不会到 1000+。
-    result = _classify_risk_intent(
-        intent, "删除 security user_allowlist 第 1234 条"
-    )
+    result = _classify_risk_intent(intent, "删除 security user_allowlist 第 1234 条")
     assert "index" not in result.parameters
 
 
@@ -373,7 +369,19 @@ def test_affirmative_reply_confirm_continue_is_exempted():
 def test_affirmative_reply_variants_all_exempted():
     intent = SimpleNamespace(complexity=SimpleNamespace(destructive_potential=False))
 
-    for reply in ["继续", "继续吧", "开始执行", "方案 OK", "方案ok", "已确认", "同意", "可以", "ok", "OK", "yes"]:
+    for reply in [
+        "继续",
+        "继续吧",
+        "开始执行",
+        "方案 OK",
+        "方案ok",
+        "已确认",
+        "同意",
+        "可以",
+        "ok",
+        "OK",
+        "yes",
+    ]:
         result = _classify_risk_intent(intent, reply)
         assert not result.requires_confirmation, reply
         assert result.reason == "affirmative_reply_to_prior_turn", reply

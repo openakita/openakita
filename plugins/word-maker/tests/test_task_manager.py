@@ -103,4 +103,3 @@ async def test_cleanup_expired_removes_completed_projects(tmp_path) -> None:
         assert await manager.cleanup_expired(retention_days=30) == 1
         assert await manager.get_project(old["id"]) is None
         assert await manager.get_project(fresh["id"]) is not None
-

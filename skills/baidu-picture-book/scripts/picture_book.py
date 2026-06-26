@@ -10,13 +10,11 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '_shared'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_shared"))
 from baidu_appbuilder import parse_common_args, run_skill_query
 
 
-def build_generate_query(
-    story: str, style: str = "", pages: int = 0, audience: str = ""
-) -> str:
+def build_generate_query(story: str, style: str = "", pages: int = 0, audience: str = "") -> str:
     query = f"请根据以下故事创作一本绘本：{story}"
     if style:
         query += f"，绘画风格：{style}"
@@ -34,13 +32,19 @@ def main() -> None:
 
     p_gen = sub.add_parser("generate", help="生成绘本")
     p_gen.add_argument("story", help="故事描述或主题")
-    p_gen.add_argument("--style", default="",
-                       choices=["watercolor", "cartoon", "flat", "realistic", ""],
-                       help="绘画风格")
+    p_gen.add_argument(
+        "--style",
+        default="",
+        choices=["watercolor", "cartoon", "flat", "realistic", ""],
+        help="绘画风格",
+    )
     p_gen.add_argument("--pages", type=int, default=0, help="页数")
-    p_gen.add_argument("--audience", default="",
-                       choices=["toddler", "preschool", "elementary", ""],
-                       help="目标年龄段")
+    p_gen.add_argument(
+        "--audience",
+        default="",
+        choices=["toddler", "preschool", "elementary", ""],
+        help="目标年龄段",
+    )
 
     args = parser.parse_args()
     query = build_generate_query(args.story, args.style, args.pages, args.audience)
@@ -49,4 +53,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

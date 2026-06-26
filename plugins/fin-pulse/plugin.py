@@ -276,14 +276,11 @@ class Plugin(PluginBase):
         # Step 5 — async bootstrap (SQLite schema seeding). Silent no-op
         # when Phase 1b has not landed yet.
         if self._tm is not None:
-            self._init_task = api.spawn_task(
-                self._async_init(), name=f"{PLUGIN_ID}:init"
-            )
+            self._init_task = api.spawn_task(self._async_init(), name=f"{PLUGIN_ID}:init")
 
         # Step 6 — log so the host status panel ticks green immediately.
         api.log(
-            f"fin-pulse plugin loaded (v{PLUGIN_VERSION}, "
-            f"{len(self._tool_definitions())} tools)"
+            f"fin-pulse plugin loaded (v{PLUGIN_VERSION}, {len(self._tool_definitions())} tools)"
         )
 
     async def _await_init(self, *, timeout: float = 5.0) -> tuple[bool, str | None]:
@@ -312,7 +309,10 @@ class Plugin(PluginBase):
             exc = task.exception() if not task.cancelled() else None
             if exc is not None:
                 return False, f"init_failed: {exc}"
-            return self._tm.is_ready(), None if self._tm.is_ready() else "init_finished_but_db_missing"
+            return (
+                self._tm.is_ready(),
+                None if self._tm.is_ready() else "init_finished_but_db_missing",
+            )
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
         except asyncio.TimeoutError:
@@ -338,9 +338,7 @@ class Plugin(PluginBase):
         if err == "init_in_progress":
             raise HTTPException(
                 status_code=503,
-                detail=(
-                    "fin-pulse 正在初始化数据库，请稍后再试（通常 1-3 秒后即可恢复）。"
-                ),
+                detail=("fin-pulse 正在初始化数据库，请稍后再试（通常 1-3 秒后即可恢复）。"),
             )
         raise HTTPException(
             status_code=503,
@@ -479,9 +477,7 @@ class Plugin(PluginBase):
     async def _save_report_plans(self, data: dict[str, Any]) -> None:
         if self._tm is None:
             return
-        await self._tm.set_configs(
-            {REPORT_PLANS_CONFIG_KEY: json.dumps(data, ensure_ascii=False)}
-        )
+        await self._tm.set_configs({REPORT_PLANS_CONFIG_KEY: json.dumps(data, ensure_ascii=False)})
 
     async def _load_radar_plan(self) -> dict[str, Any]:
         if self._tm is None:
@@ -503,9 +499,7 @@ class Plugin(PluginBase):
     async def _save_radar_plan(self, plan: dict[str, Any]) -> None:
         if self._tm is None:
             return
-        await self._tm.set_configs(
-            {RADAR_PLAN_CONFIG_KEY: json.dumps(plan, ensure_ascii=False)}
-        )
+        await self._tm.set_configs({RADAR_PLAN_CONFIG_KEY: json.dumps(plan, ensure_ascii=False)})
 
     def _normalize_radar_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -526,7 +520,9 @@ class Plugin(PluginBase):
             "locked": bool(plan.get("locked", True)),
             "enabled": bool(plan.get("enabled", True)),
             "last_run_key": str(plan.get("last_run_key") or ""),
-            "last_result": plan.get("last_result") if isinstance(plan.get("last_result"), dict) else {},
+            "last_result": plan.get("last_result")
+            if isinstance(plan.get("last_result"), dict)
+            else {},
             "updated_at": str(plan.get("updated_at") or _utcnow_iso()),
         }
 
@@ -556,7 +552,9 @@ class Plugin(PluginBase):
             "enabled": bool(plan.get("enabled", True)),
             "preIngest": bool(plan.get("preIngest", True)),
             "last_run_key": str(plan.get("last_run_key") or ""),
-            "last_result": plan.get("last_result") if isinstance(plan.get("last_result"), dict) else {},
+            "last_result": plan.get("last_result")
+            if isinstance(plan.get("last_result"), dict)
+            else {},
             "updated_at": str(plan.get("updated_at") or _utcnow_iso()),
         }
 
@@ -694,7 +692,9 @@ class Plugin(PluginBase):
             cooldown_s=0 if manual else 60,
             dedupe_by_content=False,
             content_kind=content_kind,
-            file_name=f"fin-pulse-{plan.get('id') or 'report'}.pdf" if content_kind == "html" else None,
+            file_name=f"fin-pulse-{plan.get('id') or 'report'}.pdf"
+            if content_kind == "html"
+            else None,
             fallback_text=markdown.strip() if content_kind == "html" else None,
         )
         digest_id = str(digest.get("digest_id") or "")
@@ -737,7 +737,10 @@ class Plugin(PluginBase):
             force_refresh=bool(plan.get("force_refresh")),
         )
         if ingest_result is not None:
-            logger.info("fin-pulse radar plan ingest result: %s", ingest_result.get("totals") or ingest_result)
+            logger.info(
+                "fin-pulse radar plan ingest result: %s",
+                ingest_result.get("totals") or ingest_result,
+            )
         task = await self._tm.create_task(
             mode="hot_radar",
             params={"plan_id": "radar", "manual": manual, "source_ids": source_ids},
@@ -789,17 +792,13 @@ class Plugin(PluginBase):
         try:
             payload = _parse_schedule_prompt(getattr(task, "prompt", "") or "")
         except ValueError as exc:
-            logger.warning(
-                "fin-pulse: schedule %s prompt parse failed: %s", task.id, exc
-            )
+            logger.warning("fin-pulse: schedule %s prompt parse failed: %s", task.id, exc)
             return {"ok": False, "reason": "prompt_parse_failed", "error": str(exc)}
         mode = payload.get("mode")
         channel = str(payload.get("channel") or "").strip()
         chat_id = str(payload.get("chat_id") or "").strip()
         if not channel or not chat_id:
-            logger.warning(
-                "fin-pulse: schedule %s missing channel/chat_id payload", task.id
-            )
+            logger.warning("fin-pulse: schedule %s missing channel/chat_id payload", task.id)
             return {"ok": False, "reason": "missing_target"}
 
         try:
@@ -1080,9 +1079,7 @@ class Plugin(PluginBase):
         )
         handler = dispatch_table.get(name)
         if handler is None:
-            return serialize_tool_result(
-                {"ok": False, "error": "unknown_tool", "tool": name}
-            )
+            return serialize_tool_result({"ok": False, "error": "unknown_tool", "tool": name})
         try:
             payload = await handler(args)
         except Exception as exc:  # noqa: BLE001 — envelope every failure
@@ -1115,8 +1112,7 @@ class Plugin(PluginBase):
                 "plugin_id": PLUGIN_ID,
                 "version": PLUGIN_VERSION,
                 "phase": "skeleton",
-                "db_ready": self._tm is not None
-                and getattr(self._tm, "_db", None) is not None,
+                "db_ready": self._tm is not None and getattr(self._tm, "_db", None) is not None,
                 "data_dir": str(self._data_dir) if self._data_dir else None,
                 "timestamp": time.time(),
             }
@@ -1153,25 +1149,22 @@ class Plugin(PluginBase):
                 from finpulse_fetchers.rss import parse_feed  # type: ignore
                 import httpx
             except ImportError as exc:
-                raise HTTPException(
-                    status_code=500, detail="rss_module_unavailable"
-                ) from exc
+                raise HTTPException(status_code=500, detail="rss_module_unavailable") from exc
             try:
                 async with httpx.AsyncClient(
                     timeout=httpx.Timeout(15, connect=8),
                     follow_redirects=True,
                 ) as client:
-                    resp = await client.get(url, headers={
-                        "User-Agent": "Mozilla/5.0 (compatible; FinPulse/1.0)"
-                    })
+                    resp = await client.get(
+                        url, headers={"User-Agent": "Mozilla/5.0 (compatible; FinPulse/1.0)"}
+                    )
                     resp.raise_for_status()
                     items = parse_feed("_probe", resp.text)
                     return {
                         "ok": True,
                         "count": len(items),
                         "sample": [
-                            {"title": it.title or "", "url": it.url or ""}
-                            for it in items[:3]
+                            {"title": it.title or "", "url": it.url or ""} for it in items[:3]
                         ],
                     }
             except httpx.HTTPStatusError as exc:
@@ -1448,8 +1441,8 @@ class Plugin(PluginBase):
             )
             system_prompt = (
                 "You translate financial news for a product UI. "
-                "Return strict JSON only: {\"items\":[{\"id\":\"...\","
-                "\"title_translated\":\"...\",\"summary_translated\":\"...\"}]}. "
+                'Return strict JSON only: {"items":[{"id":"...",'
+                '"title_translated":"...","summary_translated":"..."}]}. '
                 "Keep tickers, company names, numbers, dates, and URLs unchanged. "
                 "Do not add commentary."
             )
@@ -1537,9 +1530,7 @@ class Plugin(PluginBase):
                 since_hours_int = max(1, min(int(since_hours), 72))
                 top_k_int = max(1, min(int(top_k), 60))
             except (TypeError, ValueError) as exc:
-                raise HTTPException(
-                    status_code=400, detail=f"invalid numeric arg: {exc}"
-                ) from exc
+                raise HTTPException(status_code=400, detail=f"invalid numeric arg: {exc}") from exc
             now = datetime.now(timezone.utc)
             since_iso = datetime.fromtimestamp(
                 now.timestamp() - since_hours_int * 3600, tz=timezone.utc
@@ -1624,9 +1615,7 @@ class Plugin(PluginBase):
         ) -> dict[str, Any]:
             if self._tm is None:
                 raise HTTPException(status_code=503, detail="task_manager_unavailable")
-            items, total = await self._tm.list_digests(
-                session=session, offset=offset, limit=limit
-            )
+            items, total = await self._tm.list_digests(session=session, offset=offset, limit=limit)
             for item in items:
                 item.pop("html_blob", None)
                 item.pop("markdown_blob", None)
@@ -1716,7 +1705,9 @@ class Plugin(PluginBase):
             try:
                 from finpulse_ai.rules_suggest import suggest_rules_text  # type: ignore
             except ImportError as exc:
-                raise HTTPException(status_code=500, detail=f"ai_module_unavailable: {exc}") from exc
+                raise HTTPException(
+                    status_code=500, detail=f"ai_module_unavailable: {exc}"
+                ) from exc
             brain: Any = None
             try:
                 brain = self._api.get_brain() if self._api is not None else None
@@ -1760,9 +1751,7 @@ class Plugin(PluginBase):
             if not isinstance(rules_raw, str):
                 raise HTTPException(status_code=400, detail="rules_text is required")
             try:
-                entry = await save_preset(
-                    self._tm, name=name_raw, rules_text=rules_raw
-                )
+                entry = await save_preset(self._tm, name=name_raw, rules_text=rules_raw)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             return {"ok": True, "item": entry}
@@ -1899,7 +1888,11 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=503, detail="task_manager_unavailable")
             plan = self._normalize_radar_plan(payload if isinstance(payload, dict) else {})
             plan["locked"] = True
-            plan["enabled"] = bool(plan.get("channel") and plan.get("chat_id") and str(plan.get("rules_text") or "").strip())
+            plan["enabled"] = bool(
+                plan.get("channel")
+                and plan.get("chat_id")
+                and str(plan.get("rules_text") or "").strip()
+            )
             plan["updated_at"] = _utcnow_iso()
             await self._save_radar_plan(plan)
             return {"ok": True, "plan": plan}
@@ -2026,9 +2019,7 @@ class Plugin(PluginBase):
             channel = str(payload.get("channel") or "").strip()
             chat_id = str(payload.get("chat_id") or "").strip()
             if not channel or not chat_id:
-                raise HTTPException(
-                    status_code=400, detail="channel and chat_id are required"
-                )
+                raise HTTPException(status_code=400, detail="channel and chat_id are required")
             body: dict[str, Any] = {
                 "mode": mode,
                 "channel": channel,
@@ -2038,7 +2029,9 @@ class Plugin(PluginBase):
             description: str
             if mode == "daily_brief":
                 session = str(payload.get("session") or "morning")
-                if session not in {"morning", "noon", "evening"} and not session.startswith("custom"):
+                if session not in {"morning", "noon", "evening"} and not session.startswith(
+                    "custom"
+                ):
                     raise HTTPException(
                         status_code=400,
                         detail="session must be morning|noon|evening or custom*",
@@ -2329,7 +2322,7 @@ def _parse_schedule_prompt(prompt: str) -> dict[str, Any]:
     """
     text = (prompt or "").strip()
     if text.startswith(_SCHEDULE_PROMPT_PREFIX):
-        text = text[len(_SCHEDULE_PROMPT_PREFIX):]
+        text = text[len(_SCHEDULE_PROMPT_PREFIX) :]
     if not text:
         raise ValueError("empty prompt")
     try:

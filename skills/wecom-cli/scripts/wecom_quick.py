@@ -56,10 +56,13 @@ def main():
     sub.add_parser("schedule", help="日程列表")
 
     args = parser.parse_args()
-    {"send-msg": cmd_send_msg, "contacts": cmd_contacts,
-     "create-doc": cmd_create_doc, "schedule": cmd_schedule}[args.command](args)
+    {
+        "send-msg": cmd_send_msg,
+        "contacts": cmd_contacts,
+        "create-doc": cmd_create_doc,
+        "schedule": cmd_schedule,
+    }[args.command](args)
 
 
 if __name__ == "__main__":
     main()
-

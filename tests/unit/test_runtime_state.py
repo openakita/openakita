@@ -35,4 +35,3 @@ class TestRuntimeState:
         content = state_file.read_text(encoding="utf-8")
         data = json.loads(content)
         assert isinstance(data, dict)
-

@@ -27,9 +27,7 @@ def test_ffmpeg_install_recipe_includes_accept_source_agreements() -> None:
     otherwise winget on a fresh box will block on the EULA prompt and
     --silent will eat the error without doing anything."""
     spec = _SPECS["ffmpeg"]
-    win_install = next(
-        m for m in spec.install_methods if m.platform == "windows"
-    )
+    win_install = next(m for m in spec.install_methods if m.platform == "windows")
     assert win_install.command is not None
     assert "--accept-source-agreements" in win_install.command
 
@@ -40,9 +38,7 @@ def test_ffmpeg_uninstall_recipe_includes_accept_source_agreements() -> None:
     because the source EULA had never been accepted on the host.  The
     flag below makes uninstall behave like install on a fresh box."""
     spec = _SPECS["ffmpeg"]
-    win_uninstall = next(
-        m for m in spec.uninstall_methods if m.platform == "windows"
-    )
+    win_uninstall = next(m for m in spec.uninstall_methods if m.platform == "windows")
     assert win_uninstall.command is not None
     assert "--accept-source-agreements" in win_uninstall.command, (
         "winget uninstall must auto-accept source agreements or it "
@@ -55,18 +51,12 @@ def test_ffmpeg_uninstall_recipe_targets_winget_id() -> None:
     (Gyan.FFmpeg) — otherwise the user thinks they un-installed but
     a re-detect still finds the binary."""
     spec = _SPECS["ffmpeg"]
-    win_install = next(
-        m for m in spec.install_methods if m.platform == "windows"
-    )
-    win_uninstall = next(
-        m for m in spec.uninstall_methods if m.platform == "windows"
-    )
+    win_install = next(m for m in spec.install_methods if m.platform == "windows")
+    win_uninstall = next(m for m in spec.uninstall_methods if m.platform == "windows")
     assert win_install.command is not None
     assert win_uninstall.command is not None
     install_id = win_install.command[win_install.command.index("--id") + 1]
-    uninstall_id = win_uninstall.command[
-        win_uninstall.command.index("--id") + 1
-    ]
+    uninstall_id = win_uninstall.command[win_uninstall.command.index("--id") + 1]
     assert install_id == uninstall_id == "Gyan.FFmpeg"
 
 
@@ -74,9 +64,7 @@ def test_ffmpeg_uninstall_recipe_is_silent_and_explicit() -> None:
     """Uninstall must be explicit (``-e``) AND silent so the operation
     completes without prompting — matching the install side's contract."""
     spec = _SPECS["ffmpeg"]
-    win_uninstall = next(
-        m for m in spec.uninstall_methods if m.platform == "windows"
-    )
+    win_uninstall = next(m for m in spec.uninstall_methods if m.platform == "windows")
     assert win_uninstall.command is not None
     assert "-e" in win_uninstall.command
     assert "--silent" in win_uninstall.command
@@ -87,7 +75,5 @@ def test_macos_uninstall_recipe_unchanged() -> None:
     fix — a regression here would mean we accidentally generalised the
     Windows-specific flag to brew (which does not understand it)."""
     spec = _SPECS["ffmpeg"]
-    mac_uninstall = next(
-        m for m in spec.uninstall_methods if m.platform == "macos"
-    )
+    mac_uninstall = next(m for m in spec.uninstall_methods if m.platform == "macos")
     assert mac_uninstall.command == ("brew", "uninstall", "ffmpeg")

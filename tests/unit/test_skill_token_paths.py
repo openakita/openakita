@@ -53,9 +53,9 @@ def _make_catalog(skills: list[_FakeSkill]) -> SkillCatalog:
 
 def test_generate_catalog_legacy_path_is_index_only():
     long_trigger = "Use this when " + ("very detailed trigger text " * 80)
-    catalog = _make_catalog([
-        _FakeSkill("long-skill", long_trigger, category="writing", when_to_use=long_trigger)
-    ])
+    catalog = _make_catalog(
+        [_FakeSkill("long-skill", long_trigger, category="writing", when_to_use=long_trigger)]
+    )
 
     output = catalog.generate_catalog()
 
@@ -84,9 +84,9 @@ def test_catalog_scope_index_uses_skill_index_without_grouped_expansion():
 
 
 def test_skill_catalog_marks_instructions_as_guidance():
-    catalog = _make_catalog([
-        _FakeSkill("brainstorming", "Must ask one question first", category="workflow")
-    ])
+    catalog = _make_catalog(
+        [_FakeSkill("brainstorming", "Must ask one question first", category="workflow")]
+    )
 
     grouped = catalog.get_grouped_compact_catalog()
     index = catalog.get_index_catalog()
@@ -96,9 +96,9 @@ def test_skill_catalog_marks_instructions_as_guidance():
 
 
 def test_skill_guidance_advisory_is_not_duplicated_in_prompt_rules():
-    catalog = _make_catalog([
-        _FakeSkill("brainstorming", "Must ask one question first", category="workflow")
-    ])
+    catalog = _make_catalog(
+        [_FakeSkill("brainstorming", "Must ask one question first", category="workflow")]
+    )
 
     output = _build_catalogs_section(
         tool_catalog=None,
@@ -136,6 +136,31 @@ async def test_prompt_assembler_passes_intent_tool_hints(monkeypatch):
     assert captured["intent_tool_hints"] == ["File System"]
 
 
+@pytest.mark.asyncio
+async def test_prompt_assembler_uses_explicit_identity_dir(monkeypatch, tmp_path: Path):
+    captured = {}
+    identity_dir = tmp_path / "profile-identity"
+
+    def fake_build_system_prompt(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr("openakita.prompt.builder.build_system_prompt", fake_build_system_prompt)
+    assembler = PromptAssembler(
+        tool_catalog=None,
+        skill_catalog=None,
+        mcp_catalog=None,
+        memory_manager=None,
+        profile_manager=None,
+        brain=None,
+    )
+
+    result = await assembler.build_system_prompt_compiled(identity_dir=identity_dir)
+
+    assert result == "ok"
+    assert captured["identity_dir"] == identity_dir
+
+
 def test_list_skills_defaults_to_compact_directory(tmp_path: Path):
     long_description = "A skill with " + ("long trigger description " * 120)
     skill_path = tmp_path / "long-skill" / "SKILL.md"
@@ -159,7 +184,9 @@ def test_list_skills_defaults_to_compact_directory(tmp_path: Path):
     verbose = handler._list_skills({"verbose": True, "include_paths": True})
 
     assert len(compact) < 1200
-    assert "long trigger description long trigger description long trigger description" not in compact
+    assert (
+        "long trigger description long trigger description long trigger description" not in compact
+    )
     assert "path=" not in compact
     assert "long trigger description long trigger description long trigger description" in verbose
     assert "path=" in verbose

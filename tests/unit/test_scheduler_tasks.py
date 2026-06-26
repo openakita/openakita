@@ -55,7 +55,8 @@ class TestScheduledTaskCreation:
 class TestTaskStateTransitions:
     def test_enable_disable(self):
         task = ScheduledTask.create(
-            name="t", description="d",
+            name="t",
+            description="d",
             trigger_type=TriggerType.ONCE,
             trigger_config={"run_at": datetime.now().isoformat()},
             prompt="p",
@@ -67,7 +68,8 @@ class TestTaskStateTransitions:
 
     def test_mark_running(self):
         task = ScheduledTask.create(
-            name="t", description="d",
+            name="t",
+            description="d",
             trigger_type=TriggerType.ONCE,
             trigger_config={"run_at": datetime.now().isoformat()},
             prompt="p",
@@ -77,7 +79,8 @@ class TestTaskStateTransitions:
 
     def test_mark_completed(self):
         task = ScheduledTask.create(
-            name="t", description="d",
+            name="t",
+            description="d",
             trigger_type=TriggerType.ONCE,
             trigger_config={"run_at": datetime.now().isoformat()},
             prompt="p",
@@ -89,7 +92,8 @@ class TestTaskStateTransitions:
 
     def test_mark_failed(self):
         task = ScheduledTask.create(
-            name="t", description="d",
+            name="t",
+            description="d",
             trigger_type=TriggerType.ONCE,
             trigger_config={"run_at": datetime.now().isoformat()},
             prompt="p",
@@ -299,7 +303,8 @@ class TestSystemTaskRegistration:
 class TestTaskSerialization:
     def test_to_dict_and_back(self):
         task = ScheduledTask.create(
-            name="serialize-test", description="Test serialization",
+            name="serialize-test",
+            description="Test serialization",
             trigger_type=TriggerType.INTERVAL,
             trigger_config={"interval_minutes": 30},
             prompt="Do it",
@@ -338,6 +343,7 @@ class TestTriggers:
         assert len(desc) > 0
 
     def test_trigger_from_config(self):
-        trigger = Trigger.from_config("once", {"run_at": (datetime.now() + timedelta(hours=1)).isoformat()})
+        trigger = Trigger.from_config(
+            "once", {"run_at": (datetime.now() + timedelta(hours=1)).isoformat()}
+        )
         assert isinstance(trigger, OnceTrigger)
-

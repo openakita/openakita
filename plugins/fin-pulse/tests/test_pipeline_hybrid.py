@@ -72,9 +72,7 @@ class TestIngestVia:
         overrides["source.yicai.enabled"] = "true"
         _run(tm.set_configs(overrides))
 
-        def fake_get_fetcher(
-            source_id: str, *, config: dict[str, str] | None = None
-        ) -> Any:
+        def fake_get_fetcher(source_id: str, *, config: dict[str, str] | None = None) -> Any:
             if source_id == "eastmoney":
                 return _DirectStub(
                     source_id="eastmoney",
@@ -126,9 +124,7 @@ class TestIngestVia:
         overrides["newsnow.min_interval_s"] = "0"
         _run(tm.set_configs(overrides))
 
-        def fake_get_fetcher(
-            source_id: str, *, config: dict[str, str] | None = None
-        ) -> Any:
+        def fake_get_fetcher(source_id: str, *, config: dict[str, str] | None = None) -> Any:
             if source_id == "newsnow":
                 return _DirectStub(
                     source_id="newsnow",
@@ -184,9 +180,7 @@ class TestIngestVia:
                     ),
                 ]
 
-        def fake_get_fetcher(
-            source_id: str, *, config: dict[str, str] | None = None
-        ) -> Any:
+        def fake_get_fetcher(source_id: str, *, config: dict[str, str] | None = None) -> Any:
             if source_id == "newsnow":
                 return _NewsNowStub(source_id="newsnow", items=[], via="newsnow")
             return None
@@ -227,9 +221,7 @@ class TestIngestVia:
                 ]
                 return []
 
-        def fake_get_fetcher(
-            source_id: str, *, config: dict[str, str] | None = None
-        ) -> Any:
+        def fake_get_fetcher(source_id: str, *, config: dict[str, str] | None = None) -> Any:
             if source_id == "newsnow":
                 return _NewsNowEmptyStub(source_id="newsnow", items=[], via="newsnow")
             return None
@@ -239,10 +231,7 @@ class TestIngestVia:
         summary = _run(ingest(tm, sources=["newsnow"], since_hours=24))
 
         assert summary["by_source"]["fastbull"]["fetched"] == 0
-        assert (
-            summary["by_source"]["fastbull"]["via_reason"]
-            == "newsnow:empty_payload"
-        )
+        assert summary["by_source"]["fastbull"]["via_reason"] == "newsnow:empty_payload"
 
     def test_explicit_direct_source_does_not_pull_newsnow(
         self,
@@ -260,9 +249,7 @@ class TestIngestVia:
 
         called: list[str] = []
 
-        def fake_get_fetcher(
-            source_id: str, *, config: dict[str, str] | None = None
-        ) -> Any:
+        def fake_get_fetcher(source_id: str, *, config: dict[str, str] | None = None) -> Any:
             called.append(source_id)
             if source_id == "eastmoney":
                 return _DirectStub(

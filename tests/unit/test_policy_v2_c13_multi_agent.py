@@ -210,10 +210,7 @@ def test_bus_find_dedup_leader_matches_session_and_key() -> None:
         session_id="s1",
         dedup_key="key-a",
     )
-    assert (
-        bus.find_dedup_leader(session_id="s1", dedup_key="key-a")
-        == "leader-id-1"
-    )
+    assert bus.find_dedup_leader(session_id="s1", dedup_key="key-a") == "leader-id-1"
     assert bus.find_dedup_leader(session_id="s2", dedup_key="key-a") is None
     assert bus.find_dedup_leader(session_id="s1", dedup_key="key-b") is None
 
@@ -316,12 +313,8 @@ def test_bus_cleanup_immediate_when_no_followers() -> None:
 
 def test_compute_confirm_dedup_key_stable_across_dict_order() -> None:
     """不同 key 顺序的等价 dict 应产生同一 dedup_key。"""
-    k1 = _compute_confirm_dedup_key(
-        "write_file", {"path": "/a", "content": "hello"}
-    )
-    k2 = _compute_confirm_dedup_key(
-        "write_file", {"content": "hello", "path": "/a"}
-    )
+    k1 = _compute_confirm_dedup_key("write_file", {"path": "/a", "content": "hello"})
+    k2 = _compute_confirm_dedup_key("write_file", {"content": "hello", "path": "/a"})
     assert k1 == k2 != ""
 
 
@@ -414,14 +407,10 @@ def test_bus_cleanup_session_purges_dedup_state() -> None:
 def test_bus_cleanup_session_only_affects_target_session() -> None:
     """跨 session 隔离：清 A session 不应影响 B session 的 dedup 状态。"""
     bus = UIConfirmBus()
-    bus.store_pending(
-        "LA", "t", {}, session_id="sA", dedup_key="ka"
-    )
+    bus.store_pending("LA", "t", {}, session_id="sA", dedup_key="ka")
     bus.prepare("LA")
     bus.register_follower("LA")
-    bus.store_pending(
-        "LB", "t", {}, session_id="sB", dedup_key="kb"
-    )
+    bus.store_pending("LB", "t", {}, session_id="sB", dedup_key="kb")
     bus.prepare("LB")
     bus.register_follower("LB")
 
@@ -453,9 +442,5 @@ def test_tool_executor_security_confirm_marker_has_no_c13_fields() -> None:
     assert block_start != -1, "marker 块应存在（保留 schema 向后兼容）"
     block_end = src.find("},", block_start)
     block_body = src[block_start:block_end]
-    assert "delegate_chain" not in block_body, (
-        "C13 字段不应注入到无消费者的 dead marker"
-    )
-    assert "root_user_id" not in block_body, (
-        "C13 字段不应注入到无消费者的 dead marker"
-    )
+    assert "delegate_chain" not in block_body, "C13 字段不应注入到无消费者的 dead marker"
+    assert "root_user_id" not in block_body, "C13 字段不应注入到无消费者的 dead marker"

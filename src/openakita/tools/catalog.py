@@ -290,6 +290,7 @@ but with full schema you'll fill arguments more reliably.
         if not _lang:
             try:
                 from ..config import settings
+
                 _lang = (getattr(settings, "prompt_lang", "") or "").lower()
             except Exception:
                 _lang = ""
@@ -438,7 +439,7 @@ but with full schema you'll fill arguments more reliably.
             lines.append(f"**{display}**: {', '.join(names)}")
 
         lines.append(
-            "\nUse `tool_search(query=\"...\")` to discover full parameters "
+            '\nUse `tool_search(query="...")` to discover full parameters '
             "before calling any tool above."
         )
         return "\n".join(lines)
@@ -679,21 +680,19 @@ but with full schema you'll fill arguments more reliably.
         """
         available = list(self._tools.keys())
         suggestions = difflib.get_close_matches(
-            tool_name, available, n=3, cutoff=0.5,
+            tool_name,
+            available,
+            n=3,
+            cutoff=0.5,
         )
 
         org_tool_count = sum(1 for n in available if n.startswith("org_"))
-        only_org = (org_tool_count > 0 and org_tool_count == len(available))
+        only_org = org_tool_count > 0 and org_tool_count == len(available)
 
         lines = [f"❌ Tool not found: {tool_name}"]
         if suggestions:
-            lines.append(
-                "可能的相近工具（来自本节点当前可用工具集）："
-                + ", ".join(suggestions)
-            )
-            lines.append(
-                f"如需详情请用 get_tool_info('{suggestions[0]}') 查看。"
-            )
+            lines.append("可能的相近工具（来自本节点当前可用工具集）：" + ", ".join(suggestions))
+            lines.append(f"如需详情请用 get_tool_info('{suggestions[0]}') 查看。")
         elif only_org:
             lines.append(
                 "本节点当前仅可使用 org_* 组织协作工具。"
@@ -787,4 +786,3 @@ but with full schema you'll fill arguments more reliably.
 def create_tool_catalog(tools: list[dict]) -> ToolCatalog:
     """便捷函数：创建工具目录"""
     return ToolCatalog(tools)
-

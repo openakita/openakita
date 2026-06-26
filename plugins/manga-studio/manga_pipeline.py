@@ -388,9 +388,7 @@ class MangaPipeline:
         # rendered nothing.
         if self._build_video_url is not None:
             try:
-                ep_updates["final_video_url"] = self._build_video_url(
-                    episode_id, final_path.name
-                )
+                ep_updates["final_video_url"] = self._build_video_url(episode_id, final_path.name)
             except Exception:  # pragma: no cover — URL builder must not break the pipeline
                 logger.warning("build_video_url failed for episode %s", episode_id)
         await self._tm.update_episode_safe(episode_id, **ep_updates)

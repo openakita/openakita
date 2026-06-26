@@ -5,7 +5,9 @@ from pathlib import Path
 
 
 def test_manifest_is_excel_first() -> None:
-    manifest = json.loads((Path(__file__).resolve().parents[1] / "plugin.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (Path(__file__).resolve().parents[1] / "plugin.json").read_text(encoding="utf-8")
+    )
 
     assert manifest["id"] == "excel-maker"
     assert manifest["icon"] == "icon.svg"
@@ -102,7 +104,9 @@ def test_ui_asset_exists() -> None:
 
 
 def test_ui_uses_plugin_bridge_and_no_absolute_upload_path() -> None:
-    html = (Path(__file__).resolve().parents[1] / "ui" / "dist" / "index.html").read_text(encoding="utf-8")
+    html = (Path(__file__).resolve().parents[1] / "ui" / "dist" / "index.html").read_text(
+        encoding="utf-8"
+    )
 
     assert 'PLUGIN_ID_DEFAULT = "excel-maker"' in html
     assert "bridge:api-request" in html
@@ -121,7 +125,7 @@ def test_ui_uses_excel_iconify_icon_and_green_theme() -> None:
     assert "streamline-ultimate:microsoft-excel-logo" in icon
     assert "#107c41" in css.lower()
     assert "/system/python-deps/${depId}/${op}" in html
-    assert "runDep(dep.id, \"uninstall\")" in html
+    assert 'runDep(dep.id, "uninstall")' in html
     assert "主产物：可编辑 .xlsx" not in html
     assert "settings-page" in html
     assert "settings-inner" in html
@@ -150,4 +154,3 @@ def test_ui_uses_excel_iconify_icon_and_green_theme() -> None:
     assert "storage-card-grid" in css
     assert "grid-template-columns: minmax(460px" not in css
     assert 'transform="translate(8 8) scale(2)"' in icon
-

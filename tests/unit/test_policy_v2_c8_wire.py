@@ -144,9 +144,7 @@ class TestSafetyImmuneBuiltinCategories:
     def test_user_paths_can_add_to_builtin_not_replace(self) -> None:
         """User-provided safety_immune.paths is unioned with builtin (additive)."""
         # User adds a custom immune path that's NOT in builtin
-        config = PolicyConfigV2(
-            safety_immune=SafetyImmuneConfig(paths=["/my/custom/dir"])
-        )
+        config = PolicyConfigV2(safety_immune=SafetyImmuneConfig(paths=["/my/custom/dir"]))
         engine = PolicyEngineV2(config=config)
         # Both builtin /etc/** and custom /my/custom/dir present
         immune = engine._immune_paths_from_config
@@ -155,9 +153,7 @@ class TestSafetyImmuneBuiltinCategories:
 
     def test_user_cannot_remove_builtin_via_config(self) -> None:
         """Even if user lists a builtin path explicitly, no duplication."""
-        config = PolicyConfigV2(
-            safety_immune=SafetyImmuneConfig(paths=["/etc/**"])
-        )
+        config = PolicyConfigV2(safety_immune=SafetyImmuneConfig(paths=["/etc/**"]))
         engine = PolicyEngineV2(config=config)
         # /etc/** appears exactly once (no duplicate)
         assert engine._immune_paths_from_config.count("/etc/**") == 1
@@ -169,14 +165,10 @@ class TestSafetyImmuneBuiltinCategories:
 
 
 class TestOwnerOnlyAndIsOwnerWiring:
-    def test_build_policy_context_reads_is_owner_metadata(
-        self, tmp_path: Path
-    ) -> None:
+    def test_build_policy_context_reads_is_owner_metadata(self, tmp_path: Path) -> None:
         """If session has metadata['is_owner']=False, ctx must reflect that."""
         session = _FakeSession(is_owner=False)
-        ctx = build_policy_context(
-            session=session, workspace=tmp_path, mode="agent", is_owner=True
-        )
+        ctx = build_policy_context(session=session, workspace=tmp_path, mode="agent", is_owner=True)
         assert ctx.is_owner is False
 
     def test_build_policy_context_defaults_is_owner_true_when_metadata_missing(
@@ -184,9 +176,7 @@ class TestOwnerOnlyAndIsOwnerWiring:
     ) -> None:
         """No metadata['is_owner'] → kwarg default applies (back-compat)."""
         session = _FakeSession()  # no is_owner set
-        ctx = build_policy_context(
-            session=session, workspace=tmp_path, mode="agent", is_owner=True
-        )
+        ctx = build_policy_context(session=session, workspace=tmp_path, mode="agent", is_owner=True)
         assert ctx.is_owner is True
 
     def test_engine_blocks_control_plane_when_not_owner(self, tmp_path: Path) -> None:
@@ -239,16 +229,12 @@ class TestOwnerOnlyAndIsOwnerWiring:
         # but is_owner_required must NOT be set
         assert decision.is_owner_required is False
 
-    def test_owner_only_explicit_tool_list_blocks_non_owner(
-        self, tmp_path: Path
-    ) -> None:
+    def test_owner_only_explicit_tool_list_blocks_non_owner(self, tmp_path: Path) -> None:
         """`config.owner_only.tools` list is the second path: explicit per-tool
         owner_only opt-in (not necessarily CONTROL_PLANE class)."""
         from openakita.core.policy_v2 import OwnerOnlyConfig
 
-        config = PolicyConfigV2(
-            owner_only=OwnerOnlyConfig(tools=["read_file"])
-        )
+        config = PolicyConfigV2(owner_only=OwnerOnlyConfig(tools=["read_file"]))
         engine = PolicyEngineV2(config=config)
         ctx = _ctx(tmp_path, is_owner=False)
         decision = engine.evaluate_tool_call(
@@ -345,21 +331,15 @@ class TestSwitchModeWriteThrough:
         assert "无法切换" in result
         assert not hasattr(fake_agent, "_pending_mode_switch")
 
-    def test_build_policy_context_honors_session_session_role(
-        self, tmp_path: Path
-    ) -> None:
+    def test_build_policy_context_honors_session_session_role(self, tmp_path: Path) -> None:
         """If session.session_role='plan', PolicyContext.session_role=PLAN even when
         the kwarg ``mode`` says 'agent'. Demonstrates switch_mode actually takes
         effect on the next decision."""
         session = _FakeSession(session_role="plan")
-        ctx = build_policy_context(
-            session=session, workspace=tmp_path, mode="agent"
-        )
+        ctx = build_policy_context(session=session, workspace=tmp_path, mode="agent")
         assert ctx.session_role == SessionRole.PLAN
 
-    def test_build_policy_context_honors_confirmation_mode_override(
-        self, tmp_path: Path
-    ) -> None:
+    def test_build_policy_context_honors_confirmation_mode_override(self, tmp_path: Path) -> None:
         session = _FakeSession(confirmation_mode_override="strict")
         ctx = build_policy_context(session=session, workspace=tmp_path)
         assert ctx.confirmation_mode == ConfirmationMode.STRICT
@@ -376,13 +356,9 @@ class TestConsumeSessionTrustPrunesExpired:
         # Active rule (no expiry)
         grant_session_trust(session, operation="write")
         # Expired rule
-        grant_session_trust(
-            session, operation="delete", expires_at=time.time() - 100
-        )
+        grant_session_trust(session, operation="delete", expires_at=time.time() - 100)
         # Another expired rule
-        grant_session_trust(
-            session, operation="execute", expires_at=time.time() - 50
-        )
+        grant_session_trust(session, operation="execute", expires_at=time.time() - 50)
 
         rules_before = session.get_metadata(SESSION_KEY)["rules"]
         assert len(rules_before) == 3
@@ -400,9 +376,7 @@ class TestConsumeSessionTrustPrunesExpired:
         grant_session_trust(session, operation="write")
         # Manually inject a bad rule (e.g. non-numeric expires_at)
         overrides = session.get_metadata(SESSION_KEY)
-        overrides["rules"].append(
-            {"operation": "delete", "expires_at": "not-a-number"}
-        )
+        overrides["rules"].append({"operation": "delete", "expires_at": "not-a-number"})
 
         matched = consume_session_trust(session, message="anything", operation="write")
         assert matched is True
@@ -414,9 +388,7 @@ class TestConsumeSessionTrustPrunesExpired:
     def test_consume_without_any_match_still_prunes(self) -> None:
         """Even if no rule matches the request, expired rules should be GC'd."""
         session = _FakeSession()
-        grant_session_trust(
-            session, operation="write", expires_at=time.time() - 1
-        )
+        grant_session_trust(session, operation="write", expires_at=time.time() - 1)
         # Request for a different op — no match, but expiry should still be pruned
         matched = consume_session_trust(session, message="x", operation="read")
         assert matched is False

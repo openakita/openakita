@@ -42,7 +42,7 @@ const PLATFORMS = [
 
 export function IMConfigView(props: IMConfigViewProps) {
   const {
-    envDraft, setEnvDraft, busy = null, currentWorkspaceId, venvDir = "",
+    envDraft, setEnvDraft, venvDir = "",
     apiBaseUrl, onRequestRestart, wizardMode = false,
   } = props;
   const { t } = useTranslation();

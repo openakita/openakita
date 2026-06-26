@@ -75,7 +75,9 @@ class DesignBuilder:
             ],
         }
 
-    def confirm(self, design: dict[str, Any], updates: dict[str, Any] | None = None) -> dict[str, Any]:
+    def confirm(
+        self, design: dict[str, Any], updates: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         result = {**design, **(updates or {})}
         spec_lock = dict(result.get("spec_lock", {}))
         spec_lock["confirmed"] = True
@@ -127,7 +129,9 @@ class DesignBuilder:
                 lines.append(f"- {key}: {value}")
         lines.extend(["", "## Slide Plan"])
         for slide in outline.get("slides", []):
-            lines.append(f"- {slide.get('index')}. {slide.get('title')} ({slide.get('slide_type')})")
+            lines.append(
+                f"- {slide.get('index')}. {slide.get('title')} ({slide.get('slide_type')})"
+            )
         return "\n".join(lines) + "\n"
 
     STYLE_PRESETS: dict[str, dict[str, str]] = {
@@ -281,4 +285,3 @@ class DesignBuilder:
             "chart": {"fallback": "chart_bar", "source": "builtin"},
             "closing": {"fallback": "closing", "source": "builtin"},
         }
-

@@ -246,9 +246,7 @@ def _classify_cached(
             except re.error:
                 continue
 
-    tokens = (
-        list(blocked_tokens) if blocked_tokens is not None else DEFAULT_BLOCKED_COMMANDS
-    )
+    tokens = list(blocked_tokens) if blocked_tokens is not None else DEFAULT_BLOCKED_COMMANDS
     if tokens and _has_blocked_token(text, tokens):
         return ShellRiskLevel.BLOCKED
 

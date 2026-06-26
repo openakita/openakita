@@ -17,6 +17,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+from .identity_files import PROFILE_IDENTITY_FILENAMES
 from .manifest import (
     MAX_PACKAGE_SIZE,
     MAX_SINGLE_FILE_SIZE,
@@ -149,6 +150,7 @@ class AgentPackager:
             profile_data.pop(key, None)
 
         license_3rd_party = self._generate_license_3rd_party(external_skill_refs)
+        identity_files = self._read_profile_identity_files(profile.id)
 
         def _write_zip(zf: zipfile.ZipFile) -> None:
             zf.writestr(
@@ -159,6 +161,8 @@ class AgentPackager:
                 zf.writestr("README.md", readme)
             if license_3rd_party:
                 zf.writestr("LICENSE-3RD-PARTY.md", license_3rd_party)
+            for filename, content in identity_files.items():
+                zf.writestr(f"identity/{filename}", content)
             for skill_name in bundled_skill_names:
                 skill_path = self._find_skill(skill_name)
                 if skill_path:
@@ -192,6 +196,28 @@ class AgentPackager:
             f"bundled={len(bundled_skill_names)}, external={len(external_skill_refs)})"
         )
         return output_path
+
+    def _read_profile_identity_files(self, profile_id: str) -> dict[str, str]:
+        try:
+            profile_dir = self.profile_store.get_profile_dir(profile_id)
+        except Exception:
+            return {}
+        identity_dir = profile_dir / "identity"
+        result: dict[str, str] = {}
+        for filename in sorted(PROFILE_IDENTITY_FILENAMES):
+            path = identity_dir / filename
+            if not path.is_file():
+                continue
+            try:
+                result[filename] = path.read_text(encoding="utf-8")
+            except Exception as exc:
+                logger.warning(
+                    "Failed to include identity file %s for profile %s: %s",
+                    filename,
+                    profile_id,
+                    exc,
+                )
+        return result
 
     def _to_slug(self, profile_id: str) -> str:
         slug = re.sub(r"[^a-z0-9-]", "-", profile_id.lower())
@@ -372,6 +398,7 @@ class AgentInstaller:
 
             profile = AgentProfile.from_dict(profile_data)
             self.profile_store.save(profile)
+            self._install_identity_files(zf, profile.id)
 
         logger.info(
             f"Agent installed: {profile_id} "
@@ -380,6 +407,34 @@ class AgentInstaller:
             f"total installed: {installed_skills})"
         )
         return profile
+
+    def _install_identity_files(self, zf: zipfile.ZipFile, profile_id: str) -> None:
+        identity_members = [
+            name
+            for name in zf.namelist()
+            if name.startswith("identity/")
+            and not name.endswith("/")
+            and Path(name).name in PROFILE_IDENTITY_FILENAMES
+        ]
+        if not identity_members:
+            return
+
+        profile_dir = self.profile_store.ensure_profile_dir(profile_id)
+        identity_dir = profile_dir / "identity"
+        identity_dir.mkdir(parents=True, exist_ok=True)
+        for member in identity_members:
+            filename = Path(member).name
+            try:
+                content = zf.read(member).decode("utf-8")
+            except Exception as exc:
+                logger.warning(
+                    "Failed to install identity file %s for profile %s: %s",
+                    member,
+                    profile_id,
+                    exc,
+                )
+                continue
+            (identity_dir / filename).write_text(content, encoding="utf-8")
 
     def _validate_file(self, package_path: Path) -> None:
         if not package_path.exists():

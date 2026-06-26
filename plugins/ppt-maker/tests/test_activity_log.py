@@ -109,7 +109,11 @@ async def test_activity_logger_concurrent_safety(tmp_path) -> None:
     assert len(events) == 20
     # File contents should be valid JSONL even under parallel writes.
     raw_path = tmp_path / "projects" / "ppt_par" / "logs" / "activity.jsonl"
-    parsed = [json.loads(line) for line in raw_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    parsed = [
+        json.loads(line)
+        for line in raw_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     assert len(parsed) == 20
 
 
@@ -238,9 +242,7 @@ def test_activity_route_returns_logged_events(tmp_path: Path) -> None:
 
     # ``since`` filter should drop earlier events.
     cutoff = body["events"][0]["ts"]
-    response = client.get(
-        f"/projects/{project_id}/activity", params={"since": cutoff}
-    )
+    response = client.get(f"/projects/{project_id}/activity", params={"since": cutoff})
     assert response.status_code == 200
     filtered = response.json()
     assert filtered["count"] == 1
@@ -256,4 +258,3 @@ def test_activity_route_returns_logged_events(tmp_path: Path) -> None:
         "count": 0,
         "latest_ts": None,
     }
-

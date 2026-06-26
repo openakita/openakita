@@ -134,9 +134,7 @@ def render_markdown(
         return "\n".join(lines)
     for idx, art in enumerate(articles, start=1):
         score = art.get("ai_score")
-        score_text = (
-            f" [{float(score):.1f}]" if isinstance(score, (int, float)) else ""
-        )
+        score_text = f" [{float(score):.1f}]" if isinstance(score, (int, float)) else ""
         src = art.get("source_id") or "source"
         when = _fmt_time(art.get("published_at") or art.get("fetched_at"))
         title_line = art.get("title") or ""
@@ -173,11 +171,11 @@ def render_html(
     if not articles:
         empty_html = (
             '<section class="empty-panel"><h2>暂无可展示资讯</h2>'
-            '<p>当前时间窗口没有命中内容。建议先在「资讯」页抓取最新来源，'
-            '或放宽时间窗口后重新生成。</p></section>'
+            "<p>当前时间窗口没有命中内容。建议先在「资讯」页抓取最新来源，"
+            "或放宽时间窗口后重新生成。</p></section>"
             if zh
             else '<section class="empty-panel"><h2>No articles selected</h2>'
-            '<p>Fetch fresh sources or widen the time window, then generate again.</p></section>'
+            "<p>Fetch fresh sources or widen the time window, then generate again.</p></section>"
         )
     return _HTML_TEMPLATE.format(
         title=title,
@@ -200,8 +198,7 @@ def _render_stats_block(stats: DigestStats, *, lang: str = "zh") -> str:
     sources_label = "数据源" if zh else "Sources"
     bands_label = "评分分布" if zh else "Score bands"
     sources = "".join(
-        f'<span class="pill">{html.escape(k)}: {v}</span>'
-        for k, v in stats.by_source.items()
+        f'<span class="pill">{html.escape(k)}: {v}</span>' for k, v in stats.by_source.items()
     )
     bands = "".join(
         f'<span class="pill pill-{html.escape(k)}">{html.escape(k)}: {v}</span>'
@@ -209,10 +206,10 @@ def _render_stats_block(stats: DigestStats, *, lang: str = "zh") -> str:
     )
     return (
         '<section class="stats">'
-        f'<div><strong>{total_label}:</strong> '
+        f"<div><strong>{total_label}:</strong> "
         f"{stats.total_scanned} / {stats.total_selected}</div>"
-        f'<div><strong>{sources_label}:</strong> {sources or "—"}</div>'
-        f'<div><strong>{bands_label}:</strong> {bands or "—"}</div>'
+        f"<div><strong>{sources_label}:</strong> {sources or '—'}</div>"
+        f"<div><strong>{bands_label}:</strong> {bands or '—'}</div>"
         "</section>"
     )
 
@@ -222,7 +219,12 @@ def _article_type(article: dict[str, Any]) -> str:
     raw = article.get("raw") if isinstance(article.get("raw"), dict) else {}
     content_type = str(raw.get("content_type") or raw.get("type") or "").lower()
     text = f"{article.get('title') or ''} {article.get('summary') or ''}"
-    if content_type in {"policy", "data", "filing"} or source in {"nbs", "pbc_omo", "fed_fomc", "sec_edgar"}:
+    if content_type in {"policy", "data", "filing"} or source in {
+        "nbs",
+        "pbc_omo",
+        "fed_fomc",
+        "sec_edgar",
+    }:
         return "policy"
     if "快讯" in text or content_type == "flash":
         return "flash"
@@ -233,8 +235,18 @@ def _article_type(article: dict[str, Any]) -> str:
 
 def _section_label(kind: str, *, lang: str = "zh") -> str:
     if lang != "zh":
-        return {"policy": "Policy / Macro", "flash": "Market Flash", "rank": "Rankings / Heat", "market": "Companies / Sectors"}.get(kind, kind)
-    return {"policy": "政策 / 宏观", "flash": "市场快讯", "rank": "榜单热度", "market": "公司 / 行业"}.get(kind, kind)
+        return {
+            "policy": "Policy / Macro",
+            "flash": "Market Flash",
+            "rank": "Rankings / Heat",
+            "market": "Companies / Sectors",
+        }.get(kind, kind)
+    return {
+        "policy": "政策 / 宏观",
+        "flash": "市场快讯",
+        "rank": "榜单热度",
+        "market": "公司 / 行业",
+    }.get(kind, kind)
 
 
 def _metric_pills(article: dict[str, Any]) -> str:
@@ -271,7 +283,11 @@ def _render_digest_sections(articles: Sequence[dict[str, Any]], *, lang: str = "
     for article in articles:
         kind = _article_type(article)
         groups[kind] = groups.get(kind, 0) + 1
-    cells = "".join(f'<div><strong>{html.escape(_section_label(k, lang=lang))}</strong><span>{v}</span></div>' for k, v in groups.items() if v)
+    cells = "".join(
+        f"<div><strong>{html.escape(_section_label(k, lang=lang))}</strong><span>{v}</span></div>"
+        for k, v in groups.items()
+        if v
+    )
     heading = "市场脉络" if lang == "zh" else "Market Context"
     return f'<section class="context"><h2>{heading}</h2><div class="context-grid">{cells}</div></section>'
 
@@ -297,7 +313,7 @@ def _render_article_cards(articles: Sequence[dict[str, Any]], *, lang: str = "zh
     <span class="when">{when}</span>
   </header>
   <a class="title" href="{url}" target="_blank" rel="noopener">{ttl}</a>
-  {f'<p>{summary}</p>' if summary else ''}
+  {f"<p>{summary}</p>" if summary else ""}
 </article>""")
     return f'<section class="stories"><h2>{heading}</h2>{"".join(cards)}</section>'
 
@@ -357,10 +373,7 @@ def _footer(lang: str, stats: DigestStats) -> str:
             f"— 共 {stats.total_selected} 条精选（{stats.total_scanned} 候选），"
             "由 fin-pulse 财经脉动生成"
         )
-    return (
-        f"— {stats.total_selected} selected ({stats.total_scanned} scanned) "
-        "by fin-pulse"
-    )
+    return f"— {stats.total_selected} selected ({stats.total_scanned} scanned) by fin-pulse"
 
 
 _HTML_TEMPLATE = """<!doctype html>

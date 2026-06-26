@@ -153,7 +153,10 @@ class SlideIrBuilder:
             return {
                 **common,
                 "left": {"title": left.get("title", "现状"), "bullets": left.get("bullets", [])},
-                "right": {"title": right.get("title", "新方案"), "bullets": right.get("bullets", [])},
+                "right": {
+                    "title": right.get("title", "新方案"),
+                    "bullets": right.get("bullets", []),
+                },
                 "summary": body,
             }
         if slide_type == SlideType.TIMELINE.value:
@@ -162,7 +165,11 @@ class SlideIrBuilder:
         if slide_type == SlideType.METRIC_CARDS.value:
             metrics = self._metric_cards_objects(chart_specs, bullets)
             return {**common, "metrics": metrics, "bullets": bullets[:4]}
-        if slide_type in {SlideType.CHART_BAR.value, SlideType.CHART_LINE.value, SlideType.CHART_PIE.value}:
+        if slide_type in {
+            SlideType.CHART_BAR.value,
+            SlideType.CHART_LINE.value,
+            SlideType.CHART_PIE.value,
+        }:
             chart = self._first_chart(chart_specs) or {}
             return {
                 **common,
@@ -269,14 +276,23 @@ class SlideIrBuilder:
                 "fallback": mapped.get("fallback") or FALLBACK_LAYOUTS.get(slide_type, "content"),
                 "source": mapped.get("source") or "builtin",
             }
-        return {"key": key, "pptx_layout": None, "fallback": FALLBACK_LAYOUTS.get(slide_type, "content"), "source": "builtin"}
+        return {
+            "key": key,
+            "pptx_layout": None,
+            "fallback": FALLBACK_LAYOUTS.get(slide_type, "content"),
+            "source": "builtin",
+        }
 
     def _layout_key(self, slide_type: str) -> str:
         if slide_type == SlideType.COVER.value:
             return "cover"
         if slide_type == SlideType.AGENDA.value:
             return "agenda"
-        if slide_type in {SlideType.CHART_BAR.value, SlideType.CHART_LINE.value, SlideType.CHART_PIE.value}:
+        if slide_type in {
+            SlideType.CHART_BAR.value,
+            SlideType.CHART_LINE.value,
+            SlideType.CHART_PIE.value,
+        }:
             return "chart"
         if slide_type == SlideType.CLOSING.value:
             return "closing"
@@ -299,7 +315,9 @@ class SlideIrBuilder:
             repair_hints.append("内容密度较高，建议拆页、分栏或压缩文字。")
         if slide_type == SlideType.DATA_TABLE.value and len(content.get("headers") or []) > 8:
             repair_hints.append("表格列数超过 8，建议拆分或改为图表。")
-        if slide_type.startswith("chart_") and not (content.get("categories") and content.get("series")):
+        if slide_type.startswith("chart_") and not (
+            content.get("categories") and content.get("series")
+        ):
             repair_hints.append("图表缺少真实 categories/series，建议补充数据或改为洞察页。")
         return {
             "density_score": round(density_score, 3),
@@ -325,11 +343,19 @@ class SlideIrBuilder:
 
     @staticmethod
     def _visual_role(slide_type: str, content: dict[str, Any]) -> str:
-        if slide_type in {SlideType.CHART_BAR.value, SlideType.CHART_LINE.value, SlideType.CHART_PIE.value}:
+        if slide_type in {
+            SlideType.CHART_BAR.value,
+            SlideType.CHART_LINE.value,
+            SlideType.CHART_PIE.value,
+        }:
             return "chart"
         if slide_type == SlideType.DATA_TABLE.value:
             return "table"
-        if slide_type in {SlideType.TIMELINE.value, SlideType.COMPARISON.value, SlideType.METRIC_CARDS.value}:
+        if slide_type in {
+            SlideType.TIMELINE.value,
+            SlideType.COMPARISON.value,
+            SlideType.METRIC_CARDS.value,
+        }:
             return "diagram"
         if content.get("image_query"):
             return "image"
@@ -344,7 +370,10 @@ class SlideIrBuilder:
             return "navigation"
         if slide_type in {SlideType.SUMMARY.value, SlideType.CLOSING.value}:
             return "closing"
-        if slide_type.startswith("chart_") or slide_type in {SlideType.DATA_TABLE.value, SlideType.METRIC_CARDS.value}:
+        if slide_type.startswith("chart_") or slide_type in {
+            SlideType.DATA_TABLE.value,
+            SlideType.METRIC_CARDS.value,
+        }:
             return "evidence"
         return "supporting"
 
@@ -396,4 +425,3 @@ class SlideIrBuilder:
             if spec.get("type") in {"bar", "horizontal_bar", "line", "pie"}:
                 return spec
         return chart_specs[0] if chart_specs else None
-

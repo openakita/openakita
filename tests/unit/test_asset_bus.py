@@ -106,18 +106,14 @@ async def test_acl_default_private(bus):
 
 @pytest.mark.asyncio
 async def test_acl_explicit_shared_with(bus):
-    aid = await bus.publish(
-        plugin_id="p1", asset_kind="video", shared_with=["p2"]
-    )
+    aid = await bus.publish(plugin_id="p1", asset_kind="video", shared_with=["p2"])
     assert await bus.get(aid, requester_plugin_id="p2") is not None
     assert await bus.get(aid, requester_plugin_id="p3") is None
 
 
 @pytest.mark.asyncio
 async def test_acl_wildcard_public(bus):
-    aid = await bus.publish(
-        plugin_id="p1", asset_kind="video", shared_with=["*"]
-    )
+    aid = await bus.publish(plugin_id="p1", asset_kind="video", shared_with=["*"])
     assert await bus.get(aid, requester_plugin_id="p2") is not None
     assert await bus.get(aid, requester_plugin_id="anyone") is not None
 
@@ -129,9 +125,7 @@ async def test_get_missing_asset_returns_none(bus):
 
 @pytest.mark.asyncio
 async def test_get_with_empty_requester_returns_none(bus):
-    aid = await bus.publish(
-        plugin_id="p1", asset_kind="video", shared_with=["*"]
-    )
+    aid = await bus.publish(plugin_id="p1", asset_kind="video", shared_with=["*"])
     assert await bus.get(aid, requester_plugin_id="") is None
 
 
@@ -298,9 +292,7 @@ async def test_publish_asset_blocked_without_permission(tmp_path, bus):
 @pytest.mark.asyncio
 async def test_publish_asset_with_permission_works(tmp_path, bus):
     api = _api(tmp_path, "p1", perms=["assets.publish"], asset_bus=bus)
-    aid = await api.publish_asset(
-        asset_kind="video", source_path="/x.mp4"
-    )
+    aid = await api.publish_asset(asset_kind="video", source_path="/x.mp4")
     assert aid is not None
     assert await bus.count_all() == 1
 

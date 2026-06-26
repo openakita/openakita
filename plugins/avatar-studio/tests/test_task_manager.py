@@ -190,9 +190,7 @@ async def test_figure_default_status_is_pending_until_updated(
     pending = await tm.list_pending_figures()
     assert any(r["id"] == fid for r in pending)
 
-    assert await tm.update_figure_detect(
-        fid, status="pass", message="OK", humanoid=True
-    ) is True
+    assert await tm.update_figure_detect(fid, status="pass", message="OK", humanoid=True) is True
     figure = await tm.get_figure(fid)
     assert figure["detect_status"] == "pass"
     assert figure["detect_pass"] == 1
@@ -207,7 +205,9 @@ async def test_figure_update_detect_rejects_unknown_status(
     tm: AvatarTaskManager,
 ) -> None:
     fid = await tm.create_figure(
-        label="actor 03", image_path="/tmp/03.png", preview_url="/p/03.png",
+        label="actor 03",
+        image_path="/tmp/03.png",
+        preview_url="/p/03.png",
     )
     with pytest.raises(ValueError, match="unknown detect_status"):
         await tm.update_figure_detect(fid, status="bogus")
@@ -250,4 +250,3 @@ async def test_lifecycle_via_async_context(tmp_path: Path) -> None:
     # After exit the connection is closed; a fresh manager can re-open.
     async with AvatarTaskManager(db) as mgr2:
         assert await mgr2.count("tasks") == 1
-

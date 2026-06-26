@@ -28,6 +28,10 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, Strict, field_validator
 
+from .defaults import (
+    factory_default_confirmation_mode,
+    factory_default_profile_current,
+)
 from .enums import ApprovalClass, ConfirmationMode, SessionRole
 
 # C16 Phase B：所有从 YAML 来的 bool 字段一律走严格模式——拒绝 `"yes"` / `"no"`
@@ -52,9 +56,7 @@ def _validate_regex_list(patterns: list[str]) -> list[str]:
     the classifier.
     """
     if len(patterns) > _MAX_REGEX_LIST_LEN:
-        raise ValueError(
-            f"regex list has {len(patterns)} entries (max {_MAX_REGEX_LIST_LEN})"
-        )
+        raise ValueError(f"regex list has {len(patterns)} entries (max {_MAX_REGEX_LIST_LEN})")
     for idx, pat in enumerate(patterns):
         if not isinstance(pat, str):
             raise ValueError(f"entry {idx} is not a string: {type(pat).__name__}")
@@ -84,9 +86,7 @@ def _validate_safe_path(value: str) -> str:
         raise ValueError(f"path length {len(value)} exceeds {_MAX_PATH_LEN}")
     parts = value.replace("\\", "/").split("/")
     if ".." in parts:
-        raise ValueError(
-            f"path traversal segment '..' is not allowed in this field: {value!r}"
-        )
+        raise ValueError(f"path traversal segment '..' is not allowed in this field: {value!r}")
     return value
 
 
@@ -103,6 +103,7 @@ def _validate_loose_path(value: str) -> str:
     if len(value) > _MAX_PATH_LEN:
         raise ValueError(f"path length {len(value)} exceeds {_MAX_PATH_LEN}")
     return value
+
 
 # ---------------------------------------------------------------------------
 # Sub-models
@@ -127,9 +128,20 @@ class SecurityProfileConfig(_Strict):
     separate from ``confirmation.mode``: a profile writes a bundle of defaults
     across confirmation/path/sandbox/risk settings, while each mechanism remains
     independently editable.
+
+    出厂默认通过 ``factory_default_profile_current()`` 从
+    ``policy_v2/defaults.py::FACTORY_DEFAULT_PROFILE`` 取——单一真源，与
+    ``api/routes/config.py::_apply_security_profile_defaults`` 套用的 bundle
+    共用同一份 ``PROFILE_BUNDLES``。当前 = ``"trust"``：fresh install 落到
+    推荐的"少打扰但保留矩阵安全网"档（DESTRUCTIVE → CONFIRM、UNKNOWN →
+    CONFIRM、safety_immune、death_switch 仍生效）。用户想要更严格的门可在
+    SecurityView 切到 ``protect`` / ``strict``；既有 ``POLICIES.yaml`` 永远
+    覆盖此默认。
     """
 
-    current: Literal["trust", "protect", "strict", "off", "custom"] = "protect"
+    current: Literal["trust", "protect", "strict", "off", "custom"] = Field(
+        default_factory=factory_default_profile_current,
+    )
     base: Literal["trust", "protect", "strict", "off"] | None = None
     off_acknowledged_at: str | None = None
     off_acknowledged_by: str | None = None
@@ -161,9 +173,18 @@ class WorkspaceConfig(_Strict):
 
 
 class ConfirmationConfig(_Strict):
-    """确认门配置（v2 mode 只有 5 档，详见 enums.ConfirmationMode）。"""
+    """确认门配置（v2 mode 只有 5 档，详见 enums.ConfirmationMode）。
 
-    mode: ConfirmationMode = ConfirmationMode.DEFAULT
+    ``mode`` 默认通过 ``factory_default_confirmation_mode()`` 从
+    ``policy_v2/defaults.py::PROFILE_BUNDLES[FACTORY_DEFAULT_PROFILE]`` 取——
+    单一真源。当前 = ``ConfirmationMode.TRUST``，与 ``SecurityProfileConfig.current``
+    = ``"trust"`` 配套：出厂体验是"高频工具 ALLOW、DESTRUCTIVE / UNKNOWN 仍
+    CONFIRM、safety_immune 路径仍 CONFIRM、death_switch 仍生效"。需要更严的
+    ``default`` / ``strict`` 模式由用户主动在 SecurityView 切换或在 YAML 显
+    式覆盖。
+    """
+
+    mode: ConfirmationMode = Field(default_factory=factory_default_confirmation_mode)
     timeout_seconds: int = Field(default=60, ge=1, le=86400)
     default_on_timeout: Literal["allow", "deny"] = "deny"
     confirm_ttl: float = Field(default=120.0, ge=0.0, le=86400.0)
@@ -413,10 +434,32 @@ class PolicyConfigV2(_Strict):
     """完整 v2 安全配置。
 
     构造原则：
-    - 所有子配置都有 default_factory，``PolicyConfigV2()`` 无参即 minimal-safe defaults
+    - 所有子配置都有 default_factory，``PolicyConfigV2()`` 无参即出厂默认
     - ``extra='forbid'`` 让 typo 立即报错（避免 v1 时代静默忽略未知字段）
     - ``ConfirmationMode`` / ``SessionRole`` / ``ApprovalClass`` 用 v2 enum，
       字符串自动 coerce，错值直接抛 ValidationError
+
+    出厂语义（v1.27.13+，fresh install / 缺失 POLICIES.yaml / lenient fallback）：
+    - ``profile.current = "trust"``：UI 高亮"信任方案"卡片。该字段**仅**
+      被 ``engine.evaluate_tool_call`` 用来识别 ``"off"``，其余值对引擎
+      决策完全无差异——profile.current 是 UI 标签，不是引擎真源。
+    - ``confirmation.mode = TRUST``：引擎决策真源。矩阵把 READONLY /
+      MUTATING / EXEC_CAPABLE / CONTROL_PLANE / NETWORK_OUT 等多数类
+      direct ALLOW，但 DESTRUCTIVE / UNKNOWN 仍 CONFIRM，因此 trust 不
+      等同 "yolo 裸奔"。
+    - ``sandbox / shell_risk / death_switch / checkpoint`` 默认 ``enabled=True``：
+      作为 belt-and-suspenders fail-safe。这与 ``api/routes/config.py::
+      _apply_security_profile_defaults("trust")`` 套用的 bundle 之间有意保留
+      差异——bundle 是 UI 套餐（用户主动点"信任方案"按钮才整体覆盖），
+      schema 默认是原子字段层的"安全侧"。引擎在 TRUST 模式下走矩阵直接
+      ALLOW shell 类时，``sandbox.enabled=True`` 仍会让 ``run_shell``
+      在 ``CommandSandbox`` 模式检查后通过 ``asyncio.create_subprocess_shell``
+      执行（不强制 docker/wsl，详见 ``core/sandbox.py``）。
+
+    并行真源：``schema.py`` 的字段默认 与 ``_apply_security_profile_defaults``
+    的 bundle 是两份并行 source-of-truth，未来如改 trust profile 含义需同步两处
+    （单元测试 ``test_security_permission_mode_api.py`` 与
+    ``test_policy_v2_loader.py::TestSchemaDefaults`` 互为锚点）。
     """
 
     enabled: _StrictBool = True
@@ -453,9 +496,7 @@ class PolicyConfigV2(_Strict):
 
         cwd_path = cwd or Path.cwd()
         data = self.model_dump()
-        data["workspace"]["paths"] = resolve_path_list(
-            data["workspace"]["paths"], cwd=cwd_path
-        )
+        data["workspace"]["paths"] = resolve_path_list(data["workspace"]["paths"], cwd=cwd_path)
         data["safety_immune"]["paths"] = resolve_path_list(
             data["safety_immune"]["paths"], cwd=cwd_path
         )

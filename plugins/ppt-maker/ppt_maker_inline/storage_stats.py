@@ -23,4 +23,3 @@ def collect_storage_stats(root: str | Path) -> dict[str, int]:
             except OSError:
                 continue
     return {"files": files, "dirs": dirs, "bytes": bytes_total}
-

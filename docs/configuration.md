@@ -24,9 +24,10 @@ OpenAkita is configured primarily through environment variables, typically store
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGENT_NAME` | `OpenAkita` | Display name |
 | `MAX_ITERATIONS` | `100` | Max Ralph loop iterations |
 | `AUTO_CONFIRM` | `false` | Auto-confirm dangerous operations |
+
+> Each agent's display name is owned by the `AgentProfile` record managed from the desktop "Agents" menu, not by an env variable.
 
 ### Storage
 

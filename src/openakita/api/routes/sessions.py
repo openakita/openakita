@@ -73,6 +73,12 @@ def _visible_history_messages(session) -> list[tuple[int, dict]]:
 
     truncation_prefixes = ("[用户规则（必须遵守）]", "[历史背景，非当前任务]")
     visible: list[tuple[int, dict]] = []
+    deduped_messages: list[dict] = []
+    try:
+        from ...sessions.session import is_duplicate_message
+    except Exception:
+        is_duplicate_message = None
+
     for idx, msg in enumerate(session.context.messages):
         content = msg.get("content", "")
         if (
@@ -81,8 +87,41 @@ def _visible_history_messages(session) -> list[tuple[int, dict]]:
             and content.startswith(truncation_prefixes)
         ):
             continue
+        if (
+            is_duplicate_message is not None
+            and not msg.get("marker_type")
+            and is_duplicate_message(deduped_messages, msg)
+        ):
+            continue
         visible.append((idx, msg))
+        deduped_messages.append(msg)
     return visible
+
+
+def _last_activity_ms(session, visible_msgs: list[dict]) -> int:
+    """Conversation 在列表里的"最后活动时间"（毫秒）。
+
+    以**最后一条真实消息**的时间戳为准，回退到 ``last_active`` 再回退到
+    ``created_at``。这样既能修正 issue #628（``last_active`` 曾被纯读取
+    访问刷成"刚活跃"），也能在不做数据迁移的前提下，让历史里已被污染的
+    ``last_active`` 在展示层自愈。
+    """
+    from datetime import datetime
+
+    for msg in reversed(visible_msgs):
+        ts = msg.get("timestamp")
+        if not ts:
+            continue
+        try:
+            return int(datetime.fromisoformat(ts).timestamp() * 1000)
+        except (ValueError, TypeError):
+            continue
+
+    base = getattr(session, "last_active", None) or getattr(session, "created_at", None)
+    try:
+        return int(base.timestamp() * 1000)
+    except Exception:
+        return 0
 
 
 _BACKFILL_DONE_FLAG = "_history_backfilled"
@@ -161,22 +200,23 @@ def _maybe_backfill_messages(session) -> None:
             pass
         return
 
-    # 合并：用 (role, content, timestamp) 做去重
-    existing_keys = {
-        (m.get("role"), m.get("content"), m.get("timestamp"))
-        for m in (session.context.messages or [])
-    }
+    try:
+        from ...sessions.session import is_duplicate_message
+    except Exception:
+        is_duplicate_message = None
+
     appended = 0
     try:
         with getattr(session.context, "_msg_lock", _NULL_LOCK):
             for turn in db_turns:
                 if not isinstance(turn, dict):
                     continue
-                key = (turn.get("role"), turn.get("content"), turn.get("timestamp"))
-                if key in existing_keys:
+                if is_duplicate_message is not None and is_duplicate_message(
+                    session.context.messages,
+                    turn,
+                ):
                     continue
                 session.context.messages.append(dict(turn))
-                existing_keys.add(key)
                 appended += 1
     except Exception as exc:
         logger.debug(f"[Sessions] backfill append failed: {exc}")
@@ -187,9 +227,7 @@ def _maybe_backfill_messages(session) -> None:
             session.context.messages.sort(key=lambda m: m.get("timestamp") or "")
         except Exception:
             pass
-        logger.info(
-            f"[Sessions] backfilled {appended} turns from SQLite for {session.session_key}"
-        )
+        logger.info(f"[Sessions] backfilled {appended} turns from SQLite for {session.session_key}")
 
     try:
         session.set_metadata(_BACKFILL_DONE_FLAG, True)
@@ -249,15 +287,30 @@ def _history_entry(session, conversation_id: str, original_idx: int, msg: dict) 
     chain_summary = msg.get("chain_summary")
     if chain_summary:
         entry["chain_summary"] = chain_summary
+    # Causally-ordered reasoning timeline (preferred over chain_summary on the
+    # client). Lets the reasoning chain re-display faithfully after reload /
+    # multi-window switch instead of the lossy summary rebuild.
+    chain_timeline = msg.get("chain_timeline")
+    if chain_timeline:
+        entry["chain_timeline"] = chain_timeline
     tool_summary = msg.get("tool_summary")
     if tool_summary:
         entry["tool_summary"] = tool_summary
     artifacts = msg.get("artifacts")
     if artifacts:
         entry["artifacts"] = artifacts
+    sources = msg.get("sources")
+    if sources:
+        entry["sources"] = sources
+    mcp_calls = msg.get("mcp_calls")
+    if mcp_calls:
+        entry["mcp_calls"] = mcp_calls
     attachments = msg.get("attachments")
     if attachments:
         entry["attachments"] = attachments
+    input_attachments = msg.get("input_attachments")
+    if input_attachments:
+        entry["input_attachments"] = input_attachments
     org_timeline = msg.get("org_timeline")
     if org_timeline:
         entry["org_timeline"] = org_timeline
@@ -267,6 +320,33 @@ def _history_entry(session, conversation_id: str, original_idx: int, msg: dict) 
     usage = msg.get("usage")
     if isinstance(usage, dict) and (usage.get("input_tokens") or usage.get("output_tokens")):
         entry["usage"] = usage
+
+    # Progress event journal + ordered parts projection — lets rich cards
+    # (plan, answered ask_user, attachments) re-display losslessly after reload
+    # / multi-window switch. ``parts`` is derived, never stored, so it cannot
+    # bloat sessions.json. See openakita.api.message_parts.
+    from openakita.api.message_parts import (
+        build_message_parts,
+        normalize_chat_todo,
+        normalize_progress_events,
+        project_progress_events_to_todo,
+    )
+
+    progress_events = normalize_progress_events(msg.get("progress_events"))
+    if progress_events:
+        entry["progress_events"] = progress_events
+    todo_norm = project_progress_events_to_todo(progress_events) or (
+        normalize_chat_todo(msg.get("todo")) if msg.get("todo") else None
+    )
+    if todo_norm and todo_norm.get("steps"):
+        entry["todo"] = todo_norm
+    parts = build_message_parts(
+        {**msg, "content": content},
+        todo=todo_norm,
+        progress_events=progress_events,
+    )
+    if parts:
+        entry["parts"] = parts
     return entry
 
 
@@ -285,11 +365,17 @@ async def list_sessions(request: Request, channel: str = "desktop"):
     sessions = session_manager.list_sessions(channel=channel)
     # org_* sessions belong to OrgChatPanel (指挥台), not the main chat UI.
     sessions = [s for s in sessions if not s.chat_id.startswith("org_")]
-    sessions.sort(key=lambda s: s.last_active, reverse=True)
 
-    result = []
+    # 先算出每个会话的可见消息与"最后活动时间"，再按真实活动时间排序。
+    # 不能直接用 s.last_active 排序：它会被纯读取访问污染（issue #628）。
+    prepared = []
     for s in sessions:
         visible_msgs = [m for _, m in _visible_history_messages(s)]
+        prepared.append((s, visible_msgs, _last_activity_ms(s, visible_msgs)))
+    prepared.sort(key=lambda item: item[2], reverse=True)
+
+    result = []
+    for s, visible_msgs, last_ms in prepared:
         user_msgs = [m for m in visible_msgs if m.get("role") == "user"]
         first_user = user_msgs[0] if user_msgs else None
         title = ""
@@ -316,7 +402,7 @@ async def list_sessions(request: Request, channel: str = "desktop"):
                 "id": s.chat_id,
                 "title": title or "对话",
                 "lastMessage": last_msg_content,
-                "timestamp": int(s.last_active.timestamp() * 1000),
+                "timestamp": last_ms,
                 "messageCount": len(visible_msgs),
                 "agentProfileId": getattr(s.context, "agent_profile_id", "default"),
                 "endpointId": selected_endpoint or None,
@@ -431,12 +517,30 @@ async def get_session_history(
     start_index = page[0][0] if page else None
     end_index = page[-1][0] if page else None
 
+    # A plan that is still executing has not been finalized into history yet,
+    # so a passive re-hydration (window switch / reload) would otherwise lose
+    # the live plan card (#615). Surface the in-flight plan snapshot so the
+    # frontend can re-attach it to the latest assistant message.
+    active_todo = None
+    try:
+        from ...tools.handlers.plan import get_todo_handler_for_session, has_active_todo
+        from ..message_parts import serialize_plan_to_chat_todo
+
+        if has_active_todo(conversation_id):
+            _h = get_todo_handler_for_session(conversation_id)
+            _p = _h.get_plan_for(conversation_id) if _h else None
+            if isinstance(_p, dict) and _p.get("status") == "in_progress":
+                active_todo = serialize_plan_to_chat_todo(_p)
+    except Exception:
+        active_todo = None
+
     return {
         "messages": result,
         "total": len(_visible_history_messages(session)),
         "start_index": start_index,
         "end_index": end_index,
         "has_more_before": bool(page and any(idx < page[0][0] for idx, _ in visible)),
+        "active_todo": active_todo,
     }
 
 
@@ -536,6 +640,10 @@ def _cancel_tasks_for_session(request: Request, conversation_id: str, session_id
 class AppendMessageRequest(BaseModel):
     role: str = Field(..., description="user | assistant | system")
     content: str = Field(..., description="Message content")
+    input_attachments: list[dict] | None = Field(
+        None,
+        description="User-uploaded attachments shown in embedded chat UIs",
+    )
 
 
 class AppendBatchRequest(BaseModel):
@@ -577,7 +685,10 @@ async def append_session_messages(
         session.context.clear_messages()
 
     for msg in body.messages:
-        session.add_message(msg.role, msg.content)
+        meta: dict = {}
+        if msg.input_attachments:
+            meta["input_attachments"] = msg.input_attachments
+        session.add_message(msg.role, msg.content, **meta)
 
     session_manager.mark_dirty()
     return {"ok": True, "count": len(body.messages), "replaced": body.replace}

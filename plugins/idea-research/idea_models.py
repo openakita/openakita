@@ -96,6 +96,14 @@ class TrendItem:
     mdrm_hits: list[str] = field(default_factory=list)
 
 
+@dataclass
+class ResolvedSource:
+    """Single-url resolution result used by breakdown pipelines."""
+
+    item: TrendItem
+    comments: list[dict[str, Any]] = field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # §5 MODES — 4 entries
 # ---------------------------------------------------------------------------
@@ -124,7 +132,6 @@ MODES: list[Mode] = [
             "url": "",
             "persona": "小红书运营专家",
             "enable_comments": True,
-            "asr_backend": "auto",
             "frame_strategy": "hybrid",
             "write_to_mdrm": True,
         },
@@ -424,7 +431,6 @@ PROMPTS: dict[str, str] = {
         "你是爆款视频拆解专家。基于以下信息，输出严格 JSON：\n\n"
         "【视频元数据】\n标题：{title}\n作者：{author}\n时长：{duration}s\n"
         "平台：{platform}\n\n"
-        "【ASR 转写片段】（数组）\n{transcript_segments_json}\n\n"
         "【视觉关键帧描述】（按时间序）\n{frames_descriptions_json}\n\n"
         "请输出严格 JSON，schema：\n"
         "{{\n"
@@ -473,6 +479,23 @@ PROMPTS: dict[str, str] = {
         '  "thumbnail_prompt": "..."\n'
         "}}\n"
         '返回严格 JSON：{{"variants": [...]}}'
+    ),
+    "SCRIPT_REMIX_VARIANT_PROMPT": (
+        "你是 {my_persona}。请基于以下选题生成第 {variant_index}/{num_variants} 版"
+        "可执行短视频脚本。\n"
+        "已有版本标题（请差异化，勿重复）：{avoid_titles_json}\n\n"
+        "【选题钩子】{hook}\n【选题主体】{body_outline}\n"
+        "【目标平台】{target_platform}\n【我的品牌关键词】{brand_keywords}\n"
+        "【目标时长】{target_duration_seconds}s\n\n"
+        "【MDRM 参考 hook】\n{mdrm_inspirations_json}\n\n"
+        "要求：\n"
+        "1. 全部口播、标题、引导语使用中文（专有名词除外）。\n"
+        "2. body_outline 必须是数组，每段含 section / duration_s / voiceover / b_roll_hint。\n"
+        "3. 只输出单个变体 JSON 对象，不要 variants 数组，不要 markdown。\n\n"
+        "schema：\n"
+        '{{"title":"...","hook_line":"...","body_outline":[{{"section":"...",'
+        '"duration_s":10,"voiceover":"...","b_roll_hint":"..."}}],'
+        '"cta_line":"...","hashtags":["#..."],"thumbnail_prompt":"..."}}'
     ),
 }
 
@@ -580,14 +603,6 @@ def _vlm_cost(num_frames: int) -> float:
     return num_frames * float(PRICE_TABLE["qwen-vl-max"]["per_image"])
 
 
-def _asr_cost(duration_s: float, backend: str) -> float:
-    if backend == "local":
-        rate = float(PRICE_TABLE["faster-whisper-local"]["per_minute"])
-    else:
-        rate = float(PRICE_TABLE["paraformer-v2"]["per_minute"])
-    return rate * (duration_s / 60.0)
-
-
 def estimate_cost(mode: str, params: dict[str, Any]) -> dict[str, Any]:
     """Estimate the CNY cost of a job before running it.
 
@@ -601,11 +616,6 @@ def estimate_cost(mode: str, params: dict[str, Any]) -> dict[str, Any]:
         breakdown["collect"] = 0.0
     elif mode == "breakdown_url":
         num_frames = int(params.get("num_frames_estimate", 30))
-        duration_s = float(params.get("duration_seconds_estimate", 90.0))
-        backend = str(params.get("asr_backend", "auto"))
-        if backend == "auto":
-            backend = "local" if duration_s <= 600 else "cloud"
-        breakdown["asr"] = round(_asr_cost(duration_s, backend), 4)
         breakdown["vlm_frames"] = round(_vlm_cost(num_frames), 4)
         breakdown["structure_llm"] = round(
             _llm_cost("qwen-max", in_tokens=3000, out_tokens=1200),
@@ -667,12 +677,16 @@ ERROR_HINTS: dict[str, dict[str, str]] = {
         "en": "Request timeout. Retry later or reduce batch size.",
     },
     "auth": {
-        "zh": "鉴权失败，请检查 API Key 或重新导入 cookies",
-        "en": "Auth failed. Check API key or re-import cookies.",
+        "zh": "鉴权失败：请先到 Settings → AI Keys 填写 DashScope（百炼）API Key。"
+        "若错误来自浏览器采集（引擎 B），再到 Settings → 数据源检查或重新导入 cookies。",
+        "en": "Auth failed: set your DashScope API key under Settings → AI Keys. "
+        "If this relates to Engine B crawlers, check or re-import cookies under Settings → Data Sources.",
     },
     "quota": {
-        "zh": "配额或余额不足，请充值或更换 key",
-        "en": "Quota or balance exhausted. Top up or rotate key.",
+        "zh": "配额或余额不足（含欠费 / 账户未结清），请充值或更换 key，并检查百炼账户状态。"
+        " 官方说明：https://help.aliyun.com/zh/model-studio/error-code#overdue-payment",
+        "en": "Quota or balance exhausted (incl. arrears). Top up, rotate key, or check Model Studio account status. "
+        "Docs: https://help.aliyun.com/zh/model-studio/error-code#overdue-payment",
     },
     "moderation": {
         "zh": "内容被平台审核拦截，请调整输入",
@@ -711,6 +725,178 @@ def hint_for(error_kind: str) -> dict[str, str]:
     return ERROR_HINTS.get(error_kind) or ERROR_HINTS["unknown"]
 
 
+def _is_script_remix_storyboard_section(item: Any) -> bool:
+    return (
+        isinstance(item, dict)
+        and ("section" in item or "voiceover" in item or "b_roll_hint" in item)
+        and not (
+            item.get("title")
+            or item.get("hook_line")
+            or item.get("hook")
+            or item.get("opening")
+        )
+    )
+
+
+def _is_script_remix_variant_header(item: Any) -> bool:
+    return isinstance(item, dict) and bool(
+        item.get("title")
+        or item.get("hook_line")
+        or item.get("hook")
+        or item.get("opening")
+        or item.get("cta_line")
+        or item.get("cta")
+    )
+
+
+def _coerce_body_outline_sections(body: Any) -> list[dict[str, Any]]:
+    if isinstance(body, list):
+        return [sec for sec in body if isinstance(sec, dict)]
+    if isinstance(body, str):
+        text = body.strip()
+        if not text or text.startswith(":[") or text in {"[{", ":{"}:
+            return []
+    return []
+
+
+def normalize_script_remix_variants(raw: Any) -> list[dict[str, Any]]:
+    """Repair LLM/truncated JSON where storyboard sections leak into ``variants``."""
+
+    if not isinstance(raw, list):
+        return []
+    headers: list[dict[str, Any]] = []
+    orphan_sections: list[dict[str, Any]] = []
+    for item in raw:
+        if _is_script_remix_storyboard_section(item):
+            orphan_sections.append(dict(item))
+        elif isinstance(item, dict):
+            headers.append(dict(item))
+    if not headers and orphan_sections:
+        return [{"title": "脚本改写", "hook_line": "", "body_outline": orphan_sections}]
+    if headers and orphan_sections:
+        target = headers[-1]
+        sections = _coerce_body_outline_sections(target.get("body_outline"))
+        target["body_outline"] = sections + orphan_sections
+        headers[-1] = target
+    cleaned: list[dict[str, Any]] = []
+    for header in headers:
+        body = header.get("body_outline")
+        if isinstance(body, str) and body.strip().startswith(":["):
+            header["body_outline"] = []
+        cleaned.append(header)
+    return cleaned
+
+
+def _script_remix_variant_lines(variant: dict[str, Any], idx: int) -> list[str]:
+    if not isinstance(variant, dict):
+        return []
+    title = str(variant.get("title") or f"变体 {idx}").strip()
+    lines = ["", f"## 变体 {idx} · {title}", ""]
+
+    hook = (
+        variant.get("hook_line")
+        or variant.get("hook")
+        or variant.get("opening")
+        or ""
+    )
+    if hook:
+        lines.extend(["### 开头 hook（前 3 秒）", "", f"> {hook}", ""])
+
+    body = variant.get("body_outline")
+    if isinstance(body, list) and body:
+        lines.extend(["### 正文分镜", ""])
+        for sec_i, sec in enumerate(body, 1):
+            if not isinstance(sec, dict):
+                continue
+            section = str(sec.get("section") or f"段落 {sec_i}").strip()
+            dur = sec.get("duration_s")
+            dur_s = f"（约 {dur}s）" if dur is not None else ""
+            lines.append(f"**{sec_i}. {section}**{dur_s}")
+            voice = sec.get("voiceover") or sec.get("text") or ""
+            if voice:
+                lines.append(f"- 口播：{voice}")
+            broll = sec.get("b_roll_hint") or sec.get("visual") or ""
+            if broll:
+                lines.append(f"- 画面：{broll}")
+            lines.append("")
+    elif isinstance(body, str) and body.strip():
+        lines.extend(["### 正文", "", body.strip(), ""])
+    else:
+        legacy = variant.get("body") or variant.get("script") or ""
+        if legacy:
+            lines.extend(["### 正文", "", str(legacy).strip(), ""])
+
+    cta = variant.get("cta_line") or variant.get("cta") or ""
+    if cta:
+        lines.extend(["### 结尾引导", "", f"> {cta}", ""])
+
+    raw_tags = variant.get("hashtags") or variant.get("tags")
+    if isinstance(raw_tags, str):
+        tag_list = [t for t in raw_tags.split() if t]
+    elif isinstance(raw_tags, list):
+        tag_list = [str(tag) for tag in raw_tags if tag]
+    else:
+        tag_list = []
+    if tag_list:
+        lines.extend(["### 话题标签", "", " ".join(tag_list), ""])
+
+    thumb = variant.get("thumbnail_prompt") or variant.get("cover") or ""
+    if thumb:
+        lines.extend(["### 封面文案建议", "", str(thumb).strip(), ""])
+
+    return lines
+
+
+def format_script_remix_markdown(payload: dict[str, Any], *, task_id: str = "") -> str:
+    """Human-readable markdown export for ``script_remix`` task output."""
+
+    variants = normalize_script_remix_variants(payload.get("variants") or [])
+    header = "# 脚本改写"
+    if task_id:
+        header += f" · {task_id[:8]}"
+    lines = [
+        header,
+        "",
+        f"> 共 **{len(variants)}** 版可执行脚本，含口播文案与分镜建议。",
+    ]
+
+    source = payload.get("source") or {}
+    if isinstance(source, dict) and source.get("title"):
+        lines.extend(["", "## 参考选题", f"- **标题**：{source.get('title') or ''}"])
+        if source.get("platform"):
+            lines.append(f"- **平台**：{source.get('platform')}")
+        if source.get("external_url"):
+            lines.append(f"- **链接**：{source.get('external_url')}")
+
+    inspirations = payload.get("mdrm_inspirations") or []
+    if inspirations:
+        lines.extend(["", "## 参考的历史爆款 hook"])
+        for insp in inspirations[:3]:
+            if not isinstance(insp, dict):
+                continue
+            hook_text = insp.get("hook_text") or ""
+            sim = insp.get("similarity")
+            suffix = f"（相似度 {sim:.0%}）" if isinstance(sim, (int, float)) else ""
+            if hook_text:
+                lines.append(f"- {hook_text}{suffix}")
+
+    for idx, variant in enumerate(variants, start=1):
+        lines.extend(_script_remix_variant_lines(variant, idx))
+
+    if len(variants) == 0:
+        lines.extend(["", "（未生成脚本变体，请重试任务或检查 AI Key。）"])
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def repair_script_remix_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy with ``variants`` normalized for display/export."""
+
+    repaired = dict(payload)
+    repaired["variants"] = normalize_script_remix_variants(payload.get("variants") or [])
+    return repaired
+
+
 __all__ = [
     "ERROR_HINTS",
     "MODES",
@@ -729,8 +915,11 @@ __all__ = [
     "compute_interaction_rate",
     "compute_time_decay",
     "estimate_cost",
+    "format_script_remix_markdown",
     "get_mode",
     "get_persona",
     "hint_for",
+    "normalize_script_remix_variants",
+    "repair_script_remix_payload",
     "score_trend_item",
 ]

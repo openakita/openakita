@@ -116,9 +116,7 @@ def test_update_task_safe_rejects_unknown_column(tm_path: Path) -> None:
             task = await tm.create_task(mode="ingest", params={"sources": "*"})
             with pytest.raises(ValueError, match="not whitelisted"):
                 await tm.update_task_safe(task["id"], nonexistent="boom")
-            ok = await tm.update_task_safe(
-                task["id"], status="running", pipeline_step="fetch"
-            )
+            ok = await tm.update_task_safe(task["id"], status="running", pipeline_step="fetch")
             assert ok is True
             refreshed = await tm.get_task(task["id"])
             assert refreshed is not None

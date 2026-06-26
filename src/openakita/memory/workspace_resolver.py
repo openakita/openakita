@@ -112,9 +112,7 @@ def resolve_memory_workspace_id(
 
     if channel:
         namespace = (
-            getattr(session, "bot_instance_id", None)
-            or metadata.get("bot_instance_id")
-            or channel
+            getattr(session, "bot_instance_id", None) or metadata.get("bot_instance_id") or channel
         )
         return str(namespace) if namespace else LEGACY_DEFAULT_WORKSPACE_ID
 

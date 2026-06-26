@@ -88,7 +88,9 @@ class PptxExporter:
 
     # ── Dispatcher ─────────────────────────────────────────────────────
 
-    def _render_slide(self, prs: Presentation, slide_ir: dict[str, Any], theme: dict[str, str]) -> None:
+    def _render_slide(
+        self, prs: Presentation, slide_ir: dict[str, Any], theme: dict[str, str]
+    ) -> None:
         slide_type = slide_ir.get("slide_type", "content")
         renderer = self._renderers().get(slide_type, self._render_content)
         slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
@@ -126,27 +128,64 @@ class PptxExporter:
         self._add_bar(slide, theme["primary_color"], top=3.0, height=0.15)
         title = content.get("title") or ir.get("title") or "Untitled"
         subtitle = content.get("subtitle") or ""
-        self._textbox(slide, title, left=0.8, top=2.2, width=11.7, height=1.4,
-                      size=44, bold=True, color=theme["primary_color"])
+        self._textbox(
+            slide,
+            title,
+            left=0.8,
+            top=2.2,
+            width=11.7,
+            height=1.4,
+            size=44,
+            bold=True,
+            color=theme["primary_color"],
+        )
         if subtitle:
-            self._textbox(slide, subtitle, left=0.8, top=3.6, width=11.7, height=1.2,
-                          size=22, color=theme["secondary_color"])
+            self._textbox(
+                slide,
+                subtitle,
+                left=0.8,
+                top=3.6,
+                width=11.7,
+                height=1.2,
+                size=22,
+                color=theme["secondary_color"],
+            )
         meta = " · ".join(filter(None, [content.get("presenter") or "", content.get("date") or ""]))
         if meta:
-            self._textbox(slide, meta, left=0.8, top=6.2, width=11.7, height=0.6,
-                          size=14, color=theme["secondary_color"])
-        self._maybe_image(slide, ir, left=Inches(8.5), top=Inches(0.5), width=Inches(4.3), height=Inches(1.6))
+            self._textbox(
+                slide,
+                meta,
+                left=0.8,
+                top=6.2,
+                width=11.7,
+                height=0.6,
+                size=14,
+                color=theme["secondary_color"],
+            )
+        self._maybe_image(
+            slide, ir, left=Inches(8.5), top=Inches(0.5), width=Inches(4.3), height=Inches(1.6)
+        )
 
     def _render_section(self, slide: Any, ir: dict[str, Any], theme: dict[str, str]) -> None:
         content = ir.get("content") or {}
         self._add_full_band(slide, theme["secondary_color"])
         title = content.get("section_title") or ir.get("title", "")
         subtitle = content.get("section_subtitle") or ""
-        self._textbox(slide, title, left=0.8, top=2.6, width=11.7, height=1.6,
-                      size=44, bold=True, color="#FFFFFF")
+        self._textbox(
+            slide,
+            title,
+            left=0.8,
+            top=2.6,
+            width=11.7,
+            height=1.6,
+            size=44,
+            bold=True,
+            color="#FFFFFF",
+        )
         if subtitle:
-            self._textbox(slide, subtitle, left=0.8, top=4.4, width=11.7, height=1.0,
-                          size=20, color="#FFFFFF")
+            self._textbox(
+                slide, subtitle, left=0.8, top=4.4, width=11.7, height=1.0, size=20, color="#FFFFFF"
+            )
 
     def _render_agenda(self, slide: Any, ir: dict[str, Any], theme: dict[str, str]) -> None:
         self._title(slide, ir.get("title", "Agenda"), theme)
@@ -168,8 +207,16 @@ class PptxExporter:
             shape.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
             shape.text_frame.paragraphs[0].font.bold = True
             shape.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
-            self._textbox(slide, item, left=left + Inches(0.7), top=top, width=Inches(5.4),
-                          height=Inches(0.55), size=18, color=theme["secondary_color"])
+            self._textbox(
+                slide,
+                item,
+                left=left + Inches(0.7),
+                top=top,
+                width=Inches(5.4),
+                height=Inches(0.55),
+                size=18,
+                color=theme["secondary_color"],
+            )
 
     def _render_content(self, slide: Any, ir: dict[str, Any], theme: dict[str, str]) -> None:
         self._title(slide, ir.get("title", ""), theme)
@@ -179,14 +226,26 @@ class PptxExporter:
         has_image = bool((ir.get("assets") or {}).get("image_path"))
         body_width = 7.6 if has_image else 11.8
         if body:
-            self._textbox(slide, body, left=0.8, top=1.4, width=body_width, height=1.0,
-                          size=18, color=theme["secondary_color"])
+            self._textbox(
+                slide,
+                body,
+                left=0.8,
+                top=1.4,
+                width=body_width,
+                height=1.0,
+                size=18,
+                color=theme["secondary_color"],
+            )
         if bullets:
             self._bullets(slide, bullets, left=0.8, top=2.5, width=body_width, theme=theme)
         if has_image:
-            self._maybe_image(slide, ir, left=Inches(8.6), top=Inches(1.4), width=Inches(4.0), height=Inches(4.5))
+            self._maybe_image(
+                slide, ir, left=Inches(8.6), top=Inches(1.4), width=Inches(4.0), height=Inches(4.5)
+            )
         else:
-            self._maybe_icon(slide, ir, left=Inches(11.6), top=Inches(1.4), size=Inches(1.0), theme=theme)
+            self._maybe_icon(
+                slide, ir, left=Inches(11.6), top=Inches(1.4), size=Inches(1.0), theme=theme
+            )
 
     def _render_comparison(self, slide: Any, ir: dict[str, Any], theme: dict[str, str]) -> None:
         self._title(slide, ir.get("title", ""), theme)
@@ -195,18 +254,47 @@ class PptxExporter:
         right = content.get("right") or {}
         for index, side in enumerate((left, right)):
             base_left = 0.8 + index * 6.2
-            self._add_panel(slide, theme["primary_color"] if index == 0 else theme["accent_color"],
-                            left=base_left, top=1.4, width=5.85, height=4.6)
-            self._textbox(slide, side.get("title") or ("现状" if index == 0 else "新方案"),
-                          left=base_left + 0.2, top=1.55, width=5.45, height=0.6,
-                          size=22, bold=True, color="#FFFFFF")
+            self._add_panel(
+                slide,
+                theme["primary_color"] if index == 0 else theme["accent_color"],
+                left=base_left,
+                top=1.4,
+                width=5.85,
+                height=4.6,
+            )
+            self._textbox(
+                slide,
+                side.get("title") or ("现状" if index == 0 else "新方案"),
+                left=base_left + 0.2,
+                top=1.55,
+                width=5.45,
+                height=0.6,
+                size=22,
+                bold=True,
+                color="#FFFFFF",
+            )
             bullets = side.get("bullets") or []
-            self._bullets(slide, bullets, left=base_left + 0.2, top=2.3, width=5.45,
-                          theme=theme, color="#FFFFFF")
+            self._bullets(
+                slide,
+                bullets,
+                left=base_left + 0.2,
+                top=2.3,
+                width=5.45,
+                theme=theme,
+                color="#FFFFFF",
+            )
         summary = content.get("summary")
         if summary:
-            self._textbox(slide, summary, left=0.8, top=6.3, width=11.7, height=0.7,
-                          size=16, color=theme["secondary_color"])
+            self._textbox(
+                slide,
+                summary,
+                left=0.8,
+                top=6.3,
+                width=11.7,
+                height=0.7,
+                size=16,
+                color=theme["secondary_color"],
+            )
 
     def _render_timeline(self, slide: Any, ir: dict[str, Any], theme: dict[str, str]) -> None:
         self._title(slide, ir.get("title", ""), theme)
@@ -214,27 +302,52 @@ class PptxExporter:
         if not milestones:
             return
         track_top = Inches(3.5)
-        slide.shapes.add_connector(1, Inches(0.8), track_top + Emu(50000), Inches(12.5),
-                                    track_top + Emu(50000))
+        slide.shapes.add_connector(
+            1, Inches(0.8), track_top + Emu(50000), Inches(12.5), track_top + Emu(50000)
+        )
         gap = max(1.2, (12.0 / max(1, len(milestones[:6]))))
         for index, milestone in enumerate(milestones[:6]):
             cx = Inches(0.8 + index * gap)
-            dot = slide.shapes.add_shape(MSO_SHAPE.OVAL, cx - Emu(80000), track_top - Emu(80000),
-                                          Inches(0.35), Inches(0.35))
+            dot = slide.shapes.add_shape(
+                MSO_SHAPE.OVAL, cx - Emu(80000), track_top - Emu(80000), Inches(0.35), Inches(0.35)
+            )
             dot.fill.solid()
             dot.fill.fore_color.rgb = self._rgb(theme["primary_color"])
             dot.line.color.rgb = self._rgb(theme["primary_color"])
-            self._textbox(slide, milestone.get("label", f"M{index + 1}"),
-                          left=cx - Inches(0.6), top=Inches(2.7), width=Inches(2.0), height=Inches(0.5),
-                          size=14, bold=True, color=theme["primary_color"])
-            self._textbox(slide, milestone.get("title", ""),
-                          left=cx - Inches(0.8), top=Inches(4.0), width=Inches(2.4), height=Inches(0.7),
-                          size=16, bold=True, color=theme["secondary_color"])
+            self._textbox(
+                slide,
+                milestone.get("label", f"M{index + 1}"),
+                left=cx - Inches(0.6),
+                top=Inches(2.7),
+                width=Inches(2.0),
+                height=Inches(0.5),
+                size=14,
+                bold=True,
+                color=theme["primary_color"],
+            )
+            self._textbox(
+                slide,
+                milestone.get("title", ""),
+                left=cx - Inches(0.8),
+                top=Inches(4.0),
+                width=Inches(2.4),
+                height=Inches(0.7),
+                size=16,
+                bold=True,
+                color=theme["secondary_color"],
+            )
             description = milestone.get("description")
             if description:
-                self._textbox(slide, description,
-                              left=cx - Inches(0.8), top=Inches(4.7), width=Inches(2.4), height=Inches(1.5),
-                              size=12, color=theme["secondary_color"])
+                self._textbox(
+                    slide,
+                    description,
+                    left=cx - Inches(0.8),
+                    top=Inches(4.7),
+                    width=Inches(2.4),
+                    height=Inches(1.5),
+                    size=12,
+                    color=theme["secondary_color"],
+                )
 
     def _render_metric_cards(self, slide: Any, ir: dict[str, Any], theme: dict[str, str]) -> None:
         self._title(slide, ir.get("title", ""), theme)
@@ -247,7 +360,10 @@ class PptxExporter:
             left = 0.8 + index * (card_w + 0.3)
             shape = slide.shapes.add_shape(
                 MSO_SHAPE.ROUNDED_RECTANGLE,
-                Inches(left), Inches(1.6), Inches(card_w), Inches(2.4),
+                Inches(left),
+                Inches(1.6),
+                Inches(card_w),
+                Inches(2.4),
             )
             shape.fill.solid()
             shape.fill.fore_color.rgb = self._rgb(theme["primary_color"])
@@ -281,7 +397,9 @@ class PptxExporter:
         content = ir.get("content") or {}
         categories = content.get("categories") or []
         series = content.get("series") or []
-        chart_type_str = (content.get("chart_type") or ir.get("slide_type", "chart_bar").replace("chart_", "")).lower()
+        chart_type_str = (
+            content.get("chart_type") or ir.get("slide_type", "chart_bar").replace("chart_", "")
+        ).lower()
         chart_data = CategoryChartData()
         if categories and series:
             chart_data.categories = list(categories)
@@ -302,13 +420,24 @@ class PptxExporter:
             }.get(chart_type_str, XL_CHART_TYPE.COLUMN_CLUSTERED)
             slide.shapes.add_chart(
                 chart_type,
-                Inches(0.8), Inches(1.4), Inches(8.5), Inches(4.8),
+                Inches(0.8),
+                Inches(1.4),
+                Inches(8.5),
+                Inches(4.8),
                 chart_data,
             )
         except Exception as exc:  # noqa: BLE001
             logger.info("ppt-maker chart fallback: %s", exc)
-            self._textbox(slide, content.get("chart_title", ""), left=0.8, top=2.0,
-                          width=11.7, height=4.0, size=20, color=theme["primary_color"])
+            self._textbox(
+                slide,
+                content.get("chart_title", ""),
+                left=0.8,
+                top=2.0,
+                width=11.7,
+                height=4.0,
+                size=20,
+                color=theme["primary_color"],
+            )
         bullets = content.get("bullets") or []
         if bullets:
             self._bullets(slide, bullets, left=9.6, top=1.6, width=3.2, theme=theme)
@@ -323,7 +452,10 @@ class PptxExporter:
         rendered = slide.shapes.add_table(
             len(rows) + 1,
             len(headers),
-            Inches(0.7), Inches(1.4), Inches(11.9), Inches(4.6),
+            Inches(0.7),
+            Inches(1.4),
+            Inches(11.9),
+            Inches(4.6),
         ).table
         for col_index, header in enumerate(headers):
             cell = rendered.cell(0, col_index)
@@ -345,8 +477,16 @@ class PptxExporter:
         body = content.get("body") or ""
         bullets = content.get("bullets") or []
         if body:
-            self._textbox(slide, body, left=0.8, top=1.4, width=11.7, height=1.0,
-                          size=18, color=theme["secondary_color"])
+            self._textbox(
+                slide,
+                body,
+                left=0.8,
+                top=1.4,
+                width=11.7,
+                height=1.0,
+                size=18,
+                color=theme["secondary_color"],
+            )
         if bullets:
             self._bullets(slide, bullets, left=0.8, top=2.5, width=7.5, theme=theme)
         metrics = content.get("metrics") or []
@@ -354,7 +494,10 @@ class PptxExporter:
             left = 9.0 + index * 1.3
             shape = slide.shapes.add_shape(
                 MSO_SHAPE.ROUNDED_RECTANGLE,
-                Inches(left), Inches(2.5), Inches(1.2), Inches(2.0),
+                Inches(left),
+                Inches(2.5),
+                Inches(1.2),
+                Inches(2.0),
             )
             shape.fill.solid()
             shape.fill.fore_color.rgb = self._rgb(theme["accent_color"])
@@ -362,16 +505,36 @@ class PptxExporter:
             shape.text_frame.text = str(metric.get("value", ""))
             shape.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
 
-    def _render_insight_summary(self, slide: Any, ir: dict[str, Any], theme: dict[str, str]) -> None:
+    def _render_insight_summary(
+        self, slide: Any, ir: dict[str, Any], theme: dict[str, str]
+    ) -> None:
         self._title(slide, ir.get("title", ""), theme)
         content = ir.get("content") or {}
         findings = content.get("findings") or []
         risks = content.get("risks") or []
-        self._textbox(slide, "核心发现", left=0.8, top=1.4, width=5.7, height=0.5,
-                      size=18, bold=True, color=theme["primary_color"])
+        self._textbox(
+            slide,
+            "核心发现",
+            left=0.8,
+            top=1.4,
+            width=5.7,
+            height=0.5,
+            size=18,
+            bold=True,
+            color=theme["primary_color"],
+        )
         self._bullets(slide, findings, left=0.8, top=2.0, width=5.7, theme=theme)
-        self._textbox(slide, "风险提示", left=7.0, top=1.4, width=5.5, height=0.5,
-                      size=18, bold=True, color=theme["accent_color"])
+        self._textbox(
+            slide,
+            "风险提示",
+            left=7.0,
+            top=1.4,
+            width=5.5,
+            height=0.5,
+            size=18,
+            bold=True,
+            color=theme["accent_color"],
+        )
         self._bullets(slide, risks, left=7.0, top=2.0, width=5.5, theme=theme)
 
     def _render_summary(self, slide: Any, ir: dict[str, Any], theme: dict[str, str]) -> None:
@@ -380,8 +543,16 @@ class PptxExporter:
         body = content.get("body") or ""
         bullets = content.get("bullets") or []
         if body:
-            self._textbox(slide, body, left=0.8, top=1.4, width=11.7, height=1.0,
-                          size=20, color=theme["secondary_color"])
+            self._textbox(
+                slide,
+                body,
+                left=0.8,
+                top=1.4,
+                width=11.7,
+                height=1.0,
+                size=20,
+                color=theme["secondary_color"],
+            )
         if bullets:
             self._bullets(slide, bullets, left=0.8, top=2.6, width=11.7, theme=theme)
 
@@ -391,14 +562,25 @@ class PptxExporter:
         headline = content.get("headline") or ir.get("title") or "Thank You"
         body = content.get("body") or ""
         contact = content.get("contact") or ""
-        self._textbox(slide, headline, left=0.8, top=2.6, width=11.7, height=1.6,
-                      size=54, bold=True, color="#FFFFFF")
+        self._textbox(
+            slide,
+            headline,
+            left=0.8,
+            top=2.6,
+            width=11.7,
+            height=1.6,
+            size=54,
+            bold=True,
+            color="#FFFFFF",
+        )
         if body:
-            self._textbox(slide, body, left=0.8, top=4.4, width=11.7, height=1.2,
-                          size=20, color="#FFFFFF")
+            self._textbox(
+                slide, body, left=0.8, top=4.4, width=11.7, height=1.2, size=20, color="#FFFFFF"
+            )
         if contact:
-            self._textbox(slide, contact, left=0.8, top=6.0, width=11.7, height=0.7,
-                          size=16, color="#FFFFFF")
+            self._textbox(
+                slide, contact, left=0.8, top=6.0, width=11.7, height=0.7, size=16, color="#FFFFFF"
+            )
 
     # ── Primitives ─────────────────────────────────────────────────────
 
@@ -411,7 +593,11 @@ class PptxExporter:
         paragraph.font.name = theme["font_heading"]
         paragraph.font.color.rgb = self._rgb(theme["primary_color"])
         slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE, Inches(0.8), Inches(1.2), Inches(0.6), Inches(0.06),
+            MSO_SHAPE.RECTANGLE,
+            Inches(0.8),
+            Inches(1.2),
+            Inches(0.6),
+            Inches(0.06),
         ).fill.solid()
         slide.shapes[-1].fill.fore_color.rgb = self._rgb(theme["accent_color"])
         slide.shapes[-1].line.fill.background()
@@ -459,8 +645,17 @@ class PptxExporter:
         color: str | None = None,
     ) -> None:
         if title:
-            self._textbox(slide, title, left=left, top=top, width=width, height=0.4,
-                          size=18, bold=True, color=color or theme["primary_color"])
+            self._textbox(
+                slide,
+                title,
+                left=left,
+                top=top,
+                width=width,
+                height=0.4,
+                size=18,
+                bold=True,
+                color=color or theme["primary_color"],
+            )
             top += 0.5
         items = [str(item) for item in bullets if item]
         if not items:
@@ -480,7 +675,11 @@ class PptxExporter:
 
     def _add_bar(self, slide: Any, color: str, *, top: float, height: float) -> None:
         bar = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE, Inches(0), Inches(top), SLIDE_W, Inches(height),
+            MSO_SHAPE.RECTANGLE,
+            Inches(0),
+            Inches(top),
+            SLIDE_W,
+            Inches(height),
         )
         bar.fill.solid()
         bar.fill.fore_color.rgb = self._rgb(color)
@@ -492,11 +691,15 @@ class PptxExporter:
         bar.fill.fore_color.rgb = self._rgb(color)
         bar.line.fill.background()
 
-    def _add_panel(self, slide: Any, color: str, *, left: float, top: float,
-                   width: float, height: float) -> None:
+    def _add_panel(
+        self, slide: Any, color: str, *, left: float, top: float, width: float, height: float
+    ) -> None:
         panel = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE,
-            Inches(left), Inches(top), Inches(width), Inches(height),
+            Inches(left),
+            Inches(top),
+            Inches(width),
+            Inches(height),
         )
         panel.fill.solid()
         panel.fill.fore_color.rgb = self._rgb(color)

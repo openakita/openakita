@@ -12,22 +12,24 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-HOOK_NAMES = frozenset({
-    "on_init",
-    "on_shutdown",
-    "on_message_received",
-    "on_message_sending",
-    "on_retrieve",
-    "on_tool_result",
-    "on_session_start",
-    "on_session_end",
-    "on_prompt_build",
-    "on_schedule",
-    "on_before_tool_use",
-    "on_after_tool_use",
-    "on_config_change",
-    "on_error",
-})
+HOOK_NAMES = frozenset(
+    {
+        "on_init",
+        "on_shutdown",
+        "on_message_received",
+        "on_message_sending",
+        "on_retrieve",
+        "on_tool_result",
+        "on_session_start",
+        "on_session_end",
+        "on_prompt_build",
+        "on_schedule",
+        "on_before_tool_use",
+        "on_after_tool_use",
+        "on_config_change",
+        "on_error",
+    }
+)
 
 HookCallback = Callable[..., Coroutine[Any, Any, Any]]
 
@@ -44,7 +46,7 @@ HOOK_SIGNATURES: dict[str, dict[str, Any]] = {
         "kwargs": {},
         "permission": "hooks.basic",
         "return": "None (ignored)",
-        "example": 'async def on_shutdown(**kwargs): await cleanup()',
+        "example": "async def on_shutdown(**kwargs): await cleanup()",
     },
     "on_schedule": {
         "description": "Fired before each scheduled task executes.",
@@ -119,7 +121,7 @@ HOOK_SIGNATURES: dict[str, dict[str, Any]] = {
         "permission": "hooks.retrieve",
         "return": "str | None — extra text to append to the system prompt",
         "example": (
-            'async def on_prompt_build(**kwargs):\n'
+            "async def on_prompt_build(**kwargs):\n"
             '    return "\\n\\nAdditional context from my plugin..."'
         ),
     },

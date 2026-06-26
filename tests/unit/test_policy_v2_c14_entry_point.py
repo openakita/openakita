@@ -270,8 +270,7 @@ def test_cli_main_callback_rejects_no_tty(monkeypatch):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     c = classify_entry("cli")
     assert c.is_unattended is True, (
-        "main.py uses this to gate run_interactive — must remain True for "
-        "non-TTY stdin"
+        "main.py uses this to gate run_interactive — must remain True for non-TTY stdin"
     )
 
 

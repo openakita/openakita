@@ -413,7 +413,11 @@ class PptTaskManager:
             raise ValueError(f"Unsupported task update columns: {sorted(bad)}")
         if "status" in updates:
             updates["status"] = TaskStatus(updates["status"]).value
-            if updates["status"] in {TaskStatus.SUCCEEDED.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value}:
+            if updates["status"] in {
+                TaskStatus.SUCCEEDED.value,
+                TaskStatus.FAILED.value,
+                TaskStatus.CANCELLED.value,
+            }:
                 updates.setdefault("completed_at", _now())
         if "result" in updates:
             updates["result_json"] = _json(updates.pop("result"))
@@ -609,14 +613,18 @@ class PptTaskManager:
             (template_id, name, category_value, original_path, _json(metadata), now, now),
         )
         await self._conn.commit()
-        async with self._conn.execute("SELECT * FROM templates WHERE id = ?", (template_id,)) as cur:
+        async with self._conn.execute(
+            "SELECT * FROM templates WHERE id = ?", (template_id,)
+        ) as cur:
             row = _row_dict(await cur.fetchone())
         if row is None:
             raise RuntimeError("Template insert failed")
         return self._template_record(row)
 
     async def get_template(self, template_id: str) -> TemplateRecord | None:
-        async with self._conn.execute("SELECT * FROM templates WHERE id = ?", (template_id,)) as cur:
+        async with self._conn.execute(
+            "SELECT * FROM templates WHERE id = ?", (template_id,)
+        ) as cur:
             row = _row_dict(await cur.fetchone())
         return self._template_record(row) if row is not None else None
 
@@ -712,7 +720,15 @@ class PptTaskManager:
                 id, project_id, version, design_markdown, spec_lock_json, confirmed, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (design_id, project_id, version, design_markdown, _json(spec_lock), int(confirmed), now),
+            (
+                design_id,
+                project_id,
+                version,
+                design_markdown,
+                _json(spec_lock),
+                int(confirmed),
+                now,
+            ),
         )
         await self._conn.commit()
         return {
@@ -743,7 +759,9 @@ class PptTaskManager:
             "created_at": row["created_at"],
         }
 
-    async def replace_slides(self, project_id: str, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def replace_slides(
+        self, project_id: str, slides: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         now = _now()
         await self._conn.execute("DELETE FROM slides WHERE project_id = ?", (project_id,))
         records = []
@@ -971,4 +989,3 @@ class PptTaskManager:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
-

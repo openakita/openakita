@@ -5,9 +5,9 @@ import type { Theme } from "../theme";
 import { setLanguage, getLanguagePref } from "../i18n";
 import {
   DotGreen, DotGray,
-  IconX, IconLink, IconPower, IconRefresh,
+  IconLink, IconPower, IconRefresh,
   IconLaptop, IconMoon, IconSun, IconGlobe, IconClipboard,
-  IconCheck,
+  IconCheck, IconInbox,
 } from "../icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,11 +16,12 @@ import {
   DropdownMenuSeparator, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { LogOut, ClipboardCopy, Compass } from "lucide-react";
+import { LogOut, Square, ClipboardCopy, Compass } from "lucide-react";
 import { toast } from "sonner";
 import { openExternalUrl } from "../platform";
 import { copyToClipboard } from "../utils/clipboard";
 import { RemoteAccessDialog } from "./RemoteAccessDialog";
+import { InboxBadge } from "./InboxBadge";
 
 export type TopbarProps = {
   wsDropdownOpen: boolean;
@@ -37,7 +38,7 @@ export type TopbarProps = {
   endpointCount: number;
   dataMode: "local" | "remote";
   busy: string | null;
-  onDisconnect: () => void;
+  onDisconnect: () => void | Promise<void>;
   onConnect: () => void;
   onStart: () => Promise<void>;
   onRefreshAll: () => Promise<void>;
@@ -56,6 +57,8 @@ export type TopbarProps = {
   restartService?: () => Promise<void>;
   askConfirm?: (msg: string, onConfirm: () => void) => void;
   setView?: (view: ViewId) => void;
+  inboxUnreadCount?: number;
+  onOpenInbox?: () => void;
 };
 
 export function Topbar({
@@ -70,8 +73,9 @@ export function Topbar({
   onSetTheme, themePrefState, isWeb, onLogout, webAccessUrl, apiBaseUrl,
   onToggleMobileSidebar, serverName, onServerManager,
   envDraft, setEnvDraft, restartService, askConfirm,
+  inboxUnreadCount, onOpenInbox,
 }: TopbarProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const [remoteCopyState, setRemoteCopyState] = useState<"idle" | "copied" | "no_ip">("idle");
   const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
 
@@ -320,10 +324,10 @@ export function Topbar({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon-sm" onClick={onDisconnect} disabled={!!busy}>
-                  <LogOut size={16} />
+                  {dataMode === "remote" ? <LogOut size={16} /> : <Square size={14} />}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">{t("topbar.disconnect")}</TooltipContent>
+              <TooltipContent side="bottom">{dataMode === "remote" ? t("topbar.disconnect") : t("topbar.stop")}</TooltipContent>
             </Tooltip>
           ) : (
             <>
@@ -349,6 +353,30 @@ export function Topbar({
           )}
 
           <div className="h-4 w-px bg-border" />
+
+          {onOpenInbox && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="topbarInboxButton"
+                  onClick={onOpenInbox}
+                  aria-label={t("inbox.openInbox")}
+                >
+                  <IconInbox size={16} />
+                  <InboxBadge
+                    apiBaseUrl={apiBaseUrl || "http://127.0.0.1:18900"}
+                    serviceRunning={serviceRunning}
+                    countOverride={inboxUnreadCount}
+                  />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{t("inbox.openInbox")}</TooltipContent>
+            </Tooltip>
+          )}
+
+          {onOpenInbox && <div className="h-4 w-px bg-border" />}
 
           <Tooltip>
             <TooltipTrigger asChild>

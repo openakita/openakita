@@ -30,8 +30,13 @@ class TestTokenTrackingContext:
 
     def test_custom_values(self):
         ctx = TokenTrackingContext(
-            session_id="s1", request_id="r1", turn_id="t1", operation_type="chat",
-            channel="telegram", user_id="u1", iteration=3,
+            session_id="s1",
+            request_id="r1",
+            turn_id="t1",
+            operation_type="chat",
+            channel="telegram",
+            user_id="u1",
+            iteration=3,
         )
         assert ctx.session_id == "s1"
         assert ctx.request_id == "r1"
@@ -116,11 +121,8 @@ class TestTokenUsageSchemaMigration:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(token_usage)")}
             assert {"request_id", "turn_id", "agent_profile_id", "estimated_cost"} <= columns
 
-            indexes = {
-                row[1] for row in conn.execute("PRAGMA index_list(token_usage)").fetchall()
-            }
+            indexes = {row[1] for row in conn.execute("PRAGMA index_list(token_usage)").fetchall()}
             assert "idx_token_usage_request" in indexes
             assert "idx_token_usage_op" in indexes
         finally:
             conn.close()
-

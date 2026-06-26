@@ -44,8 +44,7 @@ from tongyi_dashscope_client import (  # noqa: E402
 # ── Recording handler builder ────────────────────────────────────────
 
 
-def _recorder(*, status: int = 200, body: dict | None = None,
-              raise_exc: Exception | None = None):
+def _recorder(*, status: int = 200, body: dict | None = None, raise_exc: Exception | None = None):
     """Build (handler, captured) where ``captured`` accumulates Requests.
 
     The handler returns the same canned response for every call — tests
@@ -130,8 +129,7 @@ async def test_post_returns_data_on_success() -> None:
 @pytest.mark.asyncio
 async def test_post_raises_on_http_error_status() -> None:
     """Non-200 from gateway → raise with status_code populated."""
-    handler, _ = _recorder(status=401,
-                            body={"code": "InvalidApiKey", "message": "bad key"})
+    handler, _ = _recorder(status=401, body={"code": "InvalidApiKey", "message": "bad key"})
     client = await make_dashscope_client(handler)
     try:
         with pytest.raises(DashScopeError) as exc:
@@ -147,9 +145,9 @@ async def test_post_raises_on_http_error_status() -> None:
 async def test_post_raises_on_api_error_in_200_body() -> None:
     """DashScope sometimes returns ``200 OK`` with a ``code`` field set —
     this is an application-level error and must still raise."""
-    handler, _ = _recorder(status=200,
-                            body={"code": "DataInspectionFailed",
-                                  "message": "moderation triggered"})
+    handler, _ = _recorder(
+        status=200, body={"code": "DataInspectionFailed", "message": "moderation triggered"}
+    )
     client = await make_dashscope_client(handler)
     try:
         with pytest.raises(DashScopeError) as exc:
@@ -167,8 +165,7 @@ async def test_post_raises_on_api_error_in_200_body() -> None:
 async def test_post_handles_missing_code_in_error() -> None:
     """Defensive: gateway 5xx may return prose with no JSON code field —
     must still raise with the HTTP status code as the default."""
-    handler, _ = _recorder(status=503,
-                            body={"message": "gateway timeout"})
+    handler, _ = _recorder(status=503, body={"message": "gateway timeout"})
     client = await make_dashscope_client(handler)
     try:
         with pytest.raises(DashScopeError) as exc:
@@ -309,7 +306,10 @@ async def test_generate_image_async_uses_async_endpoint_and_header() -> None:
     client = await make_dashscope_client(handler)
     try:
         await client.generate_image_async(
-            model="wan27-pro", messages=[], size="2K", n=4,
+            model="wan27-pro",
+            messages=[],
+            size="2K",
+            n=4,
         )
     finally:
         await client.close()
@@ -354,7 +354,8 @@ async def test_style_repaint_custom_style_passes_ref_url() -> None:
     client = await make_dashscope_client(handler)
     try:
         await client.style_repaint(
-            "http://x/face.png", style_index=-1,
+            "http://x/face.png",
+            style_index=-1,
             style_ref_url="http://x/style.png",
         )
     finally:
@@ -369,7 +370,8 @@ async def test_style_repaint_drops_ref_url_when_style_index_not_minus_one() -> N
     client = await make_dashscope_client(handler)
     try:
         await client.style_repaint(
-            "http://x/face.png", style_index=5,
+            "http://x/face.png",
+            style_index=5,
             style_ref_url="http://x/style.png",
         )
     finally:
@@ -506,10 +508,15 @@ async def test_outpaint_forwards_pixel_offsets_and_scales() -> None:
     try:
         await client.outpaint(
             "http://x/photo.png",
-            x_scale=1.5, y_scale=1.2, angle=15,
-            left_offset=100, right_offset=100,
-            top_offset=50, bottom_offset=50,
-            best_quality=True, limit_image_size=False,
+            x_scale=1.5,
+            y_scale=1.2,
+            angle=15,
+            left_offset=100,
+            right_offset=100,
+            top_offset=50,
+            bottom_offset=50,
+            best_quality=True,
+            limit_image_size=False,
         )
     finally:
         await client.close()
@@ -548,8 +555,12 @@ async def test_sketch_to_image_body() -> None:
     client = await make_dashscope_client(handler)
     try:
         await client.sketch_to_image(
-            "http://x/sketch.png", "a watercolor cat",
-            style="<oilpainting>", size="1024*1024", n=2, sketch_weight=5,
+            "http://x/sketch.png",
+            "a watercolor cat",
+            style="<oilpainting>",
+            size="1024*1024",
+            n=2,
+            sketch_weight=5,
         )
     finally:
         await client.close()
@@ -575,8 +586,12 @@ async def test_wan25_edit_body() -> None:
         await client.wan25_edit(
             "make it night",
             ["http://x/a.png", "http://x/b.png"],
-            n=3, size="1024*1024", negative_prompt="day",
-            prompt_extend=False, watermark=True, seed=99,
+            n=3,
+            size="1024*1024",
+            negative_prompt="day",
+            prompt_extend=False,
+            watermark=True,
+            seed=99,
         )
     finally:
         await client.close()
@@ -614,8 +629,7 @@ async def test_get_task_returns_data_on_success() -> None:
 
 @pytest.mark.asyncio
 async def test_get_task_raises_on_http_error() -> None:
-    handler, _ = _recorder(status=404,
-                            body={"code": "TaskNotFound", "message": "missing"})
+    handler, _ = _recorder(status=404, body={"code": "TaskNotFound", "message": "missing"})
     client = await make_dashscope_client(handler)
     try:
         with pytest.raises(DashScopeError) as exc:

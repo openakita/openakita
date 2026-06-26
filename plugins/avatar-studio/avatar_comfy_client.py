@@ -62,9 +62,7 @@ class AvatarComfyClient:
             if inst:
                 kit_cfg["runninghub_instance_type"] = inst
         elif backend == "comfyui_local":
-            kit_cfg["comfyui_url"] = str(
-                cfg.get("comfyui_url") or "http://127.0.0.1:8188"
-            )
+            kit_cfg["comfyui_url"] = str(cfg.get("comfyui_url") or "http://127.0.0.1:8188")
             api_key = str(cfg.get("comfyui_api_key") or "").strip()
             if api_key:
                 kit_cfg["api_key"] = api_key
@@ -134,6 +132,7 @@ class AvatarComfyClient:
                 return {"ok": True, "backend": backend, "message": "RunningHub connected"}
             elif backend == "comfyui_local":
                 import httpx
+
                 url = str(cfg.get("comfyui_url") or "http://127.0.0.1:8188")
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     resp = await client.get(f"{url.rstrip('/')}/system_stats")

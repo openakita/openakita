@@ -55,6 +55,13 @@ _FALLBACK_ERRORS = (
 )
 
 
+def _provider_unavailable_message(provider_id: str) -> str:
+    return (
+        f"Provider {provider_id!r} is registered but not available. "
+        "Configure its API key or choose another search provider."
+    )
+
+
 async def run_web_search(
     query: str,
     *,
@@ -69,7 +76,7 @@ async def run_web_search(
         provider = get_provider(provider_id)
         if not provider.is_available():
             raise MissingCredentialError(
-                f"Provider {provider_id!r} is configured but unavailable",
+                _provider_unavailable_message(provider_id),
                 provider_id=provider_id,
             )
         results = await provider.search(
@@ -107,7 +114,7 @@ async def run_news_search(
         provider = get_provider(provider_id)
         if not provider.is_available():
             raise MissingCredentialError(
-                f"Provider {provider_id!r} is configured but unavailable",
+                _provider_unavailable_message(provider_id),
                 provider_id=provider_id,
             )
         results = await provider.news_search(
@@ -184,7 +191,9 @@ async def _auto_search(
         except _FALLBACK_ERRORS as exc:
             logger.info(
                 "[web_search.auto] %s skipped (%s): %s",
-                provider.id, type(exc).__name__, exc,
+                provider.id,
+                type(exc).__name__,
+                exc,
             )
             last_err = exc
             continue

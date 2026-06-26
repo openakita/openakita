@@ -49,7 +49,10 @@ class TestUploadLocalFileForParaformer:
         with pytest.raises(DashScopeUploadError, match="not found"):
             run(
                 upload_local_file_for_paraformer(
-                    client, "k", base_url="https://dashscope.aliyuncs.com", local_path=missing,
+                    client,
+                    "k",
+                    base_url="https://dashscope.aliyuncs.com",
+                    local_path=missing,
                 ),
             )
 
@@ -80,7 +83,10 @@ class TestUploadLocalFileForParaformer:
 
         url = run(
             upload_local_file_for_paraformer(
-                client, "sk-xxx", base_url="https://dashscope.aliyuncs.com", local_path=f,
+                client,
+                "sk-xxx",
+                base_url="https://dashscope.aliyuncs.com",
+                local_path=f,
             ),
         )
         assert url == "oss://dashscope/tmp/123/a.mp4"
@@ -102,6 +108,9 @@ class TestUploadLocalFileForParaformer:
         with pytest.raises(DashScopeUploadError, match="getPolicy network"):
             run(
                 upload_local_file_for_paraformer(
-                    client, "k", base_url="https://dashscope.aliyuncs.com", local_path=f,
+                    client,
+                    "k",
+                    base_url="https://dashscope.aliyuncs.com",
+                    local_path=f,
                 ),
             )

@@ -49,10 +49,12 @@ def _make_mock_ffmpeg(available: bool = True, duration: float = 60.0):
     ffmpeg.available = available
     ffmpeg.get_duration = AsyncMock(return_value=duration)
     ffmpeg.extract_audio = AsyncMock(return_value=Path("/tmp/audio.wav"))
-    ffmpeg.detect_silence = AsyncMock(return_value=[
-        {"start": 5.0, "end": 8.0, "duration": 3.0},
-        {"start": 20.0, "end": 22.0, "duration": 2.0},
-    ])
+    ffmpeg.detect_silence = AsyncMock(
+        return_value=[
+            {"start": 5.0, "end": 8.0, "duration": 3.0},
+            {"start": 20.0, "end": 22.0, "duration": 2.0},
+        ]
+    )
     ffmpeg.cut_segments = AsyncMock(return_value=Path("/tmp/output.mp4"))
     ffmpeg.remove_segments = AsyncMock(return_value=Path("/tmp/output.mp4"))
     ffmpeg.burn_subtitles = AsyncMock(return_value=Path("/tmp/subtitled.mp4"))
@@ -61,29 +63,38 @@ def _make_mock_ffmpeg(available: bool = True, duration: float = 60.0):
 
 def _make_mock_asr():
     from clip_asr_client import TranscriptResult, TranscriptSentence
+
     asr = AsyncMock()
     asr.upload_local_source = AsyncMock(
         return_value="oss://dashscope/tmp/mock/source.mp4",
     )
-    asr.transcribe = AsyncMock(return_value=TranscriptResult(
-        sentences=[
-            TranscriptSentence(start=0.0, end=5.0, text="Hello world"),
-            TranscriptSentence(start=5.5, end=10.0, text="This is a test"),
-        ],
-        full_text="Hello world This is a test",
-        language="zh",
-        duration_sec=10.0,
-        api_task_id="task_abc",
-    ))
-    asr.analyze_highlights = AsyncMock(return_value=[
-        {"start_sec": 0, "end_sec": 5, "reason": "intro", "score": 8},
-    ])
-    asr.analyze_topics = AsyncMock(return_value=[
-        {"title": "Intro", "start_sec": 0, "end_sec": 30, "summary": "introduction"},
-    ])
-    asr.analyze_filler = AsyncMock(return_value=[
-        {"start_sec": 3, "end_sec": 4, "type": "filler", "content": "um"},
-    ])
+    asr.transcribe = AsyncMock(
+        return_value=TranscriptResult(
+            sentences=[
+                TranscriptSentence(start=0.0, end=5.0, text="Hello world"),
+                TranscriptSentence(start=5.5, end=10.0, text="This is a test"),
+            ],
+            full_text="Hello world This is a test",
+            language="zh",
+            duration_sec=10.0,
+            api_task_id="task_abc",
+        )
+    )
+    asr.analyze_highlights = AsyncMock(
+        return_value=[
+            {"start_sec": 0, "end_sec": 5, "reason": "intro", "score": 8},
+        ]
+    )
+    asr.analyze_topics = AsyncMock(
+        return_value=[
+            {"title": "Intro", "start_sec": 0, "end_sec": 30, "summary": "introduction"},
+        ]
+    )
+    asr.analyze_filler = AsyncMock(
+        return_value=[
+            {"start_sec": 3, "end_sec": 4, "type": "filler", "content": "um"},
+        ]
+    )
     return asr
 
 
@@ -98,8 +109,8 @@ class TestSilenceCleanPipeline:
 
         tm.update_task.assert_any_call("test001", status="succeeded", pipeline_step="done")
         assert any(
-            call.kwargs.get("status") == "succeeded" or
-            (len(call.args) > 1 and call.args[1].get("status") == "succeeded")
+            call.kwargs.get("status") == "succeeded"
+            or (len(call.args) > 1 and call.args[1].get("status") == "succeeded")
             for call in emit.call_args_list
         )
 
@@ -232,11 +243,13 @@ class TestTalkingPolishPipeline:
         tm = _make_mock_tm()
         ffmpeg = _make_mock_ffmpeg()
         asr = _make_mock_asr()
-        asr.analyze_filler = AsyncMock(return_value=[
-            {"start_sec": 1, "end_sec": 2, "type": "filler", "content": "um"},
-            {"start_sec": 5, "end_sec": 6, "type": "stutter", "content": "I-I"},
-            {"start_sec": 9, "end_sec": 10, "type": "repetition", "content": "the the"},
-        ])
+        asr.analyze_filler = AsyncMock(
+            return_value=[
+                {"start_sec": 1, "end_sec": 2, "type": "filler", "content": "um"},
+                {"start_sec": 5, "end_sec": 6, "type": "stutter", "content": "I-I"},
+                {"start_sec": 9, "end_sec": 10, "type": "repetition", "content": "the the"},
+            ]
+        )
         # detect_silence returns nothing so remove_segments only sees
         # filler-analysis segments (filtered by toggle).
         ffmpeg.detect_silence = AsyncMock(return_value=[])
@@ -275,7 +288,8 @@ class TestPipelineErrors:
         run(run_pipeline(ctx, tm, None, ffmpeg, emit))
 
         error_emits = [
-            c.args[1] for c in emit.call_args_list
+            c.args[1]
+            for c in emit.call_args_list
             if len(c.args) > 1 and c.args[1].get("error_kind") == "auth"
         ]
         assert len(error_emits) > 0
@@ -289,7 +303,8 @@ class TestPipelineErrors:
         run(run_pipeline(ctx, tm, None, ffmpeg, emit))
 
         error_emits = [
-            c.args[1] for c in emit.call_args_list
+            c.args[1]
+            for c in emit.call_args_list
             if len(c.args) > 1 and c.args[1].get("error_kind") == "duration"
         ]
         assert len(error_emits) > 0
@@ -304,7 +319,8 @@ class TestPipelineErrors:
         run(run_pipeline(ctx, tm, None, ffmpeg, emit))
 
         cancel_emits = [
-            c.args[1] for c in emit.call_args_list
+            c.args[1]
+            for c in emit.call_args_list
             if len(c.args) > 1 and c.args[1].get("status") == "cancelled"
         ]
         assert len(cancel_emits) > 0
@@ -319,7 +335,8 @@ class TestPipelineErrors:
         run(run_pipeline(ctx, tm, None, ffmpeg, emit))
 
         error_emits = [
-            c.args[1] for c in emit.call_args_list
+            c.args[1]
+            for c in emit.call_args_list
             if len(c.args) > 1 and c.args[1].get("error_kind") == "format"
         ]
         assert len(error_emits) > 0
@@ -342,26 +359,32 @@ class TestHelpers:
         assert _merge_overlapping([]) == []
 
     def test_merge_overlapping_no_overlap(self):
-        result = _merge_overlapping([
-            {"start": 0, "end": 5},
-            {"start": 10, "end": 15},
-        ])
+        result = _merge_overlapping(
+            [
+                {"start": 0, "end": 5},
+                {"start": 10, "end": 15},
+            ]
+        )
         assert len(result) == 2
 
     def test_merge_overlapping_with_overlap(self):
-        result = _merge_overlapping([
-            {"start": 0, "end": 5},
-            {"start": 4, "end": 10},
-            {"start": 15, "end": 20},
-        ])
+        result = _merge_overlapping(
+            [
+                {"start": 0, "end": 5},
+                {"start": 4, "end": 10},
+                {"start": 15, "end": 20},
+            ]
+        )
         assert len(result) == 2
         assert result[0]["end"] == 10
 
     def test_merge_overlapping_adjacent(self):
-        result = _merge_overlapping([
-            {"start": 0, "end": 5},
-            {"start": 5.03, "end": 10},
-        ])
+        result = _merge_overlapping(
+            [
+                {"start": 0, "end": 5},
+                {"start": 5.03, "end": 10},
+            ]
+        )
         assert len(result) == 1
 
 
@@ -370,12 +393,14 @@ class TestTranscriptCache:
         ctx = _make_ctx(tmp_path, mode="highlight_extract")
         ctx.source_url = "http://example.com/video.mp4"
         tm = _make_mock_tm()
-        tm.get_transcript_by_hash = AsyncMock(return_value={
-            "id": "cached_tr",
-            "status": "succeeded",
-            "sentences": [{"start": 0, "end": 5, "text": "cached"}],
-            "full_text": "cached",
-        })
+        tm.get_transcript_by_hash = AsyncMock(
+            return_value={
+                "id": "cached_tr",
+                "status": "succeeded",
+                "sentences": [{"start": 0, "end": 5, "text": "cached"}],
+                "full_text": "cached",
+            }
+        )
         ffmpeg = _make_mock_ffmpeg()
         asr = _make_mock_asr()
         emit = MagicMock()

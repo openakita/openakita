@@ -49,7 +49,9 @@ class MediaPipeline:
         enabled_packages = {pid for pid, meta in packages.items() if meta.get("enabled")}
         package_filter = set(params.get("package_ids") or [])
         skipped_disabled = sorted(package_filter - enabled_packages)
-        active_packages = (package_filter & enabled_packages) if package_filter else enabled_packages
+        active_packages = (
+            (package_filter & enabled_packages) if package_filter else enabled_packages
+        )
         sources = await self.tm.list_sources(enabled_only=True)
         if active_packages:
             sources = [
@@ -155,7 +157,9 @@ class MediaPipeline:
                     _, inserted = await self.tm.upsert_article(payload)
                     inserted_count += 1 if inserted else 0
                 finished = utcnow_iso()
-                await self.tm.update_source_status(source["id"], status="success", fetched_at=finished)
+                await self.tm.update_source_status(
+                    source["id"], status="success", fetched_at=finished
+                )
                 await self.tm.insert_crawl_record(
                     source_id=source["id"],
                     status="success",
@@ -495,7 +499,12 @@ class MediaPipeline:
             md,
             {"source": source, **(radar.get("stats") or {})},
         )
-        return {"report": report, "topics": topics, "source": source, "stats": radar.get("stats") or {}}
+        return {
+            "report": report,
+            "topics": topics,
+            "source": source,
+            "stats": radar.get("stats") or {},
+        }
 
     async def replicate_plan(self, task_id: str, params: dict[str, Any]) -> dict[str, Any]:
         await self.tm.update_task(

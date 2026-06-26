@@ -51,9 +51,7 @@ def test_endpoint_calculate_cost_with_user_pricing_wins():
         api_type="openai",
         base_url="x",
         model="qwen3.5-plus",
-        pricing_tiers=[
-            {"max_input": -1, "input_price": 100, "output_price": 200}
-        ],
+        pricing_tiers=[{"max_input": -1, "input_price": 100, "output_price": 200}],
     )
     cost = ep.calculate_cost(1_000_000, 1_000_000)
     assert cost == 300.0  # 100 + 200

@@ -785,7 +785,9 @@ ID: {result.test_id}
                         budget_status = token_budget_status()
                         if fix_budget_start is None:
                             fix_budget_start = int(budget_status.get("used_tokens") or 0)
-                        fix_tokens_used = int(budget_status.get("used_tokens") or 0) - fix_budget_start
+                        fix_tokens_used = (
+                            int(budget_status.get("used_tokens") or 0) - fix_budget_start
+                        )
                         fix_budget_exceeded = (
                             settings.scheduler_selfcheck_fix_token_budget > 0
                             and fix_tokens_used >= settings.scheduler_selfcheck_fix_token_budget
@@ -1300,7 +1302,9 @@ ID: {result.test_id}
         elif isinstance(parsed, list):
             parsed_items = parsed
         else:
-            logger.warning("Selfcheck LLM returned unsupported JSON type: %s", type(parsed).__name__)
+            logger.warning(
+                "Selfcheck LLM returned unsupported JSON type: %s", type(parsed).__name__
+            )
             return []
 
         results: list[dict] = []

@@ -85,7 +85,9 @@ async def optimize_prompt(
     if hasattr(brain, "think_lightweight"):
         try:
             result = await brain.think_lightweight(prompt=user_msg, system=OPTIMIZE_SYSTEM_PROMPT)
-            text = getattr(result, "content", "") or (result.get("content", "") if isinstance(result, dict) else str(result))
+            text = getattr(result, "content", "") or (
+                result.get("content", "") if isinstance(result, dict) else str(result)
+            )
             if text.strip():
                 return text
         except Exception as e:
@@ -94,7 +96,9 @@ async def optimize_prompt(
     try:
         if hasattr(brain, "think"):
             result = await brain.think(prompt=user_msg, system=OPTIMIZE_SYSTEM_PROMPT)
-            text = getattr(result, "content", "") or (result.get("content", "") if isinstance(result, dict) else str(result))
+            text = getattr(result, "content", "") or (
+                result.get("content", "") if isinstance(result, dict) else str(result)
+            )
             if not text.strip():
                 raise PromptOptimizeError("LLM 返回了空内容")
             return text
@@ -296,4 +300,3 @@ MODE_FORMULAS = {
     "edit": "保持不变的部分 + 替换/增加/删除的元素 + 时机和位置",
     "extend": "延续描述 + 新内容方向 + 过渡方式",
 }
-

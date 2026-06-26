@@ -29,9 +29,7 @@ class TestCanonicalizeUrl:
         assert canonicalize_url("https://example.com/") == "https://example.com/"
 
     def test_drops_utm_and_spm(self) -> None:
-        got = canonicalize_url(
-            "https://wallstreetcn.com/x?utm_source=a&utm_medium=b&spm=x&id=9"
-        )
+        got = canonicalize_url("https://wallstreetcn.com/x?utm_source=a&utm_medium=b&spm=x&id=9")
         assert got == "https://wallstreetcn.com/x?id=9"
 
     def test_drops_fragment(self) -> None:
@@ -44,9 +42,7 @@ class TestCanonicalizeUrl:
 
 class TestNormalizedItem:
     def test_url_hash_is_stable_across_tracking_params(self) -> None:
-        a = NormalizedItem(
-            source_id="x", title="t", url="https://e.com/1?utm_source=x"
-        )
+        a = NormalizedItem(source_id="x", title="t", url="https://e.com/1?utm_source=x")
         b = NormalizedItem(source_id="x", title="t", url="https://e.com/1")
         assert a.url_hash() == b.url_hash()
 

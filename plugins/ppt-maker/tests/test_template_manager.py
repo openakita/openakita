@@ -81,4 +81,3 @@ def test_builtin_templates_available() -> None:
 
     assert len(builtin) == 5
     assert {item["category"] for item in builtin} >= {"business", "tech"}
-

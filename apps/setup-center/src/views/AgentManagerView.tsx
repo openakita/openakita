@@ -167,8 +167,6 @@ const ICON_CATEGORIES: Record<string, { label: string; icons: string[] }> = {
     icons: SVG_ICON_KEYS.map((k) => `svg:${k}`),
   },
 };
-const EMOJI_PRESETS = Object.values(ICON_CATEGORIES).flatMap((c) => c.icons);
-
 export function AgentManagerView({
   apiBaseUrl = "http://127.0.0.1:18900",
   visible = true,
@@ -255,22 +253,6 @@ export function AgentManagerView({
       await safeFetch(`${apiBaseUrl}/api/agents/profiles/${profileId}/identity/init`, { method: "POST" });
     } catch {}
   }, [apiBaseUrl]);
-
-  const extractErrorMsg = (detail: unknown, fallback: string): string => {
-    if (typeof detail === "string") return detail;
-    if (Array.isArray(detail)) {
-      const msgs = detail
-        .map((d: Record<string, unknown>) => typeof d?.msg === "string" ? d.msg : "")
-        .filter(Boolean);
-      return msgs.length ? msgs.join("; ") : fallback;
-    }
-    if (typeof detail === "object" && detail !== null) {
-      const d = detail as Record<string, unknown>;
-      if (typeof d.msg === "string") return d.msg;
-      try { return JSON.stringify(detail); } catch { /* fall through */ }
-    }
-    return fallback;
-  };
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -505,7 +487,7 @@ export function AgentManagerView({
         : `${apiBaseUrl}/api/agents/profiles/${editingProfile.id}`;
       const method = isCreating ? "POST" : "PUT";
 
-      const res = await safeFetch(url, {
+      await safeFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -1053,15 +1035,16 @@ export function AgentManagerView({
 
       {/* Editor Sheet */}
       <Sheet open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }}>
-        <SheetContent side="right" className="w-[460px] max-w-[90vw] overflow-y-auto p-0" onOpenAutoFocus={(e) => e.preventDefault()}>
-          <SheetHeader className="px-6 pt-6 pb-2">
+        <SheetContent side="right" className="w-[460px] max-w-[90vw] overflow-hidden p-0" onOpenAutoFocus={(e) => e.preventDefault()}>
+          <SheetHeader className="shrink-0 px-6 pt-6 pb-2">
             <SheetTitle>{isCreating ? t("agentManager.create") : t("agentManager.edit")}</SheetTitle>
             <SheetDescription className="sr-only">
               {isCreating ? t("agentManager.create") : t("agentManager.edit")}
             </SheetDescription>
           </SheetHeader>
 
-          <div className="flex flex-col gap-4 px-6 pb-6">
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-4">
+          <div className="flex flex-col gap-4">
             {/* ID */}
             <div className="space-y-1.5">
               <Label className="text-xs opacity-70">{t("agentManager.id")}</Label>
@@ -1433,19 +1416,21 @@ export function AgentManagerView({
             </div>
             )}
 
-            {/* Actions */}
-            <div className="flex gap-2 pt-2">
-              <Button variant="outline" className="flex-1" onClick={closeEditor}>
-                {t("agentManager.cancel")}
-              </Button>
-              <Button
-                className="flex-1"
-                onClick={handleSave}
-                disabled={saving || !editingProfile.name.trim() || (isCreating && !isIdValid)}
-              >
-                {saving ? t("common.loading") : t("agentManager.save")}
-              </Button>
-            </div>
+          </div>
+          </div>
+
+          {/* Actions */}
+          <div className="sticky bottom-0 z-10 flex shrink-0 gap-2 border-t bg-background/95 px-6 py-4 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur supports-[backdrop-filter]:bg-background/80">
+            <Button variant="outline" className="flex-1" onClick={closeEditor}>
+              {t("agentManager.cancel")}
+            </Button>
+            <Button
+              className="flex-1"
+              onClick={handleSave}
+              disabled={saving || !editingProfile.name.trim() || (isCreating && !isIdValid)}
+            >
+              {saving ? t("common.loading") : t("agentManager.save")}
+            </Button>
           </div>
         </SheetContent>
       </Sheet>

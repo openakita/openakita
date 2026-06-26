@@ -21,9 +21,17 @@ def tool_brain():
 TOOL_SELECTION_CASES = [
     ("帮我读取 /tmp/test.txt 的内容", "read_file", "File read request should select read_file"),
     ("在项目中搜索 TODO 关键字", "search_files", "Code search should select search_files"),
-    ("帮我记住我的生日是3月15日", "store_memory", "Memory store request should select store_memory"),
+    (
+        "帮我记住我的生日是3月15日",
+        "store_memory",
+        "Memory store request should select store_memory",
+    ),
     ("打开百度搜索 Python 教程", "web_search", "Web search should select web_search"),
-    ("创建一个定时任务每天早上8点提醒我", "schedule_create", "Scheduling should select schedule_create"),
+    (
+        "创建一个定时任务每天早上8点提醒我",
+        "schedule_create",
+        "Scheduling should select schedule_create",
+    ),
 ]
 
 
@@ -95,4 +103,3 @@ class TestToolCallFormat:
         resp = await brain.messages_create_async(messages=[{"role": "user", "content": "read"}])
         tool_blocks = [b for b in resp.content if isinstance(b, ToolUseBlock)]
         assert isinstance(tool_blocks[0].input, dict)
-

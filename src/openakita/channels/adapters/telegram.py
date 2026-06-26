@@ -12,7 +12,6 @@ Telegram 适配器
 import asyncio
 import contextlib
 import html as _html
-import json
 import logging
 import os
 import secrets
@@ -128,19 +127,22 @@ class TelegramPairingManager:
 
     def _load_paired_users(self) -> dict:
         """加载已配对用户"""
-        if self.paired_file.exists():
-            try:
-                with open(self.paired_file, encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.warning(f"Failed to load paired users: {e}")
+        from openakita.utils.atomic_io import read_json_safe
+
+        try:
+            data = read_json_safe(self.paired_file)
+            if isinstance(data, dict):
+                return data
+        except Exception as e:
+            logger.warning(f"Failed to load paired users: {e}")
         return {}
 
     def _save_paired_users(self) -> None:
         """保存已配对用户"""
+        from openakita.utils.atomic_io import atomic_json_write
+
         try:
-            with open(self.paired_file, "w", encoding="utf-8") as f:
-                json.dump(self.paired_users, f, ensure_ascii=False, indent=2)
+            atomic_json_write(self.paired_file, self.paired_users)
         except Exception as e:
             logger.error(f"Failed to save paired users: {e}")
 

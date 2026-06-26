@@ -136,8 +136,7 @@ async def test_search(req: TestSearchRequest) -> TestSearchResponse:
             provider_id=req.provider_id,
             error_code="missing_credential",
             message=(
-                f"未知的搜索源 {req.provider_id!r}。"
-                f"已注册：{[p.id for p in iter_providers()]}"
+                f"未知的搜索源 {req.provider_id!r}。已注册：{[p.id for p in iter_providers()]}"
             ),
         )
 

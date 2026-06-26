@@ -65,9 +65,7 @@ def test_dedupe_passes_through_facts_without_subject_metadata():
         source_type="semantic",
         raw_data={},
     )
-    out = RetrievalEngine._dedupe_facts_by_subject_predicate(
-        [fact_no_subj, fact_no_subj_2]
-    )
+    out = RetrievalEngine._dedupe_facts_by_subject_predicate([fact_no_subj, fact_no_subj_2])
     assert [c.memory_id for c in out] == ["m1", "m2"]
 
 

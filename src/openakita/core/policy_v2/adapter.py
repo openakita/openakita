@@ -288,9 +288,7 @@ def _coerce_trusted_paths(rules: object) -> list[TrustedPathOverride]:
                     operation=rule.get("operation"),
                     path_pattern=rule.get("path_pattern"),
                     expires_at=(
-                        float(rule["expires_at"])
-                        if rule.get("expires_at") is not None
-                        else None
+                        float(rule["expires_at"]) if rule.get("expires_at") is not None else None
                     ),
                     granted_at=float(rule.get("granted_at", 0) or 0),
                 )
@@ -360,9 +358,7 @@ def build_policy_context(
     if workspace is not None:
         extra_root = Path(workspace)
         existing = {str(p) for p in config_roots}
-        ws_roots = (
-            config_roots if str(extra_root) in existing else (*config_roots, extra_root)
-        )
+        ws_roots = config_roots if str(extra_root) in existing else (*config_roots, extra_root)
     else:
         ws_roots = config_roots
 
@@ -713,9 +709,7 @@ def _build_metadata(decision: PolicyDecisionV2) -> dict[str, Any]:
     return canonical
 
 
-def _shell_risk_to_v1_risk_level(
-    shell_risk: str | None, approval_class: str
-) -> str:
+def _shell_risk_to_v1_risk_level(shell_risk: str | None, approval_class: str) -> str:
     """把 v2 ``shell_risk_level`` / ``approval_class`` 映射为 v1 风险标签
     (low/medium/high/critical)，供 SecurityView 显示。
 

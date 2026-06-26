@@ -113,8 +113,6 @@ def test_block_and_unblock_require_args():
     r1 = client.post(
         "/api/diagnostics/domain-block", params={"conversation_id": "", "host": "x.com"}
     )
-    r2 = client.post(
-        "/api/diagnostics/domain-unblock", params={"conversation_id": "c", "host": ""}
-    )
+    r2 = client.post("/api/diagnostics/domain-unblock", params={"conversation_id": "c", "host": ""})
     assert r1.json()["ok"] is False
     assert r2.json()["ok"] is False

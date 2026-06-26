@@ -68,7 +68,7 @@ def test_brief_workbench_presets_match_session_cards() -> None:
     assert '<option value="12" selected>12 小时</option>' in html
     assert "noon:{label:'每日午报', time:'12:30', since_hours:6, limit:15}" in html
     assert "scope:'preset'" in html
-    assert "data-brief-role=\"scheduleStatus\"" in html
+    assert 'data-brief-role="scheduleStatus"' in html
     assert "saveCustomSchedule" in html
 
 
@@ -556,9 +556,7 @@ async def test_task_manager_seeds_and_upserts_article(tmp_path: Path) -> None:
         assert {"ithome", "qbitai", "fjsen-taihai"}.issubset(source_ids)
         assert {"xinhua-taiwan", "people-taiwan"}.issubset(source_ids)
         assert source_ids.isdisjoint(DEPRECATED_SOURCE_IDS)
-        all_source_ids = {
-            source["id"] for source in await tm.list_sources(include_deprecated=True)
-        }
+        all_source_ids = {source["id"] for source in await tm.list_sources(include_deprecated=True)}
         assert "yicai-news" in all_source_ids - source_ids
         enabled_source_ids = {source["id"] for source in await tm.list_sources(enabled_only=True)}
         assert enabled_source_ids.isdisjoint(DEPRECATED_SOURCE_IDS)
@@ -652,9 +650,7 @@ async def test_package_crud_and_source_editing(tmp_path: Path) -> None:
             await tm.delete_custom_package("policy")
 
         # Custom package can be edited.
-        edited = await tm.update_package(
-            custom["id"], description="新描述", keywords=["a", "b"]
-        )
+        edited = await tm.update_package(custom["id"], description="新描述", keywords=["a", "b"])
         assert edited["description"] == "新描述"
         assert edited["keywords"] == ["a", "b"]
 
@@ -721,9 +717,7 @@ async def test_disabled_package_does_not_show_historical_radar_items(tmp_path: P
             }
         )
         pipeline = MediaPipeline(tm, DummyApi(), output_dir=tmp_path)
-        radar = await pipeline.hot_radar(
-            {"package_id": "taiwan", "since_hours": 24, "limit": 20}
-        )
+        radar = await pipeline.hot_radar({"package_id": "taiwan", "since_hours": 24, "limit": 20})
         assert radar["items"] == []
         assert radar["stats"]["package_disabled"] is True
     finally:

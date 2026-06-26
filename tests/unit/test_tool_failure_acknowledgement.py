@@ -33,9 +33,7 @@ def test_returns_none_when_tool_results_empty():
 
 def test_returns_none_when_no_failures():
     assert (
-        _check_tool_failure_acknowledgement(
-            "已完成保存", [_tr("write_file", is_error=False)]
-        )
+        _check_tool_failure_acknowledgement("已完成保存", [_tr("write_file", is_error=False)])
         is None
     )
 
@@ -60,9 +58,7 @@ def test_zh_acknowledgement_failure_passthrough():
 
 
 def test_zh_acknowledgement_unable_passthrough():
-    out = _check_tool_failure_acknowledgement(
-        "无法访问该路径", [_tr("read_file", is_error=True)]
-    )
+    out = _check_tool_failure_acknowledgement("无法访问该路径", [_tr("read_file", is_error=True)])
     assert out is None
 
 
@@ -117,9 +113,7 @@ def test_en_acknowledgement_case_insensitive():
 
 def test_optimistic_prose_with_single_failure_triggers_banner():
     text = "我已经成功保存了文件。"
-    out = _check_tool_failure_acknowledgement(
-        text, [_tr("write_file", is_error=True)]
-    )
+    out = _check_tool_failure_acknowledgement(text, [_tr("write_file", is_error=True)])
     assert out is not None
     assert "write_file" in out
     assert "1 个工具调用以失败告终" in out
@@ -142,9 +136,7 @@ def test_optimistic_prose_with_multiple_failures_triggers_banner():
 
 def test_banner_truncates_summary_to_5_tools():
     text = "全部完成"
-    results = [
-        _tr(f"tool_{i}", is_error=True) for i in range(8)
-    ]
+    results = [_tr(f"tool_{i}", is_error=True) for i in range(8)]
     out = _check_tool_failure_acknowledgement(text, results)
     assert out is not None
     assert "等 8 个" in out
@@ -153,7 +145,8 @@ def test_banner_truncates_summary_to_5_tools():
 def test_unknown_tool_name_fallback_in_summary():
     text = "成功完成"
     out = _check_tool_failure_acknowledgement(
-        text, [{"is_error": True}]  # 没有 tool_name / name 字段
+        text,
+        [{"is_error": True}],  # 没有 tool_name / name 字段
     )
     assert out is not None
     assert "(未知工具)" in out
@@ -161,9 +154,7 @@ def test_unknown_tool_name_fallback_in_summary():
 
 def test_uses_name_field_when_tool_name_missing():
     text = "成功完成"
-    out = _check_tool_failure_acknowledgement(
-        text, [{"name": "alt_tool", "is_error": True}]
-    )
+    out = _check_tool_failure_acknowledgement(text, [{"name": "alt_tool", "is_error": True}])
     assert out is not None
     assert "alt_tool" in out
 
@@ -234,9 +225,7 @@ def test_two_tools_one_recovers_one_remains_failed():
 
 def test_banner_format_contains_warning_emoji_and_divider():
     text = "已完成"
-    out = _check_tool_failure_acknowledgement(
-        text, [_tr("write_file", is_error=True)]
-    )
+    out = _check_tool_failure_acknowledgement(text, [_tr("write_file", is_error=True)])
     assert out is not None
     assert out.startswith("\n\n---\n")
     assert "⚠️" in out

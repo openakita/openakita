@@ -87,11 +87,21 @@ def test_audit_reports_visual_system_guardrails() -> None:
                     "slide_type": "chart_bar",
                     "content": {"image_query": "dashboard screenshot"},
                 },
-                {"id": "s4", "index": 4, "title": "结论", "slide_type": "summary", "content": {"bullets": ["A"]}},
+                {
+                    "id": "s4",
+                    "index": 4,
+                    "title": "结论",
+                    "slide_type": "summary",
+                    "content": {"bullets": ["A"]},
+                },
             ]
         }
     )
     codes = {issue["code"] for issue in report["issues"]}
 
-    assert {"title_too_long_cjk", "cover_after_first", "list_item_too_long", "image_layout_mismatch"} <= codes
-
+    assert {
+        "title_too_long_cjk",
+        "cover_after_first",
+        "list_item_too_long",
+        "image_layout_mismatch",
+    } <= codes

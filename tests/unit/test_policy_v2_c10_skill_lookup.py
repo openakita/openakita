@@ -66,9 +66,7 @@ class TestApprovalClassParsing:
         assert parsed.metadata.approval_class is None
         assert any("unknown approval_class" in rec.message for rec in caplog.records)
 
-    def test_both_fields_disagree_warns_and_uses_canonical(
-        self, tmp_skills_dir, caplog
-    ):
+    def test_both_fields_disagree_warns_and_uses_canonical(self, tmp_skills_dir, caplog):
         path = _write_skill(
             tmp_skills_dir,
             "name: dual-skill\ndescription: dual\n"
@@ -83,17 +81,14 @@ class TestApprovalClassParsing:
         )
 
     def test_missing_field_is_none_no_warn(self, tmp_skills_dir, caplog):
-        path = _write_skill(
-            tmp_skills_dir, "name: plain-skill\ndescription: plain"
-        )
+        path = _write_skill(tmp_skills_dir, "name: plain-skill\ndescription: plain")
         with caplog.at_level("WARNING", logger="openakita.skills.parser"):
             parsed = SkillParser().parse_file(path)
         assert parsed.metadata.approval_class is None
         # Plain SKILL.md without approval_class must not produce a WARN
         # otherwise the 200+ existing skills would spam logs.
         assert not any(
-            "approval_class" in rec.message or "risk_class" in rec.message
-            for rec in caplog.records
+            "approval_class" in rec.message or "risk_class" in rec.message for rec in caplog.records
         )
 
 
@@ -113,8 +108,7 @@ class TestSkillRegistryGetToolClass:
     def test_external_skill_lookup_via_skill_prefix(self, tmp_skills_dir):
         path = _write_skill(
             tmp_skills_dir,
-            "name: my-translate\ndescription: translate text\n"
-            "approval_class: network_out",
+            "name: my-translate\ndescription: translate text\napproval_class: network_out",
         )
         parsed = SkillParser().parse_file(path)
         reg = SkillRegistry()

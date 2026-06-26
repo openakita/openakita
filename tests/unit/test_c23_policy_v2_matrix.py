@@ -164,9 +164,7 @@ def test_coordinator_role_locks_control_plane_under_trust() -> None:
         ApprovalClass.EXEC_CAPABLE,
         ApprovalClass.MUTATING_GLOBAL,
     ):
-        action = lookup_matrix(
-            SessionRole.COORDINATOR, ConfirmationMode.TRUST, klass
-        )
+        action = lookup_matrix(SessionRole.COORDINATOR, ConfirmationMode.TRUST, klass)
         assert action == DecisionAction.CONFIRM, (
             f"COORDINATOR × trust × {klass.value} must be confirm "
             f"(escalation guard); got {action.value}."

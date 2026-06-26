@@ -81,7 +81,9 @@ class CreateTaskBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    mode: str = Field(..., description="One of cover_pick / multi_aspect / seo_pack / chapter_cards")
+    mode: str = Field(
+        ..., description="One of cover_pick / multi_aspect / seo_pack / chapter_cards"
+    )
     video_path: str = ""
     params: dict[str, Any] = Field(default_factory=dict)
     cost_approved: bool = False
@@ -212,7 +214,11 @@ class Plugin(PluginBase):
         cfg = await self._tm.get_all_config()
         api_key, base_url = self._resolve_vlm_endpoint(cfg)
         if api_key:
-            self._vlm_client = MediaPostVlmClient(api_key, base_url=base_url) if base_url else MediaPostVlmClient(api_key)
+            self._vlm_client = (
+                MediaPostVlmClient(api_key, base_url=base_url)
+                if base_url
+                else MediaPostVlmClient(api_key)
+            )
 
     def _resolve_vlm_endpoint(self, cfg: dict) -> tuple[str, str]:
         """Resolve DashScope VLM api_key + base_url honouring an optional
@@ -254,6 +260,7 @@ class Plugin(PluginBase):
             return api_key, ""
         except SettingsRelayResolutionError as exc:
             from fastapi import HTTPException
+
             raise HTTPException(status_code=400, detail=exc.user_message) from exc
         ref = merged.get("_relay_reference")
         unsupported = [
@@ -263,12 +270,10 @@ class Plugin(PluginBase):
         ]
         if unsupported:
             policy = str(cfg.get("dashscope_relay_fallback_policy") or "official")
-            msg = (
-                f"中转站 {relay_name!r} 不支持 media-post 需要的模型: "
-                f"{', '.join(unsupported)}"
-            )
+            msg = f"中转站 {relay_name!r} 不支持 media-post 需要的模型: {', '.join(unsupported)}"
             if policy == "strict":
                 from fastapi import HTTPException
+
                 raise HTTPException(status_code=400, detail=msg)
             logger.warning("%s; falling back to per-plugin DashScope endpoint", msg)
             return api_key, ""
@@ -378,10 +383,7 @@ class Plugin(PluginBase):
         # Route #6: GET /pricing — read-only price table.
         @router.get("/pricing")
         async def get_pricing() -> list[dict[str, Any]]:
-            return [
-                {"api": p.api, "unit": p.unit, "price_cny": p.price_cny}
-                for p in PRICE_TABLE
-            ]
+            return [{"api": p.api, "unit": p.unit, "price_cny": p.price_cny} for p in PRICE_TABLE]
 
         # Route #7: POST /estimate — pre-flight cost preview (no DB write).
         @router.post("/estimate")
@@ -421,9 +423,7 @@ class Plugin(PluginBase):
             offset: int = 0,
             limit: int = 50,
         ) -> dict[str, Any]:
-            return await self._tm.list_tasks(
-                status=status, mode=mode, offset=offset, limit=limit
-            )
+            return await self._tm.list_tasks(status=status, mode=mode, offset=offset, limit=limit)
 
         # Route #10: GET /tasks/{task_id} — single task.
         @router.get("/tasks/{task_id}")
@@ -609,7 +609,8 @@ class Plugin(PluginBase):
         async def system_install(dep_id: str, body: SystemInstallBody) -> dict[str, Any]:
             try:
                 result = await self._sysdeps.start_install(
-                    dep_id, method_index=body.method_index,
+                    dep_id,
+                    method_index=body.method_index,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -621,7 +622,8 @@ class Plugin(PluginBase):
         async def system_uninstall(dep_id: str, body: SystemUninstallBody) -> dict[str, Any]:
             try:
                 result = await self._sysdeps.start_uninstall(
-                    dep_id, method_index=body.method_index,
+                    dep_id,
+                    method_index=body.method_index,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -736,9 +738,7 @@ class Plugin(PluginBase):
                 self._task_handles.pop(task_id, None)
                 self._tm.clear_cancel(task_id)
 
-        handle = self._api.spawn_task(
-            _run_and_cleanup(), name=f"{PLUGIN_ID}:task:{task_id}"
-        )
+        handle = self._api.spawn_task(_run_and_cleanup(), name=f"{PLUGIN_ID}:task:{task_id}")
         self._task_handles[task_id] = handle
 
 

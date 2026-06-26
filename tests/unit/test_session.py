@@ -1,5 +1,8 @@
 """L1 Unit Tests: Session state machine, message management."""
 
+import json
+import threading
+import time
 from datetime import datetime
 
 import pytest
@@ -11,6 +14,7 @@ from openakita.sessions.session import (
     SessionContext,
     SessionState,
     TaskCheckpoint,
+    is_duplicate_message,
 )
 
 
@@ -42,11 +46,17 @@ class TestSessionCreation:
         assert s.session_key == "feishu:writer:chat-1:user-1:topic-1"
 
     def test_from_dict_legacy_session_defaults_bot_instance_to_channel(self):
-        s = Session.from_dict({
-            "id": "s1", "channel": "feishu", "chat_id": "chat-1", "user_id": "user-1",
-            "state": "active", "created_at": "2026-01-01T00:00:00",
-            "last_active": "2026-01-01T00:00:00",
-        })
+        s = Session.from_dict(
+            {
+                "id": "s1",
+                "channel": "feishu",
+                "chat_id": "chat-1",
+                "user_id": "user-1",
+                "state": "active",
+                "created_at": "2026-01-01T00:00:00",
+                "last_active": "2026-01-01T00:00:00",
+            }
+        )
 
         assert s.bot_instance_id == "feishu"
         assert s.session_key == "feishu:chat-1:user-1"
@@ -81,6 +91,87 @@ class TestSessionCreation:
         assert restored.context.focus_terms == s.context.focus_terms
 
 
+class TestSessionPersistence:
+    def test_save_sessions_uses_strict_atomic_json_write(self, tmp_path, monkeypatch):
+        manager = SessionManager(storage_path=tmp_path / "sessions")
+        session = manager.get_session("cli", "chat-1", "user-1")
+        session.add_message("user", "hello")
+        calls = {}
+
+        def spy(path, data, **kwargs):
+            calls["path"] = path
+            calls["data"] = data
+            calls["kwargs"] = kwargs
+
+        monkeypatch.setattr("openakita.sessions.manager.atomic_json_write", spy)
+
+        assert manager._save_sessions() is True
+
+        assert calls["path"] == tmp_path / "sessions" / "sessions.json"
+        assert calls["kwargs"]["indent"] is None
+        assert calls["kwargs"]["fsync"] is True
+        assert calls["kwargs"]["allow_fallback"] is False
+        assert calls["data"][0]["context"]["messages"][0]["content"] == "hello"
+
+    def test_save_sessions_serializes_concurrent_writes(self, tmp_path, monkeypatch):
+        from openakita.utils.atomic_io import atomic_json_write as real_atomic_json_write
+
+        manager = SessionManager(storage_path=tmp_path / "sessions")
+        session = manager.get_session("cli", "chat-1", "user-1")
+        session.add_message("user", "hello")
+
+        failures = []
+        start = threading.Barrier(8)
+        counter_lock = threading.Lock()
+        active_writes = 0
+        max_active_writes = 0
+
+        def spy(path, data, **kwargs):
+            nonlocal active_writes, max_active_writes
+            with counter_lock:
+                active_writes += 1
+                max_active_writes = max(max_active_writes, active_writes)
+            try:
+                time.sleep(0.001)
+                real_atomic_json_write(path, data, **kwargs)
+            finally:
+                with counter_lock:
+                    active_writes -= 1
+
+        def worker(worker_id: int) -> None:
+            start.wait()
+            for i in range(20):
+                if not manager._save_sessions():
+                    failures.append((worker_id, i))
+
+        from openakita.sessions import manager as manager_module
+
+        monkeypatch.setattr(manager_module, "atomic_json_write", spy)
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        sessions_file = tmp_path / "sessions" / "sessions.json"
+        data = json.loads(sessions_file.read_text(encoding="utf-8"))
+
+        assert failures == []
+        assert max_active_writes == 1
+        assert len(data) == 1
+        assert data[0]["context"]["messages"][0]["content"] == "hello"
+        assert not sessions_file.with_suffix(sessions_file.suffix + ".tmp").exists()
+
+    def test_persist_keeps_dirty_on_atomic_write_failure(self, tmp_path, monkeypatch):
+        manager = SessionManager(storage_path=tmp_path / "sessions")
+        manager._dirty = True
+        monkeypatch.setattr(manager, "_save_sessions", lambda: False)
+
+        manager.persist()
+
+        assert manager._dirty is True
+
+
 class TestSessionState:
     def test_all_states_exist(self):
         assert SessionState.ACTIVE.value == "active"
@@ -108,6 +199,15 @@ class TestSessionContext:
         ctx.variables["key"] = "value"
         assert ctx.variables["key"] == "value"
 
+    def test_to_dict_returns_independent_snapshot(self):
+        ctx = SessionContext()
+        ctx.messages.append({"role": "user", "content": {"text": "hello"}})
+        snapshot = ctx.to_dict()
+
+        ctx.messages[0]["content"]["text"] = "changed"
+
+        assert snapshot["messages"][0]["content"]["text"] == "hello"
+
     def test_task_lifecycle(self):
         ctx = SessionContext()
         assert ctx.current_task is None
@@ -122,6 +222,84 @@ class TestSessionContext:
         ctx.summary = "User asked about Python"
         assert ctx.summary == "User asked about Python"
 
+    def test_duplicate_detection_matches_same_content_with_near_timestamp(self):
+        existing = [
+            {"role": "user", "content": "same prompt", "timestamp": "2026-06-25T18:06:53.993669"}
+        ]
+        candidate = {
+            "role": "user",
+            "content": "same prompt",
+            "timestamp": "2026-06-25T18:06:53.999736",
+        }
+
+        assert is_duplicate_message(existing, candidate)
+
+    def test_duplicate_detection_allows_same_content_after_window(self):
+        existing = [
+            {"role": "user", "content": "same prompt", "timestamp": "2026-06-25T18:06:53"},
+            {"role": "assistant", "content": "done", "timestamp": "2026-06-25T18:07:10"},
+        ]
+        candidate = {
+            "role": "user",
+            "content": "same prompt",
+            "timestamp": "2026-06-25T18:08:00",
+        }
+
+        assert not is_duplicate_message(existing, candidate)
+
+    def test_add_message_writer_reuses_session_message_timestamp(self, tmp_path):
+        written: list[tuple[str, str | None]] = []
+
+        def writer(_safe_id, _turn_index, role, _content, metadata):
+            written.append((role, metadata.get("timestamp")))
+
+        manager = SessionManager(storage_path=tmp_path)
+        manager.set_turn_writer(writer)
+        session = manager.get_session("desktop", "conv1", "desktop_user")
+        assert session is not None
+
+        session.add_message("user", "hello")
+
+        assert written == [("user", session.context.messages[-1]["timestamp"])]
+
+    def test_session_manager_backfill_skips_near_duplicate_turn(self, tmp_path):
+        session = Session(
+            id="test_near_dup",
+            channel="test",
+            chat_id="1",
+            user_id="u",
+            context=SessionContext(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": "same prompt",
+                        "timestamp": "2026-06-25T18:06:53.993669",
+                    },
+                ]
+            ),
+        )
+        (tmp_path / "sessions.json").write_text(
+            json.dumps([session.to_dict()], ensure_ascii=False),
+            encoding="utf-8",
+        )
+        manager = SessionManager(storage_path=tmp_path)
+        manager.set_turn_loader(
+            lambda _safe_id: [
+                {
+                    "role": "user",
+                    "content": "same prompt",
+                    "timestamp": "2026-06-25T18:06:53.999736",
+                },
+            ]
+        )
+
+        count = manager.backfill_sessions_from_store()
+
+        loaded = manager.get_session("test", "1", "u", create_if_missing=False)
+        assert count == 0
+        assert loaded is not None
+        assert [m["content"] for m in loaded.context.messages] == ["same prompt"]
+
 
 class TestSessionConfig:
     def test_default_config(self):
@@ -134,7 +312,10 @@ class TestMetadataTrimming:
 
     def _make_session(self, max_history: int = 2000) -> Session:
         return Session(
-            id="s1", channel="desktop", chat_id="c1", user_id="u1",
+            id="s1",
+            channel="desktop",
+            chat_id="c1",
+            user_id="u1",
             config=SessionConfig(max_history=max_history),
         )
 
@@ -143,21 +324,33 @@ class TestMetadataTrimming:
         assert config.max_history == 2000
 
     def test_from_dict_no_config_defaults_to_2000(self):
-        s = Session.from_dict({
-            "id": "s1", "channel": "desktop", "chat_id": "c1", "user_id": "u1",
-            "state": "active", "created_at": "2026-01-01T00:00:00",
-            "last_active": "2026-01-01T00:00:00",
-        })
+        s = Session.from_dict(
+            {
+                "id": "s1",
+                "channel": "desktop",
+                "chat_id": "c1",
+                "user_id": "u1",
+                "state": "active",
+                "created_at": "2026-01-01T00:00:00",
+                "last_active": "2026-01-01T00:00:00",
+            }
+        )
         assert s.config.max_history == 2000
 
     def test_from_dict_upgrades_old_small_values(self):
         """旧 session 序列化值 100/500 应被迁移至 >= 500."""
-        s = Session.from_dict({
-            "id": "s1", "channel": "desktop", "chat_id": "c1", "user_id": "u1",
-            "state": "active", "created_at": "2026-01-01T00:00:00",
-            "last_active": "2026-01-01T00:00:00",
-            "config": {"max_history": 100},
-        })
+        s = Session.from_dict(
+            {
+                "id": "s1",
+                "channel": "desktop",
+                "chat_id": "c1",
+                "user_id": "u1",
+                "state": "active",
+                "created_at": "2026-01-01T00:00:00",
+                "last_active": "2026-01-01T00:00:00",
+                "config": {"max_history": 100},
+            }
+        )
         assert s.config.max_history >= 500
 
     def test_messages_never_deleted_below_hard_cap(self):
@@ -222,7 +415,10 @@ class TestHardCapTruncation:
 
     def _make_session(self, max_history: int = 100) -> Session:
         return Session(
-            id="s1", channel="desktop", chat_id="c1", user_id="u1",
+            id="s1",
+            channel="desktop",
+            chat_id="c1",
+            user_id="u1",
             config=SessionConfig(max_history=max_history),
         )
 
@@ -308,14 +504,16 @@ class TestTaskCheckpoint:
 
     def test_append_accepts_dict(self):
         ctx = SessionContext()
-        ctx.append_task_checkpoint({
-            "checkpoint_id": "raw",
-            "task_id": "t",
-            "conversation_id": "c",
-            "iteration": 1,
-            "created_at": 1.0,
-            "exit_reason": "completed",
-        })
+        ctx.append_task_checkpoint(
+            {
+                "checkpoint_id": "raw",
+                "task_id": "t",
+                "conversation_id": "c",
+                "iteration": 1,
+                "created_at": 1.0,
+                "exit_reason": "completed",
+            }
+        )
         assert len(ctx.task_checkpoints) == 1
         assert ctx.task_checkpoints[0]["checkpoint_id"] == "raw"
 
@@ -347,4 +545,3 @@ class TestTaskCheckpoint:
         ctx.append_task_checkpoint(self._ckpt())
         restored = SessionContext.from_dict(ctx.to_dict())
         assert restored.task_checkpoints == ctx.task_checkpoints
-

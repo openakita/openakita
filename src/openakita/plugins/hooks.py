@@ -154,9 +154,7 @@ class HookRegistry:
                         type(e).__name__,
                         e,
                     )
-                    self._error_tracker.record_error(
-                        plugin_id, f"hook:{hook_name}:match", str(e)
-                    )
+                    self._error_tracker.record_error(plugin_id, f"hook:{hook_name}:match", str(e))
                     return _SKIP
 
             try:
@@ -225,9 +223,7 @@ class HookRegistry:
                         type(e).__name__,
                         e,
                     )
-                    self._error_tracker.record_error(
-                        plugin_id, f"hook:{hook_name}:match", str(e)
-                    )
+                    self._error_tracker.record_error(plugin_id, f"hook:{hook_name}:match", str(e))
                     continue
             timeout = getattr(callback, "__hook_timeout__", DEFAULT_HOOK_TIMEOUT)
             if asyncio.iscoroutinefunction(callback):

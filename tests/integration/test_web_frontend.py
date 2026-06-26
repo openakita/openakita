@@ -253,4 +253,3 @@ class TestWebSocket:
             ws.send_text("ping")
             pong = ws.receive_json()
             assert pong["event"] == "pong"
-

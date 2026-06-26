@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import openakita.channels.gateway as gateway_module
+from openakita.channels.base import ChannelDeliveryUnavailable
 from openakita.channels.gateway import MessageGateway
 from openakita.channels.types import (
     MediaFile,
@@ -82,9 +83,15 @@ class TestMediaFile:
 class TestMessageTypes:
     def test_all_message_types(self):
         types = [
-            MessageType.TEXT, MessageType.IMAGE, MessageType.VOICE,
-            MessageType.FILE, MessageType.VIDEO, MessageType.LOCATION,
-            MessageType.STICKER, MessageType.MIXED, MessageType.COMMAND,
+            MessageType.TEXT,
+            MessageType.IMAGE,
+            MessageType.VOICE,
+            MessageType.FILE,
+            MessageType.VIDEO,
+            MessageType.LOCATION,
+            MessageType.STICKER,
+            MessageType.MIXED,
+            MessageType.COMMAND,
             MessageType.UNKNOWN,
         ]
         assert len(types) == 10
@@ -147,6 +154,45 @@ class TestMessageGatewayBroadcast:
         session_manager.add_message.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_send_text_reliably_propagates_channel_unavailable(self):
+        session_manager = MagicMock()
+        session_manager.add_message = MagicMock()
+        gateway = MessageGateway(session_manager=session_manager)
+        adapter = MagicMock()
+        adapter.format_final_footer = MagicMock(return_value=None)
+        adapter.send_message = AsyncMock(
+            side_effect=ChannelDeliveryUnavailable(
+                "unavailable",
+                channel="wechat:test",
+                chat_id="chat-1",
+                reason="context rejected",
+            )
+        )
+        gateway._adapters["wechat:test"] = adapter
+
+        with pytest.raises(ChannelDeliveryUnavailable):
+            await gateway.send_text_reliably("wechat:test", "chat-1", "hello")
+
+        session_manager.add_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_propagates_channel_unavailable(self):
+        gateway = MessageGateway(session_manager=MagicMock())
+        adapter = MagicMock()
+        adapter.send_text = AsyncMock(
+            side_effect=ChannelDeliveryUnavailable(
+                "unavailable",
+                channel="wechat:test",
+                chat_id="chat-1",
+                reason="session expired",
+            )
+        )
+        gateway._adapters["wechat:test"] = adapter
+
+        with pytest.raises(ChannelDeliveryUnavailable):
+            await gateway.send("wechat:test", "chat-1", "hello")
+
+    @pytest.mark.asyncio
     async def test_broadcast_rejects_non_text_payload_before_listing_sessions(self):
         session_manager = MagicMock()
         session_manager.list_sessions = MagicMock(return_value=[])
@@ -178,9 +224,7 @@ class TestMessageGatewayBroadcast:
         # 都是 module-level lazy import，patch policy_v2 模块即可拦截。
         import openakita.core.policy_v2 as policy_v2_module
 
-        monkeypatch.setattr(
-            policy_v2_module, "read_permission_mode_label", lambda: "yolo"
-        )
+        monkeypatch.setattr(policy_v2_module, "read_permission_mode_label", lambda: "yolo")
         monkeypatch.setattr(policy_v2_module, "apply_resolution", _spy_apply)
 
         gateway = MessageGateway(session_manager=MagicMock())
@@ -376,7 +420,9 @@ class TestMessageGatewayDesktopMirror:
             bot_instance_id="feishu:reviewer",
         )
 
-        assert gateway._desktop_mirror_id_for_im(writer) != gateway._desktop_mirror_id_for_im(reviewer)
+        assert gateway._desktop_mirror_id_for_im(writer) != gateway._desktop_mirror_id_for_im(
+            reviewer
+        )
 
     def test_desktop_mirror_splits_same_chat_by_thread(self, tmp_path):
         session_manager = SessionManager(storage_path=tmp_path / "sessions")
@@ -396,7 +442,9 @@ class TestMessageGatewayDesktopMirror:
             bot_instance_id="feishu:writer",
         )
 
-        assert gateway._desktop_mirror_id_for_im(topic_a) != gateway._desktop_mirror_id_for_im(topic_b)
+        assert gateway._desktop_mirror_id_for_im(topic_a) != gateway._desktop_mirror_id_for_im(
+            topic_b
+        )
 
 
 class TestMessageGatewayInterruptResolution:
@@ -514,4 +562,3 @@ class TestMessageGatewayAgentTimeout:
         assert streamed_ok is True
         adapter.stream_token.assert_awaited_once()
         adapter.finalize_stream.assert_awaited_once()
-

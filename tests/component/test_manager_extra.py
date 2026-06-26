@@ -1,16 +1,11 @@
 """补充 manager 测试: record_turn+attachments, record_attachment, on_context_compressing."""
 
 import asyncio
-from pathlib import Path
 
 import pytest
 
 from openakita.memory.types import (
-    Attachment,
     AttachmentDirection,
-    Memory,
-    MemoryPriority,
-    MemoryType,
 )
 
 
@@ -27,6 +22,7 @@ def memory_dir(tmp_workspace):
 @pytest.fixture
 def manager(memory_dir, mock_brain):
     from openakita.memory.manager import MemoryManager
+
     mem_dir, memory_md = memory_dir
     mgr = MemoryManager(data_dir=mem_dir, memory_md_path=memory_md, brain=mock_brain)
     mgr.start_session("test-session-1")
@@ -95,12 +91,14 @@ class TestRecordTurnWithAttachments:
         manager.record_turn(
             role="user",
             content="看看这张照片",
-            attachments=[{
-                "filename": "cat.jpg",
-                "mime_type": "image/jpeg",
-                "local_path": "/tmp/cat.jpg",
-                "description": "一只猫",
-            }],
+            attachments=[
+                {
+                    "filename": "cat.jpg",
+                    "mime_type": "image/jpeg",
+                    "local_path": "/tmp/cat.jpg",
+                    "description": "一只猫",
+                }
+            ],
         )
         results = manager.search_attachments(query="猫")
         assert len(results) >= 1
@@ -109,11 +107,13 @@ class TestRecordTurnWithAttachments:
         manager.record_turn(
             role="assistant",
             content="已生成报告",
-            attachments=[{
-                "filename": "report.pdf",
-                "mime_type": "application/pdf",
-                "direction": "outbound",
-            }],
+            attachments=[
+                {
+                    "filename": "report.pdf",
+                    "mime_type": "application/pdf",
+                    "direction": "outbound",
+                }
+            ],
         )
         results = manager.search_attachments(direction="outbound")
         assert len(results) >= 1
@@ -131,22 +131,16 @@ class TestOnContextCompressing:
             {"role": "user", "content": "我喜欢使用 Python 开发"},
             {"role": "assistant", "content": "好的，我记住了"},
         ]
-        asyncio.get_event_loop().run_until_complete(
-            manager.on_context_compressing(messages)
-        )
+        asyncio.run(manager.on_context_compressing(messages))
 
     def test_handles_empty_messages(self, manager):
-        asyncio.get_event_loop().run_until_complete(
-            manager.on_context_compressing([])
-        )
+        asyncio.run(manager.on_context_compressing([]))
 
     def test_handles_rules(self, manager):
         messages = [
             {"role": "user", "content": "不要使用 var，必须用 const 或 let"},
         ]
-        asyncio.get_event_loop().run_until_complete(
-            manager.on_context_compressing(messages)
-        )
+        asyncio.run(manager.on_context_compressing(messages))
 
 
 class TestEndSession:
@@ -162,3 +156,33 @@ class TestEndSession:
     def test_end_session_empty(self, manager):
         manager.end_session("empty session")
 
+
+class TestIdentityDirWriteback:
+    def test_memory_manager_defaults_identity_dir_to_memory_md_parent(self, tmp_path, mock_brain):
+        from openakita.memory.manager import MemoryManager
+
+        identity_dir = tmp_path / "agent" / "identity"
+        memory_md = identity_dir / "MEMORY.md"
+
+        manager = MemoryManager(
+            data_dir=tmp_path / "agent" / "memory",
+            memory_md_path=memory_md,
+            brain=mock_brain,
+        )
+
+        assert manager.identity_dir == identity_dir
+
+    def test_memory_manager_accepts_explicit_identity_dir(self, tmp_path, mock_brain):
+        from openakita.memory.manager import MemoryManager
+
+        identity_dir = tmp_path / "profiles" / "a-bot" / "identity"
+        memory_md = tmp_path / "elsewhere" / "MEMORY.md"
+
+        manager = MemoryManager(
+            data_dir=tmp_path / "profiles" / "a-bot" / "memory",
+            memory_md_path=memory_md,
+            identity_dir=identity_dir,
+            brain=mock_brain,
+        )
+
+        assert manager.identity_dir == identity_dir

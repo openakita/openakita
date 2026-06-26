@@ -24,7 +24,9 @@ import pytest
 _HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_HERE))
 
-_SPEC = importlib.util.spec_from_file_location("seedance_video_plugin_under_test", _HERE / "plugin.py")
+_SPEC = importlib.util.spec_from_file_location(
+    "seedance_video_plugin_under_test", _HERE / "plugin.py"
+)
 assert _SPEC is not None and _SPEC.loader is not None
 _MODULE = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = _MODULE
@@ -60,10 +62,14 @@ def test_task_payload_includes_workbench_fields():
 
 def test_task_payload_failed_sets_ok_false():
     task = {
-        "id": "tk", "status": "failed", "mode": "t2v",
+        "id": "tk",
+        "status": "failed",
+        "mode": "t2v",
         "error_message": "Ark quota exceeded",
-        "video_url": "", "local_video_path": None,
-        "last_frame_url": "", "last_frame_local_path": None,
+        "video_url": "",
+        "local_video_path": None,
+        "last_frame_url": "",
+        "last_frame_local_path": None,
         "asset_ids": [],
     }
     payload = SeedanceVideoPlugin._task_to_tool_payload(task)
@@ -73,9 +79,13 @@ def test_task_payload_failed_sets_ok_false():
 
 def test_task_payload_json_round_trip():
     task = {
-        "id": "tk", "status": "succeeded", "mode": "t2v",
-        "video_url": "u", "local_video_path": "/p",
-        "last_frame_url": "", "last_frame_local_path": None,
+        "id": "tk",
+        "status": "succeeded",
+        "mode": "t2v",
+        "video_url": "u",
+        "local_video_path": "/p",
+        "last_frame_url": "",
+        "last_frame_local_path": None,
         "asset_ids": ["x"],
     }
     payload = SeedanceVideoPlugin._task_to_tool_payload(task)
@@ -100,10 +110,12 @@ def _make_plugin_for_expand(asset_lookup: dict[str, dict]):
 
 @pytest.mark.asyncio
 async def test_expand_from_asset_ids_i2v_assigns_first_then_reference():
-    plugin = _make_plugin_for_expand({
-        "a1": {"preview_url": "https://oss/x.png"},
-        "a2": {"preview_url": "https://oss/y.png"},
-    })
+    plugin = _make_plugin_for_expand(
+        {
+            "a1": {"preview_url": "https://oss/x.png"},
+            "a2": {"preview_url": "https://oss/y.png"},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["a1", "a2"], mode="i2v")
     assert out == [
         {"type": "image_url", "image_url": {"url": "https://oss/x.png"}, "role": "first_frame"},
@@ -113,35 +125,43 @@ async def test_expand_from_asset_ids_i2v_assigns_first_then_reference():
 
 @pytest.mark.asyncio
 async def test_expand_from_asset_ids_i2v_end_uses_last_frame_for_subsequent_ids():
-    plugin = _make_plugin_for_expand({
-        "a1": {"preview_url": "https://oss/first.png"},
-        "a2": {"preview_url": "https://oss/last.png"},
-    })
+    plugin = _make_plugin_for_expand(
+        {
+            "a1": {"preview_url": "https://oss/first.png"},
+            "a2": {"preview_url": "https://oss/last.png"},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["a1", "a2"], mode="i2v_end")
     assert [item["role"] for item in out] == ["first_frame", "last_frame"]
 
 
 @pytest.mark.asyncio
 async def test_expand_from_asset_ids_multimodal_uses_reference_for_subsequent():
-    plugin = _make_plugin_for_expand({
-        "a1": {"preview_url": "https://oss/1.png"},
-        "a2": {"preview_url": "https://oss/2.png"},
-        "a3": {"preview_url": "https://oss/3.png"},
-    })
+    plugin = _make_plugin_for_expand(
+        {
+            "a1": {"preview_url": "https://oss/1.png"},
+            "a2": {"preview_url": "https://oss/2.png"},
+            "a3": {"preview_url": "https://oss/3.png"},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["a1", "a2", "a3"], mode="multimodal")
     assert [item["role"] for item in out] == [
-        "first_frame", "reference_image", "reference_image",
+        "first_frame",
+        "reference_image",
+        "reference_image",
     ]
 
 
 @pytest.mark.asyncio
 async def test_expand_from_asset_ids_skips_missing_and_invalid_assets():
-    plugin = _make_plugin_for_expand({
-        "a1": {"preview_url": "https://oss/x.png"},
-        # a2: lookup returns None → skipped, but does not abort
-        # a3: has neither preview_url nor source_path → skipped
-        "a3": {"extra": "bogus"},
-    })
+    plugin = _make_plugin_for_expand(
+        {
+            "a1": {"preview_url": "https://oss/x.png"},
+            # a2: lookup returns None → skipped, but does not abort
+            # a3: has neither preview_url nor source_path → skipped
+            "a3": {"extra": "bogus"},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["a1", "a2", "a3"], mode="i2v")
     # only a1 survives; role assignment uses ORIGINAL index 0 → first_frame
     assert out == [
@@ -151,21 +171,25 @@ async def test_expand_from_asset_ids_skips_missing_and_invalid_assets():
 
 @pytest.mark.asyncio
 async def test_expand_from_asset_ids_prefers_preview_over_source_path():
-    plugin = _make_plugin_for_expand({
-        "a1": {
-            "preview_url": "https://oss/preview.png",
-            "source_path": "/local/should/not/win.png",
-        },
-    })
+    plugin = _make_plugin_for_expand(
+        {
+            "a1": {
+                "preview_url": "https://oss/preview.png",
+                "source_path": "/local/should/not/win.png",
+            },
+        }
+    )
     out = await plugin._expand_from_asset_ids(["a1"], mode="i2v")
     assert out[0]["image_url"]["url"] == "https://oss/preview.png"
 
 
 @pytest.mark.asyncio
 async def test_expand_from_asset_ids_falls_back_to_source_path():
-    plugin = _make_plugin_for_expand({
-        "a1": {"source_path": "/local/img.png"},
-    })
+    plugin = _make_plugin_for_expand(
+        {
+            "a1": {"source_path": "/local/img.png"},
+        }
+    )
     out = await plugin._expand_from_asset_ids(["a1"], mode="i2v")
     assert out[0]["image_url"]["url"] == "/local/img.png"
 

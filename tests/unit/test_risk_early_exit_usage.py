@@ -27,9 +27,7 @@ def _make_agent(stale_trace: list[dict] | None = None) -> Agent:
 
 def test_extract_usage_summary_with_stale_trace_returns_stale_usage():
     """Sanity check：未清空的 trace 会被原样汇总（这就是 Fix-14 要规避的场景）。"""
-    agent = _make_agent(
-        stale_trace=[{"tokens": {"input": 140_000, "output": 800}}]
-    )
+    agent = _make_agent(stale_trace=[{"tokens": {"input": 140_000, "output": 800}}])
     summary = agent._extract_usage_summary(agent.reasoning_engine._last_react_trace)
     assert summary["input_tokens"] == 140_000
     assert summary["billable_input_tokens"] == 140_000
@@ -37,9 +35,7 @@ def test_extract_usage_summary_with_stale_trace_returns_stale_usage():
 
 def test_clearing_trace_produces_empty_usage_summary():
     """Fix-14 修复后的预期：清空后再提取 → usage 为空。"""
-    agent = _make_agent(
-        stale_trace=[{"tokens": {"input": 140_000, "output": 800}}]
-    )
+    agent = _make_agent(stale_trace=[{"tokens": {"input": 140_000, "output": 800}}])
     agent.reasoning_engine._last_react_trace = []
     summary = agent._extract_usage_summary(agent.reasoning_engine._last_react_trace)
     assert summary == {}
@@ -55,9 +51,7 @@ def test_empty_summary_is_distinguishable_from_zero_billable():
 
 def test_extract_with_trace_after_normal_run_includes_billable():
     agent = _make_agent()
-    summary = agent._extract_usage_summary(
-        [{"tokens": {"input": 1500, "output": 200}}]
-    )
+    summary = agent._extract_usage_summary([{"tokens": {"input": 1500, "output": 200}}])
     assert summary["billable_input_tokens"] == 1500
     assert summary["billable_output_tokens"] == 200
     assert summary["billable_total_tokens"] == 1700

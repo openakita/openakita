@@ -40,11 +40,11 @@ logger = logging.getLogger(__name__)
 # 显式 dict 而不是 dict 反转：v2 ConfirmationMode 比 v1 多两档（accept_edits / dont_ask），
 # 它们没有 v1 product 对应；这里映射到最接近的 v1 标签以保证 UI 不崩。
 _V2_TO_V1_LABEL: dict[ConfirmationMode, Literal["cautious", "smart", "yolo"]] = {
-    ConfirmationMode.TRUST: "yolo",        # v1 alias
-    ConfirmationMode.DEFAULT: "smart",     # v1 alias
-    ConfirmationMode.STRICT: "cautious",   # v1 alias
+    ConfirmationMode.TRUST: "yolo",  # v1 alias
+    ConfirmationMode.DEFAULT: "smart",  # v1 alias
+    ConfirmationMode.STRICT: "cautious",  # v1 alias
     ConfirmationMode.ACCEPT_EDITS: "smart",  # v2-only：归并到 smart（最接近的 UX）
-    ConfirmationMode.DONT_ASK: "yolo",       # v2-only：归并到 trust（最宽松）
+    ConfirmationMode.DONT_ASK: "yolo",  # v2-only：归并到 trust（最宽松）
 }
 
 
@@ -60,9 +60,7 @@ def read_permission_mode_label() -> Literal["cautious", "smart", "yolo"]:
         cfg_mode = get_config_v2().confirmation.mode
         return _V2_TO_V1_LABEL.get(cfg_mode, "yolo")
     except Exception as exc:
-        logger.debug(
-            "[PolicyV2 ConfirmationMode] failed to read v2 mode, falling back: %s", exc
-        )
+        logger.debug("[PolicyV2 ConfirmationMode] failed to read v2 mode, falling back: %s", exc)
         return "yolo"
 
 

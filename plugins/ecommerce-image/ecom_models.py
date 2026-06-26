@@ -25,9 +25,14 @@ IMAGE_MODELS: list[dict] = [
         "max_n": 4,
         "speed": "normal",
         "recommended_for": [
-            "image_main_replicate", "image_main_gen", "image_main_suite",
-            "image_batch_gen", "detail_replicate", "detail_suite",
-            "detail_long", "detail_new_product",
+            "image_main_replicate",
+            "image_main_gen",
+            "image_main_suite",
+            "image_batch_gen",
+            "detail_replicate",
+            "detail_suite",
+            "detail_long",
+            "detail_new_product",
         ],
     },
     {
@@ -54,7 +59,9 @@ IMAGE_MODELS: list[dict] = [
         "max_n": 4,
         "speed": "normal",
         "recommended_for": [
-            "image_batch_edit", "image_batch_replace", "image_translate",
+            "image_batch_edit",
+            "image_batch_replace",
+            "image_translate",
         ],
     },
     {
@@ -69,8 +76,10 @@ IMAGE_MODELS: list[dict] = [
         "speed": "normal",
         "note": "擅长文本渲染、海报、PPT生成",
         "recommended_for": [
-            "poster_private_domain", "poster_product",
-            "poster_holiday", "poster_campaign",
+            "poster_private_domain",
+            "poster_product",
+            "poster_holiday",
+            "poster_campaign",
         ],
     },
     {
@@ -264,24 +273,38 @@ VIDEO_MODELS: list[dict] = [
 
 _PIXELS_2_0: dict[str, dict[str, list[int]]] = {
     "480p": {
-        "21:9": [624, 256], "16:9": [832, 480], "4:3": [624, 480],
-        "1:1": [480, 480], "3:4": [480, 624], "9:16": [480, 832],
+        "21:9": [624, 256],
+        "16:9": [832, 480],
+        "4:3": [624, 480],
+        "1:1": [480, 480],
+        "3:4": [480, 624],
+        "9:16": [480, 832],
     },
     "720p": {
-        "21:9": [1680, 720], "16:9": [1280, 720], "4:3": [960, 720],
-        "1:1": [720, 720], "3:4": [720, 960], "9:16": [720, 1280],
+        "21:9": [1680, 720],
+        "16:9": [1280, 720],
+        "4:3": [960, 720],
+        "1:1": [720, 720],
+        "3:4": [720, 960],
+        "9:16": [720, 1280],
     },
 }
 
 _PIXELS_1_X: dict[str, dict[str, list[int]]] = {
     "480p": {
-        "16:9": [848, 480], "1:1": [544, 544], "9:16": [480, 848],
+        "16:9": [848, 480],
+        "1:1": [544, 544],
+        "9:16": [480, 848],
     },
     "720p": {
-        "16:9": [1280, 720], "1:1": [720, 720], "9:16": [720, 1280],
+        "16:9": [1280, 720],
+        "1:1": [720, 720],
+        "9:16": [720, 1280],
     },
     "1080p": {
-        "16:9": [1920, 1080], "1:1": [1080, 1080], "9:16": [1080, 1920],
+        "16:9": [1920, 1080],
+        "1:1": [1080, 1080],
+        "9:16": [1080, 1920],
     },
 }
 
@@ -299,6 +322,7 @@ RESOLUTION_PIXEL_MAP: dict[str, dict[str, dict[str, list[int]]]] = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def get_all_models() -> dict:
     return {

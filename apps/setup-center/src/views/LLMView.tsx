@@ -86,6 +86,7 @@ export interface LLMViewProps {
   providers: ProviderInfo[];
   doLoadProviders: () => Promise<void>;
   loadSavedEndpoints: () => Promise<void>;
+  onEndpointConfigChanged?: (endpointType: EndpointType) => Promise<void> | void;
   readWorkspaceFile: (path: string) => Promise<string>;
   writeWorkspaceFile: (path: string, content: string) => Promise<void>;
   venvDir: string;
@@ -100,7 +101,7 @@ export function LLMView(props: LLMViewProps) {
     secretShown, setSecretShown,
     busy, currentWorkspaceId, dataMode,
     shouldUseHttpApi, httpApiBase, askConfirm,
-    providers, doLoadProviders, loadSavedEndpoints,
+    providers, doLoadProviders, loadSavedEndpoints, onEndpointConfigChanged,
     venvDir, ensureEnvLoaded, serviceRunning,
   } = props;
 
@@ -152,6 +153,11 @@ export function LLMView(props: LLMViewProps) {
   const [sttModel, setSttModel] = useState("");
   const [sttEndpointName, setSttEndpointName] = useState("");
   const [sttModels, setSttModels] = useState<ListedModel[]>([]);
+  const [selectedEndpointNames, setSelectedEndpointNames] = useState<Record<EndpointType, Set<string>>>(() => ({
+    endpoints: new Set(),
+    compiler_endpoints: new Set(),
+    stt_endpoints: new Set(),
+  }));
 
   // Edit modal
   const [editingOriginalName, setEditingOriginalName] = useState<string | null>(null);
@@ -234,6 +240,31 @@ export function LLMView(props: LLMViewProps) {
 
   async function syncEndpointConfigChange(_endpointType: EndpointType): Promise<void> {
     await loadSavedEndpoints();
+    await onEndpointConfigChanged?.(_endpointType);
+  }
+
+  function selectedNamesForType(endpointType: EndpointType): string[] {
+    return Array.from(selectedEndpointNames[endpointType]);
+  }
+
+  function setSelectedNamesForType(endpointType: EndpointType, names: Iterable<string>) {
+    setSelectedEndpointNames((prev) => ({
+      ...prev,
+      [endpointType]: new Set(names),
+    }));
+  }
+
+  function toggleEndpointSelected(endpointType: EndpointType, name: string) {
+    setSelectedEndpointNames((prev) => {
+      const next = new Set(prev[endpointType]);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return { ...prev, [endpointType]: next };
+    });
+  }
+
+  function setAllEndpointsSelected(endpointType: EndpointType, endpoints: EndpointDraft[], checked: boolean) {
+    setSelectedNamesForType(endpointType, checked ? endpoints.map((e) => e.name) : []);
   }
 
   // ── Effects ──
@@ -242,6 +273,30 @@ export function LLMView(props: LLMViewProps) {
     loadSavedEndpoints().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentWorkspaceId, dataMode, serviceRunning]);
+
+  useEffect(() => {
+    setSelectedEndpointNames((prev) => {
+      const keepByType: Record<EndpointType, Set<string>> = {
+        endpoints: new Set(savedEndpoints.map((e) => e.name)),
+        compiler_endpoints: new Set(savedCompilerEndpoints.map((e) => e.name)),
+        stt_endpoints: new Set(savedSttEndpoints.map((e) => e.name)),
+      };
+      let changed = false;
+      const next: Record<EndpointType, Set<string>> = {
+        endpoints: new Set(),
+        compiler_endpoints: new Set(),
+        stt_endpoints: new Set(),
+      };
+      (Object.keys(keepByType) as EndpointType[]).forEach((endpointType) => {
+        for (const name of prev[endpointType]) {
+          if (keepByType[endpointType].has(name)) next[endpointType].add(name);
+          else changed = true;
+        }
+        if (next[endpointType].size !== prev[endpointType].size) changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [savedEndpoints, savedCompilerEndpoints, savedSttEndpoints]);
 
   useEffect(() => {
     if (!selectedProvider) return;
@@ -980,9 +1035,7 @@ export function LLMView(props: LLMViewProps) {
       if (editDraft.streamOnly) endpoint.stream_only = true;
 
       // Only send the API key when the user actually edited the input
-      // (apiKeyDirty). Otherwise the prefilled masked value (sk-d****ab53)
-      // would be echoed back and overwrite the real key on disk.
-      // See v1.26.x commit 8ab550fa.
+      // (apiKeyDirty) to avoid unnecessary writes.
       const keyToSave = editDraft.apiKeyDirty ? (editDraft.apiKeyValue.trim() || null) : null;
       const saveResult = await saveEndpointConfig({
         endpoint,
@@ -1174,6 +1227,47 @@ export function LLMView(props: LLMViewProps) {
     }
   }
 
+  async function doDeleteSelectedEndpoints(names: string[], endpointType: EndpointType = "endpoints") {
+    if (!currentWorkspaceId && dataMode !== "remote") return;
+    if (!ensureEndpointConfigApiReady()) return;
+    const uniqueNames = Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+    if (uniqueNames.length === 0) return;
+
+    const _busyId = notifyLoading(`删除 ${uniqueNames.length} 个端点...`);
+    try {
+      const res = await safeFetch(`${httpApiBase()}/api/config/endpoints`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          names: uniqueNames,
+          endpoint_type: endpointType,
+        }),
+      });
+      const data = await res.json();
+      if (data.status !== "ok") {
+        throw new Error(data.error || data.message || "批量删除失败");
+      }
+      const removedCount = Number(data.removed_count ?? 0);
+      if (removedCount <= 0) {
+        notifyError("未找到选中的端点，列表可能已经刷新。");
+        await syncEndpointConfigChange(endpointType);
+        return;
+      }
+      setSelectedNamesForType(endpointType, []);
+      await syncEndpointConfigChange(endpointType);
+      const reloadFailed = data.reload?.status === "failed";
+      notifySuccess(
+        reloadFailed
+          ? `已删除 ${removedCount} 个端点，当前运行中的服务暂未加载新配置。`
+          : `已删除 ${removedCount} 个端点`,
+      );
+    } catch (e) {
+      notifyError(friendlyConfigError(e));
+    } finally {
+      dismissLoading(_busyId);
+    }
+  }
+
   // Sync the actual model catalog of a relay/aggregator endpoint.
   // POST /api/config/sync-endpoint-models calls GET /v1/models on the
   // upstream and writes the result to llm_endpoints.json so:
@@ -1202,7 +1296,7 @@ export function LLMView(props: LLMViewProps) {
       }
       if (json.status !== "ok") {
         notifyError(json.error || "模型列表同步失败");
-        loadSavedEndpoints().catch(() => {});
+        syncEndpointConfigChange(endpointType).catch(() => {});
         return;
       }
       notifySuccess(
@@ -1211,7 +1305,7 @@ export function LLMView(props: LLMViewProps) {
             ? "（配置已保存，但运行时未刷新；下次启动生效）"
             : ""),
       );
-      loadSavedEndpoints().catch(() => {});
+      syncEndpointConfigChange(endpointType).catch(() => {});
     } catch (e) {
       notifyError(String(e));
     } finally {
@@ -1233,7 +1327,7 @@ export function LLMView(props: LLMViewProps) {
       if (json.reload?.status === "failed") {
         notifyError("端点状态已保存，但当前聊天会话暂未加载新配置；稍后重试或重启服务即可。");
       }
-      loadSavedEndpoints().catch(() => {});
+      syncEndpointConfigChange(endpointType).catch(() => {});
     } catch (e) {
       notifyError(String(e));
     }
@@ -1285,6 +1379,41 @@ export function LLMView(props: LLMViewProps) {
     return sections;
   }, [providers, savedEndpoints]);
 
+  function renderBatchDeleteToolbar(endpointType: EndpointType, endpoints: EndpointDraft[]) {
+    const selectedNames = selectedNamesForType(endpointType);
+    if (selectedNames.length === 0) return null;
+    return (
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2">
+        <div className="text-xs font-medium text-destructive">
+          已选择 {selectedNames.length} / {endpoints.length} 个端点
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => setSelectedNamesForType(endpointType, [])}
+          >
+            取消选择
+          </Button>
+          <Button
+            variant="destructive"
+            size="xs"
+            disabled={endpointConfigDisabled}
+            onClick={() => askConfirm(`确定要删除选中的 ${selectedNames.length} 个端点吗？`, () => doDeleteSelectedEndpoints(selectedNames, endpointType))}
+            title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}
+          >
+            <IconTrash size={12} />
+            批量删除
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  function allEndpointsSelected(endpointType: EndpointType, endpoints: EndpointDraft[]) {
+    return endpoints.length > 0 && endpoints.every((e) => selectedEndpointNames[endpointType].has(e.name));
+  }
+
   return (
     <>
       {/* ── Main endpoint list ── */}
@@ -1306,27 +1435,19 @@ export function LLMView(props: LLMViewProps) {
           </div>
         )}
 
-        {/* PR-H1: 强校验启用端点 ≥ 2。
-            单一端点崩了任务无法继续（dashscope CONTENT LOST → 无 fallback），
-            这是 0419 报告里 P1-5 的根因；这里只在无可用备份时给一条非阻塞提示，
-            点击 "+ 添加端点" 后即可消失。
-            判定口径：enabled !== false 且 .env 里有非空 api_key_env。 */}
+        {/* 只在没有任何可用聊天端点时提醒；单端点是允许的，只是没有故障切换备份。 */}
         {(() => {
           if (savedEndpoints.length === 0) return null;
           const enabledWithKey = savedEndpoints.filter(
             (e) => e.enabled !== false && (envDraft[e.api_key_env] || "").trim().length > 0,
           );
-          if (enabledWithKey.length >= 2) return null;
-          const reason =
-            enabledWithKey.length === 0
-              ? "当前没有任何已启用且填好 API Key 的聊天端点，新对话会立刻报错。"
-              : "当前只有 1 个可用端点，单点故障会导致整个任务卡住或回退到错误。";
+          if (enabledWithKey.length > 0) return null;
           return (
             <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/70 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-100">
               <AlertTriangle className="mt-0.5 size-4 shrink-0" />
               <div className="flex-1">
-                <div className="font-semibold">建议至少保留 2 个聊天端点（主 + 备）</div>
-                <div className="mt-0.5 opacity-90">{reason} 请点右上角「+ 添加端点」补一个不同提供商的备份端点。</div>
+                <div className="font-semibold">尚未配置可用聊天端点</div>
+                <div className="mt-0.5 opacity-90">当前没有任何已启用且填好 API Key 的聊天端点，新对话会立刻报错。</div>
               </div>
             </div>
           );
@@ -1338,9 +1459,19 @@ export function LLMView(props: LLMViewProps) {
             <p className="text-sm">{t("llm.noEndpoints")}</p>
           </div>
         ) : (
+          <>
+          {renderBatchDeleteToolbar("endpoints", savedEndpoints)}
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
+                <TableHead className="w-[36px]">
+                  <Checkbox
+                    checked={allEndpointsSelected("endpoints", savedEndpoints)}
+                    onCheckedChange={(v) => setAllEndpointsSelected("endpoints", savedEndpoints, !!v)}
+                    disabled={endpointConfigDisabled}
+                    aria-label="选择全部聊天端点"
+                  />
+                </TableHead>
                 <TableHead className="w-[34px]"></TableHead>
                 <TableHead>{t("status.endpoint")}</TableHead>
                 <TableHead>{t("status.model")}</TableHead>
@@ -1351,12 +1482,23 @@ export function LLMView(props: LLMViewProps) {
               {groupedEndpointSections.map((section) => (
                 <Fragment key={section.key}>
                   <TableRow key={`${section.key}-group`} className="hover:bg-transparent">
-                    <TableCell colSpan={4} className="bg-muted/35 py-2 text-xs font-semibold text-muted-foreground">
+                    <TableCell colSpan={5} className="bg-muted/35 py-2 text-xs font-semibold text-muted-foreground">
                       {section.label} <span className="font-normal opacity-70">({section.endpoints.length})</span>
                     </TableCell>
                   </TableRow>
                   {section.endpoints.map((e) => (
-                    <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
+                    <TableRow key={e.name} className={cn(
+                      selectedEndpointNames.endpoints.has(e.name) ? "bg-primary/5" : undefined,
+                      e.enabled === false ? "opacity-45" : undefined,
+                    )}>
+                      <TableCell className="align-middle">
+                        <Checkbox
+                          checked={selectedEndpointNames.endpoints.has(e.name)}
+                          onCheckedChange={() => toggleEndpointSelected("endpoints", e.name)}
+                          disabled={endpointConfigDisabled}
+                          aria-label={`选择端点 ${e.name}`}
+                        />
+                      </TableCell>
                       <TableCell className="align-middle">
                         {(envDraft[e.api_key_env] || "").trim() ? <DotGreen /> : <DotGray />}
                       </TableCell>
@@ -1408,6 +1550,7 @@ export function LLMView(props: LLMViewProps) {
               ))}
             </TableBody>
           </Table>
+          </>
         )}
       </div>
 
@@ -1428,9 +1571,19 @@ export function LLMView(props: LLMViewProps) {
             <p className="text-sm">{t("llm.noEndpoints")}</p>
           </div>
         ) : (
+          <>
+          {renderBatchDeleteToolbar("compiler_endpoints", savedCompilerEndpoints)}
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
+                <TableHead className="w-[36px]">
+                  <Checkbox
+                    checked={allEndpointsSelected("compiler_endpoints", savedCompilerEndpoints)}
+                    onCheckedChange={(v) => setAllEndpointsSelected("compiler_endpoints", savedCompilerEndpoints, !!v)}
+                    disabled={endpointConfigDisabled}
+                    aria-label="选择全部编译端点"
+                  />
+                </TableHead>
                 <TableHead>{t("status.endpoint")}</TableHead>
                 <TableHead>{t("status.model")}</TableHead>
                 <TableHead className="w-[140px]"></TableHead>
@@ -1438,7 +1591,18 @@ export function LLMView(props: LLMViewProps) {
             </TableHeader>
             <TableBody>
               {savedCompilerEndpoints.map((e) => (
-                <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
+                <TableRow key={e.name} className={cn(
+                  selectedEndpointNames.compiler_endpoints.has(e.name) ? "bg-primary/5" : undefined,
+                  e.enabled === false ? "opacity-45" : undefined,
+                )}>
+                  <TableCell className="align-middle">
+                    <Checkbox
+                      checked={selectedEndpointNames.compiler_endpoints.has(e.name)}
+                      onCheckedChange={() => toggleEndpointSelected("compiler_endpoints", e.name)}
+                      disabled={endpointConfigDisabled}
+                      aria-label={`选择端点 ${e.name}`}
+                    />
+                  </TableCell>
                   <TableCell className="font-semibold">
                     <span>{e.name}</span>
                     {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
@@ -1456,6 +1620,7 @@ export function LLMView(props: LLMViewProps) {
               ))}
             </TableBody>
           </Table>
+          </>
         )}
       </div>
 
@@ -1476,9 +1641,19 @@ export function LLMView(props: LLMViewProps) {
             <p className="text-sm">{t("llm.noEndpoints")}</p>
           </div>
         ) : (
+          <>
+          {renderBatchDeleteToolbar("stt_endpoints", savedSttEndpoints)}
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
+                <TableHead className="w-[36px]">
+                  <Checkbox
+                    checked={allEndpointsSelected("stt_endpoints", savedSttEndpoints)}
+                    onCheckedChange={(v) => setAllEndpointsSelected("stt_endpoints", savedSttEndpoints, !!v)}
+                    disabled={endpointConfigDisabled}
+                    aria-label="选择全部 STT 端点"
+                  />
+                </TableHead>
                 <TableHead>{t("status.endpoint")}</TableHead>
                 <TableHead>{t("status.model")}</TableHead>
                 <TableHead className="w-[140px]"></TableHead>
@@ -1486,7 +1661,18 @@ export function LLMView(props: LLMViewProps) {
             </TableHeader>
             <TableBody>
               {savedSttEndpoints.map((e) => (
-                <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
+                <TableRow key={e.name} className={cn(
+                  selectedEndpointNames.stt_endpoints.has(e.name) ? "bg-primary/5" : undefined,
+                  e.enabled === false ? "opacity-45" : undefined,
+                )}>
+                  <TableCell className="align-middle">
+                    <Checkbox
+                      checked={selectedEndpointNames.stt_endpoints.has(e.name)}
+                      onCheckedChange={() => toggleEndpointSelected("stt_endpoints", e.name)}
+                      disabled={endpointConfigDisabled}
+                      aria-label={`选择端点 ${e.name}`}
+                    />
+                  </TableCell>
                   <TableCell className="font-semibold">
                     <span>{e.name}</span>
                     {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
@@ -1504,6 +1690,7 @@ export function LLMView(props: LLMViewProps) {
               ))}
             </TableBody>
           </Table>
+          </>
         )}
       </div>
 
@@ -2319,4 +2506,3 @@ export function LLMView(props: LLMViewProps) {
     </>
   );
 }
-

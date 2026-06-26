@@ -67,7 +67,9 @@ class PythonDepsManager:
         target_dir: str | Path | None = None,
     ) -> None:
         self._data_root = Path(data_root)
-        self._target_dir = Path(target_dir) if target_dir else self._data_root / "python_deps" / "site-packages"
+        self._target_dir = (
+            Path(target_dir) if target_dir else self._data_root / "python_deps" / "site-packages"
+        )
         self._python = python_executable or self._resolve_python_executable()
         self._jobs: dict[str, DepJob] = {}
         self._ensure_target_on_path()
@@ -277,7 +279,8 @@ class PythonDepsManager:
         job.exit_code = 0
         job.status = "succeeded"
         job.log_tail.append(
-            "Removed from plugin target: " + (", ".join(sorted(set(removed))) if removed else "nothing")
+            "Removed from plugin target: "
+            + (", ".join(sorted(set(removed))) if removed else "nothing")
         )
 
     def _target_candidates(self, import_name: str) -> list[Path]:
@@ -343,4 +346,3 @@ class PythonDepsManager:
 
 def list_optional_groups() -> dict[str, list[str]]:
     return {key: list(value["packages"]) for key, value in OPTIONAL_DEP_GROUPS.items()}
-

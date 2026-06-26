@@ -289,9 +289,7 @@ def test_non_trust_mode_does_not_skip():
     )
     from openakita.core.policy_v2.schema import ConfirmationConfig
 
-    cfg = PolicyConfigV2(
-        confirmation=ConfirmationConfig(mode=ConfirmationMode.DEFAULT)
-    )
+    cfg = PolicyConfigV2(confirmation=ConfirmationConfig(mode=ConfirmationMode.DEFAULT))
     set_engine_v2(build_engine_from_config(cfg), cfg)
     try:
         risk = _risk(RiskLevel.HIGH, OperationKind.OVERWRITE, TargetKind.FILE_SYSTEM)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -92,6 +93,122 @@ def resolve_python_executable() -> str:
         if candidate.exists():
             return str(candidate)
     return sys.executable
+
+
+def _iter_app_venv_dirs() -> list[Path]:
+    """Return candidate OpenAkita app-venv directories, nearest usable first."""
+
+    seen: set[str] = set()
+    dirs: list[Path] = []
+
+    def add(candidate: Path) -> None:
+        key = str(candidate)
+        if key in seen:
+            return
+        seen.add(key)
+        if candidate.is_dir():
+            dirs.append(candidate)
+
+    env_root = os.environ.get("OPENAKITA_ROOT", "").strip()
+    if env_root:
+        root = Path(env_root)
+        add(root / "runtime" / "app-venv")
+        for parent in root.parents:
+            add(parent / "runtime" / "app-venv")
+
+    add(Path.home() / ".openakita" / "runtime" / "app-venv")
+    return dirs
+
+
+def resolve_ytdlp_runner() -> list[str] | None:
+    """Return argv prefix for yt-dlp across dev, packaged, and app-venv runtimes."""
+
+    import importlib.util
+
+    for venv_dir in _iter_app_venv_dirs():
+        if sys.platform == "win32":
+            py = venv_dir / "Scripts" / "python.exe"
+            bundled = venv_dir / "Scripts" / "yt-dlp.exe"
+        else:
+            py = venv_dir / "bin" / "python"
+            bundled = venv_dir / "bin" / "yt-dlp"
+        if py.is_file():
+            return [str(py), "-m", "yt_dlp"]
+        if bundled.is_file():
+            return [str(bundled)]
+
+    which_bin = shutil.which("yt-dlp")
+    if which_bin:
+        return [which_bin]
+
+    py_candidates = [resolve_python_executable(), sys.executable]
+    seen_py: set[str] = set()
+    for py in py_candidates:
+        if not py or py in seen_py:
+            continue
+        seen_py.add(py)
+        if not Path(py).is_file():
+            continue
+        for name in ("yt-dlp.exe", "yt-dlp"):
+            sidecar = str(Path(py).with_name(name))
+            if Path(sidecar).is_file():
+                return [sidecar]
+        try:
+            proc = subprocess.run(
+                [py, "-m", "yt_dlp", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if proc.returncode == 0:
+            return [py, "-m", "yt_dlp"]
+
+    if importlib.util.find_spec("yt_dlp") is not None:
+        return [sys.executable, "-m", "yt_dlp"]
+    return None
+
+
+def ytdlp_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    for venv_dir in _iter_app_venv_dirs():
+        scripts = venv_dir / ("Scripts" if sys.platform == "win32" else "bin")
+        if scripts.is_dir():
+            env["PATH"] = str(scripts) + os.pathsep + env.get("PATH", "")
+            break
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
+def run_ytdlp_subprocess(
+    args: list[str],
+    *,
+    timeout: float,
+    stdout: Any = subprocess.PIPE,
+    stderr: Any = subprocess.PIPE,
+    check: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    """Run yt-dlp with OpenAkita-friendly env; use shell wrapper in frozen Windows."""
+
+    env = ytdlp_subprocess_env()
+    kw = subprocess_kwargs()
+    common: dict[str, Any] = {
+        "env": env,
+        "timeout": timeout,
+        "check": check,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "stdout": stdout,
+        "stderr": stderr,
+        **kw,
+    }
+    if getattr(sys, "frozen", False) and sys.platform == "win32":
+        return subprocess.run(subprocess.list2cmdline(args), shell=True, **common)  # noqa: S603
+    return subprocess.run(args, **common)  # noqa: S603
 
 
 def pip_env() -> dict[str, str]:

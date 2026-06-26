@@ -48,9 +48,7 @@ class TestDelegationPreambleInjection:
         for marker in identity_markers:
             marker_pos = prompt.find(marker)
             if marker_pos >= 0:
-                assert preamble_pos < marker_pos, (
-                    f"Preamble should come before '{marker}'"
-                )
+                assert preamble_pos < marker_pos, f"Preamble should come before '{marker}'"
 
     def test_preamble_contains_priority_override(self):
         """Preamble must explicitly override solo-agent philosophy."""
@@ -70,6 +68,7 @@ class TestAgentCoreMdDelegationException:
 
     def test_static_fallback_has_exception(self):
         from openakita.prompt.compiler import _STATIC_FALLBACKS
+
         agent_core = _STATIC_FALLBACKS.get("agent_core", "")
         assert "例外" in agent_core
         assert "多 Agent 模式" in agent_core or "多Agent" in agent_core
@@ -94,6 +93,7 @@ class TestPresetSkillFixes:
 
     def test_no_code_reviewer_in_presets(self):
         from openakita.agents.presets import SYSTEM_PRESETS
+
         for p in SYSTEM_PRESETS:
             for skill in p.skills:
                 assert "code-reviewer" not in skill, (
@@ -102,6 +102,7 @@ class TestPresetSkillFixes:
 
     def test_no_brand_guidelines_in_presets(self):
         from openakita.agents.presets import SYSTEM_PRESETS
+
         for p in SYSTEM_PRESETS:
             for skill in p.skills:
                 assert "brand-guidelines" not in skill, (
@@ -110,12 +111,14 @@ class TestPresetSkillFixes:
 
     def test_code_assistant_has_code_review(self):
         from openakita.agents.presets import SYSTEM_PRESETS
+
         code_assistant = next(p for p in SYSTEM_PRESETS if p.id == "code-assistant")
         has_review = any("code-review" in s for s in code_assistant.skills)
         assert has_review, "code-assistant should have 'code-review' skill"
 
     def test_devops_engineer_has_code_review(self):
         from openakita.agents.presets import SYSTEM_PRESETS
+
         devops = next(p for p in SYSTEM_PRESETS if p.id == "devops-engineer")
         has_review = any("code-review" in s for s in devops.skills)
         assert has_review, "devops-engineer should have 'code-review' skill"
@@ -123,6 +126,7 @@ class TestPresetSkillFixes:
     def test_default_agent_has_all_skills_mode(self):
         from openakita.agents.presets import SYSTEM_PRESETS
         from openakita.agents.profile import SkillsMode
+
         default = next(p for p in SYSTEM_PRESETS if p.id == "default")
         assert default.skills == []
         assert default.skills_mode == SkillsMode.ALL
@@ -154,7 +158,8 @@ class TestOrgModeUnaffected:
 
             identity = OrgIdentity(org_dir)
             org = Organization(
-                id="test", name="测试",
+                id="test",
+                name="测试",
                 nodes=[
                     OrgNode(id="n1", role_title="Boss", level=0, department="HQ"),
                 ],
@@ -176,6 +181,7 @@ class TestPromptAssemblerParamPassing:
         import inspect
 
         from openakita.prompt.builder import build_system_prompt
+
         sig = inspect.signature(build_system_prompt)
         assert "is_sub_agent" in sig.parameters
 
@@ -184,9 +190,8 @@ class TestPromptAssemblerParamPassing:
         import inspect
 
         from openakita.core.prompt_assembler import PromptAssembler
+
         for method_name in ("build_system_prompt_compiled", "_build_compiled_sync"):
             method = getattr(PromptAssembler, method_name)
             sig = inspect.signature(method)
-            assert "is_sub_agent" in sig.parameters, (
-                f"{method_name} missing is_sub_agent param"
-            )
+            assert "is_sub_agent" in sig.parameters, f"{method_name} missing is_sub_agent param"

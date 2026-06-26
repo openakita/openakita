@@ -12,7 +12,7 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '_shared'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_shared"))
 from baidu_appbuilder import parse_common_args, run_skill_query
 
 
@@ -25,10 +25,7 @@ def build_compare_query(product: str, platforms: str = "") -> str:
 
 
 def build_review_query(product: str) -> str:
-    return (
-        f"请分析商品「{product}」的用户口碑，"
-        "汇总正面评价、负面评价、常见问题，并给出综合评分。"
-    )
+    return f"请分析商品「{product}」的用户口碑，汇总正面评价、负面评价、常见问题，并给出综合评分。"
 
 
 def build_recommend_query(requirement: str, budget: str = "") -> str:
@@ -68,4 +65,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

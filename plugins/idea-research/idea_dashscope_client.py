@@ -53,6 +53,35 @@ VLM_PATH = "/services/aigc/multimodal-generation/generation"
 PARAFORMER_TASKS_PATH = "/services/audio/asr/transcription"
 
 
+def _dashscope_exception_from_body(
+    body: Any, *, http_status: int | None = None
+) -> VendorError | None:
+    """If ``body`` is a DashScope-style JSON error, return a typed exception."""
+
+    if not isinstance(body, dict):
+        return None
+    code_raw = body.get("code")
+    if code_raw is None or code_raw == "":
+        return None
+    code = str(code_raw)
+    if code in ("Success", "OK", "200"):
+        return None
+    msg = str(body.get("message") or "")
+    sc = http_status
+    if "Throttling" in code or "RateLimit" in code:
+        return VendorRateLimitError(f"{code}: {msg}", status_code=sc)
+    if "Auth" in code or "InvalidApiKey" in code:
+        return VendorAuthError(f"{code}: {msg}", status_code=sc)
+    if (
+        "Quota" in code
+        or "Balance" in code
+        or code == "Arrearage"
+        or "Arrearage" in code
+    ):
+        return VendorQuotaError(f"{code}: {msg}", status_code=sc)
+    return VendorError(f"dashscope error {code}: {msg}", status_code=sc)
+
+
 # --------------------------------------------------------------------------- #
 # Backend selection helpers (§7.4)                                             #
 # --------------------------------------------------------------------------- #
@@ -122,13 +151,6 @@ def select_asr_backend(
     if user_pref in ("local", "cloud"):
         return user_pref  # type: ignore[return-value]
     if not faster_whisper_available():
-        return "cloud"
-    if duration_s is None and audio_path is not None and audio_path.exists():
-        try:
-            duration_s = ffprobe_duration(audio_path)
-        except VendorError:
-            duration_s = 0.0
-    if (duration_s or 0.0) > 600.0:
         return "cloud"
     return "local"
 
@@ -205,7 +227,9 @@ class DashScopeClient(VendorClient):
 
     def _headers(self, *, async_task: bool = False) -> dict[str, str]:
         if not self.api_key:
-            raise VendorAuthError("DashScope API key not configured")
+            raise VendorAuthError(
+                "DashScope API key not configured — add it under Settings → AI Keys"
+            )
         h: dict[str, str] = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -272,6 +296,16 @@ class DashScopeClient(VendorClient):
                 status_code=r.status_code,
             )
         if r.status_code != 200:
+            txt = (r.text or "").strip()
+            if txt.startswith("{"):
+                try:
+                    early = json.loads(txt)
+                except json.JSONDecodeError:
+                    early = None
+                else:
+                    exc = _dashscope_exception_from_body(early, http_status=r.status_code)
+                    if exc is not None:
+                        raise exc
             raise VendorNetworkError(
                 f"dashscope unexpected {r.status_code}: {r.text[:160]!r}",
                 status_code=r.status_code,
@@ -280,17 +314,9 @@ class DashScopeClient(VendorClient):
             payload = r.json()
         except json.JSONDecodeError as exc:
             raise VendorFormatError(f"dashscope non-json response: {r.text[:160]!r}") from exc
-        if isinstance(payload, dict) and payload.get("code"):
-            code = str(payload.get("code") or "")
-            msg = payload.get("message") or ""
-            if "Throttling" in code or "RateLimit" in code:
-                raise VendorRateLimitError(f"{code}: {msg}")
-            if "Auth" in code or "InvalidApiKey" in code:
-                raise VendorAuthError(f"{code}: {msg}")
-            if "Quota" in code or "Balance" in code:
-                raise VendorQuotaError(f"{code}: {msg}")
-            if code:
-                raise VendorError(f"dashscope error {code}: {msg}")
+        exc = _dashscope_exception_from_body(payload, http_status=r.status_code)
+        if exc is not None:
+            raise exc
         return payload
 
     # ---- chat / text ------------------------------------------------------
@@ -532,6 +558,8 @@ class DashScopeClient(VendorClient):
                 )
             if status == "FAILED":
                 msg = (poll.get("output") or {}).get("message") or "unknown failure"
+                if "DECODE" in str(msg).upper():
+                    raise VendorFormatError(f"paraformer task failed: {msg}")
                 raise VendorError(f"paraformer task failed: {msg}")
             await asyncio.sleep(poll_interval_s)
         raise VendorTimeoutError(f"paraformer task {task_id} did not finish in {poll_timeout_s}s")

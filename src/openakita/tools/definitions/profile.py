@@ -87,4 +87,3 @@ PROFILE_TOOLS = [
         "input_schema": {"type": "object", "properties": {}},
     },
 ]
-

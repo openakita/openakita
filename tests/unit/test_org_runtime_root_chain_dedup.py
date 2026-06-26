@@ -169,7 +169,11 @@ class TestExtractAcceptedChainIds:
                     },
                 ],
                 "tool_results": [
-                    {"tool_use_id": "tc_1", "is_error": False, "result_content": "缺少 from_node 参数"},
+                    {
+                        "tool_use_id": "tc_1",
+                        "is_error": False,
+                        "result_content": "缺少 from_node 参数",
+                    },
                 ],
             },
         ]
@@ -186,7 +190,11 @@ class TestExtractAcceptedChainIds:
                     },
                 ],
                 "tool_results": [
-                    {"tool_use_id": "tc_1", "is_error": False, "result_content": '{"ok": false, "error": "x"}'},
+                    {
+                        "tool_use_id": "tc_1",
+                        "is_error": False,
+                        "result_content": '{"ok": false, "error": "x"}',
+                    },
                 ],
             },
         ]
@@ -320,7 +328,8 @@ class TestSubAgentAcceptDoesNotPolluteRootSet:
     本测试锁这个调用契约。"""
 
     def test_extract_is_role_neutral_but_caller_must_check_root(
-        self, runtime: OrgRuntime,
+        self,
+        runtime: OrgRuntime,
     ):
         """_extract_accepted_chain_ids 本身不区分 root 与子节点，由调用方
         负责仅在 root 节点 task_completed 时调用 _mark_chain_processed_by_root。"""

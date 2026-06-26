@@ -108,9 +108,7 @@ def compute_effective_class(
             caller should validate the manifest value before calling.
     """
     if not isinstance(declared, ApprovalClass):
-        raise TypeError(
-            f"declared must be ApprovalClass, got {type(declared).__name__}"
-        )
+        raise TypeError(f"declared must be ApprovalClass, got {type(declared).__name__}")
 
     if trust is DeclaredClassTrust.TRUSTED:
         return declared, source

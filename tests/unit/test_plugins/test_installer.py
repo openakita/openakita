@@ -17,7 +17,9 @@ from openakita.plugins.installer import (
 from openakita.plugins.state import PluginState
 
 
-def _write_plugin(path: Path, plugin_id: str = "demo", version: str = "1.0.0", marker: str = "") -> None:
+def _write_plugin(
+    path: Path, plugin_id: str = "demo", version: str = "1.0.0", marker: str = ""
+) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "plugin.json").write_text(
         f'{{"id":"{plugin_id}","name":"Demo","version":"{version}","type":"python"}}',
@@ -95,7 +97,9 @@ def test_plugin_state_tracks_disk_only_pending_update(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_loaded_plugin_update_stages_without_touching_live(monkeypatch, tmp_path: Path) -> None:
+async def test_loaded_plugin_update_stages_without_touching_live(
+    monkeypatch, tmp_path: Path
+) -> None:
     project_root = tmp_path
     live = project_root / "data" / "plugins" / "demo"
     _write_plugin(live, version="1.0.0", marker="live-v1")
@@ -308,11 +312,15 @@ async def test_second_staged_update_replaces_old_pending_after_success(
     assert hot_loaded is False
     assert not old_pending.exists()
     assert entry.pending_update_path
-    assert Path(entry.pending_update_path, "marker.txt").read_text(encoding="utf-8") == "new-pending"
+    assert (
+        Path(entry.pending_update_path, "marker.txt").read_text(encoding="utf-8") == "new-pending"
+    )
 
 
 @pytest.mark.asyncio
-async def test_manual_update_endpoint_does_not_create_fake_pending(monkeypatch, tmp_path: Path) -> None:
+async def test_manual_update_endpoint_does_not_create_fake_pending(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(plugin_routes.settings, "project_root", str(tmp_path))
 
     class _PM:

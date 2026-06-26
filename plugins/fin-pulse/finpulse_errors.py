@@ -94,9 +94,7 @@ def hints_for(kind: str, locale: str = "zh") -> list[str]:
     return list(data.get(locale) or data["zh"])
 
 
-def map_exception(
-    exc: BaseException, *, locale: str = "zh"
-) -> tuple[str, str, list[str]]:
+def map_exception(exc: BaseException, *, locale: str = "zh") -> tuple[str, str, list[str]]:
     """Classify ``exc`` and return ``(error_kind, message, hints)``.
 
     ``error_kind`` is always a member of :data:`ERROR_KINDS`; ``message``

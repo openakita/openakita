@@ -42,23 +42,21 @@ def _deps_hash(deps: list[str] | tuple[str, ...] | None) -> str:
     return hashlib.sha256("\n".join(deps_t).encode("utf-8")).hexdigest()[:16]
 
 
-def mark_skill_loaded(
-    skill_id: str,
-    *,
-    source_path: str,
-    enabled: bool = True,
-    dependencies: list[str] | tuple[str, ...] | None = None,
-) -> None:
-    data = _read()
-    skills = data.setdefault("skills", {})
+def _apply_loaded_record(skills: dict[str, Any], record: dict[str, Any], now: int) -> None:
+    skill_id = str(record.get("skill_id") or "").strip()
+    if not skill_id:
+        return
+
     current = skills.get(skill_id) if isinstance(skills.get(skill_id), dict) else {}
-    now = int(time.time())
+    dependencies = record.get("dependencies")
+    if not isinstance(dependencies, (list, tuple)):
+        dependencies = []
     current.update(
         {
             "skill_id": skill_id,
-            "source_path": source_path,
+            "source_path": str(record.get("source_path") or ""),
             "installed": True,
-            "enabled": enabled,
+            "enabled": bool(record.get("enabled", True)),
             "loaded": True,
             "dependencies": list(dependencies or []),
             "deps_hash": _deps_hash(dependencies),
@@ -71,7 +69,40 @@ def mark_skill_loaded(
     current.setdefault("installed_at", now)
     current.setdefault("update_policy", "disk-only")
     skills[skill_id] = current
+
+
+def mark_skills_loaded(records: list[dict[str, Any]]) -> None:
+    """Mark many skills loaded with a single registry read/write."""
+    if not records:
+        return
+    data = _read()
+    skills = data.setdefault("skills", {})
+    if not isinstance(skills, dict):
+        skills = {}
+        data["skills"] = skills
+    now = int(time.time())
+    for record in records:
+        _apply_loaded_record(skills, record, now)
     _write(data)
+
+
+def mark_skill_loaded(
+    skill_id: str,
+    *,
+    source_path: str,
+    enabled: bool = True,
+    dependencies: list[str] | tuple[str, ...] | None = None,
+) -> None:
+    mark_skills_loaded(
+        [
+            {
+                "skill_id": skill_id,
+                "source_path": source_path,
+                "enabled": enabled,
+                "dependencies": list(dependencies or []),
+            }
+        ]
+    )
 
 
 def mark_skill_pending_update(

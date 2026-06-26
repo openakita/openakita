@@ -149,4 +149,3 @@ def create_connection(
 
     else:
         raise ValueError(f"Unsupported transport type: {transport}. Use 'stdio', 'sse', or 'http'")
-

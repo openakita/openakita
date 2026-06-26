@@ -9,7 +9,9 @@ from excel_task_manager import ExcelTaskManager
 @pytest.mark.asyncio
 async def test_project_workbook_artifact_crud(tmp_path) -> None:
     async with ExcelTaskManager(tmp_path / "excel_maker.db") as manager:
-        project = await manager.create_project(ProjectCreate(title="Sales Report", goal="Make XLSX"))
+        project = await manager.create_project(
+            ProjectCreate(title="Sales Report", goal="Make XLSX")
+        )
         workbook = await manager.create_workbook(
             project_id=project.id,
             filename="sales.csv",
@@ -62,4 +64,3 @@ async def test_rejects_unknown_project_update(tmp_path) -> None:
 
         with pytest.raises(ValueError):
             await manager.update_project_safe(project.id, arbitrary="nope")
-

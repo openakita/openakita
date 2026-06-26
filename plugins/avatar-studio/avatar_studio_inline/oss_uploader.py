@@ -203,9 +203,7 @@ class OssUploader:
         except DepInstallFailed as e:
             raise OssUploadError(str(e), cause=e) from e
         except Exception as e:  # noqa: BLE001 — defensive: bootstrap should never crash uploads
-            raise OssUploadError(
-                f"oss2 自举失败：{type(e).__name__}: {e}", cause=e
-            ) from e
+            raise OssUploadError(f"oss2 自举失败：{type(e).__name__}: {e}", cause=e) from e
         # ``oss2.Bucket(...)`` validates the bucket name eagerly and
         # raises ``ClientError`` for things like wrong length, illegal
         # characters, or the user pasting the full endpoint URL into
@@ -268,9 +266,7 @@ class OssUploader:
                 headers={"Content-Type": ct} if ct else None,
             )
         except Exception as e:  # noqa: BLE001 - re-raise as our type
-            raise OssUploadError(
-                f"OSS put_object_from_file failed: {e}", cause=e
-            ) from e
+            raise OssUploadError(f"OSS put_object_from_file failed: {e}", cause=e) from e
         return self._signed_url(bucket, key)
 
     def upload_bytes(
@@ -291,9 +287,7 @@ class OssUploader:
                 headers={"Content-Type": ct} if ct else None,
             )
         except Exception as e:  # noqa: BLE001
-            raise OssUploadError(
-                f"OSS put_object failed: {e}", cause=e
-            ) from e
+            raise OssUploadError(f"OSS put_object failed: {e}", cause=e) from e
         return self._signed_url(bucket, key)
 
     def delete(self, key: str) -> bool:
@@ -314,9 +308,7 @@ class OssUploader:
             # ``slash_safe=True`` keeps our `/`-separated keys readable
             # (default behaviour percent-encodes them, which DashScope
             # tolerates but makes log lines harder to grep).
-            return bucket.sign_url(
-                "GET", key, self._sign_ttl_sec, slash_safe=True
-            )
+            return bucket.sign_url("GET", key, self._sign_ttl_sec, slash_safe=True)
         except TypeError:
             # Older oss2 versions (<2.13) don't support slash_safe; retry
             # without it so we don't crash on legacy environments.
@@ -332,4 +324,3 @@ def _guess_content_type(name: str) -> str:
     """
     guessed, _ = mimetypes.guess_type(name)
     return guessed or "application/octet-stream"
-

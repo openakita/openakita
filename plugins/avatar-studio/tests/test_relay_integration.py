@@ -26,6 +26,7 @@ def _read_settings_factory(**overrides):
         s = make_default_settings()
         s.update(overrides)
         return s
+
     return _read
 
 

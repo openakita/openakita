@@ -101,7 +101,7 @@ export type Step = {
   desc: string;
 };
 
-export type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "token_stats" | "mcp" | "scheduler" | "memory" | "dashboard" | "agent_manager" | "agent_store" | "skill_store" | "org_editor" | "pixel_office" | "identity" | "docs" | "security" | "plugins" | "my_feedback" | `plugin_app:${string}`;
+export type ViewId = "wizard" | "status" | "chat" | "skills" | "im" | "onboarding" | "token_stats" | "skill_usage" | "mcp" | "scheduler" | "memory" | "dashboard" | "agent_manager" | "agent_store" | "skill_store" | "org_editor" | "pixel_office" | "identity" | "docs" | "security" | "pending_approvals" | "plugins" | "my_feedback" | `plugin_app:${string}`;
 
 export type PluginUIApp = {
   id: string;
@@ -223,6 +223,7 @@ export type ChatMessage = {
   agentName?: string | null;
   toolCalls?: ChatToolCall[] | null;
   todo?: ChatTodo | null;
+  progressEvents?: ChatProgressEvent[] | null;
   askUser?: ChatAskUser | null;
   attachments?: ChatAttachment[] | null;
   artifacts?: ChatArtifact[] | null;
@@ -249,7 +250,55 @@ export type ChatMessage = {
   streaming?: boolean;
   /** Ephemeral UI-only status while an SSE stream is alive; never persisted as message content. */
   streamStatus?: string | null;
+  /**
+   * Set when this assistant bubble was finalized from an interrupted /
+   * recovering stream, so its content may be partial or polluted. Backend
+   * reconciliation (`patchMessagesWithBackendDetailed`) then replaces the text
+   * with the authoritative persisted answer even when the backend copy is
+   * *shorter* (e.g. trace markers stripped), and clears this flag. Transient —
+   * not persisted to localStorage.
+   */
+  streamFallback?: boolean;
+  /**
+   * Ordered, structured render model for an assistant message.
+   *
+   * This is the single source of truth for how the rich cards (reasoning,
+   * plan, text, tools, attachments, answered ask_user, …) are laid out and
+   * re-displayed after a reload / window switch. It is normally a
+   * deterministic projection of the flat fields above (see
+   * `views/chat/utils/messageParts.ts#deriveMessageParts`), and may also be
+   * supplied authoritatively by the backend history projection
+   * (`/api/sessions/{id}/history` → `parts`). When absent it is derived on
+   * the fly, so old sessions / localStorage payloads keep rendering.
+   *
+   * Kept out of localStorage and out of the LLM transcript on purpose: it is
+   * a view concern, not stored message content.
+   */
+  parts?: MessagePart[] | null;
 };
+
+/**
+ * One ordered block inside an assistant message.
+ *
+ * Heavy text blocks (`text`, `reasoning`, `thinking`) are markers — the
+ * renderer pulls their payload from the corresponding flat field on the
+ * message — so the projection stays small when it travels over the wire from
+ * the backend history endpoint. The remaining (small) blocks inline their
+ * data so a single part is self-describing. The client-side
+ * `deriveMessageParts` builds the same shape from flat fields.
+ */
+export type MessagePart =
+  | { kind: "reasoning"; id: string }
+  | { kind: "thinking"; id: string }
+  | { kind: "org_timeline"; id: string }
+  | { kind: "sources"; id: string }
+  | { kind: "mcp"; id: string }
+  | { kind: "plan"; id: string; todo?: ChatTodo; progressEvents?: ChatProgressEvent[] }
+  | { kind: "text"; id: string }
+  | { kind: "tools"; id: string }
+  | { kind: "attachment"; id: string; artifact?: ChatArtifact }
+  | { kind: "ask_user"; id: string; ask?: ChatAskUser }
+  | { kind: "error"; id: string };
 
 // ─── 思维链 (Thinking Chain) 类型 ───
 
@@ -318,6 +367,20 @@ export type ChainToolCall = {
   description: string;
 };
 
+/**
+ * Persisted causal reasoning-chain timeline (the server mirrors the browser's
+ * ``ChainGroup.entries`` assembly and stores it as ``chain_timeline``). The
+ * client restores it with ``buildChainFromTimeline`` so the reasoning chain
+ * re-displays faithfully after reload / multi-window switch, instead of the
+ * lossy ``chain_summary`` rebuild. Entries reuse the live ``ChainEntry`` shape,
+ * including ``config_hint`` action cards.
+ */
+export type ChainTimelineGroup = {
+  iteration: number;
+  entries: ChainEntry[];
+  durationMs?: number;
+};
+
 /** IM 消息中的思维链摘要项 */
 export type ChainSummaryItem = {
   iteration: number;
@@ -360,6 +423,19 @@ export type ChatTodoStep = {
   status: "pending" | "in_progress" | "completed" | "skipped" | "failed" | "cancelled";
   result?: string | null;
 };
+
+export type ChatProgressEvent =
+  | { type: "todo_created"; seq?: number; plan: ChatTodo }
+  | {
+      type: "todo_step_updated";
+      seq?: number;
+      stepId?: string;
+      stepIdx?: number;
+      status?: ChatTodoStep["status"];
+      result?: string | null;
+    }
+  | { type: "todo_completed"; seq?: number }
+  | { type: "todo_cancelled"; seq?: number };
 
 export type PlanApprovalEvent = {
   conversation_id: string;
@@ -500,4 +576,3 @@ export const PERSONA_PRESETS = [
   { id: "family", name: "家人", desc: "亲切关怀、唠叨温暖", style: "适合家庭场景，长辈式温暖关怀" },
   { id: "jarvis", name: "贾维斯", desc: "冷静睿智、英式幽默", style: "适合科技极客，像钢铁侠的 AI 管家" },
 ] as const;
-

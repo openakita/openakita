@@ -67,9 +67,7 @@ class TestChromaDBBackend:
         mock_vs.search.return_value = []
         backend = ChromaDBBackend(mock_vs)
         backend.search("query", filter_type="PREFERENCE")
-        mock_vs.search.assert_called_once_with(
-            query="query", limit=10, filter_type="preference"
-        )
+        mock_vs.search.assert_called_once_with(query="query", limit=10, filter_type="preference")
 
     def test_distance_to_score_conversion(self):
         mock_vs = MagicMock()
@@ -111,6 +109,7 @@ class TestAPIEmbeddingBackend:
 
     def test_cache_hit(self, tmp_storage):
         import struct
+
         floats = [0.1, 0.2, 0.3]
         blob = struct.pack(f"{len(floats)}f", *floats)
         content_hash = "abcdef1234567890"
@@ -164,4 +163,3 @@ class TestFactoryFallbacks:
     def test_api_no_key_fallback(self, tmp_storage):
         backend = create_search_backend("api_embedding", storage=tmp_storage, api_key="")
         assert isinstance(backend, FTS5Backend)
-

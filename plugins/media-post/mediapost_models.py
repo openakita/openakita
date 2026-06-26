@@ -386,8 +386,7 @@ def estimate_cost(  # noqa: C901  (per-mode branch table is intentionally explic
             {
                 "api": "qwen-vl-max",
                 "description": (
-                    f"主体检测（fps={recompose_fps}, "
-                    f"{int(n_frames)} 帧, {len(aspects)} aspect）"
+                    f"主体检测（fps={recompose_fps}, {int(n_frames)} 帧, {len(aspects)} aspect）"
                 ),
                 "quantity": f"{n_batches}批",
                 "cost_cny": round(cost, 4),

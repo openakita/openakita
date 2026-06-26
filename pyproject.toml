@@ -36,6 +36,7 @@ dependencies = [
 
     # Async and HTTP
     "httpx[socks]>=0.27.0",
+    "aiohttp>=3.13.0",
     "aiofiles>=24.1.0",
     "nest-asyncio>=1.5.0",
 
@@ -222,15 +223,17 @@ include = [
     "pyproject.toml",
     "README.md",
     "LICENSE",
-    # Keep sdist and wheel inputs aligned; otherwise `python -m build`
-    # fails when wheel is built from sdist and force-include targets are absent.
-    "apps/setup-center/dist-web",
-    "docs-site/.vitepress/dist",
-    "docs-site/.vitepress/dist/.keep",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/openakita"]
+artifacts = [
+    # Optional release assets staged by `python scripts/stage_package_assets.py`.
+    # They are intentionally package-local build outputs so default
+    # `python -m build` / `pip install .` do not require Node/VitePress outputs.
+    "src/openakita/web/**",
+    "src/openakita/docs_dist/**",
+]
 
 # 把仓库根目录的系统技能、外部技能、内置 MCP 配置一并打进 wheel，
 # 保证 `pip install openakita` 后可用。
@@ -238,12 +241,6 @@ packages = ["src/openakita"]
 # skills/*      → site-packages/openakita/builtin_skills/external/  (不含 system/)
 # mcps          → site-packages/openakita/builtin_mcps/
 [tool.hatch.build.targets.wheel.force-include]
-# Web frontend (built with: cd apps/setup-center && VITE_BUILD_TARGET=web npm run build:web)
-# CI always builds the frontend before `python -m build --wheel`, so dist-web/ is present.
-# Local `pip install .` without building the frontend first will fail; run npm run build:web first.
-"apps/setup-center/dist-web" = "openakita/web"
-# User docs (built with: python scripts/build_docs.py)
-"docs-site/.vitepress/dist" = "openakita/docs_dist"
 "skills/system" = "openakita/builtin_skills/system"
 "mcps" = "openakita/builtin_mcps"
 "skills/xiaohongshu-creator" = "openakita/builtin_skills/external/xiaohongshu-creator"
@@ -285,6 +282,38 @@ packages = ["src/openakita"]
 "skills/superpowers-workflow" = "openakita/builtin_skills/external/superpowers-workflow"
 "skills/superpowers-writing-plans" = "openakita/builtin_skills/external/superpowers-writing-plans"
 "skills/superpowers-writing-skills" = "openakita/builtin_skills/external/superpowers-writing-skills"
+
+# Identity templates: shipped as bundled examples so the setup wizard can
+# seed the user-customizable identity/*.md files on first install. The
+# wizard's `_resolve_identity_template` looks up these paths under the
+# installed `openakita` package directory when no repo checkout is on the
+# Python path (i.e. for `pip install openakita` users). Without this
+# block, wheel-installed users would fall through to the prompt builder's
+# 5-line `_STATIC_FALLBACKS["identity_core"]` template instead of the
+# full SOUL.md / AGENT.md / persona library shipped with the project.
+#
+# User-customizable runtime state (SOUL.md, AGENT.md, USER.md, MEMORY.md,
+# identity/runtime/**, identity/personas/user_custom.md) is intentionally
+# NOT packaged: those files are gitignored and live in the user's project
+# directory; the wizard copies these *.example/*.template files there on
+# first run.
+"identity/SOUL.md.example" = "openakita/identity/SOUL.md.example"
+"identity/AGENT.md.example" = "openakita/identity/AGENT.md.example"
+"identity/USER.md.example" = "openakita/identity/USER.md.example"
+"identity/MEMORY.md.example" = "openakita/identity/MEMORY.md.example"
+"identity/POLICIES.yaml" = "openakita/identity/POLICIES.yaml"
+"identity/CREDITS.md" = "openakita/identity/CREDITS.md"
+"identity/SYSTEM_TASKS.yaml.template" = "openakita/identity/SYSTEM_TASKS.yaml.template"
+"identity/personas/boyfriend.md" = "openakita/identity/personas/boyfriend.md"
+"identity/personas/business.md" = "openakita/identity/personas/business.md"
+"identity/personas/butler.md" = "openakita/identity/personas/butler.md"
+"identity/personas/default.md" = "openakita/identity/personas/default.md"
+"identity/personas/family.md" = "openakita/identity/personas/family.md"
+"identity/personas/girlfriend.md" = "openakita/identity/personas/girlfriend.md"
+"identity/personas/jarvis.md" = "openakita/identity/personas/jarvis.md"
+"identity/personas/tech_expert.md" = "openakita/identity/personas/tech_expert.md"
+"identity/personas/user_custom.md.example" = "openakita/identity/personas/user_custom.md.example"
+"identity/prompts/policies.md" = "openakita/identity/prompts/policies.md"
 
 [tool.ruff]
 line-length = 100

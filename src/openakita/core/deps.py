@@ -74,4 +74,3 @@ class AgentDeps:
     tool_executor_deps: ToolExecutorDeps | None = None
     hook_executor: Any | None = None
     file_history: Any | None = None
-

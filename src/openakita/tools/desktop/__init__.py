@@ -129,4 +129,3 @@ __all__ = [
     "DesktopToolHandler",
     "register_desktop_tools",
 ]
-

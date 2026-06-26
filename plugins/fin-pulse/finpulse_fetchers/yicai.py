@@ -65,10 +65,7 @@ def _parse_latest(data: Any) -> list[NormalizedItem]:
             continue
 
         summary = (
-            item.get("NewsContent")
-            or item.get("newcontent")
-            or item.get("NewsNotes")
-            or ""
+            item.get("NewsContent") or item.get("newcontent") or item.get("NewsNotes") or ""
         ).strip()
         pub = _parse_yicai_date(item)
 

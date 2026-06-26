@@ -115,7 +115,13 @@ class TestSrtGeneration:
         assert "00:00:05,000 --> 00:00:08,000" in srt
 
 
-def _make_test_wav(path: str, duration_sec: float = 1.0, freq: float = 440.0, sr: int = 16000, amplitude: float = 0.5):
+def _make_test_wav(
+    path: str,
+    duration_sec: float = 1.0,
+    freq: float = 440.0,
+    sr: int = 16000,
+    amplitude: float = 0.5,
+):
     """Create a test WAV file with a sine wave."""
     n_samples = int(sr * duration_sec)
     with wave.open(path, "wb") as wf:

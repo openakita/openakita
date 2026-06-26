@@ -5,7 +5,6 @@ export { ThinkingBlock, ToolCallDetail, ToolCallsGroup, ThinkingChain } from "./
 export { FloatingPlanBar } from "./FloatingPlanBar";
 export { PlanApprovalPanel } from "./PlanApprovalPanel";
 export { AskUserBlock } from "./AskUser";
-export { ArtifactList } from "./Artifacts";
 export { SlashCommandPanel } from "./SlashCommandPanel";
 export { RenderIcon, SubAgentCards } from "./SubAgentCards";
 export { SecurityConfirmModal } from "./SecurityConfirmModal";

@@ -93,9 +93,7 @@ class TestSchema:
         assert "origin_plugin_id" in cols
         assert "origin_task_id" in cols
 
-    def test_assets_bus_has_v2_required_columns(
-        self, tm: MediaPostTaskManager
-    ) -> None:
+    def test_assets_bus_has_v2_required_columns(self, tm: MediaPostTaskManager) -> None:
         # The §8 schema reservation is checked here so v2.0 doesn't have to
         # add columns + run a migration.
         async def _columns():
@@ -115,9 +113,7 @@ class TestSchema:
         ):
             assert required in cols, f"assets_bus column {required!r} missing"
 
-    def test_assets_bus_count_zero_after_init(
-        self, tm: MediaPostTaskManager
-    ) -> None:
+    def test_assets_bus_count_zero_after_init(self, tm: MediaPostTaskManager) -> None:
         # Red-line §3.3: pipeline never writes to assets_bus in v1.0.
         assert _run(tm.assets_bus_count()) == 0
 
@@ -181,9 +177,7 @@ class TestTaskCrud:
         assert again is not None
         assert again["id"] == task["id"]
 
-    def test_update_task_with_aliased_json_columns(
-        self, tm: MediaPostTaskManager
-    ) -> None:
+    def test_update_task_with_aliased_json_columns(self, tm: MediaPostTaskManager) -> None:
         task = _run(tm.create_task(mode="seo_pack"))
         _run(
             tm.update_task(
@@ -201,16 +195,12 @@ class TestTaskCrud:
         assert refreshed["result_summary"]["platforms"] == 5
         assert refreshed["cost_actual"] == 0.025
 
-    def test_update_task_rejects_unknown_column(
-        self, tm: MediaPostTaskManager
-    ) -> None:
+    def test_update_task_rejects_unknown_column(self, tm: MediaPostTaskManager) -> None:
         task = _run(tm.create_task(mode="cover_pick"))
         with pytest.raises(ValueError, match="not whitelisted"):
             _run(tm.update_task(task["id"], some_random_col="oops"))
 
-    def test_update_task_safe_swallows_errors(
-        self, tm: MediaPostTaskManager
-    ) -> None:
+    def test_update_task_safe_swallows_errors(self, tm: MediaPostTaskManager) -> None:
         task = _run(tm.create_task(mode="cover_pick"))
         # Must NOT raise even with an invalid column key.
         _run(tm.update_task_safe(task["id"], some_random_col="oops"))
@@ -229,9 +219,7 @@ class TestTaskCrud:
         assert only_seo["total"] == 1
         assert only_seo["tasks"][0]["mode"] == "seo_pack"
 
-    def test_get_running_tasks_filters_status(
-        self, tm: MediaPostTaskManager
-    ) -> None:
+    def test_get_running_tasks_filters_status(self, tm: MediaPostTaskManager) -> None:
         a = _run(tm.create_task(mode="cover_pick"))
         b = _run(tm.create_task(mode="cover_pick", status="running"))
         _run(tm.create_task(mode="cover_pick", status="completed"))
@@ -240,15 +228,9 @@ class TestTaskCrud:
         assert a["id"] in ids and b["id"] in ids
         assert len(running) == 2
 
-    def test_delete_task_cascades_results(
-        self, tm: MediaPostTaskManager
-    ) -> None:
+    def test_delete_task_cascades_results(self, tm: MediaPostTaskManager) -> None:
         task = _run(tm.create_task(mode="cover_pick"))
-        _run(
-            tm.insert_cover_result(
-                task_id=task["id"], rank=1, cover_path="/x.png"
-            )
-        )
+        _run(tm.insert_cover_result(task_id=task["id"], rank=1, cover_path="/x.png"))
         assert _run(tm.delete_task(task["id"])) is True
         results = _run(tm.list_cover_results(task["id"]))
         assert results == []
@@ -299,9 +281,7 @@ class TestPerModeResults:
         }
         assert results[0]["best_for"] == "thumbnail"
 
-    def test_recompose_outputs_serialise_trajectory(
-        self, tm: MediaPostTaskManager
-    ) -> None:
+    def test_recompose_outputs_serialise_trajectory(self, tm: MediaPostTaskManager) -> None:
         task = _run(tm.create_task(mode="multi_aspect"))
         trajectory = [(0.0, 540.0), (0.5, 545.2), (1.0, 555.7)]
         _run(
@@ -342,9 +322,7 @@ class TestPerModeResults:
         for r in rows:
             assert r["payload"]["title"].startswith("hello-")
 
-    def test_chapter_card_results_round_trip(
-        self, tm: MediaPostTaskManager
-    ) -> None:
+    def test_chapter_card_results_round_trip(self, tm: MediaPostTaskManager) -> None:
         task = _run(tm.create_task(mode="chapter_cards"))
         for i, title in enumerate(["intro", "body", "outro"]):
             _run(
@@ -370,9 +348,7 @@ class TestPerModeResults:
 
 
 class TestAssetsBusInvariants:
-    def test_assets_bus_count_remains_zero_after_workflow(
-        self, tm: MediaPostTaskManager
-    ) -> None:
+    def test_assets_bus_count_remains_zero_after_workflow(self, tm: MediaPostTaskManager) -> None:
         # Run a representative end-to-end CRUD across all 4 modes and
         # confirm assets_bus stays empty (no accidental write paths).
         for mode in ("cover_pick", "multi_aspect", "seo_pack", "chapter_cards"):
@@ -380,9 +356,7 @@ class TestAssetsBusInvariants:
             _run(tm.update_task(task["id"], status="completed"))
         assert _run(tm.assets_bus_count()) == 0
 
-    def test_get_asset_returns_none_for_missing_id(
-        self, tm: MediaPostTaskManager
-    ) -> None:
+    def test_get_asset_returns_none_for_missing_id(self, tm: MediaPostTaskManager) -> None:
         assert _run(tm.get_asset("nope")) is None
 
 

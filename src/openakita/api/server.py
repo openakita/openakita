@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 import openakita._ensure_utf8  # noqa: F401  # Windows UTF-8 编码保护
 
 from .auth import WebAccessConfig, create_auth_middleware
+from .middleware_setup_gate import create_setup_gate_middleware
 from .routes import (
     _orgs_v2_legacy_redirects,
     agents,
@@ -37,12 +38,14 @@ from .routes import (
     chat,
     chat_models,
     config,
+    diagnostics,
     feishu_onboard,
     files,
     health,
     hub,
     identity,
     im,
+    inbox,
     logs,
     mcp,
     memory,
@@ -55,6 +58,7 @@ from .routes import (
     scheduler,
     sessions,
     skill_categories,
+    skill_stats,
     skills,
     token_stats,
     upload,
@@ -84,8 +88,27 @@ from .routes import (
 
 logger = logging.getLogger(__name__)
 
-API_HOST = os.environ.get("API_HOST", "127.0.0.1")
+# Default port. The actual host is decided by
+# :func:`openakita.api.host_resolution.resolve_api_host` at startup and passed
+# into :func:`start_api_server` explicitly. Do not import a module-level
+# ``API_HOST`` constant — it was removed because it captured ``os.environ``
+# at import time, which is too early (``.env`` may not be loaded yet) and
+# made the resolution logic invisible to tests.
 API_PORT = int(os.environ.get("API_PORT", "18900"))
+
+
+def get_api_host_for_health_display(app_state: Any | None = None) -> str:
+    """Best-effort answer to "which host did we bind to?" for /api/health.
+
+    Prefers the value stored on FastAPI ``app.state.actual_bind_host`` (the
+    truth, set by :func:`start_api_server` after uvicorn binds), then falls
+    back to the ``API_HOST`` env var, finally to ``127.0.0.1``.
+    """
+    if app_state is not None:
+        actual = getattr(app_state, "actual_bind_host", None)
+        if isinstance(actual, str) and actual:
+            return actual
+    return os.environ.get("API_HOST", "").strip() or "127.0.0.1"
 
 
 def is_port_free(host: str, port: int) -> bool:
@@ -314,14 +337,101 @@ def _find_docs_dist() -> Path | None:
     return None
 
 
+def _docs_version_matches_bundled(bundled: Path, version_dir: Path) -> bool:
+    """Return True when the deployed docs look current enough to reuse."""
+    if not version_dir.is_dir():
+        return False
+
+    try:
+        bundled_files = {path.relative_to(bundled) for path in bundled.rglob("*") if path.is_file()}
+        deployed_files = {
+            path.relative_to(version_dir) for path in version_dir.rglob("*") if path.is_file()
+        }
+        if bundled_files != deployed_files:
+            return False
+
+        for relative_path in bundled_files:
+            source_path = bundled / relative_path
+            deployed_path = version_dir / relative_path
+            if not deployed_path.is_file():
+                return False
+            source_stat = source_path.stat()
+            deployed_stat = deployed_path.stat()
+            if source_stat.st_size != deployed_stat.st_size:
+                return False
+            if source_stat.st_mtime_ns == deployed_stat.st_mtime_ns:
+                continue
+            if source_path.read_bytes() != deployed_path.read_bytes():
+                return False
+
+        for relative_name in ("index.html", "hashmap.json", "versions.html"):
+            source_path = bundled / relative_name
+            deployed_path = version_dir / relative_name
+            if source_path.is_file():
+                if not deployed_path.is_file():
+                    return False
+                if source_path.read_bytes() != deployed_path.read_bytes():
+                    return False
+    except OSError:
+        return False
+
+    return True
+
+
+def _sync_docs_tree(bundled: Path, version_dir: Path) -> None:
+    import shutil
+
+    version_dir.mkdir(parents=True, exist_ok=True)
+    bundled_files: set[Path] = set()
+    bundled_dirs: set[Path] = set()
+
+    for source_path in bundled.rglob("*"):
+        relative_path = source_path.relative_to(bundled)
+        if source_path.is_dir():
+            bundled_dirs.add(relative_path)
+            (version_dir / relative_path).mkdir(parents=True, exist_ok=True)
+            continue
+        if source_path.is_file():
+            bundled_files.add(relative_path)
+            deployed_path = version_dir / relative_path
+            deployed_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, deployed_path)
+
+    deployed_files = [path for path in version_dir.rglob("*") if path.is_file()]
+    for deployed_path in deployed_files:
+        if deployed_path.relative_to(version_dir) not in bundled_files:
+            deployed_path.unlink()
+
+    deployed_dirs = sorted(
+        (path for path in version_dir.rglob("*") if path.is_dir()),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    )
+    for deployed_path in deployed_dirs:
+        if deployed_path.relative_to(version_dir) not in bundled_dirs:
+            deployed_path.rmdir()
+
+
+def _record_docs_version(docs_root: Path, version_clean: str) -> None:
+    import json
+
+    versions_file = docs_root / "versions.json"
+    try:
+        versions = json.loads(versions_file.read_text("utf-8")) if versions_file.exists() else []
+        if not isinstance(versions, list):
+            versions = []
+        if version_clean not in versions:
+            versions.insert(0, version_clean)
+            versions_file.write_text(json.dumps(versions, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Could not update docs versions index: {e}")
+
+
 def _deploy_docs(data_dir: Path, app_version: str) -> Path | None:
     """Deploy bundled docs to data/docs/v{version}/ and refresh same-version assets.
 
     Historical versions are never deleted so users can switch between them.
     """
-    import json
-    import shutil
-
     bundled = _find_docs_dist()
     if not bundled:
         return None
@@ -329,25 +439,23 @@ def _deploy_docs(data_dir: Path, app_version: str) -> Path | None:
     docs_root = data_dir / "docs"
     version_clean = app_version.split("+")[0]
     version_dir = docs_root / f"v{version_clean}"
-    tmp_dir = docs_root / f".v{version_clean}.tmp"
 
     docs_root.mkdir(parents=True, exist_ok=True)
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir)
-    shutil.copytree(bundled, tmp_dir)
-    if version_dir.exists():
-        shutil.rmtree(version_dir)
-    tmp_dir.replace(version_dir)
-    logger.info(f"Deployed user docs v{version_clean} → {version_dir}")
+    if _docs_version_matches_bundled(bundled, version_dir):
+        _record_docs_version(docs_root, version_clean)
+        return docs_root
 
-    versions_file = docs_root / "versions.json"
     try:
-        versions = json.loads(versions_file.read_text("utf-8")) if versions_file.exists() else []
-    except Exception:
-        versions = []
-    if version_clean not in versions:
-        versions.insert(0, version_clean)
-        versions_file.write_text(json.dumps(versions, indent=2), encoding="utf-8")
+        _sync_docs_tree(bundled, version_dir)
+    except Exception as e:
+        logger.warning(f"Could not deploy user docs v{version_clean}: {e}")
+        if version_dir.exists():
+            _record_docs_version(docs_root, version_clean)
+            return docs_root
+        return None
+
+    logger.info(f"Deployed user docs v{version_clean} → {version_dir}")
+    _record_docs_version(docs_root, version_clean)
 
     return docs_root
 
@@ -430,6 +538,143 @@ def _build_on_stop_org_cancel_inflight_handler(
     return _on_stop_org_cancel_inflight
 
 
+def _has_web_frontend_mount(app: FastAPI) -> bool:
+    return any(getattr(route, "name", None) == "web-frontend" for route in app.routes)
+
+
+def _attach_agent_to_app(app: FastAPI, agent: Any) -> None:
+    app.state.agent = agent
+
+    pm = getattr(agent, "_plugin_manager", None)
+    if pm is None:
+        return
+
+    # Writes go to the shared backing dict; ``_host_refs`` is a filtered
+    # read-only view for plugins (no ``__setitem__`` / ``pop``).
+    ext = pm._external_host_refs
+    ext["api_app"] = app
+    pending = ext.pop("_pending_plugin_routers", [])
+    for plugin_id, router in pending:
+        try:
+            # F-2 §B: third-party plugin endpoints are excluded from the public
+            # OpenAPI schema so a single plugin's broken return-type annotation
+            # cannot 500 /openapi.json (Pydantic >=2.12 walks ForwardRefs inside
+            # register-factory closures), and because plugin endpoints are not a
+            # stable public API contract -- the frontend always reaches them via
+            # explicit /api/plugins/{id}/... URLs, never via OpenAPI codegen.
+            app.include_router(
+                router,
+                prefix=f"/api/plugins/{plugin_id}",
+                include_in_schema=False,
+            )
+            logger.info("Mounted pending plugin routes for '%s'", plugin_id)
+        except Exception as e:
+            logger.warning("Failed to mount pending routes for plugin '%s': %s", plugin_id, e)
+
+    pending_ui = ext.pop("_pending_plugin_ui_mounts", [])
+    for plugin_id, ui_dist_dir in pending_ui:
+        try:
+            pm._do_mount_plugin_ui(app, plugin_id, ui_dist_dir)
+        except Exception as e:
+            logger.warning("Failed to mount pending UI for plugin '%s': %s", plugin_id, e)
+
+
+def _startup_health_check_clients(app_state: Any) -> tuple[Any | None, Any | None, Any | None]:
+    _agent = getattr(app_state, "agent", None)
+    _brain = getattr(_agent, "brain", None) if _agent else None
+    _llm_client = getattr(_brain, "_llm_client", None) if _brain else None
+    _compiler_client = getattr(_brain, "_compiler_client", None) if _brain else None
+
+    if not (_llm_client and hasattr(_llm_client, "startup_health_check")):
+        _llm_client = None
+    if not (_compiler_client and hasattr(_compiler_client, "startup_health_check")):
+        _compiler_client = None
+
+    return _brain, _llm_client, _compiler_client
+
+
+async def _run_startup_llm_health_checks(app_state: Any) -> None:
+    try:
+        _brain, _llm_client, _compiler_client = _startup_health_check_clients(app_state)
+    except Exception as e:
+        logger.debug(f"[Startup] Endpoint health check skipped: {e}")
+        return
+
+    # Endpoint health check: detect stale/broken endpoints early.
+    try:
+        if _llm_client:
+            _results = await _llm_client.startup_health_check()
+            _ok = sum(1 for v in _results.values() if v == "ok")
+            _fail = len(_results) - _ok
+            if _fail:
+                logger.warning(
+                    f"[Startup] Endpoint health check: {_ok} ok, {_fail} failed — "
+                    f"{', '.join(f'{k}={v}' for k, v in _results.items() if v != 'ok')}"
+                )
+            else:
+                logger.info(f"[Startup] All {_ok} endpoints healthy")
+    except Exception as e:
+        logger.debug(f"[Startup] Endpoint health check skipped: {e}")
+
+    # Compiler endpoint health check.
+    try:
+        if _compiler_client:
+            comp_result = await _compiler_client.startup_health_check()
+            comp_failed = {k: v for k, v in comp_result.items() if v != "ok"}
+            if comp_failed:
+                for ep_name, status in comp_failed.items():
+                    _brain._compiler_on_failure(f"startup: {ep_name}={status}")
+                logger.warning(
+                    f"[Startup] Compiler health check failed: "
+                    f"{', '.join(f'{k}={v}' for k, v in comp_failed.items())}. "
+                    f"Compiler tasks will use main model."
+                )
+            else:
+                logger.info(f"[Startup] Compiler endpoints all healthy: {list(comp_result.keys())}")
+    except Exception as e:
+        logger.debug(f"[Startup] Compiler health check skipped: {e}")
+
+
+def _schedule_startup_llm_health_check(app_state: Any) -> asyncio.Task[None] | None:
+    existing = getattr(app_state, "llm_startup_health_check_task", None)
+    if existing is not None and not existing.done():
+        return existing
+
+    try:
+        _, _llm_client, _compiler_client = _startup_health_check_clients(app_state)
+    except Exception as e:
+        logger.debug(f"[Startup] Endpoint health check skipped: {e}")
+        app_state.llm_startup_health_check_task = None
+        return None
+
+    if _llm_client is None and _compiler_client is None:
+        app_state.llm_startup_health_check_task = None
+        return None
+
+    task = asyncio.create_task(
+        _run_startup_llm_health_checks(app_state),
+        name="openakita-startup-llm-health-check",
+    )
+    app_state.llm_startup_health_check_task = task
+    logger.info("[Startup] LLM endpoint health check scheduled in background")
+    return task
+
+
+async def _cancel_startup_llm_health_check(app_state: Any) -> None:
+    task = getattr(app_state, "llm_startup_health_check_task", None)
+    if task is None or task.done():
+        app_state.llm_startup_health_check_task = None
+        return
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        logger.debug("[Shutdown] Startup LLM health check cancelled")
+    finally:
+        app_state.llm_startup_health_check_task = None
+
+
 def create_app(
     agent: Any = None,
     shutdown_event: asyncio.Event | None = None,
@@ -456,6 +701,7 @@ def create_app(
         {"name": "身份", "description": "AI 身份定义文件管理"},
         {"name": "定时任务", "description": "计划任务调度"},
         {"name": "即时通讯", "description": "IM 渠道与消息"},
+        {"name": "站内信", "description": "客户端站内信、升级公告与未读状态"},
         {"name": "Hub", "description": "Agent/Skill 导入导出与市场"},
         {"name": "工作区", "description": "备份、导入导出"},
         {"name": "健康检查", "description": "服务健康、诊断、调试"},
@@ -507,6 +753,14 @@ def create_app(
     auth_mw = create_auth_middleware(web_access_config)
     app.middleware("http")(auth_mw)
 
+    # Setup gate runs **before** the auth middleware on the inbound side
+    # (FastAPI middleware is LIFO: added later = executed earlier). It
+    # short-circuits non-loopback requests with HTTP 428 when the web-access
+    # password has not been configured yet, so the frontend can route the
+    # user to the SetupView before any 401 noise.
+    setup_gate_mw = create_setup_gate_middleware(web_access_config)
+    app.middleware("http")(setup_gate_mw)
+
     # CORS configuration (outermost middleware — added last)
     # NOTE: allow_origins=["*"] is incompatible with allow_credentials=True per
     # the browser spec.  When no explicit origins are configured we fall back to
@@ -546,46 +800,7 @@ def create_app(
     }
 
     if agent is not None:
-        pm = getattr(agent, "_plugin_manager", None)
-        if pm is not None:
-            # Writes go to the shared backing dict; ``_host_refs`` is a filtered
-            # read-only view for plugins (no ``__setitem__`` / ``pop``).
-            ext = pm._external_host_refs
-            ext["api_app"] = app
-            pending = ext.pop("_pending_plugin_routers", [])
-            for plugin_id, router in pending:
-                try:
-                    # F-2 §B: third-party plugin endpoints are excluded
-                    # from the public OpenAPI schema. Two reasons:
-                    #   1. /openapi.json must not 500 because of a single
-                    #      plugin's broken return-type annotation
-                    #      (Pydantic >=2.12 raises PydanticUserError when
-                    #      walking ForwardRef('FileResponse') / similar
-                    #      annotations defined inside register-factory
-                    #      closures; see tmp_p10/_f2_repro.py).
-                    #   2. Plugin endpoints are not a stable public API
-                    #      contract -- the frontend always reaches them
-                    #      via explicit /api/plugins/{id}/... URLs, never
-                    #      via OpenAPI-derived codegen.
-                    # Plugin admin/control-plane routes mounted earlier
-                    # via plugins_routes.router stay in the schema.
-                    app.include_router(
-                        router,
-                        prefix=f"/api/plugins/{plugin_id}",
-                        include_in_schema=False,
-                    )
-                    logger.info("Mounted pending plugin routes for '%s'", plugin_id)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to mount pending routes for plugin '%s': %s", plugin_id, e
-                    )
-
-            pending_ui = ext.pop("_pending_plugin_ui_mounts", [])
-            for plugin_id, ui_dist_dir in pending_ui:
-                try:
-                    pm._do_mount_plugin_ui(app, plugin_id, ui_dist_dir)
-                except Exception as e:
-                    logger.warning("Failed to mount pending UI for plugin '%s': %s", plugin_id, e)
+        _attach_agent_to_app(app, agent)
 
     # Initialize OrgManager & OrgRuntime
     from openakita.orgs._default_agent_builder import DefaultAgentBuilder
@@ -869,6 +1084,7 @@ def create_app(
     app.include_router(chat.router, tags=["对话"])
     app.include_router(chat_models.router, tags=["模型"])
     app.include_router(config.router, tags=["配置"])
+    app.include_router(diagnostics.router, tags=["诊断"])
     app.include_router(feishu_onboard.router, tags=["飞书扫码"])
     app.include_router(qqbot_onboard.router, tags=["QQ扫码"])
     app.include_router(wechat_onboard.router, tags=["微信扫码"])
@@ -876,6 +1092,7 @@ def create_app(
     app.include_router(files.router, tags=["文件"])
     app.include_router(health.router, tags=["健康检查"])
     app.include_router(im.router, tags=["即时通讯"])
+    app.include_router(inbox.router, tags=["站内信"])
     app.include_router(logs.router, tags=["日志"])
     app.include_router(mcp.router, tags=["MCP"])
     app.include_router(memory.router, tags=["记忆"])
@@ -885,6 +1102,7 @@ def create_app(
     app.include_router(sessions.router, tags=["会话"])
     app.include_router(skills.router, tags=["技能"])
     app.include_router(skill_categories.router, tags=["技能分类"])
+    app.include_router(skill_stats.router, tags=["统计"])
     app.include_router(token_stats.router, tags=["统计"])
     app.include_router(upload.router, tags=["文件"])
     app.include_router(web_search_routes.router)
@@ -931,7 +1149,7 @@ def create_app(
     async def root():
         # If web frontend is available, redirect to it
         web_dist = _find_web_dist()
-        if web_dist:
+        if web_dist or _has_web_frontend_mount(app):
             from fastapi.responses import RedirectResponse
 
             return RedirectResponse(url="/web/")
@@ -1042,6 +1260,20 @@ def create_app(
             logger.debug("[Startup] Memory recovery pending cleanup skipped: %s", e)
 
     @app.on_event("startup")
+    async def _cleanup_expired_resume_state():
+        """Issue #608: drop crash-leftover cancel-resume snapshots in
+        ``data/working_messages/`` so a process that died mid-turn doesn't
+        keep re-injecting yesterday's half-finished tool state on resume."""
+        try:
+            from openakita.core.cancel_cleanup import cleanup_expired_working_messages
+
+            removed = await asyncio.to_thread(cleanup_expired_working_messages, base_dir=data_dir)
+            if removed:
+                logger.info("[Startup] Removed %d expired cancel-resume snapshot(s)", removed)
+        except Exception as e:
+            logger.debug("[Startup] Cancel-resume snapshot cleanup skipped: %s", e)
+
+    @app.on_event("startup")
     async def _wire_pending_approvals_sse():
         """C9c-2: bridge PendingApprovalsStore events to WebSocket broadcast.
 
@@ -1129,6 +1361,26 @@ def create_app(
         return {"status": "error", "message": "shutdown not available in this mode"}
 
     @app.on_event("startup")
+    async def _start_inbox_service():
+        try:
+            from openakita.config import settings
+            from openakita.inbox import get_inbox_service
+
+            if settings.inbox_enabled:
+                await get_inbox_service().start()
+        except Exception as e:
+            logger.warning("[Startup] Inbox service startup skipped: %s", e)
+
+    @app.on_event("shutdown")
+    async def _stop_inbox_service():
+        try:
+            from openakita.inbox import get_inbox_service
+
+            await get_inbox_service().stop()
+        except Exception as e:
+            logger.debug("[Shutdown] Inbox service stop skipped: %s", e)
+
+    @app.on_event("startup")
     async def _startup_org_runtime():
         loop = asyncio.get_running_loop()
         loop.slow_callback_duration = 0.5
@@ -1167,47 +1419,7 @@ def create_app(
         # reconcile loop above only reconciles bookkeeping; it does
         # not perform any wall-clock termination.
 
-        # Endpoint health check: detect stale/broken endpoints early
-        try:
-            _agent = getattr(app.state, "agent", None)
-            _brain = getattr(_agent, "brain", None) if _agent else None
-            _llm_client = getattr(_brain, "_llm_client", None) if _brain else None
-            if _llm_client and hasattr(_llm_client, "startup_health_check"):
-                _results = await _llm_client.startup_health_check()
-                _ok = sum(1 for v in _results.values() if v == "ok")
-                _fail = len(_results) - _ok
-                if _fail:
-                    logger.warning(
-                        f"[Startup] Endpoint health check: {_ok} ok, {_fail} failed — "
-                        f"{', '.join(f'{k}={v}' for k, v in _results.items() if v != 'ok')}"
-                    )
-                else:
-                    logger.info(f"[Startup] All {_ok} endpoints healthy")
-        except Exception as e:
-            logger.debug(f"[Startup] Endpoint health check skipped: {e}")
-
-        # Compiler endpoint health check
-        try:
-            _agent = getattr(app.state, "agent", None)
-            _brain = getattr(_agent, "brain", None) if _agent else None
-            _compiler_client = getattr(_brain, "_compiler_client", None) if _brain else None
-            if _compiler_client and hasattr(_compiler_client, "startup_health_check"):
-                comp_result = await _compiler_client.startup_health_check()
-                comp_failed = {k: v for k, v in comp_result.items() if v != "ok"}
-                if comp_failed:
-                    for ep_name, status in comp_failed.items():
-                        _brain._compiler_on_failure(f"startup: {ep_name}={status}")
-                    logger.warning(
-                        f"[Startup] Compiler health check failed: "
-                        f"{', '.join(f'{k}={v}' for k, v in comp_failed.items())}. "
-                        f"Compiler tasks will use main model."
-                    )
-                else:
-                    logger.info(
-                        f"[Startup] Compiler endpoints all healthy: {list(comp_result.keys())}"
-                    )
-        except Exception as e:
-            logger.debug(f"[Startup] Compiler health check skipped: {e}")
+        _schedule_startup_llm_health_check(app.state)
 
     @app.on_event("shutdown")
     async def _shutdown_org_runtime():
@@ -1273,6 +1485,10 @@ def create_app(
                 )
             except Exception as e:
                 logger.warning(f"OrgRuntime shutdown error: {e}")
+
+    @app.on_event("shutdown")
+    async def _shutdown_startup_llm_health_check():
+        await _cancel_startup_llm_health_check(app.state)
 
     @app.on_event("shutdown")
     async def _shutdown_policy_hot_reloader():
@@ -1587,7 +1803,7 @@ async def start_api_server(
     gateway: Any = None,
     orchestrator: Any = None,
     agent_pool: Any = None,
-    host: str = API_HOST,
+    host: str = "127.0.0.1",
     port: int = API_PORT,
     max_retries: int = 5,
 ) -> asyncio.Task:
@@ -1631,6 +1847,8 @@ async def start_api_server(
         agent_pool=agent_pool,
     )
     app.state.engine_loop = engine_loop
+    app.state.actual_bind_host = host
+    app.state.actual_bind_port = port
 
     # Sprint 15 / v32 Phase B Task C hypothesis fix (forensics in
     # ``_v32_biz/_phase_b_hang_rca.md``): uvicorn's default
@@ -1793,7 +2011,7 @@ def _refresh_node_tool_host(app: FastAPI) -> None:
 
 def update_agent(app: FastAPI, agent: Any) -> None:
     """Update the agent reference in the running app (e.g. after initialization)."""
-    app.state.agent = agent
+    _attach_agent_to_app(app, agent)
     # Sprint-6 P0-1: rebind the orgs_v2 NodeToolHost to the new agent
     # so any subsequent node activation sees the populated registry.
     _refresh_node_tool_host(app)
@@ -1820,13 +2038,16 @@ def update_runtime_refs(
     if app is None:
         return False
     if agent is not None:
-        app.state.agent = agent
+        _attach_agent_to_app(app, agent)
         # Sprint-6 P0-1: rebind the orgs_v2 NodeToolHost so the next
         # node activation picks up the freshly-installed agent's
         # populated handler registry instead of the empty global.
         _refresh_node_tool_host(app)
     if session_manager is not None:
         app.state.session_manager = session_manager
+        org_command_service = getattr(app.state, "org_command_service", None)
+        if org_command_service is not None and hasattr(org_command_service, "_session_manager"):
+            org_command_service._session_manager = session_manager
     if gateway is not None:
         app.state.gateway = gateway
     if orchestrator is not None:

@@ -770,4 +770,3 @@ __all__ = [
     "InstallMethod",
     "SystemDepsManager",
 ]
-

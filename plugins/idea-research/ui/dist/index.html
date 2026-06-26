@@ -9,9 +9,9 @@
   <script src="./_assets/icons.js"></script>
   <script src="./_assets/markdown-mini.js"></script>
   <script src="./_assets/bootstrap.js"></script>
-  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+  <script src="./_assets/vendor/react.production.min.js"></script>
+  <script src="./_assets/vendor/react-dom.production.min.js"></script>
+  <script src="./_assets/vendor/babel.min.js"></script>
 </head>
 <body>
   <div id="root">
@@ -19,6 +19,42 @@
       <p style="color:#64748b">Loading workbench…</p>
     </main>
   </div>
+
+  <script>
+  (function () {
+    function renderBootMessage(kind, detail) {
+      var root = document.getElementById("root");
+      if (!root) return;
+      root.innerHTML =
+        '<main class="placeholder" style="text-align:center;padding:80px 24px">' +
+        '<p style="color:#b91c1c;white-space:pre-wrap">' + kind + ': ' + String(detail || 'unknown') + '</p>' +
+        '</main>';
+    }
+
+    window.addEventListener("error", function (event) {
+      renderBootMessage("BOOT ERROR", event && event.message);
+    });
+
+    window.addEventListener("unhandledrejection", function (event) {
+      var reason = event && event.reason;
+      renderBootMessage("BOOT REJECTION", reason && reason.message ? reason.message : reason);
+    });
+
+    window.setTimeout(function () {
+      var root = document.getElementById("root");
+      if (!root) return;
+      if (root.textContent && root.textContent.indexOf("Loading workbench") === -1) return;
+      var missing = [];
+      if (!window.React) missing.push("React");
+      if (!window.ReactDOM) missing.push("ReactDOM");
+      if (!window.Babel) missing.push("Babel");
+      if (!window.OpenAkita || !window.OpenAkita.idea_research) missing.push("OpenAkita.idea_research");
+      if (missing.length) {
+        renderBootMessage("BOOT BLOCKED", 'missing ' + missing.join(', '));
+      }
+    }, 4000);
+  })();
+  </script>
 
   <script type="text/babel" data-presets="env,react">
 /* eslint-disable */
@@ -50,11 +86,11 @@ const PLATFORMS = [
 ];
 
 const COOKIES_PLATFORMS = [
-  { id: "douyin",   label_zh: "抖音", label_en: "Douyin", site_url: "https://www.douyin.com/" },
-  { id: "xhs",      label_zh: "小红书", label_en: "Xiaohongshu", site_url: "https://www.xiaohongshu.com/explore" },
-  { id: "ks",       label_zh: "快手", label_en: "Kuaishou", site_url: "https://www.kuaishou.com/" },
-  { id: "bilibili", label_zh: "B 站登录态", label_en: "Bilibili login", site_url: "https://www.bilibili.com/" },
-  { id: "weibo",    label_zh: "微博", label_en: "Weibo", site_url: "https://weibo.com/" },
+  { id: "douyin",   label_zh: "抖音", label_en: "Douyin", site_url: "https://www.douyin.com/", required_keys: ["sessionid_ss", "s_v_web_id", "ttwid"] },
+  { id: "xhs",      label_zh: "小红书", label_en: "Xiaohongshu", site_url: "https://www.xiaohongshu.com/explore", required_keys: ["web_session", "xsecappid", "a1"] },
+  { id: "ks",       label_zh: "快手", label_en: "Kuaishou", site_url: "https://www.kuaishou.com/", required_keys: [] },
+  { id: "bilibili", label_zh: "B 站登录态", label_en: "Bilibili login", site_url: "https://www.bilibili.com/", required_keys: ["SESSDATA", "bili_jct", "DedeUserID"] },
+  { id: "weibo",    label_zh: "微博", label_en: "Weibo", site_url: "https://weibo.com/", required_keys: ["SUB", "SUBP"] },
 ];
 
 const COOKIE_EDITOR_URL = "https://microsoftedge.microsoft.com/addons/detail/cookieeditor/neaplmfkghagebokkhpjpoebhdledlfi";
@@ -117,6 +153,17 @@ function safeJSON(s, fallback) {
 }
 
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
+
+function normalizeCoverUrl(url) {
+  if (typeof url !== "string") return "";
+  const value = url.trim();
+  if (!value) return "";
+  if (value.startsWith("//")) return "https:" + value;
+  if (value.startsWith("http://i") && value.includes(".hdslb.com/")) {
+    return "https://" + value.slice("http://".length);
+  }
+  return value;
+}
 
 function debounceWith(ref, ms, fn) {
   if (ref.current) clearTimeout(ref.current);
@@ -513,6 +560,10 @@ function LeftPanel({ draft, setDraft, onCreateRadar, onCreateBreakdown, onCreate
 
 const PAGE_SIZE = 30;
 
+function isItemSaved(item) {
+  return item && (item.saved === 1 || item.saved === true || item.saved === "1");
+}
+
 function useVirtualSlice(items) {
   const [count, setCount] = useState(PAGE_SIZE);
   const sentinel = useRef(null);
@@ -527,7 +578,7 @@ function useVirtualSlice(items) {
   return { slice: items.slice(0, count), sentinel, hasMore: count < items.length };
 }
 
-function StreamStatus({ items, fetchedAt, loading, onRefresh, engines }) {
+function StreamStatus({ items, fetchedAt, loading, onRefresh, engines, viewMode, onViewModeChange }) {
   if (loading) {
     return (
       <div className="ir-stream__status">
@@ -535,18 +586,27 @@ function StreamStatus({ items, fetchedAt, loading, onRefresh, engines }) {
       </div>
     );
   }
+  const statusText = viewMode === "saved"
+    ? t("rp_saved_status", { n: items.length })
+    : t("rp_status", { ago: formatRelative(fetchedAt), n: items.length, engines });
   return (
     <div className="ir-stream__status">
-      {t("rp_status", { ago: formatRelative(fetchedAt), n: items.length, engines })}
+      <div className="ir-segment ir-stream__view">
+        <button type="button" className="ir-segment__btn" aria-pressed={viewMode === "feed"} onClick={() => onViewModeChange("feed")}>{t("rp_view_feed")}</button>
+        <button type="button" className="ir-segment__btn" aria-pressed={viewMode === "saved"} onClick={() => onViewModeChange("saved")}>{t("rp_view_saved")}</button>
+      </div>
+      <span className="ir-stream__status-text">{statusText}</span>
       <button className="ir-btn ir-btn--xs" onClick={onRefresh}><Icon name="refresh" w={12} h={12} /> {t("lp_refresh_now")}</button>
     </div>
   );
 }
 
-function RecommendationCard({ item, expanded, onExpand, onCollapse, onHandoff, onSave, onRemix }) {
+function RecommendationCard({ item, expanded, onExpand, onCollapse, onSave, onRemix }) {
+  const coverUrl = normalizeCoverUrl(item.cover_url);
+  const saved = isItemSaved(item);
   return (
     <div className="ir-rec-card">
-      <img className="ir-rec-card__cover" src={item.cover_url || ""} alt="" loading="lazy" onError={e => { e.currentTarget.style.background = "var(--ir-bg)"; e.currentTarget.removeAttribute("src"); }} />
+      <img className="ir-rec-card__cover" src={coverUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={e => { e.currentTarget.style.background = "var(--ir-bg)"; e.currentTarget.removeAttribute("src"); }} />
       <div className="ir-rec-card__main">
         <div className="ir-rec-card__title">{item.title || "(no title)"}</div>
         <div className="ir-rec-card__meta">
@@ -562,8 +622,9 @@ function RecommendationCard({ item, expanded, onExpand, onCollapse, onHandoff, o
           {expanded
             ? <button className="ir-btn ir-btn--xs" onClick={onCollapse}>{t("rp_btn_close")}</button>
             : <button className="ir-btn ir-btn--xs ir-btn--primary" onClick={onExpand}><Icon name="eye" w={12} h={12} /> {t("rp_btn_expand")}</button>}
-          <button className="ir-btn ir-btn--xs" onClick={onHandoff}><Icon name="handoff" w={12} h={12} /> {t("rp_btn_handoff")}</button>
-          <button className="ir-btn ir-btn--xs" onClick={onSave}><Icon name="save" w={12} h={12} /> {t("rp_btn_save")}</button>
+          <button className={"ir-btn ir-btn--xs" + (saved ? " ir-btn--primary" : "")} onClick={onSave} data-saved={saved ? "true" : "false"}>
+            <Icon name="save" w={12} h={12} /> {saved ? t("rp_btn_unsave") : t("rp_btn_save")}
+          </button>
           <button className="ir-btn ir-btn--xs" onClick={onRemix}><Icon name="script" w={12} h={12} /> {t("rp_btn_remix")}</button>
         </div>
       </div>
@@ -574,8 +635,14 @@ function RecommendationCard({ item, expanded, onExpand, onCollapse, onHandoff, o
 function TranscriptViewer({ data }) {
   if (!data) return <p className="ir-empty">{t("bd_no_transcript")}</p>;
   if (typeof data === "string") return <pre className="ir-transcript">{data}</pre>;
+  if (data.message && data.error_kind) return <p className="ir-empty">{data.message}</p>;
   const segs = data.segments || [];
-  if (!segs.length) return <p className="ir-empty">{t("bd_no_transcript")}</p>;
+  if (!segs.length) {
+    const text = String(data.text || "").trim();
+    if (text) return <pre className="ir-transcript">{text}</pre>;
+    if (data.message) return <p className="ir-empty">{data.message}</p>;
+    return <p className="ir-empty">{t("bd_no_transcript")}</p>;
+  }
   return (
     <div className="ir-transcript">
       {segs.map((s, i) => (
@@ -616,26 +683,57 @@ function KeywordsCloud({ keywords }) {
   );
 }
 
+function normalizeStringList(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value.map(v => String(v)).filter(Boolean);
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text ? text.split(/\s+/).filter(Boolean) : [];
+  }
+  return [];
+}
+
+function formatCommentListItem(item) {
+  if (item == null) return "";
+  if (typeof item === "string" || typeof item === "number") return String(item);
+  if (typeof item === "object") {
+    if (item.emotion != null) {
+      const ratio = item.ratio != null ? ` (${Math.round(Number(item.ratio) * 100)}%)` : "";
+      const ex = Array.isArray(item.examples) && item.examples.length
+        ? " — " + item.examples.slice(0, 2).map(x => String(x)).join("；")
+        : "";
+      return String(item.emotion) + ratio + ex;
+    }
+    return item.text || item.question || item.edge || JSON.stringify(item);
+  }
+  return String(item);
+}
+
 function CommentsSummary({ summary }) {
   if (!summary) return <p className="ir-empty">{t("bd_no_comments")}</p>;
+  const hasAnalysis = summary.top_emotions || summary.common_questions || summary.controversies;
+  if (!hasAnalysis && summary.message) {
+    return <p className="ir-empty">{String(summary.message)}</p>;
+  }
   return (
     <div className="ir-comments">
+      {summary.message && hasAnalysis && <p className="ir-muted">{String(summary.message)}</p>}
       {summary.top_emotions && (
         <>
           <h4>Top emotions</h4>
-          <ul>{summary.top_emotions.map((e, i) => <li key={i}>{e}</li>)}</ul>
+          <ul>{summary.top_emotions.map((e, i) => <li key={i}>{formatCommentListItem(e)}</li>)}</ul>
         </>
       )}
       {summary.common_questions && (
         <>
           <h4>Common questions</h4>
-          <ul>{summary.common_questions.map((e, i) => <li key={i}>{e}</li>)}</ul>
+          <ul>{summary.common_questions.map((e, i) => <li key={i}>{formatCommentListItem(e)}</li>)}</ul>
         </>
       )}
       {summary.controversies && (
         <>
           <h4>Controversies</h4>
-          <ul>{summary.controversies.map((e, i) => <li key={i}>{e}</li>)}</ul>
+          <ul>{summary.controversies.map((e, i) => <li key={i}>{formatCommentListItem(e)}</li>)}</ul>
         </>
       )}
     </div>
@@ -651,9 +749,236 @@ function MdrmWriteStatus({ writes }) {
   );
 }
 
+function AnalysisList({ title, items }) {
+  return (
+    <details open>
+      <summary><strong>{title}</strong></summary>
+      {items && items.length
+        ? <ul>{items.map((item, i) => {
+            if (item && typeof item === "object") {
+              const edge = item.edge || item.text || JSON.stringify(item);
+              const url = item.url ? ` (${item.url})` : "";
+              return <li key={i}>{edge}{url}</li>;
+            }
+            return <li key={i}>{String(item)}</li>;
+          })}</ul>
+        : <p className="ir-empty">{t("empty_default")}</p>}
+    </details>
+  );
+}
+
+function CompareAccountsDetail({ output }) {
+  if (!output) return <p className="ir-empty">{t("empty_default")}</p>;
+  const analysis = output.analysis || {};
+  const accounts = output.accounts || [];
+  return (
+    <div className="ir-drawer__grid">
+      <AnalysisList title={t("cmp_common_traits")} items={analysis.common_traits} />
+      <AnalysisList title={t("cmp_differentiators")} items={analysis.differentiators} />
+      <AnalysisList title={t("cmp_gaps")} items={analysis.gaps} />
+      <AnalysisList title={t("cmp_recommendations")} items={analysis.recommendations} />
+      <details>
+        <summary><strong>{t("cmp_section_accounts")}</strong></summary>
+        <ul>
+          {(accounts || []).map((acc, i) => {
+            if (!acc || typeof acc !== "object") return null;
+            const creator = acc.creator || {};
+            const label = acc.error_kind
+              ? `${acc.url || ""} · ${acc.error_kind}: ${acc.message || ""}`
+              : `${acc.url || ""} · ${acc.platform || ""} · ${(acc.videos || []).length} videos`
+                + (creator.name ? ` · ${creator.name}` : "");
+            return <li key={i}>{label}</li>;
+          })}
+        </ul>
+      </details>
+    </div>
+  );
+}
+
+function ScriptRemixVariant({ variant, index }) {
+  if (!variant || typeof variant !== "object") return null;
+  const title = variant.title || `${t("sr_variant")} ${index}`;
+  const hook = variant.hook_line || variant.hook || variant.opening || "";
+  const body = variant.body_outline;
+  const legacyBody = variant.body || variant.script || "";
+  const cta = variant.cta_line || variant.cta || "";
+  const hasBody = (Array.isArray(body) && body.length)
+    || (typeof body === "string" && body.trim() && body.trim().indexOf(":[") !== 0)
+    || legacyBody;
+  if (!hook && !hasBody && !cta) {
+    return (
+      <article className="ir-script-variant">
+        <h4>{index}. {title}</h4>
+        <p className="ir-empty">{t("sr_empty")}</p>
+      </article>
+    );
+  }
+  const tags = normalizeStringList(variant.hashtags ?? variant.tags);
+  const thumb = variant.thumbnail_prompt || variant.cover || "";
+  return (
+    <article className="ir-script-variant">
+      <h4>{index}. {title}</h4>
+      {hook
+        ? <>
+            <p className="ir-script-variant__label">{t("sr_hook")}</p>
+            <blockquote className="ir-script-quote">{hook}</blockquote>
+          </>
+        : null}
+      {Array.isArray(body) && body.length
+        ? <>
+            <p className="ir-script-variant__label">{t("sr_storyboard")}</p>
+            <ol className="ir-script-storyboard">
+              {body.map((sec, i) => {
+                if (!sec || typeof sec !== "object") return null;
+                return (
+                  <li key={i}>
+                    <div className="ir-script-storyboard__head">
+                      <strong>{sec.section || t("sr_section", { n: i + 1 })}</strong>
+                      {sec.duration_s != null && <span className="ir-pill">{sec.duration_s}s</span>}
+                    </div>
+                    {sec.voiceover && <p><span className="ir-script-variant__tag">{t("sr_voiceover")}</span> {sec.voiceover}</p>}
+                    {sec.b_roll_hint && <p><span className="ir-script-variant__tag">{t("sr_visual")}</span> {sec.b_roll_hint}</p>}
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        : (typeof body === "string" && body.trim() && body.trim().indexOf(":[") !== 0)
+          ? <pre className="ir-transcript">{body.trim()}</pre>
+          : (legacyBody ? <pre className="ir-transcript">{String(legacyBody)}</pre> : null)}
+      {cta
+        ? <>
+            <p className="ir-script-variant__label">{t("sr_cta")}</p>
+            <blockquote className="ir-script-quote">{cta}</blockquote>
+          </>
+        : null}
+      {tags.length
+        ? <>
+            <p className="ir-script-variant__label">{t("sr_hashtags")}</p>
+            <p>{tags.map(tag => String(tag)).join(" ")}</p>
+          </>
+        : null}
+      {thumb
+        ? <>
+            <p className="ir-script-variant__label">{t("sr_thumbnail")}</p>
+            <p>{String(thumb)}</p>
+          </>
+        : null}
+    </article>
+  );
+}
+
+function normalizeScriptRemixVariants(raw) {
+  if (!Array.isArray(raw)) return [];
+  const headers = [];
+  const orphanSections = [];
+  const isSection = (item) => item && typeof item === "object"
+    && (item.section != null || item.voiceover != null || item.b_roll_hint != null)
+    && !(item.title || item.hook_line || item.hook || item.opening);
+  raw.forEach(item => {
+    if (!item || typeof item !== "object") return;
+    if (isSection(item)) orphanSections.push(item);
+    else headers.push(item);
+  });
+  if (!headers.length && orphanSections.length) {
+    return [{ title: t("sr_variant") + " 1", hook_line: "", body_outline: orphanSections }];
+  }
+  if (headers.length && orphanSections.length) {
+    const target = Object.assign({}, headers[headers.length - 1]);
+    let body = target.body_outline;
+    if (typeof body === "string" && body.trim().indexOf(":[") === 0) body = [];
+    if (!Array.isArray(body)) body = [];
+    target.body_outline = body.concat(orphanSections);
+    headers[headers.length - 1] = target;
+  }
+  return headers.map(h => {
+    const copy = Object.assign({}, h);
+    if (typeof copy.body_outline === "string" && copy.body_outline.trim().indexOf(":[") === 0) {
+      copy.body_outline = [];
+    }
+    return copy;
+  });
+}
+
+function ScriptRemixDetail({ output }) {
+  if (!output) return <p className="ir-empty">{t("empty_default")}</p>;
+  const variants = normalizeScriptRemixVariants(output.variants);
+  const source = output.source && typeof output.source === "object" ? output.source : {};
+  const inspirations = Array.isArray(output.mdrm_inspirations) ? output.mdrm_inspirations : [];
+  return (
+    <div className="ir-drawer__grid ir-script-detail">
+      {source.title && (
+        <details open>
+          <summary><strong>{t("sr_source")}</strong></summary>
+          <ul>
+            <li>{source.title}</li>
+            {source.platform && <li>{platformLabel(source.platform)}</li>}
+            {source.external_url && (
+              <li><a href={source.external_url} target="_blank" rel="noreferrer">{source.external_url}</a></li>
+            )}
+          </ul>
+        </details>
+      )}
+      {inspirations.length > 0 && (
+        <details>
+          <summary><strong>{t("sr_inspirations")}</strong></summary>
+          <ul>
+            {inspirations.map((insp, i) => (
+              <li key={i}>
+                {insp.hook_text || ""}
+                {insp.similarity != null ? ` (${Math.round(Number(insp.similarity) * 100)}%)` : ""}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <p className="ir-muted">{t("sr_variant_count", { n: variants.length })}</p>
+      {variants.map((v, i) => <ScriptRemixVariant key={i} variant={v} index={i + 1} />)}
+      {!variants.length && <p className="ir-empty">{t("sr_empty")}</p>}
+    </div>
+  );
+}
+
+function ExportResultBanner({ info, onOpenFolder, onOpenFile, onDismiss }) {
+  if (!info || !info.path) return null;
+  return (
+    <div className="ir-export-banner">
+      <strong>{t("tasks_export_saved")}</strong>
+      <p className="ir-export-banner__path">{info.path}</p>
+      <div className="ir-export-banner__actions">
+        <button type="button" className="ir-btn ir-btn--xs" onClick={() => onOpenFolder(info.dir || info.path)}>
+          <Icon name="box" w={12} h={12} /> {t("tasks_export_open_folder")}
+        </button>
+        <button type="button" className="ir-btn ir-btn--xs" onClick={() => onOpenFile(info.path)}>
+          <Icon name="download" w={12} h={12} /> {t("tasks_export_open_file")}
+        </button>
+        <button type="button" className="ir-btn ir-btn--xs" onClick={onDismiss}>{t("btn_dismiss")}</button>
+      </div>
+    </div>
+  );
+}
+
 function BreakdownDetail({ task, loading }) {
-  if (loading) return <p className="ir-empty"><span className="ir-spinner" /> {t("bd_pending")}</p>;
+  const pending = loading && (!task || !["done", "failed", "canceled"].includes(task.status));
+  if (pending) {
+    const step = task && task.current_step ? String(task.current_step) : "";
+    const pct = task && task.progress_pct != null ? Number(task.progress_pct) : null;
+    return (
+      <p className="ir-empty">
+        <span className="ir-spinner" /> {t("bd_pending")}
+        {pct != null && !Number.isNaN(pct) ? ` ${pct}%` : ""}
+        {step ? ` · ${step}` : ""}
+      </p>
+    );
+  }
   if (!task) return null;
+  if (task.status === "failed" || task.status === "canceled") {
+    return (
+      <div className="ir-drawer__grid">
+        <ErrorPanel task={task} />
+      </div>
+    );
+  }
   const out = safeJSON(task.output_json, task.output_json) || {};
   const transcript = out.transcript;
   const frames = out.frames;
@@ -683,14 +1008,15 @@ function BreakdownDetail({ task, loading }) {
       <details>
         <summary><strong>{t("bd_section_takeaways")}</strong></summary>
         {persona && persona.length
-          ? <ul>{persona.map((p, i) => <li key={i}>{p}</li>)}</ul>
+          ? <ul>{persona.map((p, i) => <li key={i}>{formatCommentListItem(p)}</li>)}</ul>
           : <p className="ir-empty">{t("empty_default")}</p>}
       </details>
     </div>
   );
 }
 
-function InPlaceDrawer({ item, breakdownTask, breakdownLoading, onClose }) {
+function InPlaceDrawer({ item, breakdownTask, breakdownProgress, breakdownLoading, onClose }) {
+  const taskForDetail = breakdownTask || (breakdownProgress ? Object.assign({ status: breakdownProgress.status }, breakdownProgress) : null);
   return (
     <div className="ir-drawer">
       <div className="ir-drawer__head">
@@ -698,7 +1024,7 @@ function InPlaceDrawer({ item, breakdownTask, breakdownLoading, onClose }) {
         <h3>{item.title || "(no title)"}</h3>
         <button className="ir-btn ir-btn--xs ir-drawer__close" onClick={onClose}>{t("btn_close")}</button>
       </div>
-      <BreakdownDetail task={breakdownTask} loading={breakdownLoading} />
+      <BreakdownDetail task={taskForDetail} loading={breakdownLoading} />
     </div>
   );
 }
@@ -715,18 +1041,49 @@ function FloatingChangeBar({ count, onApply, onDismiss }) {
   );
 }
 
+function RadarErrorPanel({ errors }) {
+  const list = (errors || []).filter(Boolean);
+  if (!list.length) return null;
+  return (
+    <div className="ir-error-panel ir-error-panel--banner">
+      <strong>{t("rp_errors_title")}</strong>
+      {list.map((err, idx) => {
+        const fallbackErrors = ((err.payload || {}).fallback_errors || []).filter(Boolean);
+        return (
+          <small key={idx}>
+            {(err.platform || "unknown") + " / " + (err.error_kind || "unknown") + ": " + (err.message || "")}
+            {fallbackErrors.length > 0 && (
+              <span>
+                {" | fallback: " + fallbackErrors.map(f => (f.source || "source") + "/" + (f.error_kind || "unknown") + ": " + (f.message || "")).join("; ")}
+              </span>
+            )}
+          </small>
+        );
+      })}
+    </div>
+  );
+}
+
 function RightPanel({
-  items, fetchedAt, loading, engines, onRefresh,
-  expandedId, onExpand, onCollapse, breakdownTask, breakdownLoading,
-  onHandoff, onSave, onRemix, pendingChanges, onApply, onDismiss,
+  items, fetchedAt, loading, engines, onRefresh, radarErrors, viewMode, onViewModeChange,
+  expandedId, onExpand, onCollapse, breakdownTask, breakdownProgress, breakdownLoading,
+  onSave, onRemix, pendingChanges, onApply, onDismiss,
 }) {
   const { slice, sentinel, hasMore } = useVirtualSlice(items);
   const enginesLabel = engines.join("+") || "A";
   return (
     <main className="ir-right">
       <div className="ir-stream">
-        <StreamStatus items={items} fetchedAt={fetchedAt} loading={loading} onRefresh={onRefresh} engines={enginesLabel} />
-        {slice.length === 0 && !loading && <div className="ir-empty">{t("rp_empty")}</div>}
+        <StreamStatus
+          items={items} fetchedAt={fetchedAt} loading={loading} onRefresh={onRefresh} engines={enginesLabel}
+          viewMode={viewMode} onViewModeChange={onViewModeChange}
+        />
+        {viewMode !== "saved" && (radarErrors || []).length
+          ? <RadarErrorPanel errors={radarErrors} />
+          : null}
+        {slice.length === 0 && !loading && (
+          <div className="ir-empty">{viewMode === "saved" ? t("rp_saved_empty") : t("rp_empty")}</div>
+        )}
         {slice.map(item => (
           <div key={item.id} className="ir-stream__row" data-expanded={expandedId === item.id ? "true" : "false"}>
             <RecommendationCard
@@ -734,12 +1091,11 @@ function RightPanel({
               expanded={expandedId === item.id}
               onExpand={() => onExpand(item)}
               onCollapse={onCollapse}
-              onHandoff={() => onHandoff(item)}
               onSave={() => onSave(item)}
               onRemix={() => onRemix(item)}
             />
             {expandedId === item.id && (
-              <InPlaceDrawer item={item} breakdownTask={breakdownTask} breakdownLoading={breakdownLoading} onClose={onCollapse} />
+              <InPlaceDrawer item={item} breakdownTask={breakdownTask} breakdownProgress={breakdownProgress} breakdownLoading={breakdownLoading} onClose={onCollapse} />
             )}
           </div>
         ))}
@@ -763,7 +1119,7 @@ function diffCount(a, b) {
   return n;
 }
 
-function WorkbenchTab({ mdrmStats, settings, onTaskCreated, onMdrmRefresh, onSnapshot }) {
+function WorkbenchTab({ mdrmStats, settings, onTaskCreated, onMdrmRefresh, onSnapshot, taskBus, onNavigate }) {
   const [draft, setDraft] = useDraft(LEFT_DRAFT_KEY, LEFT_DRAFT_DEFAULT);
   const [appliedDraft, setAppliedDraft] = useState(draft);
   const [items, setItems] = useState([]);
@@ -771,25 +1127,60 @@ function WorkbenchTab({ mdrmStats, settings, onTaskCreated, onMdrmRefresh, onSna
   const [loading, setLoading] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [breakdownTask, setBreakdownTask] = useState(null);
+  const [breakdownProgress, setBreakdownProgress] = useState(null);
   const [breakdownLoading, setBreakdownLoading] = useState(false);
+  const breakdownPollRef = useRef(null);
+  const breakdownFinishRef = useRef(null);
+  const [radarErrors, setRadarErrors] = useState([]);
+  const [viewMode, setViewMode] = useState("feed");
   const [dismissed, setDismissed] = useState(false);
   const debounceRef = useRef(null);
   const toast = useToast();
   const deferred = useDeferredValue(draft);
 
-  const fetchRecommendations = useCallback((d) => {
+  useEffect(() => {
+    if (!taskBus) return undefined;
+    return taskBus.subscribe((type, data) => {
+      if (!type || !type.startsWith("idea.task.")) return;
+      const ref = breakdownPollRef.current;
+      if (!ref || !ref.active || !data || data.task_id !== ref.tid) return;
+      if (type === "idea.task.done" || type === "idea.task.failed" || type === "idea.task.canceled") {
+        const finish = breakdownFinishRef.current;
+        if (finish) {
+          PLUGIN_API.api("GET", "/tasks/" + ref.tid).then(finish).catch(() => {});
+        }
+        return;
+      }
+      PLUGIN_API.api("GET", "/tasks/" + ref.tid).then(row => {
+        const live = breakdownPollRef.current;
+        if (!live || !live.active || live.tid !== ref.tid) return;
+        setBreakdownProgress({
+          status: row.status,
+          progress_pct: row.progress_pct,
+          current_step: row.current_step,
+        });
+      }).catch(() => {});
+    });
+  }, [taskBus]);
+
+  const fetchRecommendations = useCallback((d, opts = {}) => {
+    const view = opts.view || "feed";
+    const onlySaved = view === "saved";
     setLoading(true);
-    PLUGIN_API.api("GET", "/recommendations", {
-      query: {
-        limit: d.limit,
-        platforms: d.platforms.join(","),
-        sort: "score",
-        mdrm_weighting: d.mdrm_weighting ? "true" : "false",
-      },
-    })
+    const query = onlySaved
+      ? { limit: 100, sort: opts.sort || "fetched_at", only_saved: "true" }
+      : {
+          limit: d.limit,
+          platforms: d.platforms.join(","),
+          keywords: (d.keywords || []).join(","),
+          sort: opts.sort || "score",
+          mdrm_weighting: d.mdrm_weighting ? "true" : "false",
+          only_saved: "false",
+        };
+    PLUGIN_API.api("GET", "/recommendations", { query })
       .then(r => {
         let list = r.items || [];
-        if ((d.filters || []).length) {
+        if (!onlySaved && (d.filters || []).length) {
           const fset = new Set(d.filters.map(s => s.toLowerCase()));
           list = list.filter(it => !Array.from(fset).some(f => (it.title || "").toLowerCase().includes(f)));
         }
@@ -800,7 +1191,9 @@ function WorkbenchTab({ mdrmStats, settings, onTaskCreated, onMdrmRefresh, onSna
       .finally(() => setLoading(false));
   }, [toast]);
 
-  useEffect(() => { fetchRecommendations(appliedDraft); /* on tab mount */ }, []); // eslint-disable-line
+  useEffect(() => {
+    fetchRecommendations(appliedDraft, { view: viewMode });
+  }, [viewMode]); // eslint-disable-line
 
   useEffect(() => {
     debounceWith(debounceRef, 300, () => {
@@ -808,7 +1201,7 @@ function WorkbenchTab({ mdrmStats, settings, onTaskCreated, onMdrmRefresh, onSna
       // Auto-apply when ≤2 changes; otherwise let the floating bar handle.
       if (diffCount(deferred, appliedDraft) <= 2 && !dismissed) {
         setAppliedDraft(deferred);
-        fetchRecommendations(deferred);
+        fetchRecommendations(deferred, { view: viewMode });
       }
     });
     return () => debounceRef.current && clearTimeout(debounceRef.current);
@@ -818,7 +1211,8 @@ function WorkbenchTab({ mdrmStats, settings, onTaskCreated, onMdrmRefresh, onSna
   const onApply = () => {
     setAppliedDraft(draft);
     setDismissed(false);
-    fetchRecommendations(draft);
+    setRadarErrors([]);
+    fetchRecommendations(draft, { view: viewMode });
   };
 
   const createTask = (mode, input, persona) => {
@@ -831,16 +1225,47 @@ function WorkbenchTab({ mdrmStats, settings, onTaskCreated, onMdrmRefresh, onSna
       .catch(err => { toast("error", err.message); throw err; });
   };
 
-  const onCreateRadar = () => createTask("radar_pull", {
-    platforms: draft.platforms, keywords: draft.keywords,
-    time_window: draft.time_window, limit: draft.limit,
-    engine: draft.engine_b ? "auto" : "a",
-    mdrm_weighting: draft.mdrm_weighting,
-  }).then(() => fetchRecommendations(draft));
+  const pollRadarTask = (taskId, d) => {
+    return PLUGIN_API.api("GET", "/tasks/" + taskId).then(row => {
+      if (["done", "failed", "canceled"].includes(row.status)) {
+        const out = safeJSON(row.output_json, {}) || {};
+        const errs = Array.isArray(out.errors) ? out.errors : [];
+        if (row.status === "failed" && !errs.length) {
+          setRadarErrors([{
+            platform: "radar",
+            error_kind: row.error_kind || "unknown",
+            message: row.error_message || row.current_step || row.status,
+          }]);
+        } else {
+          setRadarErrors(errs);
+        }
+        return fetchRecommendations(d, { sort: "fetched_at", view: viewMode });
+      }
+      return new Promise(resolve => setTimeout(resolve, 2000)).then(() => pollRadarTask(taskId, d));
+    });
+  };
+
+  const onCreateRadar = () => {
+    setAppliedDraft(draft);
+    setDismissed(false);
+    return createTask("radar_pull", {
+      platforms: draft.platforms, keywords: draft.keywords,
+      time_window: draft.time_window, limit: draft.limit,
+      engine: draft.engine_b ? "auto" : "a",
+      mdrm_weighting: draft.mdrm_weighting,
+    }).then(resp => {
+      setLoading(true);
+      setRadarErrors([]);
+      return pollRadarTask(resp.task_id, draft);
+    }).catch(() => setLoading(false));
+  };
 
   const onCreateBreakdown = () => createTask("breakdown_url", {
     url: draft.url.trim(), persona: draft.persona, write_to_mdrm: draft.mdrm_weighting,
-  }).then(() => onMdrmRefresh && onMdrmRefresh());
+  }).then(resp => {
+    if (onMdrmRefresh) onMdrmRefresh();
+    if (onNavigate && resp && resp.task_id) onNavigate("tasks", { id: resp.task_id });
+  });
 
   const onCreateCompare = () => {
     const urls = (draft.accounts || "").split("\n").map(s => s.trim()).filter(Boolean);
@@ -848,33 +1273,93 @@ function WorkbenchTab({ mdrmStats, settings, onTaskCreated, onMdrmRefresh, onSna
     return createTask("compare_accounts", { account_urls: urls });
   };
 
+  const stopBreakdownPoll = () => {
+    if (breakdownPollRef.current && breakdownPollRef.current.timer) {
+      clearTimeout(breakdownPollRef.current.timer);
+    }
+    breakdownPollRef.current = null;
+  };
+
   const onExpand = (item) => {
+    const prev = breakdownPollRef.current;
+    if (prev && prev.tid) {
+      PLUGIN_API.api("POST", "/tasks/" + prev.tid + "/cancel").catch(() => {});
+    }
+    stopBreakdownPoll();
     setExpandedId(item.id);
     setBreakdownLoading(true);
     setBreakdownTask(null);
-    createTask("breakdown_url", { url: item.external_url, persona: draft.persona, write_to_mdrm: draft.mdrm_weighting })
+    setBreakdownProgress({ status: "pending", progress_pct: 0, current_step: "creating" });
+    const url = (item.external_url || "").trim();
+    if (!url) {
+      toast("warn", t("lp_url_input"));
+      setBreakdownLoading(false);
+      return;
+    }
+    createTask("breakdown_url", { url, trend_item_id: item.id, persona: draft.persona, write_to_mdrm: draft.mdrm_weighting })
       .then(resp => {
         const tid = resp.task_id;
+        breakdownPollRef.current = { tid, active: true, timer: null };
+        const finishBreakdown = (taskRow) => {
+          stopBreakdownPoll();
+          const done = (finalRow) => {
+            setBreakdownTask(finalRow);
+            setBreakdownProgress(null);
+            setBreakdownLoading(false);
+            if (finalRow.status === "done") onMdrmRefresh && onMdrmRefresh();
+          };
+          if (taskRow.status === "done") {
+            PLUGIN_API.api("GET", "/tasks/" + tid + "/breakdown")
+              .then(bd => done(Object.assign({}, taskRow, { output_json: bd })))
+              .catch(() => done(taskRow));
+          } else {
+            done(taskRow);
+          }
+        };
+        breakdownFinishRef.current = finishBreakdown;
         const poll = () => {
+          const ref = breakdownPollRef.current;
+          if (!ref || !ref.active || ref.tid !== tid) return;
           PLUGIN_API.api("GET", "/tasks/" + tid).then(row => {
             if (["done", "failed", "canceled"].includes(row.status)) {
-              setBreakdownTask(row);
-              setBreakdownLoading(false);
-              if (row.status === "done") onMdrmRefresh && onMdrmRefresh();
+              finishBreakdown(row);
               return;
             }
-            setBreakdownTask(row);
-            setTimeout(poll, 2000);
-          }).catch(() => { setBreakdownLoading(false); });
+            setBreakdownProgress({
+              status: row.status,
+              progress_pct: row.progress_pct,
+              current_step: row.current_step,
+            });
+            ref.timer = setTimeout(poll, 2000);
+          }).catch(err => {
+            stopBreakdownPoll();
+            setBreakdownLoading(false);
+            toast("error", err.message || String(err));
+          });
         };
-        setTimeout(poll, 1500);
+        breakdownPollRef.current.timer = setTimeout(poll, 800);
       })
-      .catch(() => setBreakdownLoading(false));
+      .catch(() => {
+        stopBreakdownPoll();
+        setBreakdownLoading(false);
+        setBreakdownProgress(null);
+      });
   };
 
-  const onSave = (item) => PLUGIN_API.api("POST", "/items/" + encodeURIComponent(item.id) + "/save").then(() => toast("success", t("rp_btn_save")));
-
-  const onHandoff = (item) => toast("success", t("rp_btn_handoff") + " · " + item.id.slice(0, 8));
+  const onSave = (item) => {
+    const saved = isItemSaved(item);
+    const action = saved ? "unsave" : "save";
+    return PLUGIN_API.api("POST", "/items/" + encodeURIComponent(item.id) + "/" + action)
+      .then(() => {
+        if (viewMode === "saved" && saved) {
+          setItems(prev => prev.filter(it => it.id !== item.id));
+        } else {
+          setItems(prev => prev.map(it => (it.id === item.id ? { ...it, saved: saved ? 0 : 1 } : it)));
+        }
+        toast("success", saved ? t("rp_unsaved_toast") : t("rp_saved_toast"));
+      })
+      .catch(err => toast("error", err.message));
+  };
 
   const onRemix = (item) => createTask("script_remix", {
     trend_item_id: item.id, my_persona: draft.persona, my_brand_keywords: draft.keywords,
@@ -899,10 +1384,12 @@ function WorkbenchTab({ mdrmStats, settings, onTaskCreated, onMdrmRefresh, onSna
         onSnapshot={() => onSnapshot(draft)}
       />
       <RightPanel
-        items={items} fetchedAt={fetchedAt} loading={loading} engines={engines} onRefresh={() => fetchRecommendations(draft)}
-        expandedId={expandedId} onExpand={onExpand} onCollapse={() => { setExpandedId(null); setBreakdownTask(null); }}
-        breakdownTask={breakdownTask} breakdownLoading={breakdownLoading}
-        onHandoff={onHandoff} onSave={onSave} onRemix={onRemix}
+        items={items} fetchedAt={fetchedAt} loading={loading} engines={engines}
+        onRefresh={() => fetchRecommendations(draft, { sort: "fetched_at", view: viewMode })}
+        radarErrors={radarErrors} viewMode={viewMode} onViewModeChange={setViewMode}
+        expandedId={expandedId} onExpand={onExpand} onCollapse={() => { stopBreakdownPoll(); setExpandedId(null); setBreakdownTask(null); setBreakdownProgress(null); setBreakdownLoading(false); }}
+        breakdownTask={breakdownTask} breakdownProgress={breakdownProgress} breakdownLoading={breakdownLoading}
+        onSave={onSave} onRemix={onRemix}
         pendingChanges={pending} onApply={onApply} onDismiss={() => setDismissed(true)}
       />
     </div>
@@ -943,11 +1430,18 @@ function CostBreakdown({ task }) {
   );
 }
 
-function TaskDetailDrawer({ task, breakdown, onClose, onRetry, onCancel, onDelete, onExport }) {
+function TaskDetailDrawer({ task, breakdown, breakdownLoading, exportInfo, onClose, onRetry, onCancel, onDelete, onExport, onOpenExportPath, onDismissExport }) {
   if (!task) return null;
   const inp = safeJSON(task.input_json, task.input_json);
   const out = safeJSON(task.output_json, task.output_json);
   const writes = safeJSON(task.mdrm_writes_json, null);
+  const isBreakdown = task.mode === "breakdown_url";
+  const breakdownOut = breakdown || (out && typeof out === "object" ? out : null);
+  const showBreakdownPanel = isBreakdown;
+  const showDoneAnalysis = task.status === "done" && (task.mode === "compare_accounts" || task.mode === "script_remix");
+  const analysisTitle = task.mode === "compare_accounts"
+    ? t("cmp_section_analysis")
+    : (task.mode === "script_remix" ? t("sr_section_analysis") : t("td_outputs"));
   return (
     <aside className="ir-task-detail">
       <header className="ir-drawer__head">
@@ -959,21 +1453,41 @@ function TaskDetailDrawer({ task, breakdown, onClose, onRetry, onCancel, onDelet
         {task.status === "running" && <button className="ir-btn ir-btn--xs" onClick={() => onCancel(task.id)}><Icon name="cancel" w={12} h={12} /> {t("tasks_btn_cancel")}</button>}
         <button className="ir-btn ir-btn--xs" onClick={() => onRetry(task.id)}><Icon name="refresh" w={12} h={12} /> {t("tasks_btn_retry")}</button>
         <button className="ir-btn ir-btn--xs ir-btn--danger" onClick={() => onDelete(task.id)}><Icon name="trash" w={12} h={12} /> {t("tasks_btn_delete")}</button>
-        <button className="ir-btn ir-btn--xs" onClick={() => onExport(task.id)}><Icon name="download" w={12} h={12} /> {t("tasks_btn_export")}</button>
+        <button className="ir-btn ir-btn--xs ir-btn--primary" disabled={task.status !== "done"} onClick={() => onExport(task)}>
+          <Icon name="download" w={12} h={12} /> {t("tasks_btn_export")}
+        </button>
       </div>
+      <ExportResultBanner info={exportInfo} onOpenFolder={p => onOpenExportPath(p)} onOpenFile={p => onOpenExportPath(p)} onDismiss={onDismissExport} />
       <CostBreakdown task={task} />
       <ErrorPanel task={task} />
       {writes && <MdrmWriteStatus writes={writes} />}
-      <details open>
+      {showBreakdownPanel && (
+        <details open>
+          <summary><strong>{analysisTitle}</strong></summary>
+          <BreakdownDetail
+            task={{ ...task, output_json: breakdownOut, mdrm_writes_json: writes }}
+            loading={breakdownLoading}
+          />
+        </details>
+      )}
+      {showDoneAnalysis && (
+        <details open>
+          <summary><strong>{analysisTitle}</strong></summary>
+          {task.mode === "compare_accounts"
+            ? <CompareAccountsDetail output={out} />
+            : <ScriptRemixDetail output={out} />}
+        </details>
+      )}
+      <details>
         <summary><strong>{t("td_inputs")}</strong></summary>
         <pre className="ir-mono">{JSON.stringify(inp, null, 2)}</pre>
       </details>
-      <details open={task.mode === "breakdown_url"}>
-        <summary><strong>{t("td_outputs")}</strong></summary>
-        {breakdown
-          ? <BreakdownDetail task={{ output_json: breakdown, mdrm_writes_json: writes }} />
-          : <pre className="ir-mono">{JSON.stringify(out, null, 2)}</pre>}
-      </details>
+      {!showBreakdownPanel && !showDoneAnalysis && (
+        <details open>
+          <summary><strong>{t("td_outputs")}</strong></summary>
+          <pre className="ir-mono">{JSON.stringify(out, null, 2)}</pre>
+        </details>
+      )}
     </aside>
   );
 }
@@ -984,8 +1498,18 @@ function TasksTab({ taskBus }) {
   const [filterStatus, setFilterStatus] = useState("");
   const [active, setActive] = useState(null);
   const [breakdown, setBreakdown] = useState(null);
+  const [breakdownLoading, setBreakdownLoading] = useState(false);
+  const [exportInfo, setExportInfo] = useState(null);
   const toast = useToast();
   const [route, navigate] = useHashRoute();
+  const taskPollRef = useRef(null);
+
+  const stopTaskPoll = useCallback(() => {
+    if (taskPollRef.current && taskPollRef.current.timer) {
+      clearTimeout(taskPollRef.current.timer);
+    }
+    taskPollRef.current = null;
+  }, []);
 
   const refresh = useCallback(() => {
     return PLUGIN_API.api("GET", "/tasks", { query: { mode: filterMode, status: filterStatus, limit: 100 } })
@@ -993,36 +1517,122 @@ function TasksTab({ taskBus }) {
       .catch(err => toast("error", err.message));
   }, [filterMode, filterStatus, toast]);
 
+  const loadActiveTask = useCallback((sel) => {
+    if (!sel) {
+      setActive(null);
+      setBreakdown(null);
+      setBreakdownLoading(false);
+      stopTaskPoll();
+      return Promise.resolve(null);
+    }
+    return PLUGIN_API.api("GET", "/tasks/" + sel)
+      .then(row => {
+        setActive(row);
+        if (row.mode !== "breakdown_url") {
+          setBreakdown(null);
+          setBreakdownLoading(false);
+          stopTaskPoll();
+          return row;
+        }
+        if (row.status === "done") {
+          setBreakdownLoading(true);
+          return PLUGIN_API.api("GET", "/tasks/" + sel + "/breakdown")
+            .then(bd => {
+              setBreakdown(bd);
+              setBreakdownLoading(false);
+              return row;
+            })
+            .catch(() => {
+              const fallback = safeJSON(row.output_json, null);
+              setBreakdown(typeof fallback === "object" && fallback ? fallback : null);
+              setBreakdownLoading(false);
+              return row;
+            });
+        }
+        setBreakdown(null);
+        setBreakdownLoading(row.status === "pending" || row.status === "running");
+        return row;
+      })
+      .catch(() => {
+        setActive(null);
+        setBreakdown(null);
+        setBreakdownLoading(false);
+        return null;
+      });
+  }, [stopTaskPoll]);
+
+  const startTaskPoll = useCallback((sel) => {
+    stopTaskPoll();
+    const poll = () => {
+      loadActiveTask(sel).then(row => {
+        if (!row || ["done", "failed", "canceled"].includes(row.status)) {
+          stopTaskPoll();
+          return;
+        }
+        taskPollRef.current = { tid: sel, timer: setTimeout(poll, 2000) };
+      });
+    };
+    poll();
+  }, [loadActiveTask, stopTaskPoll]);
+
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => {
     const sel = route.params && route.params.id;
-    if (!sel) { setActive(null); setBreakdown(null); return; }
-    PLUGIN_API.api("GET", "/tasks/" + sel)
-      .then(row => {
-        setActive(row);
-        if (row.mode === "breakdown_url") {
-          PLUGIN_API.api("GET", "/tasks/" + sel + "/breakdown").then(setBreakdown).catch(() => setBreakdown(null));
-        } else { setBreakdown(null); }
-      })
-      .catch(() => { setActive(null); setBreakdown(null); });
-  }, [route.params && route.params.id]);
+    if (!sel) {
+      setActive(null);
+      setBreakdown(null);
+      setBreakdownLoading(false);
+      setExportInfo(null);
+      stopTaskPoll();
+      return undefined;
+    }
+    loadActiveTask(sel).then(row => {
+      if (row && (row.status === "pending" || row.status === "running")) {
+        startTaskPoll(sel);
+      }
+    });
+    return () => stopTaskPoll();
+  }, [route.params && route.params.id, loadActiveTask, startTaskPoll, stopTaskPoll]);
 
   useEffect(() => {
     if (!taskBus) return undefined;
-    const off = taskBus.subscribe(refresh);
+    const off = taskBus.subscribe((type, data) => {
+      refresh();
+      const sel = route.params && route.params.id;
+      if (!sel) return;
+      if (data && data.task_id && data.task_id !== sel) return;
+      loadActiveTask(sel).then(row => {
+        if (row && (row.status === "pending" || row.status === "running")) {
+          startTaskPoll(sel);
+        } else {
+          stopTaskPoll();
+        }
+      });
+    });
     return off;
-  }, [taskBus, refresh]);
+  }, [taskBus, refresh, route.params && route.params.id, loadActiveTask, startTaskPoll, stopTaskPoll]);
+
+  useEffect(() => () => stopTaskPoll(), [stopTaskPoll]);
 
   const onRetry = (tid) => PLUGIN_API.api("POST", "/tasks/" + tid + "/retry").then(() => { toast("success", t("tasks_btn_retry")); refresh(); });
   const onCancel = (tid) => PLUGIN_API.api("POST", "/tasks/" + tid + "/cancel").then(() => { toast("success", t("tasks_btn_cancel")); refresh(); });
   const onDelete = (tid) => PLUGIN_API.api("DELETE", "/tasks/" + tid).then(() => { toast("success", t("tasks_btn_delete")); navigate("tasks", {}); refresh(); });
-  const onExport = (tid) => {
-    PLUGIN_API.api("GET", "/tasks/" + tid).then(row => {
-      const blob = new Blob([JSON.stringify(row, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = "task-" + tid + ".json"; a.click();
-      URL.revokeObjectURL(url);
-    });
+  const onOpenExportPath = (path) => {
+    PLUGIN_API.api("POST", "/storage/open-folder", { body: { path } })
+      .catch(err => toast("error", err.message));
+  };
+
+  const onExport = (task) => {
+    if (!task || task.status !== "done") {
+      toast("warn", t("tasks_export_need_done"));
+      return;
+    }
+    PLUGIN_API.api("POST", "/tasks/" + task.id + "/export", { body: {} })
+      .then(res => {
+        setExportInfo(res);
+        toast("success", t("tasks_export_toast", { path: res.path || "" }));
+      })
+      .catch(err => toast("error", err.message));
   };
 
   return (
@@ -1078,7 +1688,11 @@ function TasksTab({ taskBus }) {
           </tbody>
         </table>
       )}
-      <TaskDetailDrawer task={active} breakdown={breakdown} onClose={() => navigate("tasks", {})} onRetry={onRetry} onCancel={onCancel} onDelete={onDelete} onExport={onExport} />
+      <TaskDetailDrawer
+        task={active} breakdown={breakdown} breakdownLoading={breakdownLoading} exportInfo={exportInfo}
+        onClose={() => navigate("tasks", {})} onRetry={onRetry} onCancel={onCancel} onDelete={onDelete}
+        onExport={onExport} onOpenExportPath={onOpenExportPath} onDismissExport={() => setExportInfo(null)}
+      />
     </section>
   );
 }
@@ -1092,27 +1706,38 @@ function CookieCard({ platform, status, onSave, onTest, onClear }) {
   const [risk, setRisk] = useState(false);
   const toast = useToast();
   const label = cookiesPlatformLabel(platform);
+  const required = (platform.required_keys || []).join(", ");
+  const missing = (status && status.missing_keys) || [];
+  const statusOk = status && status.ok && !status.expired;
   return (
     <div className="ir-cookie">
       <div className="ir-cookie__head">
         <div className="ir-cookie__title"><Icon name="cookie" w={18} h={18} /> {label}</div>
-        <div className="ir-cookie__status" data-ok={status ? (!status.expired ? "true" : "false") : undefined}>
+        <div className="ir-cookie__status" data-ok={status ? (statusOk ? "true" : "false") : undefined}>
           {status ? (
             <>
-              <Icon name={status.ok ? "check" : "alert"} w={12} h={12} />
-              {status.expires_at ? "exp " + formatRelative(status.expires_at) : (status.updated_at ? formatRelative(status.updated_at) : "已保存")}
+              <Icon name={statusOk ? "check" : "alert"} w={12} h={12} />
+              {status.expired
+                ? t("st_cookies_status_expired")
+                : missing.length
+                  ? t("st_cookies_status_incomplete")
+                  : (status.expires_at ? "exp " + formatRelative(status.expires_at) : (status.updated_at ? formatRelative(status.updated_at) : t("st_cookies_status_ready")))}
             </>
-          ) : "未配置"}
+          ) : t("st_cookies_status_empty")}
         </div>
       </div>
       <p className="ir-cookie__hint">{t("st_cookies_help")}</p>
+      {required ? <p className="ir-cookie__hint"><small>{t("st_cookies_required_keys", { keys: required })}</small></p> : null}
+      {missing.length ? <p className="ir-cookie__hint" style={{ color: "var(--ir-warn)" }}><small>{t("st_cookies_missing_keys", { keys: missing.join(", ") })}</small></p> : null}
       <textarea className="ir-textarea" placeholder={t("st_cookies_placeholder")} value={text} onChange={e => setText(e.target.value)} />
       <div className="ir-risk-row">
         <RiskCheckbox checked={risk} onChange={setRisk} label={t("st_engine_b_risk")} />
       </div>
       <div className="ir-cookie__actions">
         <button className="ir-btn ir-btn--xs ir-btn--primary ir-cookie__save" disabled={!text.trim() || !risk}
-          onClick={() => onSave(platform.id, text, risk).then(() => { setText(""); toast("success", t("st_cookies_btn_save")); })}>
+          onClick={() => onSave(platform.id, text, risk)
+            .then(() => { setText(""); toast("success", t("st_cookies_btn_save")); })
+            .catch(() => {})}>
           {t("st_cookies_btn_save")}
         </button>
         <button className="ir-btn ir-btn--xs" title={t("st_cookies_btn_test_full")} onClick={() => onTest(platform.id)}>{t("st_cookies_btn_test")}</button>
@@ -1363,7 +1988,12 @@ function SettingsTab({ mdrmStats, onMdrmRefresh }) {
   const onSaveCookies = (platform, jsonText, risk) => {
     return PLUGIN_API.api("POST", "/sources/cookies/" + platform, {
       body: { json_text: jsonText, risk_acknowledged: risk },
-    }).then(() => refresh()).catch(err => { toast("error", err.message); throw err; });
+    }).then(r => {
+      refresh();
+      if (r.missing_keys && r.missing_keys.length) {
+        toast("warn", t("st_cookies_save_incomplete", { keys: r.missing_keys.join(", ") }));
+      }
+    }).catch(err => { toast("error", err.message || String(err)); });
   };
 
   const onTestCookies = (platform) => {
@@ -1426,18 +2056,6 @@ function SettingsTab({ mdrmStats, onMdrmRefresh }) {
             <small style={{ color: "var(--ir-muted)" }}>{t("st_key_dashscope_hint")}</small>
           </div>
           <div className="ir-field">
-            <label className="ir-field__label">DashScope 共享中转站（可选）</label>
-            <input className="ir-input" defaultValue={settings.dashscope_relay_endpoint || ""} onBlur={e => setSetting("dashscope_relay_endpoint", e.target.value.trim())} placeholder="例如: yunwu-chat" />
-            <small style={{ color: "var(--ir-muted)" }}>来自 LLM 配置页 relay_endpoints；填写后 DashScope 分析请求优先走该中转站。</small>
-          </div>
-          <div className="ir-field">
-            <label className="ir-field__label">中转站失败策略</label>
-            <select className="ir-input" value={settings.dashscope_relay_fallback_policy || "official"} onChange={e => setSetting("dashscope_relay_fallback_policy", e.target.value)}>
-              <option value="official">official：失败时回官方/插件配置</option>
-              <option value="strict">strict：失败时阻止提交</option>
-            </select>
-          </div>
-          <div className="ir-field">
             <label className="ir-field__label">{t("st_key_youtube")}</label>
             <input className="ir-input" type="password" defaultValue={settings.youtube_api_key || ""} onBlur={e => setSetting("youtube_api_key", e.target.value)} />
             <small style={{ color: "var(--ir-muted)" }}>{t("st_key_youtube_hint")}</small>
@@ -1446,6 +2064,11 @@ function SettingsTab({ mdrmStats, onMdrmRefresh }) {
             <label className="ir-field__label">{t("st_key_rsshub")}</label>
             <input className="ir-input" defaultValue={settings.rsshub_base || "https://rsshub.app"} onBlur={e => setSetting("rsshub_base", e.target.value)} />
             <small style={{ color: "var(--ir-muted)" }}>{t("st_key_rsshub_hint")}</small>
+          </div>
+          <div className="ir-field">
+            <label className="ir-field__label">{t("st_key_http_proxy")}</label>
+            <input className="ir-input" defaultValue={settings.http_proxy || ""} placeholder="http://127.0.0.1:7890" onBlur={e => setSetting("http_proxy", e.target.value)} />
+            <small style={{ color: "var(--ir-muted)" }}>{t("st_key_http_proxy_hint")}</small>
           </div>
         </div>
       </div>
@@ -1550,7 +2173,11 @@ function App() {
       subscribers.current.add(fn);
       return () => subscribers.current.delete(fn);
     },
-    publish() { subscribers.current.forEach(fn => { try { fn(); } catch (_) {} }); },
+    publish(type, data) {
+      subscribers.current.forEach(fn => {
+        try { fn(type, data); } catch (_) {}
+      });
+    },
   }), []);
   const toast = useToast();
 
@@ -1576,7 +2203,7 @@ function App() {
 
   useSSE(useCallback((type, data) => {
     if (!type) return;
-    if (type.startsWith("idea.task.")) taskBus.publish();
+    if (type.startsWith("idea.task.")) taskBus.publish(type, data);
     if (type === "idea.task.done") {
       toast("success", `${modeLabel(data?.mode || "")} ✓`);
       refreshMdrm();
@@ -1610,7 +2237,9 @@ function App() {
           <WorkbenchTab
             mdrmStats={mdrmStats}
             settings={settings}
-            onTaskCreated={() => taskBus.publish()}
+            taskBus={taskBus}
+            onNavigate={navigate}
+            onTaskCreated={(taskId, mode) => taskBus.publish("idea.task.created", { task_id: taskId, mode })}
             onMdrmRefresh={refreshMdrm}
             onSnapshot={onSnapshot}
           />

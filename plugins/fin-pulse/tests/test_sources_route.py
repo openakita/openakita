@@ -92,9 +92,7 @@ def test_plugin_exposes_sources_route() -> None:
     /api/plugins/fin-pulse/sources.
     """
     plugin_src = (PLUGIN_DIR / "plugin.py").read_text("utf-8")
-    assert '@router.get("/sources")' in plugin_src, (
-        "GET /sources route missing from plugin.py"
-    )
+    assert '@router.get("/sources")' in plugin_src, "GET /sources route missing from plugin.py"
     # Must also register the scheduler-channel proxy (P1).
     assert '@router.get("/scheduler/channels")' in plugin_src, (
         "GET /scheduler/channels proxy missing from plugin.py"

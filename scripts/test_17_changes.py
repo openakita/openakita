@@ -44,13 +44,18 @@ test("settings still exists", "settings" in example_data)
 print()
 print("=== A2: config.py load_endpoints_config returns 3-tuple ===")
 import inspect
+
 sys.path.insert(0, "src")
 from openakita.llm.config import load_endpoints_config, save_endpoints_config, validate_config
 
 sig = inspect.signature(load_endpoints_config)
 ret_str = str(sig.return_annotation)
 # After import, EndpointConfig resolves to full module path; just check it has 3 elements in the tuple
-test("return annotation is a 3-element tuple", "tuple[" in ret_str and ret_str.count("list[") >= 2 and "dict" in ret_str, ret_str)
+test(
+    "return annotation is a 3-element tuple",
+    "tuple[" in ret_str and ret_str.count("list[") >= 2 and "dict" in ret_str,
+    ret_str,
+)
 
 sig_save = inspect.signature(save_endpoints_config)
 test("save has compiler_endpoints param", "compiler_endpoints" in sig_save.parameters)
@@ -58,11 +63,19 @@ test("save has compiler_endpoints param", "compiler_endpoints" in sig_save.param
 print()
 print("=== A2b: client.py and others use 3-tuple ===")
 client_src = read("src/openakita/llm/client.py")
-test("client.py uses _ for compiler_endpoints", "self._endpoints, _, self._settings = load_endpoints_config" in client_src)
+test(
+    "client.py uses _ for compiler_endpoints",
+    "self._endpoints, _, self._settings = load_endpoints_config" in client_src,
+)
 
 cli_src = read("src/openakita/llm/setup/cli.py")
-test("setup/cli.py 3-tuple (1st call)", "_compiler_eps, settings = load_endpoints_config()" in cli_src)
-test("setup/cli.py 3-tuple (2nd call)", "compiler_eps, settings = load_endpoints_config()" in cli_src)
+test(
+    "setup/cli.py 3-tuple (1st call)",
+    "_compiler_eps, settings = load_endpoints_config()" in cli_src,
+)
+test(
+    "setup/cli.py 3-tuple (2nd call)", "compiler_eps, settings = load_endpoints_config()" in cli_src
+)
 
 diag_src = read("scripts/llm_diag.py")
 test("llm_diag.py uses 3-tuple", "_compiler_eps, _settings = load_endpoints_config()" in diag_src)
@@ -76,7 +89,10 @@ test("compiler_think method", "async def compiler_think(self" in brain_src)
 test("compiler_think calls enable_thinking=False", "enable_thinking=False" in brain_src)
 test("compiler_think has fallback logic", "falling back to main model" in brain_src)
 test("_llm_response_to_response method", "def _llm_response_to_response(self" in brain_src)
-test("imports load_endpoints_config", "from ..llm.config import get_default_config_path, load_endpoints_config" in brain_src)
+test(
+    "imports load_endpoints_config",
+    "from ..llm.config import get_default_config_path, load_endpoints_config" in brain_src,
+)
 
 print()
 print("=== A4: agent.py _compile_prompt uses compiler_think ===")
@@ -84,8 +100,16 @@ agent_src = read("src/openakita/core/agent.py")
 test("_compile_prompt calls brain.compiler_think", "await self.brain.compiler_think(" in agent_src)
 
 # Check brain.think is NOT in _compile_prompt
-compile_method = agent_src.split("async def _compile_prompt")[1].split("\n    async def ")[0].split("\n    def ")[0]
-test("_compile_prompt does NOT call brain.think()", "brain.think(" not in compile_method, "still uses brain.think")
+compile_method = (
+    agent_src.split("async def _compile_prompt")[1]
+    .split("\n    async def ")[0]
+    .split("\n    def ")[0]
+)
+test(
+    "_compile_prompt does NOT call brain.think()",
+    "brain.think(" not in compile_method,
+    "still uses brain.think",
+)
 
 print()
 print("=== B1: _should_compile_prompt simplified ===")
@@ -95,7 +119,11 @@ method_body = agent_src[method_start:method_end]
 test("no simple_patterns list", "simple_patterns" not in method_body)
 test("no regex match", "re.match" not in method_body)
 test("uses len < 20 threshold", "len(message.strip()) < 20" in method_body)
-test("method is concise (< 15 lines)", method_body.count("\n") < 15, f"{method_body.count(chr(10))} lines")
+test(
+    "method is concise (< 15 lines)",
+    method_body.count("\n") < 15,
+    f"{method_body.count(chr(10))} lines",
+)
 
 print()
 print("=== B2: vector_store async_search + async prompt build ===")
@@ -108,9 +136,17 @@ ret_src = read("src/openakita/prompt/retriever.py")
 test("async_search_related_memories exists", "async def async_search_related_memories(" in ret_src)
 test("retriever uses vector_store.async_search", "vector_store.async_search(" in ret_src)
 
-test("_build_system_prompt_compiled is async", "async def _build_system_prompt_compiled(self" in agent_src)
-test("_build_system_prompt_compiled_sync exists", "def _build_system_prompt_compiled_sync(self" in agent_src)
-test("async version passes precomputed_memory", "precomputed_memory=precomputed_memory" in agent_src)
+test(
+    "_build_system_prompt_compiled is async",
+    "async def _build_system_prompt_compiled(self" in agent_src,
+)
+test(
+    "_build_system_prompt_compiled_sync exists",
+    "def _build_system_prompt_compiled_sync(self" in agent_src,
+)
+test(
+    "async version passes precomputed_memory", "precomputed_memory=precomputed_memory" in agent_src
+)
 
 print()
 print("=== C1+C3: system msg convention + msg typing rules ===")
@@ -130,7 +166,11 @@ print("=== C2: context boundary marker ===")
 test("boundary marker in agent", "[上下文结束，以下是用户的最新消息]" in agent_src)
 test("assistant ack after boundary", "好的，我已了解之前的对话上下文" in agent_src)
 # Verify it's only inserted when there are history messages
-test("only inserted when messages exist", 'if messages:\n                messages.append({\n                    "role": "user",\n                    "content": "[上下文结束' in agent_src)
+test(
+    "only inserted when messages exist",
+    'if messages:\n                messages.append({\n                    "role": "user",\n                    "content": "[上下文结束'
+    in agent_src,
+)
 
 print()
 print("=== C4: TaskVerify handles non-task messages ===")
@@ -141,7 +181,10 @@ verify_section = rh_src[_vs:_ve] if _vs >= 0 and _ve > _vs else rh_src[_vs : _vs
 test("verify_task_completion lives in response_handler", _vs >= 0)
 test("verify prompt handles greetings", "闲聊/问候" in verify_section)
 test("verify prompt handles confirmations", "简单确认/反馈" in verify_section)
-test("non-task section references COMPLETED", "非任务类" in verify_section and "COMPLETED" in verify_section)
+test(
+    "non-task section references COMPLETED",
+    "非任务类" in verify_section and "COMPLETED" in verify_section,
+)
 test("simple Q&A in verify prompt", "简单问答" in verify_section)
 
 print()
@@ -154,7 +197,10 @@ test("verify retry offers finish or continue", "如果已全部完成" in re_src
 
 print()
 print("=== C6: IM ForceToolCall floor ===")
-test("IM path sets base_force_retries from im_floor", 'session_type == "im"' in re_src and "im_floor" in re_src)
+test(
+    "IM path sets base_force_retries from im_floor",
+    'session_type == "im"' in re_src and "im_floor" in re_src,
+)
 
 print()
 print("=== C7: loop detection refactored ===")
@@ -168,7 +214,10 @@ test("LLM self-check interval = 10", "llm_self_check_interval: int = 10" in stat
 test("extreme safety threshold = 50", "extreme_safety_threshold: int = 50" in state_src)
 test("supervisor repeat terminate threshold", "SIGNATURE_REPEAT_TERMINATE" in sup_src)
 test("dead loop uses most_common_count", "most_common_count >=" in sup_src)
-test("tool pattern uses param hash", "round_signatures = [_make_tool_signature(tc) for tc in tool_calls]" in re_src)
+test(
+    "tool pattern uses param hash",
+    "round_signatures = [_make_tool_signature(tc) for tc in tool_calls]" in re_src,
+)
 
 print()
 print("=== C8: interrupt mechanism fixed ===")
@@ -177,7 +226,10 @@ test("gateway detects stop commands", "is_stop_command(user_text)" in gw_src)
 test("gateway calls cancel_current_task", "cancel_current_task(" in gw_src)
 test("reasoning_engine cancels at iteration start", "Task cancelled at iteration start" in re_src)
 test("cancel check comment in agent _chat_with_tools", "C8: 每轮迭代检查取消" in agent_src)
-test("cancel check comment in agent execute_task", "C8: 每轮迭代开始时检查任务是否被取消" in agent_src)
+test(
+    "cancel check comment in agent execute_task",
+    "C8: 每轮迭代开始时检查任务是否被取消" in agent_src,
+)
 
 print()
 print("=== A5: Setup Center UI (App.tsx) ===")
@@ -187,9 +239,12 @@ test("compiler_endpoints in JSON parsing", "compiler_endpoints" in tsx_src)
 test("doSaveCompilerEndpoint function", "doSaveCompilerEndpoint" in tsx_src)
 test("doDeleteCompilerEndpoint function", "doDeleteCompilerEndpoint" in tsx_src)
 test("Prompt Compiler UI title", "提示词编译模型" in tsx_src or "Prompt Compiler" in tsx_src)
-test("max 2 compiler endpoints", tsx_src.count("savedCompilerEndpoints.length < 2") >= 1 or
-     tsx_src.count("savedCompilerEndpoints.length >= 2") >= 1 or
-     "最多 2 个" in tsx_src)
+test(
+    "max 2 compiler endpoints",
+    tsx_src.count("savedCompilerEndpoints.length < 2") >= 1
+    or tsx_src.count("savedCompilerEndpoints.length >= 2") >= 1
+    or "最多 2 个" in tsx_src,
+)
 
 print()
 print("=== A7: wizard.py compiler config ===")

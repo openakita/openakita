@@ -50,15 +50,24 @@ def cmd_install(_args):
         shell = shutil.which("powershell") or shutil.which("pwsh")
         if shell:
             cmd = [
-                shell, "-NoProfile", "-Command",
+                shell,
+                "-NoProfile",
+                "-Command",
                 "irm https://mat1.gtimg.com/qqcdn/qqnews/cli/hub/tencent-news/setup.ps1 | iex",
             ]
             r = subprocess.run(cmd, text=True)
             result = {"status": "ok" if r.returncode == 0 else "failed", "code": r.returncode}
         else:
-            result = {"status": "skipped", "reason": "PowerShell not found, please install manually"}
+            result = {
+                "status": "skipped",
+                "reason": "PowerShell not found, please install manually",
+            }
     else:
-        cmd = ["sh", "-c", "curl -fsSL https://mat1.gtimg.com/qqcdn/qqnews/cli/hub/tencent-news/setup.sh | sh"]
+        cmd = [
+            "sh",
+            "-c",
+            "curl -fsSL https://mat1.gtimg.com/qqcdn/qqnews/cli/hub/tencent-news/setup.sh | sh",
+        ]
         r = subprocess.run(cmd, text=True)
         result = {"status": "ok" if r.returncode == 0 else "failed", "code": r.returncode}
 
@@ -68,14 +77,23 @@ def cmd_install(_args):
 def cmd_configure(_args):
     api_key = os.environ.get("TENCENT_NEWS_API_KEY", "")
     if not api_key:
-        print(json.dumps(
-            {"error": "未设置 TENCENT_NEWS_API_KEY 环境变量，请先 export TENCENT_NEWS_API_KEY=your_key"},
-            ensure_ascii=False, indent=2,
-        ))
+        print(
+            json.dumps(
+                {
+                    "error": "未设置 TENCENT_NEWS_API_KEY 环境变量，请先 export TENCENT_NEWS_API_KEY=your_key"
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         sys.exit(1)
 
     if not _cli_installed():
-        print(json.dumps({"error": "tencent-news-cli 未安装，请先运行 install"}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {"error": "tencent-news-cli 未安装，请先运行 install"}, ensure_ascii=False, indent=2
+            )
+        )
         sys.exit(1)
 
     r = _run(["tencent-news-cli", "config", "set", "apikey", api_key])
@@ -106,4 +124,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

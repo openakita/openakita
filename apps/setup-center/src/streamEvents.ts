@@ -27,6 +27,7 @@ export const StreamEventType = {
   // ── Tool execution ──
   TOOL_CALL_START: "tool_call_start",
   TOOL_CALL_END: "tool_call_end",
+  CONFIG_HINT: "config_hint",
   SOURCE_USED: "source_used",
   MCP_CALL: "mcp_call",
 
@@ -57,6 +58,10 @@ export const StreamEventType = {
   AGENT_SWITCH: "agent_switch",
   USER_INSERT: "user_insert",
   SUB_AGENT_STATE: "sub_agent_state",
+
+  // ── Pending Approvals (C12 §14.5) ──
+  PENDING_APPROVAL_CREATED: "pending_approval_created",
+  PENDING_APPROVAL_RESOLVED: "pending_approval_resolved",
 
   // ── UI enrichment (injected by API layer) ──
   ARTIFACT: "artifact",

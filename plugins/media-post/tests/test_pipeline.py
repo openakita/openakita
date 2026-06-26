@@ -109,7 +109,9 @@ class TestModeDispatch:
 class TestCoverPick:
     def test_happy_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # Stub the cover_picker so we don't need ffmpeg.
-        async def _fake_pick(ctx: Any, vlm_client: Any, *, progress_cb: Any = None) -> list[dict[str, Any]]:
+        async def _fake_pick(
+            ctx: Any, vlm_client: Any, *, progress_cb: Any = None
+        ) -> list[dict[str, Any]]:
             return [
                 {
                     "rank": 1,
@@ -153,7 +155,9 @@ class TestCoverPick:
 
 class TestMultiAspect:
     def test_happy_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        async def _fake_smart(ctx: Any, vlm_client: Any, *, progress_cb: Any = None) -> dict[str, Any]:
+        async def _fake_smart(
+            ctx: Any, vlm_client: Any, *, progress_cb: Any = None
+        ) -> dict[str, Any]:
             return {
                 "trajectory": [{"t": 0.0, "x_left": 100.0}],
                 "scene_cuts": [0.0, 1.0],
@@ -271,9 +275,7 @@ class TestChapterCards:
         _run(tm.close())
 
     def test_empty_chapters_fails(self, tmp_path: Path) -> None:
-        ctx, tm, api = _make_ctx(
-            tmp_path=tmp_path, mode="chapter_cards", params={"chapters": []}
-        )
+        ctx, tm, api = _make_ctx(tmp_path=tmp_path, mode="chapter_cards", params={"chapters": []})
         _run(run_pipeline(ctx))
         task = _run(tm.get_task(ctx.task_id))
         assert task is not None and task["status"] == "failed"

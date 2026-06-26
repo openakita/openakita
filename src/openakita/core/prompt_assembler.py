@@ -7,6 +7,7 @@
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from ..config import settings
@@ -45,6 +46,7 @@ class PromptAssembler:
         self,
         task_description: str = "",
         session_type: str = "cli",
+        agent_voice: str = "",
     ) -> str:
         """
         构建完整的系统提示词（使用编译管线 v2）。
@@ -52,11 +54,14 @@ class PromptAssembler:
         Args:
             task_description: 任务描述（用于记忆检索）
             session_type: 会话类型 "cli" 或 "im"
+            agent_voice: 当前 Agent 的显示名（用于 SOUL.md 占位符替换）
 
         Returns:
             完整的系统提示词
         """
-        return self._build_compiled_sync(task_description, session_type=session_type)
+        return self._build_compiled_sync(
+            task_description, session_type=session_type, agent_voice=agent_voice
+        )
 
     async def build_system_prompt_compiled(
         self,
@@ -79,6 +84,8 @@ class PromptAssembler:
         catalog_scope: list[str] | None = None,
         include_project_guidelines: bool | None = None,
         intent_tool_hints: list[str] | None = None,
+        agent_voice: str = "",
+        identity_dir: Path | None = None,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2) - 异步版本。
@@ -103,14 +110,14 @@ class PromptAssembler:
         from ..prompt.budget import BudgetConfig
         from ..prompt.builder import build_system_prompt
 
-        identity_dir = settings.identity_path
+        effective_identity_dir = identity_dir or settings.identity_path
 
         budget_config = (
             BudgetConfig.for_context_window(context_window) if context_window > 0 else None
         )
 
         return build_system_prompt(
-            identity_dir=identity_dir,
+            identity_dir=effective_identity_dir,
             tools_enabled=tools_enabled,
             tool_catalog=self._tool_catalog if tools_enabled else None,
             skill_catalog=self._skill_catalog if tools_enabled else None,
@@ -138,6 +145,7 @@ class PromptAssembler:
             catalog_scope=catalog_scope,
             include_project_guidelines=include_project_guidelines,
             intent_tool_hints=intent_tool_hints,
+            agent_voice=agent_voice,
         )
 
     def _build_compiled_sync(
@@ -146,24 +154,26 @@ class PromptAssembler:
         session_type: str = "cli",
         context_window: int = 0,
         is_sub_agent: bool = False,
+        agent_voice: str = "",
+        identity_dir: Path | None = None,
     ) -> str:
         """同步版本：启动时构建初始系统提示词"""
         from ..prompt.budget import BudgetConfig
         from ..prompt.builder import build_system_prompt
         from ..prompt.compiler import check_compiled_outdated, compile_all
 
-        identity_dir = settings.identity_path
+        effective_identity_dir = identity_dir or settings.identity_path
 
-        if check_compiled_outdated(identity_dir):
+        if check_compiled_outdated(effective_identity_dir):
             logger.info("Compiled identity files outdated, recompiling...")
-            compile_all(identity_dir)
+            compile_all(effective_identity_dir)
 
         budget_config = (
             BudgetConfig.for_context_window(context_window) if context_window > 0 else None
         )
 
         return build_system_prompt(
-            identity_dir=identity_dir,
+            identity_dir=effective_identity_dir,
             tools_enabled=True,
             tool_catalog=self._tool_catalog,
             skill_catalog=self._skill_catalog,
@@ -176,5 +186,5 @@ class PromptAssembler:
             session_type=session_type,
             persona_manager=self._persona_manager,
             is_sub_agent=is_sub_agent,
+            agent_voice=agent_voice,
         )
-

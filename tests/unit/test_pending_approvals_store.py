@@ -276,9 +276,7 @@ async def test_resume_writes_replay_auth_and_reschedules_task(
     assert auth["original_message"] == "please write a.txt"  # uses user_message
     assert auth["confirmation_id"] == entry.id
     assert auth["expires_at"] > time.time(), "ttl must be in the future"
-    assert "awaiting_approval_marker" not in task.metadata, (
-        "marker should be cleared on resume"
-    )
+    assert "awaiting_approval_marker" not in task.metadata, "marker should be cleared on resume"
     assert task.metadata.get("resumed_from_approval_id") == entry.id
 
 
@@ -581,7 +579,6 @@ def test_engine_step7_promotes_unattended_confirm_to_allow_with_replay_auth(
     )
     dec_yes = eng.evaluate_tool_call(ev, ctx_yes)
     assert str(dec_yes.action) == "allow", (
-        f"replay auth must short-circuit to ALLOW; got {dec_yes.action} "
-        f"reason={dec_yes.reason!r}"
+        f"replay auth must short-circuit to ALLOW; got {dec_yes.action} reason={dec_yes.reason!r}"
     )
     assert "replay" in dec_yes.reason.lower()

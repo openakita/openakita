@@ -35,7 +35,13 @@ from openakita.plugins.api import PluginAPI, PluginBase
 
 
 def _purge_module_cache() -> int:
-    prefixes = ("media_models", "media_task_manager", "media_pipeline", "media_fetchers", "media_ai")
+    prefixes = (
+        "media_models",
+        "media_task_manager",
+        "media_pipeline",
+        "media_fetchers",
+        "media_ai",
+    )
     removed = 0
     for name in list(sys.modules):
         if name == __name__:
@@ -132,7 +138,9 @@ def _report_push_summary(row: dict[str, Any], *, file_sent: bool) -> str:
     lines = [
         line.strip(" #*-")
         for line in markdown.splitlines()
-        if line.strip() and not line.strip().startswith("|") and not set(line.strip()) <= {"-", "_", "*"}
+        if line.strip()
+        and not line.strip().startswith("|")
+        and not set(line.strip()) <= {"-", "_", "*"}
     ]
     highlights = [line for line in lines if line and line != title][:3]
     prefix = "已发送 PDF 报表附件" if file_sent else "PDF 报表附件发送失败，先发送摘要"
@@ -172,12 +180,7 @@ def _find_bundled_chromium() -> tuple[str | None, Path | None]:
                     )
                 elif system == "Darwin":
                     candidates.extend(
-                        chromium_dir
-                        / mac_dir
-                        / "Chromium.app"
-                        / "Contents"
-                        / "MacOS"
-                        / "Chromium"
+                        chromium_dir / mac_dir / "Chromium.app" / "Contents" / "MacOS" / "Chromium"
                         for mac_dir in ("chrome-mac-arm64", "chrome-mac")
                     )
                 else:
@@ -233,7 +236,9 @@ async def _write_report_push_pdf(data_dir: Path, row: dict[str, Any]) -> Path:
     target_dir = data_dir / "push_exports"
     target_dir.mkdir(parents=True, exist_ok=True)
     stem = safe_name.rsplit(".", 1)[0]
-    target = target_dir / f"{stem}-{safe_report_id}.pdf" if safe_report_id else target_dir / safe_name
+    target = (
+        target_dir / f"{stem}-{safe_report_id}.pdf" if safe_report_id else target_dir / safe_name
+    )
     await _render_report_html_to_pdf(html, target)
     return target
 
@@ -261,7 +266,8 @@ def _serialize_schedule(task: Any) -> dict[str, Any]:
         "chat_id": getattr(task, "chat_id", None),
         "mode": meta.get("mode"),
         "session": meta.get("session"),
-        "scope": meta.get("scope") or ("preset" if meta.get("session") in {"morning", "noon", "evening"} else "custom"),
+        "scope": meta.get("scope")
+        or ("preset" if meta.get("session") in {"morning", "noon", "evening"} else "custom"),
         "package_id": meta.get("package_id"),
         "since_hours": meta.get("since_hours"),
         "limit": meta.get("limit"),
@@ -281,7 +287,10 @@ def _schedule_matches(existing: Any, *, name: str, mode: str, session: str, scop
         meta = _parse_schedule_prompt(getattr(existing, "prompt", "") or "")
     except ValueError:
         return False
-    existing_scope = str(meta.get("scope") or ("preset" if meta.get("session") in {"morning", "noon", "evening"} else "custom"))
+    existing_scope = str(
+        meta.get("scope")
+        or ("preset" if meta.get("session") in {"morning", "noon", "evening"} else "custom")
+    )
     return (
         str(meta.get("mode") or "") == mode
         and str(meta.get("session") or "") == session
@@ -496,7 +505,9 @@ class Plugin(PluginBase):
             if path is not None:
                 return path
             if self._api is not None:
-                self._api.log(f"{PLUGIN_ID}: ignoring invalid custom_data_dir {custom!r}: {err}", "warning")
+                self._api.log(
+                    f"{PLUGIN_ID}: ignoring invalid custom_data_dir {custom!r}: {err}", "warning"
+                )
         return self._default_data_dir()
 
     def _storage_dirs(self) -> dict[str, Path]:
@@ -595,7 +606,9 @@ class Plugin(PluginBase):
                     message_id = await adapter.send_file(chat_id, str(target))
                 summary_result: dict[str, Any]
                 try:
-                    summary_result = await _send_text_best_effort(_report_push_summary(row, file_sent=True))
+                    summary_result = await _send_text_best_effort(
+                        _report_push_summary(row, file_sent=True)
+                    )
                 except Exception as summary_exc:  # noqa: BLE001
                     summary_result = {"ok": False, "error": str(summary_exc)}
                 return {
@@ -610,8 +623,13 @@ class Plugin(PluginBase):
                 }
             except Exception as exc:  # noqa: BLE001
                 if self._api is not None:
-                    self._api.log(f"{PLUGIN_ID}: report file push failed; sending summary ({exc!r})", "warning")
-                text_result = await _send_text_best_effort(_report_push_summary(row, file_sent=False))
+                    self._api.log(
+                        f"{PLUGIN_ID}: report file push failed; sending summary ({exc!r})",
+                        "warning",
+                    )
+                text_result = await _send_text_best_effort(
+                    _report_push_summary(row, file_sent=False)
+                )
                 return {
                     "ok": bool(text_result.get("ok")),
                     "mode": "summary",
@@ -621,8 +639,15 @@ class Plugin(PluginBase):
                     "chat_id": chat_id,
                 }
 
-        text_result = await _send_text_best_effort(text[:12000] if text_only else _report_push_summary(row, file_sent=False))
-        return {"ok": True, "mode": "text" if text_only else "summary", "channel": channel, "chat_id": chat_id}
+        text_result = await _send_text_best_effort(
+            text[:12000] if text_only else _report_push_summary(row, file_sent=False)
+        )
+        return {
+            "ok": True,
+            "mode": "text" if text_only else "summary",
+            "channel": channel,
+            "chat_id": chat_id,
+        }
 
     def _build_router(self) -> APIRouter:
         router = APIRouter()
@@ -666,7 +691,9 @@ class Plugin(PluginBase):
             assert self._tm is not None
             updates = dict(body.updates or {})
             if "custom_data_dir" in updates:
-                path, err = self._validate_custom_data_dir(str(updates.get("custom_data_dir") or ""))
+                path, err = self._validate_custom_data_dir(
+                    str(updates.get("custom_data_dir") or "")
+                )
                 if err:
                     raise HTTPException(status_code=422, detail=err)
                 self._save_settings({"custom_data_dir": str(path) if path else ""})
@@ -747,7 +774,9 @@ class Plugin(PluginBase):
             raw_url = body.url.strip()
             parsed = urlparse(raw_url)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise HTTPException(status_code=422, detail="Only http/https external URLs are allowed")
+                raise HTTPException(
+                    status_code=422, detail="Only http/https external URLs are allowed"
+                )
             import os
             import subprocess
             import webbrowser
@@ -782,7 +811,9 @@ class Plugin(PluginBase):
                 for sub in ("Desktop", "Documents", "Downloads", "Pictures", "Videos", "Movies"):
                     p = home / sub
                     if p.is_dir():
-                        anchors.append({"name": sub, "path": str(p), "is_dir": True, "kind": "shortcut"})
+                        anchors.append(
+                            {"name": sub, "path": str(p), "is_dir": True, "kind": "shortcut"}
+                        )
                 if sys.platform == "win32":
                     import string
 
@@ -790,12 +821,14 @@ class Plugin(PluginBase):
                         drive = Path(f"{letter}:/")
                         try:
                             if drive.exists():
-                                anchors.append({
-                                    "name": f"{letter}:",
-                                    "path": str(drive),
-                                    "is_dir": True,
-                                    "kind": "drive",
-                                })
+                                anchors.append(
+                                    {
+                                        "name": f"{letter}:",
+                                        "path": str(drive),
+                                        "is_dir": True,
+                                        "kind": "drive",
+                                    }
+                                )
                         except OSError:
                             continue
                 else:
@@ -869,7 +902,9 @@ class Plugin(PluginBase):
             try:
                 packages = await self._tm.set_package_enabled(body.package_id, body.enabled)
             except KeyError as exc:
-                raise HTTPException(status_code=404, detail=f"unknown package: {body.package_id}") from exc
+                raise HTTPException(
+                    status_code=404, detail=f"unknown package: {body.package_id}"
+                ) from exc
             return {"ok": True, "packages": packages}
 
         @router.post("/packages")
@@ -894,7 +929,9 @@ class Plugin(PluginBase):
                         prefer_id=body.prefer_id,
                     )
             except KeyError as exc:
-                raise HTTPException(status_code=404, detail=f"unknown source package: {body.clone_from}") from exc
+                raise HTTPException(
+                    status_code=404, detail=f"unknown source package: {body.clone_from}"
+                ) from exc
             return {"ok": True, "package": package, "packages": await self._tm.list_packages()}
 
         @router.patch("/packages/{package_id}")
@@ -911,7 +948,9 @@ class Plugin(PluginBase):
                     enabled=body.enabled,
                 )
             except KeyError as exc:
-                raise HTTPException(status_code=404, detail=f"unknown package: {package_id}") from exc
+                raise HTTPException(
+                    status_code=404, detail=f"unknown package: {package_id}"
+                ) from exc
             return {"ok": True, "package": package, "packages": await self._tm.list_packages()}
 
         @router.delete("/packages/{package_id}")
@@ -921,13 +960,17 @@ class Plugin(PluginBase):
             try:
                 await self._tm.delete_custom_package(package_id)
             except KeyError as exc:
-                raise HTTPException(status_code=404, detail=f"unknown package: {package_id}") from exc
+                raise HTTPException(
+                    status_code=404, detail=f"unknown package: {package_id}"
+                ) from exc
             except PermissionError as exc:
                 raise HTTPException(status_code=403, detail=str(exc)) from exc
             return {"ok": True, "packages": await self._tm.list_packages()}
 
         @router.post("/packages/{package_id}/bulk-toggle-sources")
-        async def bulk_toggle_sources(package_id: str, body: BulkPackageSourcesBody) -> dict[str, Any]:
+        async def bulk_toggle_sources(
+            package_id: str, body: BulkPackageSourcesBody
+        ) -> dict[str, Any]:
             await self._ensure_ready()
             assert self._tm is not None
             stats = await self._tm.bulk_set_sources_enabled_for_package(package_id, body.enabled)
@@ -1011,9 +1054,7 @@ class Plugin(PluginBase):
                 selectors={"parser": body.parser} if body.parser else {},
             )
             if body.authority is not None:
-                source = await self._tm.update_source(
-                    source["id"], authority=body.authority
-                )
+                source = await self._tm.update_source(source["id"], authority=body.authority)
             return {"ok": True, "source": source}
 
         async def _parse_radar_url(body: RadarUrlBody) -> tuple[str, Any]:
@@ -1148,7 +1189,9 @@ class Plugin(PluginBase):
         ) -> dict[str, Any]:
             await self._ensure_ready()
             assert self._pipeline is not None
-            return await self._pipeline.search_news({"q": q, "package_id": package_id, "limit": limit})
+            return await self._pipeline.search_news(
+                {"q": q, "package_id": package_id, "limit": limit}
+            )
 
         @router.get("/reports")
         async def reports(limit: int = Query(default=30, ge=1, le=100)) -> dict[str, Any]:
@@ -1230,13 +1273,19 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=503, detail="scheduler_unavailable")
             mode = str(payload.get("mode") or "daily_brief").strip()
             if mode not in {"daily_brief", "ai_topic_analysis"}:
-                raise HTTPException(status_code=400, detail="mode must be daily_brief or ai_topic_analysis")
+                raise HTTPException(
+                    status_code=400, detail="mode must be daily_brief or ai_topic_analysis"
+                )
             scope = str(payload.get("scope") or "preset").strip()
             if scope not in {"preset", "custom"}:
                 raise HTTPException(status_code=400, detail="scope must be preset or custom")
-            session = str(payload.get("session") or ("custom" if scope == "custom" else "morning")).strip()
+            session = str(
+                payload.get("session") or ("custom" if scope == "custom" else "morning")
+            ).strip()
             if scope == "preset" and session not in {"morning", "noon", "evening"}:
-                raise HTTPException(status_code=400, detail="preset session must be morning|noon|evening")
+                raise HTTPException(
+                    status_code=400, detail="preset session must be morning|noon|evening"
+                )
             cron = str(payload.get("cron") or payload.get("cron_expression") or "").strip()
             if not cron:
                 raise HTTPException(status_code=400, detail="cron expression required")
@@ -1261,9 +1310,15 @@ class Plugin(PluginBase):
             try:
                 from openakita.scheduler.task import ScheduledTask  # type: ignore
             except ImportError as exc:
-                raise HTTPException(status_code=503, detail=f"scheduler module unavailable: {exc}") from exc
+                raise HTTPException(
+                    status_code=503, detail=f"scheduler module unavailable: {exc}"
+                ) from exc
 
-            default_name = f"media-strategy {session}-brief" if scope == "preset" else "media-strategy custom-report"
+            default_name = (
+                f"media-strategy {session}-brief"
+                if scope == "preset"
+                else "media-strategy custom-report"
+            )
             name = str(payload.get("name") or "").strip() or default_name
             if not _task_name_is_media_strategy(name):
                 name = f"media-strategy {name}"
@@ -1290,7 +1345,12 @@ class Plugin(PluginBase):
                 task_id = await scheduler.add_task(task)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-            return {"ok": True, "id": task_id, "updated_from": removed_ids, "schedule": _serialize_schedule(task)}
+            return {
+                "ok": True,
+                "id": task_id,
+                "updated_from": removed_ids,
+                "schedule": _serialize_schedule(task),
+            }
 
         @router.delete("/schedules/{schedule_id}")
         async def delete_schedule(schedule_id: str) -> dict[str, Any]:
@@ -1301,7 +1361,10 @@ class Plugin(PluginBase):
             if existing is None:
                 raise HTTPException(status_code=404, detail="not_found")
             if not _task_name_is_media_strategy(getattr(existing, "name", "") or ""):
-                raise HTTPException(status_code=403, detail="refusing to delete schedule not owned by media-strategy")
+                raise HTTPException(
+                    status_code=403,
+                    detail="refusing to delete schedule not owned by media-strategy",
+                )
             outcome = await scheduler.remove_task(schedule_id)
             if outcome != "ok":
                 raise HTTPException(status_code=400, detail=outcome)
@@ -1316,13 +1379,20 @@ class Plugin(PluginBase):
             if existing is None:
                 raise HTTPException(status_code=404, detail="not_found")
             if not _task_name_is_media_strategy(getattr(existing, "name", "") or ""):
-                raise HTTPException(status_code=403, detail="refusing to toggle schedule not owned by media-strategy")
+                raise HTTPException(
+                    status_code=403,
+                    detail="refusing to toggle schedule not owned by media-strategy",
+                )
             if getattr(existing, "enabled", True):
                 await scheduler.disable_task(schedule_id)
             else:
                 await scheduler.enable_task(schedule_id)
             updated = scheduler.get_task(schedule_id)
-            return {"ok": True, "id": schedule_id, "schedule": _serialize_schedule(updated) if updated else None}
+            return {
+                "ok": True,
+                "id": schedule_id,
+                "schedule": _serialize_schedule(updated) if updated else None,
+            }
 
         @router.post("/schedules/{schedule_id}/trigger")
         async def trigger_schedule(schedule_id: str) -> dict[str, Any]:
@@ -1333,10 +1403,15 @@ class Plugin(PluginBase):
             if existing is None:
                 raise HTTPException(status_code=404, detail="not_found")
             if not _task_name_is_media_strategy(getattr(existing, "name", "") or ""):
-                raise HTTPException(status_code=403, detail="refusing to trigger schedule not owned by media-strategy")
+                raise HTTPException(
+                    status_code=403,
+                    detail="refusing to trigger schedule not owned by media-strategy",
+                )
             trigger = getattr(scheduler, "trigger_task", None)
             if not callable(trigger):
-                raise HTTPException(status_code=501, detail="host scheduler does not expose trigger_task")
+                raise HTTPException(
+                    status_code=501, detail="host scheduler does not expose trigger_task"
+                )
             result = trigger(schedule_id)
             if hasattr(result, "__await__"):
                 await result
@@ -1458,7 +1533,12 @@ class Plugin(PluginBase):
                     chat_id=chat_id,
                     text_only=bool(payload.get("text_only", False)),
                 )
-            return {"ok": True, "task": result.get("task"), "report": report, "dispatched": dispatched}
+            return {
+                "ok": True,
+                "task": result.get("task"),
+                "report": report,
+                "dispatched": dispatched,
+            }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "reason": "run_failed", "error": str(exc)}
 
@@ -1491,10 +1571,14 @@ class Plugin(PluginBase):
         )
         return {"ok": True, "background": True, "task": await self._tm.get_task(task_id)}
 
-    async def _run_existing_task(self, task_id: str, mode: str, params: dict[str, Any]) -> dict[str, Any]:
+    async def _run_existing_task(
+        self, task_id: str, mode: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
         await self._ensure_ready()
         assert self._tm is not None and self._pipeline is not None
-        await self._tm.update_task(task_id, status="running", started_at=utcnow_iso(), progress=0.05)
+        await self._tm.update_task(
+            task_id, status="running", started_at=utcnow_iso(), progress=0.05
+        )
         try:
             if mode == "ingest":
                 result = await self._pipeline.ingest(params)
@@ -1530,15 +1614,36 @@ class Plugin(PluginBase):
                 error_kind=kind,
                 error_message=message,
             )
-            return {"ok": False, "task": await self._tm.get_task(task_id), "error": kind, "hint": message}
+            return {
+                "ok": False,
+                "task": await self._tm.get_task(task_id),
+                "error": kind,
+                "hint": message,
+            }
 
     def _tool_definitions(self) -> list[dict[str, Any]]:
         return [
-            _tool("media_strategy_subscribe_package", "订阅或取消融媒智策 RSS 套餐。", {"package_id": "string", "enabled": "boolean"}),
-            _tool("media_strategy_add_feed", "添加自定义长期新闻源并做安全校验，支持 RSS 或 HTML 栏目页。", {"name": "string", "url": "string", "package_ids": "array", "kind": "string"}),
+            _tool(
+                "media_strategy_subscribe_package",
+                "订阅或取消融媒智策 RSS 套餐。",
+                {"package_id": "string", "enabled": "boolean"},
+            ),
+            _tool(
+                "media_strategy_add_feed",
+                "添加自定义长期新闻源并做安全校验，支持 RSS 或 HTML 栏目页。",
+                {"name": "string", "url": "string", "package_ids": "array", "kind": "string"},
+            ),
             _tool("media_strategy_list_sources", "查看套餐、订阅源和健康状态。", {}),
-            _tool("media_strategy_ingest", "手动拉取最新 RSS 新闻。", {"package_ids": "array", "limit_sources": "integer"}),
-            _tool("media_strategy_hot_radar", "生成热点雷达榜。", {"package_id": "string", "since_hours": "integer", "limit": "integer"}),
+            _tool(
+                "media_strategy_ingest",
+                "手动拉取最新 RSS 新闻。",
+                {"package_ids": "array", "limit_sources": "integer"},
+            ),
+            _tool(
+                "media_strategy_hot_radar",
+                "生成热点雷达榜。",
+                {"package_id": "string", "since_hours": "integer", "limit": "integer"},
+            ),
             _tool(
                 "media_strategy_top_topics",
                 "选题推荐：按多源覆盖+权威加权聚合输出 Top 5-10 高权重热点，仅返回标题与原文链接以节省 Token。",
@@ -1550,8 +1655,16 @@ class Plugin(PluginBase):
                     "compact": "boolean",
                 },
             ),
-            _tool("media_strategy_search_news", "按关键词、分类检索新闻。", {"q": "string", "package_id": "string", "limit": "integer"}),
-            _tool("media_strategy_import_article_url", "导入用户补充的单篇新闻网页 URL 到雷达文章库。", {"url": "string", "package_ids": "array", "allow_fetched_time": "boolean"}),
+            _tool(
+                "media_strategy_search_news",
+                "按关键词、分类检索新闻。",
+                {"q": "string", "package_id": "string", "limit": "integer"},
+            ),
+            _tool(
+                "media_strategy_import_article_url",
+                "导入用户补充的单篇新闻网页 URL 到雷达文章库。",
+                {"url": "string", "package_ids": "array", "allow_fetched_time": "boolean"},
+            ),
             _tool(
                 "media_strategy_ai_analyze_topics",
                 "对规则筛选后的 Top N 热点簇调用主程序大模型生成选题分析报告，避免逐条新闻烧模型。",
@@ -1563,9 +1676,26 @@ class Plugin(PluginBase):
                     "evidence_limit": "integer",
                 },
             ),
-            _tool("media_strategy_daily_brief", "生成融媒早报、午报、晚报或专题简报。", {"session": "string", "since_hours": "integer", "limit": "integer"}),
-            _tool("media_strategy_verify_pack", "为热点生成信源复核清单。", {"article_ids": "array", "topic": "string"}),
-            _tool("media_strategy_replicate_plan", "生成热点复刻、采访、拍摄和制作计划。", {"article_ids": "array", "topic": "string", "target_format": "string", "tone": "string"}),
+            _tool(
+                "media_strategy_daily_brief",
+                "生成融媒早报、午报、晚报或专题简报。",
+                {"session": "string", "since_hours": "integer", "limit": "integer"},
+            ),
+            _tool(
+                "media_strategy_verify_pack",
+                "为热点生成信源复核清单。",
+                {"article_ids": "array", "topic": "string"},
+            ),
+            _tool(
+                "media_strategy_replicate_plan",
+                "生成热点复刻、采访、拍摄和制作计划。",
+                {
+                    "article_ids": "array",
+                    "topic": "string",
+                    "target_format": "string",
+                    "tone": "string",
+                },
+            ),
         ]
 
     async def _handle_tool(self, name: str, arguments: dict[str, Any], **_: Any) -> Any:
@@ -1573,7 +1703,9 @@ class Plugin(PluginBase):
         assert self._tm is not None and self._pipeline is not None
         args = dict(arguments or {})
         if name == "media_strategy_subscribe_package":
-            packages = await self._tm.set_package_enabled(str(args.get("package_id")), bool(args.get("enabled", True)))
+            packages = await self._tm.set_package_enabled(
+                str(args.get("package_id")), bool(args.get("enabled", True))
+            )
             return {"ok": True, "packages": packages}
         if name == "media_strategy_add_feed":
             url = validate_feed_url(str(args.get("url") or ""))
@@ -1589,7 +1721,11 @@ class Plugin(PluginBase):
             )
             return {"ok": True, "source": source}
         if name == "media_strategy_list_sources":
-            return {"ok": True, "packages": await self._tm.list_packages(), "sources": await self._tm.list_sources()}
+            return {
+                "ok": True,
+                "packages": await self._tm.list_packages(),
+                "sources": await self._tm.list_sources(),
+            }
         if name == "media_strategy_ingest":
             return await self._create_and_run_task("ingest", args)
         if name == "media_strategy_hot_radar":

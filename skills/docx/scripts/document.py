@@ -30,8 +30,20 @@ import html
 import random
 import shutil
 import tempfile
+import weakref
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _cleanup_docx_temp(temp_dir: str) -> None:
+    """Clean up a Document's temporary directory via weak reference guarantee."""
+    try:
+        p = Path(temp_dir)
+        if p.exists():
+            shutil.rmtree(temp_dir)
+    except Exception:
+        pass
+
 
 from defusedxml import minidom
 from ooxml.scripts.pack import pack_document
@@ -56,9 +68,7 @@ class DocxXMLEditor(XMLEditor):
         dom (defusedxml.minidom.Document): The DOM document for direct manipulation
     """
 
-    def __init__(
-        self, xml_path, rsid: str, author: str = "Claude", initials: str = "C"
-    ):
+    def __init__(self, xml_path, rsid: str, author: str = "Claude", initials: str = "C"):
         """Initialize with required RSID and optional author.
 
         Args:
@@ -173,9 +183,7 @@ class DocxXMLEditor(XMLEditor):
             if not elem.hasAttribute("w:date"):
                 elem.setAttribute("w:date", timestamp)
             # Add w16du:dateUtc for tracked changes (same as w:date since we generate UTC timestamps)
-            if elem.tagName in ("w:ins", "w:del") and not elem.hasAttribute(
-                "w16du:dateUtc"
-            ):
+            if elem.tagName in ("w:ins", "w:del") and not elem.hasAttribute("w16du:dateUtc"):
                 self._ensure_w16du_namespace()
                 elem.setAttribute("w16du:dateUtc", timestamp)
 
@@ -195,10 +203,7 @@ class DocxXMLEditor(XMLEditor):
 
         def add_xml_space_to_t(elem):
             # Add xml:space="preserve" to w:t if text has leading/trailing whitespace
-            if (
-                elem.firstChild
-                and elem.firstChild.nodeType == elem.firstChild.TEXT_NODE
-            ):
+            if elem.firstChild and elem.firstChild.nodeType == elem.firstChild.TEXT_NODE:
                 text = elem.firstChild.data
                 if text and (text[0].isspace() or text[-1].isspace()):
                     if not elem.hasAttribute("xml:space"):
@@ -450,9 +455,7 @@ class DocxXMLEditor(XMLEditor):
         pPr_list = para.getElementsByTagName("w:pPr")
         if not pPr_list:
             pPr = doc.createElement("w:pPr")
-            para.insertBefore(
-                pPr, para.firstChild
-            ) if para.firstChild else para.appendChild(pPr)
+            para.insertBefore(pPr, para.firstChild) if para.firstChild else para.appendChild(pPr)
         else:
             pPr = pPr_list[0]
 
@@ -466,9 +469,9 @@ class DocxXMLEditor(XMLEditor):
 
         # Add <w:ins/> to w:rPr
         ins_marker = doc.createElement("w:ins")
-        rPr.insertBefore(
-            ins_marker, rPr.firstChild
-        ) if rPr.firstChild else rPr.appendChild(ins_marker)
+        rPr.insertBefore(ins_marker, rPr.firstChild) if rPr.firstChild else rPr.appendChild(
+            ins_marker
+        )
 
         # Wrap all non-pPr children in <w:ins>
         ins_wrapper = doc.createElement("w:ins")
@@ -553,9 +556,9 @@ class DocxXMLEditor(XMLEditor):
 
                 # Add <w:del/> marker
                 del_marker = self.dom.createElement("w:del")
-                rPr.insertBefore(
-                    del_marker, rPr.firstChild
-                ) if rPr.firstChild else rPr.appendChild(del_marker)
+                rPr.insertBefore(del_marker, rPr.firstChild) if rPr.firstChild else rPr.appendChild(
+                    del_marker
+                )
 
             # Convert w:t → w:delText in all runs
             for t_elem in list(elem.getElementsByTagName("w:t")):
@@ -638,6 +641,7 @@ class Document:
 
         # Create temporary directory with subdirectories for unpacked content and baseline
         self.temp_dir = tempfile.mkdtemp(prefix="docx_")
+        weakref.finalize(self, _cleanup_docx_temp, self.temp_dir)
         self.unpacked_path = Path(self.temp_dir) / "unpacked"
         shutil.copytree(self.original_path, self.unpacked_path)
 
@@ -743,9 +747,7 @@ class Document:
             self._document.insert_after(end, self._comment_range_end_xml(comment_id))
 
         # Add to comments.xml immediately
-        self._add_to_comments_xml(
-            comment_id, para_id, text, self.author, self.initials, timestamp
-        )
+        self._add_to_comments_xml(comment_id, para_id, text, self.author, self.initials, timestamp)
 
         # Add to commentsExtended.xml immediately
         self._add_to_comments_extended_xml(para_id, parent_para_id=None)
@@ -797,26 +799,16 @@ class Document:
             tag="w:commentReference", attrs={"w:id": str(parent_comment_id)}
         )
 
-        self._document.insert_after(
-            parent_start_elem, self._comment_range_start_xml(comment_id)
-        )
+        self._document.insert_after(parent_start_elem, self._comment_range_start_xml(comment_id))
         parent_ref_run = parent_ref_elem.parentNode
-        self._document.insert_after(
-            parent_ref_run, f'<w:commentRangeEnd w:id="{comment_id}"/>'
-        )
-        self._document.insert_after(
-            parent_ref_run, self._comment_ref_run_xml(comment_id)
-        )
+        self._document.insert_after(parent_ref_run, f'<w:commentRangeEnd w:id="{comment_id}"/>')
+        self._document.insert_after(parent_ref_run, self._comment_ref_run_xml(comment_id))
 
         # Add to comments.xml immediately
-        self._add_to_comments_xml(
-            comment_id, para_id, text, self.author, self.initials, timestamp
-        )
+        self._add_to_comments_xml(comment_id, para_id, text, self.author, self.initials, timestamp)
 
         # Add to commentsExtended.xml immediately (with parent)
-        self._add_to_comments_extended_xml(
-            para_id, parent_para_id=parent_info["para_id"]
-        )
+        self._add_to_comments_extended_xml(para_id, parent_para_id=parent_info["para_id"])
 
         # Add to commentsIds.xml immediately
         self._add_to_comments_ids_xml(para_id, durable_id)
@@ -830,10 +822,9 @@ class Document:
         self.next_comment_id += 1
         return comment_id
 
-    def __del__(self):
-        """Clean up temporary directory on deletion."""
-        if hasattr(self, "temp_dir") and Path(self.temp_dir).exists():
-            shutil.rmtree(self.temp_dir)
+    def close(self) -> None:
+        """Explicitly clean up temporary directory."""
+        _cleanup_docx_temp(self.temp_dir)
 
     def validate(self) -> None:
         """
@@ -942,14 +933,10 @@ class Document:
 
         # Update XML files
         self._add_content_type_for_people(self.unpacked_path / "[Content_Types].xml")
-        self._add_relationship_for_people(
-            self.word_path / "_rels" / "document.xml.rels"
-        )
+        self._add_relationship_for_people(self.word_path / "_rels" / "document.xml.rels")
 
         # Always add RSID to settings.xml, optionally enable trackRevisions
-        self._update_settings(
-            self.word_path / "settings.xml", track_revisions=track_revisions
-        )
+        self._update_settings(self.word_path / "settings.xml", track_revisions=track_revisions)
 
     def _update_people_xml(self, path):
         """Create people.xml if it doesn't exist."""
@@ -1042,9 +1029,7 @@ class Document:
                 inserted = True
 
             if not inserted:
-                clr_elements = editor.dom.getElementsByTagName(
-                    f"{prefix}:clrSchemeMapping"
-                )
+                clr_elements = editor.dom.getElementsByTagName(f"{prefix}:clrSchemeMapping")
                 if clr_elements:
                     editor.insert_before(clr_elements[0], rsids_xml)
                     inserted = True
@@ -1065,9 +1050,7 @@ class Document:
 
     # ==================== Private: XML File Creation ====================
 
-    def _add_to_comments_xml(
-        self, comment_id, para_id, text, author, initials, timestamp
-    ):
+    def _add_to_comments_xml(self, comment_id, para_id, text, author, initials, timestamp):
         """Add a single comment to comments.xml."""
         if not self.comments_path.exists():
             shutil.copy(TEMPLATE_DIR / "comments.xml", self.comments_path)
@@ -1075,9 +1058,7 @@ class Document:
         editor = self["word/comments.xml"]
         root = editor.get_node(tag="w:comments")
 
-        escaped_text = (
-            text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        )
+        escaped_text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         # Note: w:rsidR, w:rsidRDefault, w:rsidP on w:p, w:rsidR on w:r,
         # and w:author, w:date, w:initials on w:comment are automatically added by DocxXMLEditor
         comment_xml = f'''<w:comment w:id="{comment_id}">
@@ -1091,9 +1072,7 @@ class Document:
     def _add_to_comments_extended_xml(self, para_id, parent_para_id):
         """Add a single comment to commentsExtended.xml."""
         if not self.comments_extended_path.exists():
-            shutil.copy(
-                TEMPLATE_DIR / "commentsExtended.xml", self.comments_extended_path
-            )
+            shutil.copy(TEMPLATE_DIR / "commentsExtended.xml", self.comments_extended_path)
 
         editor = self["word/commentsExtended.xml"]
         root = editor.get_node(tag="w15:commentsEx")
@@ -1118,9 +1097,7 @@ class Document:
     def _add_to_comments_extensible_xml(self, durable_id):
         """Add a single comment to commentsExtensible.xml."""
         if not self.comments_extensible_path.exists():
-            shutil.copy(
-                TEMPLATE_DIR / "commentsExtensible.xml", self.comments_extensible_path
-            )
+            shutil.copy(TEMPLATE_DIR / "commentsExtensible.xml", self.comments_extensible_path)
 
         editor = self["word/commentsExtensible.xml"]
         root = editor.get_node(tag="w16cex:commentsExtensible")
@@ -1237,7 +1214,9 @@ class Document:
         ]
 
         for rel_id, rel_type, target in rels:
-            rel_xml = f'<{prefix}Relationship Id="rId{rel_id}" Type="{rel_type}" Target="{target}"/>'
+            rel_xml = (
+                f'<{prefix}Relationship Id="rId{rel_id}" Type="{rel_type}" Target="{target}"/>'
+            )
             editor.append_to(root, rel_xml)
 
     def _ensure_comment_content_types(self):
@@ -1270,8 +1249,5 @@ class Document:
         ]
 
         for part_name, content_type in overrides:
-            override_xml = (
-                f'<Override PartName="{part_name}" ContentType="{content_type}"/>'
-            )
+            override_xml = f'<Override PartName="{part_name}" ContentType="{content_type}"/>'
             editor.append_to(root, override_xml)
-

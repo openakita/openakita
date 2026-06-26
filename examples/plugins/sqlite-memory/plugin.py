@@ -72,12 +72,14 @@ class SQLiteMemoryBackend:
         results = []
         for row in rows:
             meta = json.loads(row[2]) if row[2] else {}
-            results.append({
-                "id": row[0],
-                "content": row[1],
-                "metadata": meta,
-                "created_at": row[3],
-            })
+            results.append(
+                {
+                    "id": row[0],
+                    "content": row[1],
+                    "metadata": meta,
+                    "created_at": row[3],
+                }
+            )
         logger.info("[sqlite-memory] search q=%r found=%d", query, len(results))
         return results
 
@@ -144,4 +146,3 @@ class Plugin(PluginBase):
     def on_unload(self) -> None:
         if hasattr(self, "_backend"):
             self._backend.close()
-

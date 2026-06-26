@@ -169,7 +169,8 @@ class TaskQueue:
         unfinished_children = [
             child.task_id
             for child in self._task_index.values()
-            if child.parent_task_id == task_id and child.status not in ("done", "failed", "cancelled")
+            if child.parent_task_id == task_id
+            and child.status not in ("done", "failed", "cancelled")
         ]
         if unfinished_children:
             task.blocked_by = unfinished_children
@@ -292,6 +293,8 @@ class TaskQueue:
             "stale_leases": sum(
                 1
                 for task in self._task_index.values()
-                if task.status == "running" and task.lease_expires_at and task.lease_expires_at < time.time()
+                if task.status == "running"
+                and task.lease_expires_at
+                and task.lease_expires_at < time.time()
             ),
         }

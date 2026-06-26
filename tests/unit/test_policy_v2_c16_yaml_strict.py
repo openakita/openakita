@@ -130,9 +130,7 @@ def test_regex_list_count_cap_enforced():
 
 
 def test_valid_regex_accepted():
-    cfg = ShellRiskConfig.model_validate(
-        {"custom_critical": [r"rm\s+-rf", r"dd\s+if="]}
-    )
+    cfg = ShellRiskConfig.model_validate({"custom_critical": [r"rm\s+-rf", r"dd\s+if="]})
     assert len(cfg.custom_critical) == 2
 
 
@@ -205,9 +203,7 @@ def test_recover_from_load_failure_falls_back_to_defaults_on_first_load():
     in POLICIES.yaml — operators are not locked out at first run.
     """
     assert ge._get_last_known_good() is None
-    recovered = ge._recover_from_load_failure(
-        ValueError("simulated"), source="POLICIES.yaml"
-    )
+    recovered = ge._recover_from_load_failure(ValueError("simulated"), source="POLICIES.yaml")
     # Default safety_immune paths is the schema default (empty list).
     assert recovered.safety_immune.paths == []
 
@@ -260,11 +256,7 @@ def test_rebuild_with_bad_yaml_keeps_lkg(tmp_path: Path):
     """
     yaml_path = tmp_path / "POLICIES.yaml"
     yaml_path.write_text(
-        "security:\n"
-        "  enabled: true\n"
-        "  safety_immune:\n"
-        "    paths:\n"
-        "      - /important/dir\n",
+        "security:\n  enabled: true\n  safety_immune:\n    paths:\n      - /important/dir\n",
         encoding="utf-8",
     )
     ge.rebuild_engine_v2(yaml_path=yaml_path)

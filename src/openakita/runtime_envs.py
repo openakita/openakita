@@ -96,7 +96,9 @@ def get_execution_env_seed_roots(scope: ExecutionEnvScope) -> list[Path]:
     return out
 
 
-def resolve_agent_env(profile_id: str, deps: list[str] | tuple[str, ...] | None = None) -> ExecutionEnvSpec:
+def resolve_agent_env(
+    profile_id: str, deps: list[str] | tuple[str, ...] | None = None
+) -> ExecutionEnvSpec:
     deps_t = _deps_tuple(deps)
     key = _safe_key(profile_id or "default")
     venv = get_execution_envs_root() / "agents" / key / ".venv"
@@ -111,7 +113,9 @@ def resolve_agent_env(profile_id: str, deps: list[str] | tuple[str, ...] | None 
     )
 
 
-def resolve_skill_env(skill_id: str, deps: list[str] | tuple[str, ...] | None = None) -> ExecutionEnvSpec:
+def resolve_skill_env(
+    skill_id: str, deps: list[str] | tuple[str, ...] | None = None
+) -> ExecutionEnvSpec:
     deps_t = _deps_tuple(deps)
     key = _safe_key(skill_id or "unknown-skill")
     venv = get_execution_envs_root() / "skills" / key / ".venv"
@@ -199,11 +203,15 @@ def _write_manifest(spec: ExecutionEnvSpec, *, status: str = "ready", error: str
     existing = _read_manifest(spec)
     manifest["created_at"] = existing.get("created_at") or manifest["last_used_at"]
     spec.venv_path.parent.mkdir(parents=True, exist_ok=True)
-    _manifest_path(spec).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    _manifest_path(spec).write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def _base_python() -> str | None:
-    managed = get_managed_python_seed() or get_app_python_executable() or get_agent_python_executable()
+    managed = (
+        get_managed_python_seed() or get_app_python_executable() or get_agent_python_executable()
+    )
     if managed:
         return managed
     if IS_FROZEN:
@@ -240,7 +248,12 @@ def _install_dependencies(spec: ExecutionEnvSpec) -> None:
     kwargs["env"] = apply_runtime_pip_environment(python_executable=str(spec.python_path))
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-    logger.info("[runtime_envs] Installing %d deps into %s env %s", len(spec.dependencies), spec.scope, spec.key)
+    logger.info(
+        "[runtime_envs] Installing %d deps into %s env %s",
+        len(spec.dependencies),
+        spec.scope,
+        spec.key,
+    )
     result = subprocess.run(cmd, **kwargs)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "dependency install failed").strip())

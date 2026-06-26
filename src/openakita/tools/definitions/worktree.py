@@ -67,4 +67,3 @@ WORKTREE_TOOLS: list[dict] = [
         },
     },
 ]
-

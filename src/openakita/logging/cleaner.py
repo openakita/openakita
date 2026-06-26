@@ -185,4 +185,3 @@ class LogCleaner:
             "oldest_file": files_sorted[0].name if files_sorted else None,
             "newest_file": files_sorted[-1].name if files_sorted else None,
         }
-

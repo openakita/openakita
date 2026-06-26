@@ -55,6 +55,7 @@ _FIELD_OPTIMIZE_SYSTEMS: dict[str, str] = {
 
 # ── Request models ──
 
+
 class ExecuteBody(BaseModel):
     params: dict = {}
 
@@ -80,8 +81,8 @@ class PromptOptimizeBody(BaseModel):
 
 # ── Plugin ──
 
-class Plugin(PluginBase):
 
+class Plugin(PluginBase):
     def on_load(self, api: PluginAPI) -> None:
         self._api = api
         self._data_dir = api.get_data_dir()
@@ -112,51 +113,60 @@ class Plugin(PluginBase):
         self._register_custom_routes(router)
         api.register_api_routes(router)
 
-        api.register_tools([
-            {
-                "name": "ecom_image_create",
-                "description": "Create an e-commerce image (product main image, poster, detail page)",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "feature_id": {"type": "string", "description": "Feature ID like image_main_gen"},
-                        "prompt": {"type": "string", "description": "Image generation prompt"},
-                        "product_name": {"type": "string"},
+        api.register_tools(
+            [
+                {
+                    "name": "ecom_image_create",
+                    "description": "Create an e-commerce image (product main image, poster, detail page)",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "feature_id": {
+                                "type": "string",
+                                "description": "Feature ID like image_main_gen",
+                            },
+                            "prompt": {"type": "string", "description": "Image generation prompt"},
+                            "product_name": {"type": "string"},
+                        },
+                        "required": ["prompt"],
                     },
-                    "required": ["prompt"],
                 },
-            },
-            {
-                "name": "ecom_video_create",
-                "description": "Create an e-commerce video (product showcase, ad, storyboard)",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "feature_id": {"type": "string", "description": "Feature ID like video_ad_oneclick"},
-                        "prompt": {"type": "string", "description": "Video generation prompt"},
-                        "duration": {"type": "integer", "default": 5},
+                {
+                    "name": "ecom_video_create",
+                    "description": "Create an e-commerce video (product showcase, ad, storyboard)",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "feature_id": {
+                                "type": "string",
+                                "description": "Feature ID like video_ad_oneclick",
+                            },
+                            "prompt": {"type": "string", "description": "Video generation prompt"},
+                            "duration": {"type": "integer", "default": 5},
+                        },
+                        "required": ["prompt"],
                     },
-                    "required": ["prompt"],
                 },
-            },
-            {
-                "name": "ecom_task_status",
-                "description": "Check status of an e-commerce content generation task",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"task_id": {"type": "string"}},
-                    "required": ["task_id"],
+                {
+                    "name": "ecom_task_status",
+                    "description": "Check status of an e-commerce content generation task",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"task_id": {"type": "string"}},
+                        "required": ["task_id"],
+                    },
                 },
-            },
-            {
-                "name": "ecom_task_list",
-                "description": "List recent e-commerce content generation tasks",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"limit": {"type": "integer", "default": 10}},
+                {
+                    "name": "ecom_task_list",
+                    "description": "List recent e-commerce content generation tasks",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"limit": {"type": "integer", "default": 10}},
+                    },
                 },
-            },
-        ], handler=self._handle_tool)
+            ],
+            handler=self._handle_tool,
+        )
 
         # Use api.spawn_task so the host can cancel + drain on unload.
         self._init_task = api.spawn_task(self._async_init(), name="ecommerce-image:init")
@@ -164,27 +174,32 @@ class Plugin(PluginBase):
 
     async def _async_init(self) -> None:
         from ecom_task_manager import TaskManager
+
         self._tm = TaskManager(self._data_dir / "ecommerce.db")
         await self._tm.init()
 
         dashscope_key, dashscope_base_url = self._resolve_relay_endpoint(
-            "dashscope_api_key", "dashscope_relay_endpoint",
+            "dashscope_api_key",
+            "dashscope_relay_endpoint",
             "dashscope_relay_fallback_policy",
             required_capability="image",
             await_config=await self._tm.get_all_config(),
         )
         if dashscope_key:
             from ecom_client import EcomClient
+
             self._dashscope = EcomClient(dashscope_key, base_url=dashscope_base_url or None)
 
         ark_key, ark_base_url = self._resolve_relay_endpoint(
-            "ark_api_key", "ark_relay_endpoint",
+            "ark_api_key",
+            "ark_relay_endpoint",
             "ark_relay_fallback_policy",
             required_capability="video",
             await_config=await self._tm.get_all_config(),
         )
         if ark_key:
             from ecom_video_client import EcomVideoClient
+
             self._ark = EcomVideoClient(ark_key, base_url=ark_base_url or None)
 
         self._start_polling()
@@ -227,9 +242,7 @@ class Plugin(PluginBase):
                     "api_key": api_key,
                     "base_url": "",
                     "relay_endpoint": relay_name,
-                    "relay_fallback_policy": str(
-                        await_config.get(policy_field) or "official"
-                    ),
+                    "relay_fallback_policy": str(await_config.get(policy_field) or "official"),
                 },
                 required_capability=required_capability,
                 plugin_name="ecommerce-image",
@@ -267,6 +280,7 @@ class Plugin(PluginBase):
         """
         try:
             from ecom_features_config import ALL_FEATURES
+
             for raw in ALL_FEATURES:
                 fdict = dict(raw)
                 params = [FeatureParam(**p) for p in fdict.pop("params", [])]
@@ -315,7 +329,8 @@ class Plugin(PluginBase):
         """
         if self._tm is None:
             raise HTTPException(
-                503, "ecommerce-image backend is initializing, try again in a moment",
+                503,
+                "ecommerce-image backend is initializing, try again in a moment",
             )
 
     # ── Tool handler ──
@@ -342,7 +357,9 @@ class Plugin(PluginBase):
             tasks, total = await self._tm.list_tasks(limit=args.get("limit", 10))
             lines = [f"Total: {total} tasks"]
             for t in tasks:
-                lines.append(f"  {t['id']}: [{t['status']}] {t.get('feature_id', '')} - {(t.get('prompt') or '')[:40]}")
+                lines.append(
+                    f"  {t['id']}: [{t['status']}] {t.get('feature_id', '')} - {(t.get('prompt') or '')[:40]}"
+                )
             return "\n".join(lines)
         return f"Unknown tool: {tool_name}"
 
@@ -422,7 +439,9 @@ class Plugin(PluginBase):
             name=f"ecommerce-image:mock:{task['id']}",
         )
         try:
-            self._api.broadcast_ui_event("task_update", {"task_id": task["id"], "status": "running"})
+            self._api.broadcast_ui_event(
+                "task_update", {"task_id": task["id"], "status": "running"}
+            )
         except Exception:
             pass
         return task
@@ -448,12 +467,16 @@ class Plugin(PluginBase):
 
         if feature.api_provider == "ark" or feature.output_type == "video":
             await self._tm.update_task_status(
-                task_id, "succeeded", video_url=MOCK_VIDEO_URL,
+                task_id,
+                "succeeded",
+                video_url=MOCK_VIDEO_URL,
             )
         else:
             urls = mock_image_urls(task_id, qty)
             await self._tm.update_task_status(
-                task_id, "succeeded", image_urls=json.dumps(urls, ensure_ascii=False),
+                task_id,
+                "succeeded",
+                image_urls=json.dumps(urls, ensure_ascii=False),
             )
         self._broadcast_update(task_id, "succeeded")
 
@@ -466,10 +489,15 @@ class Plugin(PluginBase):
             pass
         return self._brain
 
-    async def _call_brain(self, brain: Any, user_msg: str, system: str, max_tokens: int = 2048) -> str:
+    async def _call_brain(
+        self, brain: Any, user_msg: str, system: str, max_tokens: int = 2048
+    ) -> str:
         from ecom_execution import _extract_text
+
         if hasattr(brain, "think_lightweight"):
-            result = await brain.think_lightweight(prompt=user_msg, system=system, max_tokens=max_tokens)
+            result = await brain.think_lightweight(
+                prompt=user_msg, system=system, max_tokens=max_tokens
+            )
         elif hasattr(brain, "think"):
             result = await brain.think(prompt=user_msg, system=system)
         else:
@@ -565,12 +593,12 @@ class Plugin(PluginBase):
                 httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client,
                 client.stream("GET", url) as resp,
             ):
-                    resp.raise_for_status()
-                    ext = self._ext_from_response(resp, ".mp4")
-                    out_path = out_dir / f"ecom_{task_id}{ext}"
-                    with out_path.open("wb") as f:
-                        async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
-                            f.write(chunk)
+                resp.raise_for_status()
+                ext = self._ext_from_response(resp, ".mp4")
+                out_path = out_dir / f"ecom_{task_id}{ext}"
+                with out_path.open("wb") as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
+                        f.write(chunk)
             return str(out_path)
         except Exception as e:
             self._api.log(f"Failed to download video {url} for task {task_id}: {e}")
@@ -594,14 +622,16 @@ class Plugin(PluginBase):
                 if status in ("SUCCEEDED", "succeeded"):
                     image_urls = result.get("image_urls", [])
                     await self._tm.update_task_status(
-                        task["id"], "succeeded",
+                        task["id"],
+                        "succeeded",
                         image_urls=json.dumps(image_urls) if image_urls else None,
                     )
                     if image_urls and await self._is_auto_download():
                         local = await self._download_image_assets(task["id"], image_urls)
                         if local:
                             await self._tm.update_task(
-                                task["id"], local_paths=json.dumps(local, ensure_ascii=False),
+                                task["id"],
+                                local_paths=json.dumps(local, ensure_ascii=False),
                             )
                     self._broadcast_update(task["id"], "succeeded")
                     parent_id = task.get("batch_parent_id")
@@ -611,7 +641,9 @@ class Plugin(PluginBase):
                 elif status in ("FAILED", "failed"):
                     error = result.get("error", "Unknown error")
                     await self._tm.update_task_status(
-                        task["id"], "failed", error_message=str(error),
+                        task["id"],
+                        "failed",
+                        error_message=str(error),
                     )
                     self._broadcast_update(task["id"], "failed")
                     parent_id = task.get("batch_parent_id")
@@ -648,13 +680,16 @@ class Plugin(PluginBase):
                                 if isinstance(item, dict) and item.get("type") == "video_url":
                                     video_url = item.get("video_url", {}).get("url", "")
                     await self._tm.update_task_status(
-                        task["id"], "succeeded", video_url=video_url,
+                        task["id"],
+                        "succeeded",
+                        video_url=video_url,
                     )
                     if video_url and await self._is_auto_download():
                         local = await self._download_video_asset(task["id"], video_url)
                         if local:
                             await self._tm.update_task(
-                                task["id"], local_video_path=local,
+                                task["id"],
+                                local_video_path=local,
                             )
                     self._broadcast_update(task["id"], "succeeded")
                     parent_id = task.get("batch_parent_id")
@@ -663,9 +698,15 @@ class Plugin(PluginBase):
                         self._broadcast_update(parent_id, "progress")
                 elif status == "failed":
                     error = result.get("error", {})
-                    msg = error.get("message", "Unknown error") if isinstance(error, dict) else str(error)
+                    msg = (
+                        error.get("message", "Unknown error")
+                        if isinstance(error, dict)
+                        else str(error)
+                    )
                     await self._tm.update_task_status(
-                        task["id"], "failed", error_message=msg,
+                        task["id"],
+                        "failed",
+                        error_message=msg,
                     )
                     self._broadcast_update(task["id"], "failed")
                     parent_id = task.get("batch_parent_id")
@@ -709,9 +750,12 @@ class Plugin(PluginBase):
             if not feature:
                 raise HTTPException(404, "Feature not found")
             ctx = ExecutionContext(
-                dashscope=self._dashscope, ark=self._ark,
-                task_manager=self._tm, brain=self._get_brain(),
-                plugin_api=self._api, feature=feature,
+                dashscope=self._dashscope,
+                ark=self._ark,
+                task_manager=self._tm,
+                brain=self._get_brain(),
+                plugin_api=self._api,
+                feature=feature,
             )
             strategy = strategy_factory(feature.execution_mode)
             errors = await strategy.validate(body.params, ctx)
@@ -722,6 +766,7 @@ class Plugin(PluginBase):
         def _make_mini_ctx(feature: FeatureDefinition):
             """Lightweight object mimicking ExecutionContext for resolve_model/resolve_size."""
             import types
+
             ctx = types.SimpleNamespace()
             ctx.feature = feature
             ctx.defaults = {}
@@ -736,8 +781,11 @@ class Plugin(PluginBase):
             limit: int = 20,
         ) -> dict:
             tasks, total = await self._tm.list_tasks(
-                module=module, feature_id=feature, status=status,
-                offset=offset, limit=limit,
+                module=module,
+                feature_id=feature,
+                status=status,
+                offset=offset,
+                limit=limit,
             )
             return {"ok": True, "tasks": tasks, "total": total}
 
@@ -805,6 +853,7 @@ class Plugin(PluginBase):
                 raise HTTPException(404, "Feature not found")
 
             from ecom_execution import resolve_model, resolve_size
+
             chosen_model = resolve_model(params, _make_mini_ctx(feature))
             size = resolve_size(params, _make_mini_ctx(feature))
             saved_full = await self._tm.get_all_config()
@@ -819,6 +868,7 @@ class Plugin(PluginBase):
                 )
                 if ds_key:
                     from ecom_client import EcomClient
+
                     if self._dashscope:
                         self._dashscope.update_api_key(ds_key)
                         self._dashscope.update_base_url(ds_base or None)
@@ -835,6 +885,7 @@ class Plugin(PluginBase):
                 )
                 if ark_key:
                     from ecom_video_client import EcomVideoClient
+
                     if self._ark:
                         self._ark.update_api_key(ark_key)
                         self._ark.update_base_url(ark_base or None)
@@ -882,7 +933,9 @@ class Plugin(PluginBase):
                 self._broadcast_update(parent_id, "progress")
             except Exception as e:
                 await self._tm.update_task_status(
-                    task_id, "failed", error_message=str(e),
+                    task_id,
+                    "failed",
+                    error_message=str(e),
                 )
                 self._broadcast_update(task_id, "failed")
                 await self._tm.recompute_batch_parent_status(parent_id)
@@ -903,7 +956,8 @@ class Plugin(PluginBase):
             if old["status"] not in ("failed", "cancelled", "partial_success"):
                 raise HTTPException(400, "只能重试失败/取消/部分成功的任务")
             new_task = await self._execute_feature(
-                old["feature_id"], old.get("params", {}),
+                old["feature_id"],
+                old.get("params", {}),
             )
             return {"ok": True, "task": new_task}
 
@@ -916,8 +970,7 @@ class Plugin(PluginBase):
                 raise HTTPException(400, "只能取消 pending/running 任务")
 
             has_children = (
-                task.get("execution_mode") == "batch"
-                or task.get("progress_total", 0) > 1
+                task.get("execution_mode") == "batch" or task.get("progress_total", 0) > 1
             )
             if has_children:
                 await self._tm.update_task_status(task_id, "cancelling")
@@ -940,13 +993,15 @@ class Plugin(PluginBase):
 
         @router.post("/upload")
         async def upload_file(
-            request: Request, file: UploadFile = File(...),
+            request: Request,
+            file: UploadFile = File(...),
         ) -> dict:
             # Pre-check Content-Length so giant uploads die before we touch disk.
             cl = request.headers.get("content-length")
             if cl and cl.isdigit() and int(cl) > MAX_UPLOAD_BYTES:
                 raise HTTPException(
-                    413, f"Upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
+                    413,
+                    f"Upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
                 )
 
             ext = Path(file.filename or "file").suffix.lower()
@@ -954,6 +1009,7 @@ class Plugin(PluginBase):
             assets_dir.mkdir(parents=True, exist_ok=True)
 
             import uuid
+
             filename = f"{uuid.uuid4().hex[:8]}_{file.filename or 'file'}"
             filepath = assets_dir / filename
 
@@ -1028,7 +1084,9 @@ class Plugin(PluginBase):
                 media = mimetypes.guess_type(str(lp))[0] or "image/png"
                 return FileResponse(str(lp), media_type=media, filename=lp.name)
             return self._api.create_file_response(
-                url, filename=f"ecom_{task_id}_{idx}.png", media_type="image/png",
+                url,
+                filename=f"ecom_{task_id}_{idx}.png",
+                media_type="image/png",
             )
 
         @router.get("/videos/{task_id}")
@@ -1046,7 +1104,9 @@ class Plugin(PluginBase):
             if not video_url:
                 raise HTTPException(404, "No video available")
             return self._api.create_file_response(
-                video_url, filename=f"ecom_{task_id}.mp4", media_type="video/mp4",
+                video_url,
+                filename=f"ecom_{task_id}.mp4",
+                media_type="video/mp4",
             )
 
     def _register_config_routes(self, router: APIRouter) -> None:
@@ -1063,6 +1123,7 @@ class Plugin(PluginBase):
                 auto_dl = "true"
             wm = await self._tm.get_config("watermark") or "false"
             from ecom_models import IMAGE_MODELS, VIDEO_MODELS
+
             image_model_opts = [{"id": m["id"], "name": m["name"]} for m in IMAGE_MODELS]
             video_model_opts = [{"id": m["id"], "name": m["name"]} for m in VIDEO_MODELS]
             image_size_opts = ["1K", "2K", "4K"]
@@ -1138,6 +1199,7 @@ class Plugin(PluginBase):
                 )
                 if ds_key:
                     from ecom_client import EcomClient
+
                     if self._dashscope:
                         self._dashscope.update_api_key(ds_key)
                         if hasattr(self._dashscope, "update_base_url"):
@@ -1154,6 +1216,7 @@ class Plugin(PluginBase):
                 )
                 if ark_key:
                     from ecom_video_client import EcomVideoClient
+
                     if self._ark:
                         self._ark.update_api_key(ark_key)
                         self._ark.update_base_url(ark_base or None)
@@ -1221,6 +1284,7 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=500, detail=f"Cannot create folder: {exc}") from exc
             import subprocess
             import sys
+
             try:
                 if sys.platform == "win32":
                     subprocess.Popen(["explorer", str(target)])
@@ -1235,6 +1299,7 @@ class Plugin(PluginBase):
         @router.get("/storage/list-dir")
         async def list_dir(path: str = "") -> dict:
             import sys as _sys
+
             raw = (path or "").strip()
             if not raw:
                 anchors: list[dict] = []
@@ -1243,14 +1308,24 @@ class Plugin(PluginBase):
                 for sub in ("Desktop", "Documents", "Downloads", "Pictures", "Videos"):
                     p = home / sub
                     if p.is_dir():
-                        anchors.append({"name": sub, "path": str(p), "is_dir": True, "kind": "shortcut"})
+                        anchors.append(
+                            {"name": sub, "path": str(p), "is_dir": True, "kind": "shortcut"}
+                        )
                 if _sys.platform == "win32":
                     import string
+
                     for letter in string.ascii_uppercase:
                         drv = Path(f"{letter}:/")
                         try:
                             if drv.exists():
-                                anchors.append({"name": f"{letter}:", "path": str(drv), "is_dir": True, "kind": "drive"})
+                                anchors.append(
+                                    {
+                                        "name": f"{letter}:",
+                                        "path": str(drv),
+                                        "is_dir": True,
+                                        "kind": "drive",
+                                    }
+                                )
                         except OSError:
                             continue
                 else:
@@ -1279,7 +1354,13 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             items.sort(key=lambda it: it["name"].lower())
             parent_path = str(target.parent) if target.parent != target else None
-            return {"ok": True, "path": str(target), "parent": parent_path, "items": items, "is_anchor": False}
+            return {
+                "ok": True,
+                "path": str(target),
+                "parent": parent_path,
+                "items": items,
+                "is_anchor": False,
+            }
 
         @router.post("/storage/mkdir")
         async def make_dir(body: dict) -> dict:
@@ -1313,18 +1394,23 @@ class Plugin(PluginBase):
 
             if feature and field_id == "prompt" and feature.execution_mode == "agent":
                 from ecom_execution import AgentStrategy, split_params
+
                 text_params, _ = split_params(feature, body.params or {})
                 if not text_params.get("prompt") and body.prompt:
                     text_params["prompt"] = body.prompt
 
                 is_video = feature.api_provider == "ark"
                 user_msg = AgentStrategy._build_user_msg(
-                    text_params, feature, is_video=is_video, params=body.params,
+                    text_params,
+                    feature,
+                    is_video=is_video,
+                    params=body.params,
                 )
                 cfg = feature.execution_config or {}
                 system_prompt = cfg.get("agent_system_prompt", "")
                 if is_video and not system_prompt:
                     from ecom_prompt_optimizer import VIDEO_OPTIMIZE_SYSTEM_PROMPT
+
                     system_prompt = VIDEO_OPTIMIZE_SYSTEM_PROMPT
                 if not system_prompt:
                     system_prompt = "你是电商内容创意专家，请优化以下提示词使其更适合 AI 图像生成。直接输出优化后的提示词，不要解释。"
@@ -1352,32 +1438,44 @@ class Plugin(PluginBase):
 
             if kind == "video":
                 from ecom_prompt_optimizer import optimize_video_prompt
+
                 result = await optimize_video_prompt(
-                    brain, text_to_optimize,
-                    mode=body.mode, duration=body.duration, ratio=body.ratio,
-                    asset_summary=body.asset_summary, level=body.level,
+                    brain,
+                    text_to_optimize,
+                    mode=body.mode,
+                    duration=body.duration,
+                    ratio=body.ratio,
+                    asset_summary=body.asset_summary,
+                    level=body.level,
                 )
             else:
                 from ecom_prompt_optimizer import optimize_prompt as do_optimize
+
                 result = await do_optimize(
-                    brain, text_to_optimize,
-                    level=body.level, category=body.category, style=body.style,
+                    brain,
+                    text_to_optimize,
+                    level=body.level,
+                    category=body.category,
+                    style=body.style,
                 )
             return {"ok": True, "optimized": result, "field_id": field_id, "kind": kind}
 
         @router.get("/prompt-guide")
         async def prompt_guide(kind: str = "video") -> dict:
             from ecom_prompt_optimizer import get_prompt_guide
+
             return {"ok": True, "kind": kind, **get_prompt_guide(kind)}
 
         @router.get("/prompt-templates")
         async def prompt_templates(kind: str = "video") -> dict:
             from ecom_prompt_optimizer import get_prompt_templates
+
             return {"ok": True, "kind": kind, "templates": get_prompt_templates(kind)}
 
         @router.get("/models")
         async def list_models() -> dict:
             from ecom_models import get_all_models
+
             return {"ok": True, "models": get_all_models()}
 
     def _register_custom_routes(self, router: APIRouter) -> None:

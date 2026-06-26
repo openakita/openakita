@@ -41,6 +41,7 @@ _INTERNAL_PARAM_PREFIX = "_"
 
 # ── Request models ──
 
+
 class CreateTaskBody(BaseModel):
     # ``extra="allow"`` keeps mode-specific UI flags (e.g. talking_polish's
     # remove_filler / remove_stutter / remove_repetition toggles) flowing
@@ -72,6 +73,7 @@ class ConfigUpdateBody(BaseModel):
 
 
 # ── System dep installer (settings page) ──
+
 
 class SystemInstallBody(BaseModel):
     """POST body for ``/system/{dep_id}/install``.
@@ -117,6 +119,7 @@ class StorageMkdirBody(BaseModel):
 
 # ── Plugin entry ──
 
+
 class Plugin(PluginBase):
     def on_load(self, api: PluginAPI) -> None:
         self._api = api
@@ -137,47 +140,64 @@ class Plugin(PluginBase):
         self._register_routes(router)
         api.register_api_routes(router)
 
-        api.register_tools([
-            {
-                "name": "clip_sense_create",
-                "description": "Create a video editing task (highlight extraction, silence removal, topic splitting, or talking-head polish)",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "mode": {"type": "string", "enum": ["highlight_extract", "silence_clean", "topic_split", "talking_polish"]},
-                        "source_video_path": {"type": "string", "description": "Path to the source video file"},
-                        "flavor": {"type": "string", "description": "Highlight selection preference"},
+        api.register_tools(
+            [
+                {
+                    "name": "clip_sense_create",
+                    "description": "Create a video editing task (highlight extraction, silence removal, topic splitting, or talking-head polish)",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "mode": {
+                                "type": "string",
+                                "enum": [
+                                    "highlight_extract",
+                                    "silence_clean",
+                                    "topic_split",
+                                    "talking_polish",
+                                ],
+                            },
+                            "source_video_path": {
+                                "type": "string",
+                                "description": "Path to the source video file",
+                            },
+                            "flavor": {
+                                "type": "string",
+                                "description": "Highlight selection preference",
+                            },
+                        },
+                        "required": ["mode", "source_video_path"],
                     },
-                    "required": ["mode", "source_video_path"],
                 },
-            },
-            {
-                "name": "clip_sense_status",
-                "description": "Check status of a clip-sense editing task",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"task_id": {"type": "string"}},
-                    "required": ["task_id"],
+                {
+                    "name": "clip_sense_status",
+                    "description": "Check status of a clip-sense editing task",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"task_id": {"type": "string"}},
+                        "required": ["task_id"],
+                    },
                 },
-            },
-            {
-                "name": "clip_sense_list",
-                "description": "List recent clip-sense editing tasks",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"limit": {"type": "integer", "default": 10}},
+                {
+                    "name": "clip_sense_list",
+                    "description": "List recent clip-sense editing tasks",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"limit": {"type": "integer", "default": 10}},
+                    },
                 },
-            },
-            {
-                "name": "clip_sense_cancel",
-                "description": "Cancel a running clip-sense task",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"task_id": {"type": "string"}},
-                    "required": ["task_id"],
+                {
+                    "name": "clip_sense_cancel",
+                    "description": "Cancel a running clip-sense task",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"task_id": {"type": "string"}},
+                        "required": ["task_id"],
+                    },
                 },
-            },
-        ], handler=self._handle_tool)
+            ],
+            handler=self._handle_tool,
+        )
 
         api.spawn_task(self._async_init(), name="clip-sense:init")
         api.log("ClipSense plugin loaded")
@@ -201,9 +221,7 @@ class Plugin(PluginBase):
             if self._client is not None:
                 await self._client.close()
             self._client = (
-                ClipAsrClient(api_key, base_url=base_url)
-                if base_url
-                else ClipAsrClient(api_key)
+                ClipAsrClient(api_key, base_url=base_url) if base_url else ClipAsrClient(api_key)
             )
             self._client.configure_analysis(
                 provider=analysis_provider,
@@ -251,6 +269,7 @@ class Plugin(PluginBase):
             return api_key, ""
         except SettingsRelayResolutionError as exc:
             from fastapi import HTTPException
+
             raise HTTPException(status_code=400, detail=exc.user_message) from exc
         ref = merged.get("_relay_reference")
         unsupported = [
@@ -260,12 +279,10 @@ class Plugin(PluginBase):
         ]
         if unsupported:
             policy = str(cfg.get("dashscope_relay_fallback_policy") or "official")
-            msg = (
-                f"中转站 {relay_name!r} 不支持 clip-sense 需要的模型: "
-                f"{', '.join(unsupported)}"
-            )
+            msg = f"中转站 {relay_name!r} 不支持 clip-sense 需要的模型: {', '.join(unsupported)}"
             if policy == "strict":
                 from fastapi import HTTPException
+
                 raise HTTPException(status_code=400, detail=msg)
             logger.warning("%s; falling back to per-plugin DashScope endpoint", msg)
             return api_key, ""
@@ -379,9 +396,7 @@ class Plugin(PluginBase):
             offset: int = 0,
             limit: int = 50,
         ) -> dict[str, Any]:
-            return await self._tm.list_tasks(
-                status=status, mode=mode, offset=offset, limit=limit
-            )
+            return await self._tm.list_tasks(status=status, mode=mode, offset=offset, limit=limit)
 
         # 3. GET /tasks/{task_id} — get task
         @router.get("/tasks/{task_id}")
@@ -407,6 +422,7 @@ class Plugin(PluginBase):
             }:
                 if task_dir.exists() and task_dir.is_dir():
                     import shutil as _shutil
+
                     _shutil.rmtree(task_dir, ignore_errors=True)
             return {"status": "deleted"}
 
@@ -429,11 +445,13 @@ class Plugin(PluginBase):
             if task["status"] not in ("failed", "cancelled"):
                 raise HTTPException(400, "Can only retry failed or cancelled tasks")
             new_params = task.get("params") or {}
-            new_task = await self._create_task_internal({
-                "mode": task["mode"],
-                "source_video_path": task.get("source_video_path", ""),
-                **new_params,
-            })
+            new_task = await self._create_task_internal(
+                {
+                    "mode": task["mode"],
+                    "source_video_path": task.get("source_video_path", ""),
+                    **new_params,
+                }
+            )
             return new_task
 
         # 7. GET /tasks/{task_id}/download
@@ -445,12 +463,14 @@ class Plugin(PluginBase):
             - no index  → download the primary output_path (first topic)
             """
             from fastapi.responses import FileResponse
+
             task = await self._tm.get_task(task_id)
             if not task or not task.get("output_path"):
                 raise HTTPException(404, "Output not found")
             params = task.get("params") or {}
             if isinstance(params, str):
                 import json as _json
+
                 try:
                     params = _json.loads(params)
                 except Exception:
@@ -475,12 +495,11 @@ class Plugin(PluginBase):
         @router.get("/tasks/{task_id}/subtitle")
         async def download_subtitle(task_id: str) -> Any:
             from fastapi.responses import FileResponse
+
             task = await self._tm.get_task(task_id)
             if not task or not task.get("subtitle_path"):
                 raise HTTPException(404, "Subtitle not found")
-            p = await self._resolve_task_file(
-                task_id, Path(task["subtitle_path"]), kind="subtitle"
-            )
+            p = await self._resolve_task_file(task_id, Path(task["subtitle_path"]), kind="subtitle")
             if not p.exists():
                 raise HTTPException(404, "Subtitle file missing")
             return FileResponse(p, filename=p.name, media_type="text/plain")
@@ -551,7 +570,9 @@ class Plugin(PluginBase):
             updates = dict(body.updates)
             if "analysis_provider" in updates:
                 provider = (updates["analysis_provider"] or "host").strip().lower()
-                updates["analysis_provider"] = provider if provider in ("host", "dashscope") else "host"
+                updates["analysis_provider"] = (
+                    provider if provider in ("host", "dashscope") else "host"
+                )
             for k in ("output_dir", "uploads_dir", "tasks_dir"):
                 if k not in updates:
                     continue
@@ -588,7 +609,10 @@ class Plugin(PluginBase):
             for key, default in self._storage_defaults(config).items():
                 target = Path(default)
                 report = await collect_storage_stats(
-                    target, max_files=20000, sample_paths=0, skip_hidden=True,
+                    target,
+                    max_files=20000,
+                    sample_paths=0,
+                    skip_hidden=True,
                 )
                 truncated_any = truncated_any or report.truncated
                 stats[key] = {
@@ -677,12 +701,11 @@ class Plugin(PluginBase):
             try:
                 target.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
-                raise HTTPException(
-                    500, f"Cannot create folder: {exc}"
-                ) from exc
+                raise HTTPException(500, f"Cannot create folder: {exc}") from exc
 
             import subprocess
             import sys
+
             try:
                 if sys.platform == "win32":
                     subprocess.Popen(["explorer", str(target)])
@@ -691,9 +714,7 @@ class Plugin(PluginBase):
                 else:
                     subprocess.Popen(["xdg-open", str(target)])
             except (OSError, FileNotFoundError) as exc:
-                raise HTTPException(
-                    500, f"Cannot open folder: {exc}"
-                ) from exc
+                raise HTTPException(500, f"Cannot open folder: {exc}") from exc
             return {"ok": True, "path": str(target)}
 
         # 18. GET /storage/list-dir — folder picker navigation. Empty
@@ -702,46 +723,69 @@ class Plugin(PluginBase):
         @router.get("/storage/list-dir")
         async def list_dir(path: str = "") -> dict[str, Any]:
             import sys
+
             raw = (path or "").strip()
             if not raw:
                 anchors: list[dict[str, Any]] = []
                 home = Path.home()
-                anchors.append({
-                    "name": "Home", "path": str(home), "is_dir": True,
-                    "kind": "home",
-                })
+                anchors.append(
+                    {
+                        "name": "Home",
+                        "path": str(home),
+                        "is_dir": True,
+                        "kind": "home",
+                    }
+                )
                 for sub in (
-                    "Desktop", "Documents", "Downloads",
-                    "Pictures", "Videos", "Movies",
+                    "Desktop",
+                    "Documents",
+                    "Downloads",
+                    "Pictures",
+                    "Videos",
+                    "Movies",
                 ):
                     p = home / sub
                     if p.is_dir():
-                        anchors.append({
-                            "name": sub, "path": str(p), "is_dir": True,
-                            "kind": "shortcut",
-                        })
+                        anchors.append(
+                            {
+                                "name": sub,
+                                "path": str(p),
+                                "is_dir": True,
+                                "kind": "shortcut",
+                            }
+                        )
                 if sys.platform == "win32":
                     import string
+
                     for letter in string.ascii_uppercase:
                         drv = Path(f"{letter}:/")
                         try:
                             if drv.exists():
-                                anchors.append({
-                                    "name": f"{letter}:",
-                                    "path": str(drv),
-                                    "is_dir": True,
-                                    "kind": "drive",
-                                })
+                                anchors.append(
+                                    {
+                                        "name": f"{letter}:",
+                                        "path": str(drv),
+                                        "is_dir": True,
+                                        "kind": "drive",
+                                    }
+                                )
                         except OSError:
                             continue
                 else:
-                    anchors.append({
-                        "name": "/", "path": "/", "is_dir": True,
-                        "kind": "drive",
-                    })
+                    anchors.append(
+                        {
+                            "name": "/",
+                            "path": "/",
+                            "is_dir": True,
+                            "kind": "drive",
+                        }
+                    )
                 return {
-                    "ok": True, "path": "", "parent": None,
-                    "items": anchors, "is_anchor": True,
+                    "ok": True,
+                    "path": "",
+                    "parent": None,
+                    "items": anchors,
+                    "is_anchor": True,
                 }
 
             try:
@@ -759,10 +803,13 @@ class Plugin(PluginBase):
                         continue
                     try:
                         if entry.is_dir():
-                            items.append({
-                                "name": name, "path": str(entry),
-                                "is_dir": True,
-                            })
+                            items.append(
+                                {
+                                    "name": name,
+                                    "path": str(entry),
+                                    "is_dir": True,
+                                }
+                            )
                     except (PermissionError, OSError):
                         continue
             except PermissionError as exc:
@@ -771,12 +818,13 @@ class Plugin(PluginBase):
                 raise HTTPException(500, str(exc)) from exc
 
             items.sort(key=lambda it: it["name"].lower())
-            parent_path = (
-                str(target.parent) if target.parent != target else None
-            )
+            parent_path = str(target.parent) if target.parent != target else None
             return {
-                "ok": True, "path": str(target), "parent": parent_path,
-                "items": items, "is_anchor": False,
+                "ok": True,
+                "path": str(target),
+                "parent": parent_path,
+                "items": items,
+                "is_anchor": False,
             }
 
         # 19. POST /storage/mkdir — folder picker "New folder" action.
@@ -798,9 +846,7 @@ class Plugin(PluginBase):
             try:
                 new_path.mkdir(parents=False, exist_ok=False)
             except FileExistsError as exc:
-                raise HTTPException(
-                    409, "Folder already exists"
-                ) from exc
+                raise HTTPException(409, "Folder already exists") from exc
             except OSError as exc:
                 raise HTTPException(500, str(exc)) from exc
             return {"ok": True, "path": str(new_path)}
@@ -813,7 +859,9 @@ class Plugin(PluginBase):
             loop = asyncio.get_running_loop()
             try:
                 snap = await loop.run_in_executor(
-                    None, self._sysdeps.detect, "ffmpeg",
+                    None,
+                    self._sysdeps.detect,
+                    "ffmpeg",
                 )
                 return {
                     "available": bool(snap.get("found")),
@@ -823,7 +871,8 @@ class Plugin(PluginBase):
             except Exception:
                 if self._ffmpeg:
                     return await loop.run_in_executor(
-                        None, self._ffmpeg.detect,
+                        None,
+                        self._ffmpeg.detect,
                     )
                 return {"available": False, "version": "", "path": ""}
 
@@ -836,11 +885,13 @@ class Plugin(PluginBase):
         # 22. POST /system/{dep_id}/install
         @router.post("/system/{dep_id}/install")
         async def system_install(
-            dep_id: str, body: SystemInstallBody,
+            dep_id: str,
+            body: SystemInstallBody,
         ) -> dict[str, Any]:
             try:
                 result = await self._sysdeps.start_install(
-                    dep_id, method_index=body.method_index,
+                    dep_id,
+                    method_index=body.method_index,
                 )
             except ValueError as exc:
                 raise HTTPException(404, str(exc)) from exc
@@ -861,11 +912,13 @@ class Plugin(PluginBase):
         # 23. POST /system/{dep_id}/uninstall
         @router.post("/system/{dep_id}/uninstall")
         async def system_uninstall(
-            dep_id: str, body: SystemUninstallBody,
+            dep_id: str,
+            body: SystemUninstallBody,
         ) -> dict[str, Any]:
             try:
                 result = await self._sysdeps.start_uninstall(
-                    dep_id, method_index=body.method_index,
+                    dep_id,
+                    method_index=body.method_index,
                 )
             except ValueError as exc:
                 raise HTTPException(404, str(exc)) from exc
@@ -887,10 +940,10 @@ class Plugin(PluginBase):
         @router.get("/permissions/check")
         async def permissions_check() -> dict[str, Any]:
             required = [
-                ("brain.access",   "AI 内容分析（高光提取 / 段落拆条 需要主进程 LLM）"),
+                ("brain.access", "AI 内容分析（高光提取 / 段落拆条 需要主进程 LLM）"),
                 ("routes.register", "插件 HTTP 接口（前端调用）"),
-                ("data.own",       "本地任务/字幕缓存（SQLite + 输出文件）"),
-                ("config.write",   "保存 API Key、FFmpeg 路径与默认参数"),
+                ("data.own", "本地任务/字幕缓存（SQLite + 输出文件）"),
+                ("config.write", "保存 API Key、FFmpeg 路径与默认参数"),
             ]
             checks = [
                 {
@@ -1044,7 +1097,8 @@ class Plugin(PluginBase):
             args.setdefault("padding_sec", preset.padding_sec)
 
         params = {
-            k: v for k, v in args.items()
+            k: v
+            for k, v in args.items()
             if k not in ("mode", "source_video_path", "source_url")
             and not str(k).startswith(_INTERNAL_PARAM_PREFIX)
         }
@@ -1078,17 +1132,13 @@ class Plugin(PluginBase):
             source_url=source_url,
         )
         self._running_pipelines[task["id"]] = ctx
-        self._api.spawn_task(
-            self._run_task(ctx), name=f"clip-sense:task:{task['id']}"
-        )
+        self._api.spawn_task(self._run_task(ctx), name=f"clip-sense:task:{task['id']}")
 
         return task
 
     async def _run_task(self, ctx: ClipPipelineContext) -> None:
         try:
-            await run_pipeline(
-                ctx, self._tm, self._client, self._ffmpeg, self._emit
-            )
+            await run_pipeline(ctx, self._tm, self._client, self._ffmpeg, self._emit)
         except Exception as exc:
             logger.exception("clip-sense pipeline unexpected error: %s", exc)
             try:
@@ -1127,7 +1177,8 @@ class Plugin(PluginBase):
                         tid = t["id"]
                         if tid not in self._running_pipelines:
                             await self._tm.update_task(
-                                tid, status="failed",
+                                tid,
+                                status="failed",
                                 error_kind="unknown",
                                 error_message="Task found in running state but no pipeline context (likely server restart)",
                             )

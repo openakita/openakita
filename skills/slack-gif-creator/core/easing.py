@@ -232,4 +232,3 @@ EASING_FUNCTIONS.update(
         "overshoot": ease_back_out,  # Alias
     }
 )
-

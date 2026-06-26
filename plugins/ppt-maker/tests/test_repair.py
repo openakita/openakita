@@ -47,4 +47,3 @@ def test_repair_trims_wide_tables() -> None:
     assert plan["changed"] is True
     assert len(repaired["slides"][0]["content"]["headers"]) == 8
     assert len(repaired["slides"][0]["content"]["rows"][0]) == 8
-

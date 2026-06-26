@@ -237,12 +237,18 @@ class LifecycleManager:
             review_result = checkpoint.get("llm_review") or {}
             report["llm_review"] = review_result
         else:
-            review_checkpoint = checkpoint.get("llm_review") if isinstance(checkpoint, dict) else None
+            review_checkpoint = (
+                checkpoint.get("llm_review") if isinstance(checkpoint, dict) else None
+            )
             review_result = await self.review_memories_with_llm(
                 checkpoint=review_checkpoint if isinstance(review_checkpoint, dict) else None,
-                checkpoint_callback=lambda state: save_checkpoint("llm_review", {"llm_review": state}),
+                checkpoint_callback=lambda state: save_checkpoint(
+                    "llm_review", {"llm_review": state}
+                ),
                 max_batches=review_max_batches,
-                deadline_monotonic=(started_at + time_budget_seconds) if time_budget_seconds else None,
+                deadline_monotonic=(started_at + time_budget_seconds)
+                if time_budget_seconds
+                else None,
             )
             report["llm_review"] = review_result
 
@@ -326,9 +332,7 @@ class LifecycleManager:
                             )
                             added += 1
                         except Exception as _e:
-                            logger.debug(
-                                f"[Lifecycle] backfill embed failed for {mem.id}: {_e}"
-                            )
+                            logger.debug(f"[Lifecycle] backfill embed failed for {mem.id}: {_e}")
                     if added:
                         logger.info(
                             f"[Lifecycle] Backfilled {added}/{len(missing)} missing vectors"
@@ -350,8 +354,45 @@ class LifecycleManager:
         if not unextracted:
             return {"processed": 0, "partial": False} if deadline_monotonic else 0
 
+        # v1.27.15 (S2 P1-6): drop ``preempted`` / ``aborted_partial``
+        # markers before they reach the LLM-driven extractor.  These
+        # placeholders are UI-only signals that a turn was cut short
+        # — extracting "[上一条任务被新请求中断]" as a long-term
+        # memory would actively confuse the agent (it would learn the
+        # user wants tasks to be interrupted!) and waste extraction
+        # tokens.  We immediately ``mark_turns_extracted`` so they're
+        # not picked up on the next pass either.
+        _markers_per_session: dict[str, list[int]] = defaultdict(list)
+        _real_turns: list[dict] = []
+        for _t in unextracted:
+            _meta = _t.get("metadata")
+            _marker_type = _meta.get("marker_type") if isinstance(_meta, dict) else None
+            if _marker_type in ("preempted", "aborted_partial"):
+                _markers_per_session[_t["session_id"]].append(_t["turn_index"])
+            else:
+                _real_turns.append(_t)
+        if _markers_per_session:
+            _total_markers = sum(len(v) for v in _markers_per_session.values())
+            logger.debug(
+                "[Lifecycle] skipping %d marker turn(s) across %d session(s)",
+                _total_markers,
+                len(_markers_per_session),
+            )
+            for _sid, _indices in _markers_per_session.items():
+                try:
+                    self.store.mark_turns_extracted(_sid, _indices)
+                except Exception as _exc:  # pragma: no cover - defensive
+                    logger.debug(
+                        "[Lifecycle] mark_turns_extracted(markers) failed for %s: %s",
+                        _sid,
+                        _exc,
+                    )
+
+        if not _real_turns:
+            return {"processed": 0, "partial": False} if deadline_monotonic else 0
+
         by_session: dict[str, list[dict]] = defaultdict(list)
-        for turn in unextracted:
+        for turn in _real_turns:
             by_session[turn["session_id"]].append(turn)
 
         total = 0
@@ -380,7 +421,9 @@ class LifecycleManager:
 
         for session_id, turns in by_session.items():
             if paused := pause_if_needed():
-                logger.info("[Lifecycle] Pausing unextracted turn processing before session %s", session_id)
+                logger.info(
+                    "[Lifecycle] Pausing unextracted turn processing before session %s", session_id
+                )
                 return paused
 
             # v4：先从 session_tenants 反查这个 session 属于哪个 (user_id, workspace_id)。
@@ -441,7 +484,9 @@ class LifecycleManager:
         retry_items = self.store.dequeue_extraction(batch_size=20)
         for item in retry_items:
             if paused := pause_if_needed():
-                logger.info("[Lifecycle] Pausing queued extraction processing at item %s", item.get("id"))
+                logger.info(
+                    "[Lifecycle] Pausing queued extraction processing at item %s", item.get("id")
+                )
                 return paused
             turn = ConversationTurn(
                 role="user",
@@ -1211,7 +1256,9 @@ class LifecycleManager:
             except Exception as e:
                 logger.debug(
                     "[Lifecycle] load_all_memories for tenant (%s, %s) failed: %s",
-                    tenant_user_id, tenant_workspace_id, e,
+                    tenant_user_id,
+                    tenant_workspace_id,
+                    e,
                 )
                 continue
 
@@ -1275,7 +1322,9 @@ class LifecycleManager:
                             self.store.update_semantic(sid, {"superseded_by": dup_target.id})
                         logger.debug(
                             "[Lifecycle] Synthesis dedup (tenant=%s/%s): reused %s",
-                            tenant_user_id, tenant_workspace_id, dup_target.id[:8],
+                            tenant_user_id,
+                            tenant_workspace_id,
+                            dup_target.id[:8],
                         )
                         continue
 
@@ -1305,20 +1354,26 @@ class LifecycleManager:
                     logger.info(
                         "[Lifecycle] Synthesized %d experience principles for tenant (%s, %s) "
                         "from %d memories",
-                        saved, tenant_user_id, tenant_workspace_id, len(experiences),
+                        saved,
+                        tenant_user_id,
+                        tenant_workspace_id,
+                        len(experiences),
                     )
                 total_saved += saved
             except Exception as e:
                 logger.warning(
                     "[Lifecycle] Synthesis failed for tenant (%s, %s): %s",
-                    tenant_user_id, tenant_workspace_id, e,
+                    tenant_user_id,
+                    tenant_workspace_id,
+                    e,
                 )
                 continue
 
         if total_saved:
             logger.info(
                 "[Lifecycle] Total synthesized %d experience principles across %d tenants",
-                total_saved, len(tenants),
+                total_saved,
+                len(tenants),
             )
         return total_saved
 
@@ -1337,9 +1392,7 @@ class LifecycleManager:
         """
         # v4：限定 scope='user'，防止 pending_consolidation / legacy_quarantine
         # 里的未审查内容直接写进 MEMORY.md（之前未过滤 scope 会跨用户污染）。
-        memories = self.store.query_semantic(
-            scope="user", min_importance=0.5, limit=200
-        )
+        memories = self.store.query_semantic(scope="user", min_importance=0.5, limit=200)
 
         try:
             from ..core.feature_flags import is_enabled as _ff_enabled
@@ -1350,8 +1403,7 @@ class LifecycleManager:
 
         if ff_filter:
             memories = [
-                m for m in memories
-                if str(getattr(m, "source", "") or "") != "profile_fallback"
+                m for m in memories if str(getattr(m, "source", "") or "") != "profile_fallback"
             ]
 
         by_type: dict[str, list[SemanticMemory]] = defaultdict(list)

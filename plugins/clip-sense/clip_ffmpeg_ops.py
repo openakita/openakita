@@ -28,15 +28,37 @@ logger = logging.getLogger(__name__)
 _VERSION_RE = re.compile(r"version\s+(\S+)", re.IGNORECASE)
 
 _CUT_VIDEO_ARGS = [
-    "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-pix_fmt", "yuv420p",
-    "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-    "-movflags", "+faststart",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "fast",
+    "-crf",
+    "22",
+    "-pix_fmt",
+    "yuv420p",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-ar",
+    "48000",
+    "-movflags",
+    "+faststart",
 ]
 
 _SUBTITLE_VIDEO_ARGS = [
-    "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
-    "-c:a", "copy",
-    "-movflags", "+faststart",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "fast",
+    "-crf",
+    "18",
+    "-pix_fmt",
+    "yuv420p",
+    "-c:a",
+    "copy",
+    "-movflags",
+    "+faststart",
 ]
 
 
@@ -114,9 +136,12 @@ class FFmpegOps:
         try:
             proc = await asyncio.create_subprocess_exec(
                 probe,
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
                 str(video_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -137,11 +162,22 @@ class FFmpegOps:
         """Extract audio as 16kHz mono PCM WAV."""
         ffmpeg = self._require()
         out = Path(output_path)
-        await self._run([
-            ffmpeg, "-y", "-i", str(video_path),
-            "-vn", "-ac", "1", "-ar", str(sample_rate), "-c:a", "pcm_s16le",
-            str(out),
-        ])
+        await self._run(
+            [
+                ffmpeg,
+                "-y",
+                "-i",
+                str(video_path),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                str(sample_rate),
+                "-c:a",
+                "pcm_s16le",
+                str(out),
+            ]
+        )
         return out
 
     # ------------------------------------------------------------------
@@ -202,15 +238,22 @@ class FFmpegOps:
                 fade_dur = min(0.03, duration / 4)
                 af = f"afade=t=in:st=0:d={fade_dur},afade=t=out:st={duration - fade_dur}:d={fade_dur}"
 
-                await self._run([
-                    ffmpeg, "-y",
-                    "-ss", f"{start:.3f}",
-                    "-i", str(video_path),
-                    "-t", f"{duration:.3f}",
-                    *_CUT_VIDEO_ARGS,
-                    "-af", af,
-                    str(seg_file),
-                ])
+                await self._run(
+                    [
+                        ffmpeg,
+                        "-y",
+                        "-ss",
+                        f"{start:.3f}",
+                        "-i",
+                        str(video_path),
+                        "-t",
+                        f"{duration:.3f}",
+                        *_CUT_VIDEO_ARGS,
+                        "-af",
+                        af,
+                        str(seg_file),
+                    ]
+                )
                 if seg_file.exists():
                     seg_files.append(seg_file)
 
@@ -226,14 +269,23 @@ class FFmpegOps:
                 "\n".join(f"file '{f.resolve()}'" for f in seg_files),
                 encoding="utf-8",
             )
-            await self._run([
-                ffmpeg, "-y",
-                "-f", "concat", "-safe", "0",
-                "-i", str(list_file),
-                "-c", "copy",
-                "-movflags", "+faststart",
-                str(out),
-            ])
+            await self._run(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(list_file),
+                    "-c",
+                    "copy",
+                    "-movflags",
+                    "+faststart",
+                    str(out),
+                ]
+            )
             return out
         finally:
             for f in tmp_dir.rglob("*"):
@@ -294,35 +346,47 @@ class FFmpegOps:
         escaped = _escape_subtitle_path(str(Path(srt_path).resolve()))
         vf = f"subtitles='{escaped}'"
 
-        await self._run([
-            ffmpeg, "-y",
-            "-i", str(video_path),
-            "-vf", vf,
-            *_SUBTITLE_VIDEO_ARGS,
-            str(out),
-        ])
+        await self._run(
+            [
+                ffmpeg,
+                "-y",
+                "-i",
+                str(video_path),
+                "-vf",
+                vf,
+                *_SUBTITLE_VIDEO_ARGS,
+                str(out),
+            ]
+        )
         return out
 
     # ------------------------------------------------------------------
     # Thumbnail
     # ------------------------------------------------------------------
 
-    async def extract_thumbnail(
-        self, video_path: str | Path, time_sec: float = 1.0
-    ) -> bytes:
+    async def extract_thumbnail(self, video_path: str | Path, time_sec: float = 1.0) -> bytes:
         """Extract a single frame as JPEG bytes."""
         ffmpeg = self._require()
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
             tmp_path = tmp.name
         try:
-            await self._run([
-                ffmpeg, "-y",
-                "-ss", f"{time_sec:.3f}",
-                "-i", str(video_path),
-                "-frames:v", "1", "-q:v", "4",
-                "-vf", "scale=320:-2",
-                tmp_path,
-            ])
+            await self._run(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-ss",
+                    f"{time_sec:.3f}",
+                    "-i",
+                    str(video_path),
+                    "-frames:v",
+                    "1",
+                    "-q:v",
+                    "4",
+                    "-vf",
+                    "scale=320:-2",
+                    tmp_path,
+                ]
+            )
             return Path(tmp_path).read_bytes()
         finally:
             try:
@@ -361,11 +425,13 @@ class FFmpegOps:
                     s_start = s.get("start", 0.0)
                     s_end = s.get("end", 0.0)
                     if seg_start <= s_start and s_end <= seg_end:
-                        filtered.append({
-                            **s,
-                            "start": running_offset + (s_start - seg_start),
-                            "end": running_offset + (s_end - seg_start),
-                        })
+                        filtered.append(
+                            {
+                                **s,
+                                "start": running_offset + (s_start - seg_start),
+                                "end": running_offset + (s_end - seg_start),
+                            }
+                        )
                 running_offset += seg_duration
 
         lines: list[str] = []
@@ -407,12 +473,16 @@ class FFmpegOps:
 # Module-level helpers
 # ======================================================================
 
+
 def _get_version(ffmpeg_path: str) -> str:
     import subprocess
+
     try:
         out = subprocess.run(
             [ffmpeg_path, "-version"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         m = _VERSION_RE.search(out.stdout)
         return m.group(1) if m else ""
@@ -426,9 +496,13 @@ def _refresh_windows_path() -> None:
         return
     try:
         import winreg
+
         parts: list[str] = []
         for root, sub in [
-            (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+            (
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+            ),
             (winreg.HKEY_CURRENT_USER, r"Environment"),
         ]:
             try:
@@ -582,18 +656,22 @@ def _detect_silence_sync(
 
     for s, e in final_sound:
         if s > current + 0.01:
-            silence_intervals.append({
-                "start": round(current, 3),
-                "end": round(s, 3),
-                "duration": round(s - current, 3),
-            })
+            silence_intervals.append(
+                {
+                    "start": round(current, 3),
+                    "end": round(s, 3),
+                    "duration": round(s - current, 3),
+                }
+            )
         current = e
 
     if current < total_dur - 0.01:
-        silence_intervals.append({
-            "start": round(current, 3),
-            "end": round(total_dur, 3),
-            "duration": round(total_dur - current, 3),
-        })
+        silence_intervals.append(
+            {
+                "start": round(current, 3),
+                "end": round(total_dur, 3),
+                "duration": round(total_dur - current, 3),
+            }
+        )
 
     return silence_intervals

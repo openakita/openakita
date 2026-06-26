@@ -67,23 +67,17 @@ _CATEGORY_1_IDENTITY: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 # Category 2: Audit logs (append-only integrity)
 # ---------------------------------------------------------------------------
-_CATEGORY_2_AUDIT: tuple[str, ...] = (
-    "${CWD}/data/audit/**",
-)
+_CATEGORY_2_AUDIT: tuple[str, ...] = ("${CWD}/data/audit/**",)
 
 # ---------------------------------------------------------------------------
 # Category 3: Checkpoints (file rollback safety net)
 # ---------------------------------------------------------------------------
-_CATEGORY_3_CHECKPOINTS: tuple[str, ...] = (
-    "${CWD}/data/checkpoints/**",
-)
+_CATEGORY_3_CHECKPOINTS: tuple[str, ...] = ("${CWD}/data/checkpoints/**",)
 
 # ---------------------------------------------------------------------------
 # Category 4: Sessions persistence
 # ---------------------------------------------------------------------------
-_CATEGORY_4_SESSIONS: tuple[str, ...] = (
-    "${CWD}/data/sessions/**",
-)
+_CATEGORY_4_SESSIONS: tuple[str, ...] = ("${CWD}/data/sessions/**",)
 
 # ---------------------------------------------------------------------------
 # Category 5: Scheduler state (cron / executions / pending approvals / locks)

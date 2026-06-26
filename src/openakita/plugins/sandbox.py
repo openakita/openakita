@@ -114,15 +114,11 @@ class PluginErrorTracker:
             is_disabled:     whether the plugin has been auto-disabled
         """
         cutoff = time.time() - ERROR_WINDOW
-        recent = [
-            e for e in self._errors.get(plugin_id, []) if e["time"] > cutoff
-        ]
+        recent = [e for e in self._errors.get(plugin_id, []) if e["time"] > cutoff]
         return {
             "weighted_errors": sum(int(e.get("weight", 1)) for e in recent),
             "timeout_count": sum(1 for e in recent if e.get("kind") == "timeout"),
-            "exception_count": sum(
-                1 for e in recent if e.get("kind") == "exception"
-            ),
+            "exception_count": sum(1 for e in recent if e.get("kind") == "exception"),
             "last_success_at": self._last_success.get(plugin_id),
             "is_disabled": plugin_id in self._disabled,
         }
@@ -151,9 +147,7 @@ async def safe_call(
             timeout,
         )
         if error_tracker:
-            error_tracker.record_error(
-                plugin_id, context, "timeout", kind="timeout"
-            )
+            error_tracker.record_error(plugin_id, context, "timeout", kind="timeout")
         return default
     except Exception as e:
         logger.error(

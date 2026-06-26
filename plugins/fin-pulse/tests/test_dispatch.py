@@ -286,13 +286,9 @@ class _StubAdapter:
         self._text_failure = text_failure
         self._text_caption_failure = text_caption_failure
 
-    async def send_file(
-        self, chat_id: str, file_path: str, caption: str = ""
-    ) -> str:
+    async def send_file(self, chat_id: str, file_path: str, caption: str = "") -> str:
         if caption and self._send_file_caption_failure:
-            raise RuntimeError(
-                "WeChat sendmessage(text) failed: ret=-2, errcode=None, errmsg="
-            )
+            raise RuntimeError("WeChat sendmessage(text) failed: ret=-2, errcode=None, errmsg=")
         self.send_file_calls.append(
             {"chat_id": chat_id, "file_path": file_path, "caption": caption}
         )
@@ -336,9 +332,7 @@ def test_pdf_caption_failure_does_not_abort_pdf_dispatch(monkeypatch) -> None:
     plain text — multiplying the failure cost.
     """
 
-    monkeypatch.setattr(
-        DispatchService, "_render_html_to_pdf", _stub_render, raising=True
-    )
+    monkeypatch.setattr(DispatchService, "_render_html_to_pdf", _stub_render, raising=True)
     adapter = _StubAdapter(
         send_file_caption_failure=True,
         text_caption_failure=RuntimeError(
@@ -376,21 +370,15 @@ def test_permanent_error_skips_text_fallback(monkeypatch) -> None:
     must be inserted at the head of ``errors`` so the UI surfaces it.
     """
 
-    monkeypatch.setattr(
-        DispatchService, "_render_html_to_pdf", _stub_render, raising=True
-    )
+    monkeypatch.setattr(DispatchService, "_render_html_to_pdf", _stub_render, raising=True)
 
     class _AlwaysFailAdapter(_StubAdapter):
         async def send_file(self, chat_id, file_path, caption=""):  # noqa: ARG002
-            raise RuntimeError(
-                "WeChat sendmessage(text) failed: ret=-2, errcode=None, errmsg="
-            )
+            raise RuntimeError("WeChat sendmessage(text) failed: ret=-2, errcode=None, errmsg=")
 
         async def send_text(self, chat_id: str, text: str) -> str:
             self.send_text_calls.append((chat_id, text))
-            raise RuntimeError(
-                "WeChat sendmessage(text) failed: ret=-2, errcode=None, errmsg="
-            )
+            raise RuntimeError("WeChat sendmessage(text) failed: ret=-2, errcode=None, errmsg=")
 
     adapter = _AlwaysFailAdapter()
     api = _StubAPIWithAdapter(adapter)
@@ -406,9 +394,7 @@ def test_permanent_error_skips_text_fallback(monkeypatch) -> None:
         )
     )
     assert res.ok is False
-    assert adapter.send_text_calls == [], (
-        "permanent error must skip the text fan-out entirely"
-    )
+    assert adapter.send_text_calls == [], "permanent error must skip the text fan-out entirely"
     assert res.errors, "expected at least the pdf_file error to be recorded"
     assert res.errors[0].startswith("hint:"), (
         "actionable hint must be the first error so the UI shows it"
@@ -427,9 +413,7 @@ def test_text_chunk_permanent_error_aborts_remaining_chunks() -> None:
 
         def send_message(self, *, channel: str, chat_id: str, text: str) -> None:
             self.calls += 1
-            raise RuntimeError(
-                "WeChat sendmessage(text) failed: ret=-2, errcode=None, errmsg="
-            )
+            raise RuntimeError("WeChat sendmessage(text) failed: ret=-2, errcode=None, errmsg=")
 
     api = _PermFailAPI()
     ds = DispatchService(api, inter_chunk_delay=0.0, batch_bytes={"wechat": 50})

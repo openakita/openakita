@@ -178,4 +178,3 @@ class TestChainCommand:
 
         assert "最大" in result
         assert session.get_metadata("thinking_depth") == "max"
-

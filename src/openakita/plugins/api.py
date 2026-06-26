@@ -192,26 +192,25 @@ class PluginAPI:
 
     def _read_config_file(self) -> dict:
         """Read config.json without permission check (internal use)."""
-        import json
+        from openakita.utils.atomic_io import read_json_safe
 
         config_path = self._data_dir / "config.json"
-        if not config_path.exists():
-            return {}
         try:
-            return json.loads(config_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            data = read_json_safe(config_path)
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
             self.log(f"Corrupt config.json, returning empty config: {e}", "warning")
             return {}
 
     def set_config(self, updates: dict) -> None:
         if not self._check_permission("config.write"):
             return
-        import json
+        from openakita.utils.atomic_io import atomic_json_write
 
         config = self._read_config_file()
         config.update(updates)
         config_path = self._data_dir / "config.json"
-        config_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_json_write(config_path, config)
 
     def get_data_dir(self) -> Path | None:
         if not self._check_permission("data.own"):
@@ -398,9 +397,7 @@ class PluginAPI:
             )
             match = None
 
-        self._hook_registry.register(
-            hook_name, callback, plugin_id=self._plugin_id, match=match
-        )
+        self._hook_registry.register(hook_name, callback, plugin_id=self._plugin_id, match=match)
         timeout = self._manifest.hook_timeout
         self._hook_registry.set_timeout(hook_name, self._plugin_id, timeout)
         self._registered_hooks.append(hook_name)
@@ -836,8 +833,7 @@ class PluginAPI:
             raw_name = filename or Path(source_str).name or "download"
             ascii_safe = raw_name.encode("ascii", "replace").decode("ascii")
             headers["Content-Disposition"] = (
-                f'attachment; filename="{ascii_safe}"; '
-                f"filename*=UTF-8''{quote(raw_name)}"
+                f"attachment; filename=\"{ascii_safe}\"; filename*=UTF-8''{quote(raw_name)}"
             )
 
         if source_str.startswith("http://") or source_str.startswith("https://"):
@@ -856,6 +852,7 @@ class PluginAPI:
         local_path = Path(source_str)
         if not local_path.is_file():
             from fastapi import HTTPException
+
             raise HTTPException(status_code=404, detail="File not found")
 
         return FileResponse(str(local_path), media_type=media_type, headers=headers)
@@ -868,7 +865,10 @@ class PluginAPI:
         return PLUGIN_UI_API_VERSION
 
     def register_ui_event_handler(
-        self, event_type: str, handler: Callable, **kwargs: Any,
+        self,
+        event_type: str,
+        handler: Callable,
+        **kwargs: Any,
     ) -> None:
         """Register a handler for bridge events sent from the plugin UI."""
         handlers: dict = self._host.get("_ui_event_handlers", {})
@@ -1119,9 +1119,7 @@ class PluginAPI:
         any long-running background work (poll loops, schedulers, etc.).
         """
         if not inspect.iscoroutine(coro):
-            raise TypeError(
-                f"spawn_task expects a coroutine, got {type(coro).__name__}"
-            )
+            raise TypeError(f"spawn_task expects a coroutine, got {type(coro).__name__}")
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError as e:
@@ -1146,9 +1144,7 @@ class PluginAPI:
         try:
             await asyncio.wait(pending, timeout=timeout)
         except Exception as e:
-            logger.debug(
-                "Plugin '%s' background task cancel error: %s", self._plugin_id, e
-            )
+            logger.debug("Plugin '%s' background task cancel error: %s", self._plugin_id, e)
 
     def list_spawned_tasks(self) -> list[dict[str, Any]]:
         """Diagnostics helper: snapshot of background tasks for this plugin."""
@@ -1156,9 +1152,7 @@ class PluginAPI:
         for t in list(self._spawned_tasks):
             coro = t.get_coro()
             coro_name = (
-                getattr(coro, "__qualname__", None)
-                or getattr(coro, "__name__", "")
-                or repr(coro)
+                getattr(coro, "__qualname__", None) or getattr(coro, "__name__", "") or repr(coro)
             )
             out.append(
                 {

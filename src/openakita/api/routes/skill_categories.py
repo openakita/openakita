@@ -15,10 +15,12 @@ Skill categories route: /api/skill-categories
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +118,7 @@ async def list_categories(request: Request):
 
     try:
         from openakita.config import settings
+
         base_path = Path(settings.project_root)
     except Exception:
         base_path = Path.cwd()
@@ -294,6 +297,7 @@ async def _scan_external_ids_in_category(
 
     try:
         from openakita.config import settings
+
         base_path = Path(settings.project_root)
     except Exception:
         base_path = Path.cwd()
@@ -319,6 +323,7 @@ def _ensure_skills_cache_invalidated() -> None:
     """显式失效 GET /api/skills 的模块级缓存（安全网）。"""
     try:
         from openakita.api.routes.skills import _invalidate_skills_cache
+
         _invalidate_skills_cache()
     except Exception:
         pass
@@ -327,76 +332,113 @@ def _ensure_skills_cache_invalidated() -> None:
 @router.post("/api/skill-categories/{name:path}/enable")
 async def enable_category(name: str, request: Request):
     """批量启用：把该分类下所有外部技能 ID upsert 进 allowlist。"""
-    from openakita.skills.allowlist_io import (
-        overwrite_allowlist,
-        read_allowlist,
-        upsert_skill_ids,
-    )
-
-    target_ids, system_count = await _scan_external_ids_in_category(name)
-    logger.info(
-        "[category/enable] category=%r  external=%d  system=%d  ids=%s",
-        name, len(target_ids), system_count, sorted(target_ids)[:5],
-    )
-    if not target_ids:
-        return {
-            "status": "ok", "name": name, "added": 0,
-            "system_count": system_count,
-        }
-
-    _, declared = read_allowlist()
-    if declared is None:
-        from openakita.skills.loader import SkillLoader
-        try:
-            from openakita.config import settings
-            base_path = Path(settings.project_root)
-        except Exception:
-            base_path = Path.cwd()
-        loader = SkillLoader()
-        await asyncio.to_thread(loader.load_all, base_path)
-        try:
-            effective = loader.compute_effective_allowlist(None) or set()
-        except Exception:
-            effective = set()
-        merged = set(effective) | target_ids
-        overwrite_allowlist(merged)
-    else:
-        upsert_skill_ids(target_ids)
-
-    _ensure_skills_cache_invalidated()
-    await _propagate(request, "category_enable", rescan=True)
-    _ensure_skills_cache_invalidated()
-    return {"status": "ok", "name": name, "added": len(target_ids)}
-
-
-# ── POST /api/skill-categories/{name:path}/disable ─────────────────────
+    if request.query_params.get("stream") in {"1", "true", "yes"}:
+        return _category_toggle_stream(name, request, enable=True)
+    return await _category_toggle_json(name, request, enable=True)
 
 
 @router.post("/api/skill-categories/{name:path}/disable")
 async def disable_category(name: str, request: Request):
     """批量禁用：把该分类下所有外部技能 ID 从 allowlist 中剔除。"""
+    if request.query_params.get("stream") in {"1", "true", "yes"}:
+        return _category_toggle_stream(name, request, enable=False)
+    return await _category_toggle_json(name, request, enable=False)
+
+
+def _category_progress_event(
+    *,
+    stage: str,
+    message: str,
+    percent: int,
+    total: int = 0,
+    processed: int = 0,
+    finished: bool = False,
+    error: str = "",
+    result: dict | None = None,
+) -> dict:
+    """Build a compact, user-facing progress payload for category mass actions."""
+    payload: dict = {
+        "stage": stage,
+        "message": message,
+        "percent": max(0, min(100, int(percent))),
+        "total": max(0, int(total)),
+        "processed": max(0, int(processed)),
+        "finished": bool(finished),
+        "error": error,
+    }
+    if result is not None:
+        payload["result"] = result
+    return payload
+
+
+async def _apply_category_toggle(
+    name: str,
+    request: Request,
+    *,
+    enable: bool,
+    progress: asyncio.Queue[dict] | None = None,
+) -> dict:
+    """Apply enable/disable for a category and optionally emit progress snapshots."""
     from openakita.skills.allowlist_io import (
         overwrite_allowlist,
         read_allowlist,
-        remove_skill_ids,
     )
 
+    if enable:
+        from openakita.skills.allowlist_io import upsert_skill_ids
+    else:
+        from openakita.skills.allowlist_io import remove_skill_ids
+
+    async def emit(payload: dict) -> None:
+        if progress is not None:
+            await progress.put(payload)
+
+    action_name = "enable" if enable else "disable"
+    action_past = "enabled" if enable else "disabled"
+
+    await emit(
+        _category_progress_event(
+            stage="scanning",
+            message="Scanning category skills",
+            percent=10,
+        )
+    )
     target_ids, system_count = await _scan_external_ids_in_category(name)
     logger.info(
-        "[category/disable] category=%r  external=%d  system=%d  ids=%s",
-        name, len(target_ids), system_count, sorted(target_ids)[:5],
+        "[category/%s] category=%r  external=%d  system=%d  ids=%s",
+        action_name,
+        name,
+        len(target_ids),
+        system_count,
+        sorted(target_ids)[:5],
+    )
+    await emit(
+        _category_progress_event(
+            stage="allowlist",
+            message="Updating enabled skill list",
+            percent=35,
+            total=len(target_ids),
+            processed=0,
+        )
     )
     if not target_ids:
+        key = "added" if enable else "removed"
         return {
-            "status": "ok", "name": name, "removed": 0,
+            "status": "ok",
+            "name": name,
+            key: 0,
             "system_count": system_count,
+            "total": 0,
+            "processed": 0,
         }
 
     _, declared = read_allowlist()
     if declared is None:
         from openakita.skills.loader import SkillLoader
+
         try:
             from openakita.config import settings
+
             base_path = Path(settings.project_root)
         except Exception:
             base_path = Path.cwd()
@@ -406,15 +448,110 @@ async def disable_category(name: str, request: Request):
             effective = loader.compute_effective_allowlist(None) or set()
         except Exception:
             effective = set()
-        remaining = set(effective) - target_ids
-        overwrite_allowlist(remaining)
+        next_allowlist = set(effective) | target_ids if enable else set(effective) - target_ids
+        overwrite_allowlist(next_allowlist)
     else:
-        remove_skill_ids(target_ids)
+        if enable:
+            upsert_skill_ids(target_ids)
+        else:
+            remove_skill_ids(target_ids)
+
+    await emit(
+        _category_progress_event(
+            stage="propagating",
+            message="Reloading skill runtime",
+            percent=70,
+            total=len(target_ids),
+            processed=len(target_ids),
+        )
+    )
 
     _ensure_skills_cache_invalidated()
-    await _propagate(request, "category_disable", rescan=True)
+    await _propagate(request, f"category_{action_name}", rescan=True)
     _ensure_skills_cache_invalidated()
-    return {"status": "ok", "name": name, "removed": len(target_ids)}
+
+    key = "added" if enable else "removed"
+    return {
+        "status": "ok",
+        "name": name,
+        key: len(target_ids),
+        "system_count": system_count,
+        "total": len(target_ids),
+        "processed": len(target_ids),
+        "action": action_past,
+    }
+
+
+async def _category_toggle_json(name: str, request: Request, *, enable: bool) -> dict:
+    return await _apply_category_toggle(name, request, enable=enable)
+
+
+def _format_category_sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _category_toggle_stream(name: str, request: Request, *, enable: bool) -> StreamingResponse:
+    async def event_stream():
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+
+        async def run_action() -> dict:
+            return await _apply_category_toggle(name, request, enable=enable, progress=queue)
+
+        task = asyncio.create_task(run_action())
+        yield _format_category_sse(
+            _category_progress_event(
+                stage="starting",
+                message="Starting category update",
+                percent=5,
+            )
+        )
+        try:
+            while True:
+                if task.done() and queue.empty():
+                    break
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=0.5)
+                    yield _format_category_sse(payload)
+                except TimeoutError:
+                    yield ": keepalive\n\n"
+
+            result = await task
+            yield _format_category_sse(
+                _category_progress_event(
+                    stage="done",
+                    message="Category update complete",
+                    percent=100,
+                    total=int(result.get("total") or 0),
+                    processed=int(result.get("processed") or result.get("total") or 0),
+                    finished=True,
+                    result=result,
+                )
+            )
+        except Exception as e:
+            if not task.done():
+                task.cancel()
+            logger.error(
+                "Category %s stream failed for %r: %s",
+                "enable" if enable else "disable",
+                name,
+                e,
+                exc_info=True,
+            )
+            yield _format_category_sse(
+                _category_progress_event(
+                    stage="error",
+                    message=str(e),
+                    percent=100,
+                    finished=True,
+                    error=str(e),
+                )
+            )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ── POST /api/skill-categories/move ────────────────────────────────────
@@ -458,7 +595,9 @@ async def move_skill(request: Request):
         if loader is not None:
             try:
                 for s in loader.registry.list_all():
-                    if (s.category or "Uncategorized") == target_category and getattr(s, "system", False):
+                    if (s.category or "Uncategorized") == target_category and getattr(
+                        s, "system", False
+                    ):
                         raise HTTPException(status_code=409, detail="外部技能不可移动到系统分类")
             except HTTPException:
                 raise
@@ -474,7 +613,9 @@ async def move_skill(request: Request):
     else:
         store.unbind_skill(skill_id)
 
+    _ensure_skills_cache_invalidated()
     await _propagate(request, "category_move", rescan=True)
+    _ensure_skills_cache_invalidated()
     return {
         "status": "ok",
         "skill_id": skill_id,

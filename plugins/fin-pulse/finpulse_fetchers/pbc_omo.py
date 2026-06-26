@@ -36,9 +36,7 @@ except ImportError:
 
 
 _HOME = "https://www.pbc.gov.cn"
-_ENTRY = (
-    f"{_HOME}/zhengcehuobisi/125207/125213/125431/125475/index.html"
-)
+_ENTRY = f"{_HOME}/zhengcehuobisi/125207/125213/125431/125475/index.html"
 
 # PBC uses GBK/GB2312 on this subtree; httpx auto-detects correctly
 # 90% of the time but we pin the charset explicitly below for safety.
@@ -108,15 +106,11 @@ class PbcOmoFetcher(BaseFetcher):
             if date_span and date_span.text:
                 try:
                     dt = datetime.strptime(date_span.text.strip(), "%Y-%m-%d")
-                    published_iso = dt.replace(
-                        tzinfo=timezone.utc
-                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    published_iso = dt.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 except ValueError:
                     published_iso = None
             if published_iso is None:
-                published_iso = datetime.now(timezone.utc).strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
-                )
+                published_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             uid = hashlib.sha256(href.encode("utf-8")).hexdigest()[:16]
             items.append(
                 NormalizedItem(
@@ -143,15 +137,11 @@ class PbcOmoFetcher(BaseFetcher):
             if idx < len(dates):
                 try:
                     dt = datetime.strptime(dates[idx], "%Y-%m-%d")
-                    published_iso = dt.replace(
-                        tzinfo=timezone.utc
-                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    published_iso = dt.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 except ValueError:
                     published_iso = None
             if published_iso is None:
-                published_iso = datetime.now(timezone.utc).strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
-                )
+                published_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             uid = hashlib.sha256(full_url.encode("utf-8")).hexdigest()[:16]
             items.append(
                 NormalizedItem(

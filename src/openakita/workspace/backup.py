@@ -118,25 +118,25 @@ _SQLITE_TEMP_EXTENSIONS = {".db-shm", ".db-wal", ".db-journal"}
 
 def read_backup_settings(workspace_path: Path) -> dict[str, Any]:
     """Read backup_settings.json, returning defaults for missing keys."""
+    from openakita.utils.atomic_io import read_json_safe
+
     settings_path = workspace_path / "data" / BACKUP_SETTINGS_FILE
     result = dict(DEFAULT_BACKUP_SETTINGS)
-    if settings_path.exists():
-        try:
-            data = json.loads(settings_path.read_text(encoding="utf-8"))
+    try:
+        data = read_json_safe(settings_path)
+        if isinstance(data, dict):
             result.update(data)
-        except Exception as exc:
-            logger.warning(f"Failed to read {settings_path}: {exc}")
+    except Exception as exc:
+        logger.warning(f"Failed to read {settings_path}: {exc}")
     return result
 
 
 def write_backup_settings(workspace_path: Path, settings: dict[str, Any]) -> None:
     """Persist backup settings to data/backup_settings.json."""
+    from openakita.utils.atomic_io import atomic_json_write
+
     settings_path = workspace_path / "data" / BACKUP_SETTINGS_FILE
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(
-        json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_json_write(settings_path, settings)
 
 
 # ── Backup creation ─────────────────────────────────────────────────

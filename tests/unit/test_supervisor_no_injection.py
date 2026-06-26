@@ -92,4 +92,3 @@ class TestBudgetWarningNoInjection:
         budget.start()
         budget.record_tokens(200)
         assert budget.get_budget_prompt_warning() == ""
-

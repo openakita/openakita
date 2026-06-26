@@ -77,7 +77,9 @@ def cmd_drive(args):
     if not _looks_like_coord(origin):
         loc = _geocode(origin)
         if not loc:
-            print(json.dumps({"error": f"无法解析起点地址: {origin}"}, ensure_ascii=False, indent=2))
+            print(
+                json.dumps({"error": f"无法解析起点地址: {origin}"}, ensure_ascii=False, indent=2)
+            )
             return
         origin = loc
 
@@ -99,7 +101,9 @@ def cmd_walk(args):
     if not _looks_like_coord(origin):
         loc = _geocode(origin)
         if not loc:
-            print(json.dumps({"error": f"无法解析起点地址: {origin}"}, ensure_ascii=False, indent=2))
+            print(
+                json.dumps({"error": f"无法解析起点地址: {origin}"}, ensure_ascii=False, indent=2)
+            )
             return
         origin = loc
 
@@ -178,4 +182,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

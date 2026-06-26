@@ -19,6 +19,7 @@ def _read_settings_factory(api_key: str = "", base_url: str = ""):
         if base_url:
             s["base_url"] = base_url
         return s
+
     return _read
 
 
@@ -428,12 +429,9 @@ async def test_happyhorse_i2v_packs_first_frame_into_media_array(monkeypatch):
     body = captured["body"]
     inp = body["input"]
     assert "first_frame_url" not in inp, (
-        "happyhorse-1.0-i2v must NOT use legacy first_frame_url — that "
-        "is the bug we just fixed"
+        "happyhorse-1.0-i2v must NOT use legacy first_frame_url — that is the bug we just fixed"
     )
-    assert inp["media"] == [
-        {"type": "first_frame", "url": "https://example.test/cat.png"}
-    ]
+    assert inp["media"] == [{"type": "first_frame", "url": "https://example.test/cat.png"}]
     # HappyHorse 1.0 forbids parameters.task_type as well — registry
     # marks it via input_protocol=media_array_i2v which skips task_type.
     assert "task_type" not in body["parameters"]
@@ -464,9 +462,7 @@ async def test_happyhorse_long_video_i2v_segment_also_uses_media_array(monkeypat
     )
     inp = captured["body"]["input"]
     assert "first_frame_url" not in inp
-    assert inp["media"] == [
-        {"type": "first_frame", "url": "https://example.test/frame1.png"}
-    ]
+    assert inp["media"] == [{"type": "first_frame", "url": "https://example.test/frame1.png"}]
 
 
 @pytest.mark.asyncio

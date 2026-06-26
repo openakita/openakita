@@ -212,7 +212,10 @@ class TestEpisode:
         loaded = Episode.from_dict(
             {
                 **data,
-                "tools_used": [{"name": "list_recent_tasks"}, {"function": {"name": "trace_memory"}}],
+                "tools_used": [
+                    {"name": "list_recent_tasks"},
+                    {"function": {"name": "trace_memory"}},
+                ],
             }
         )
 
@@ -242,4 +245,3 @@ class TestScratchpad:
         assert s2.content == "正在重构记忆系统"
         assert s2.active_projects == ["memory-redesign"]
         assert s2.open_questions == ["性能如何?"]
-

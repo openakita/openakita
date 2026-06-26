@@ -15,50 +15,89 @@ import asyncio
 import ipaddress
 import logging
 import socket
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 logger = logging.getLogger(__name__)
 
-_BLOCKED_HOSTNAMES = frozenset({
-    "localhost",
-    "metadata.google.internal",
-    "metadata.internal",
-})
+# ──────────────────────── 通用安全解析 ────────────────────────
+#
+# Python 3.11+ 的 urlparse / urlsplit 在遇到格式错误的 IPv6 URL 时
+# 会抛出 ValueError，而之前的版本默默返回空结果。代码库中存在大量
+# urlparse 调用处理不可信的用户输入（消息文本、工具参数、配置等），
+# 需要统一保护，避免散弹枪式地在每个调用点写 try-except。
 
-_METADATA_IPS = frozenset({
-    "169.254.169.254",
-    "169.254.170.2",
-})
+_EMPTY_PARSE_RESULT = ParseResult(scheme="", netloc="", path="", params="", query="", fragment="")
 
 
-def _is_blocked_ip(ip_str: str) -> bool:
-    """Check if IP address belongs to a blocked range."""
+def safe_urlparse(url: str) -> ParseResult:
+    """urlparse wrapper that never raises on malformed input.
+
+    Returns an empty ParseResult instead of raising ValueError for
+    invalid IPv6 URLs (Python 3.11+) or other malformed strings.
+    """
+    try:
+        return urlparse(url)
+    except (ValueError, TypeError):
+        return _EMPTY_PARSE_RESULT
+
+
+_BLOCKED_HOSTNAMES = frozenset(
+    {
+        "localhost",
+        "metadata.google.internal",
+        "metadata.internal",
+    }
+)
+
+_METADATA_IPS = frozenset(
+    {
+        "169.254.169.254",
+        "169.254.170.2",
+    }
+)
+
+_PROXY_INTERCEPT_NET = ipaddress.ip_network("198.18.0.0/15")
+
+
+def _blocked_ip_reason(ip_str: str) -> str:
+    """Return the blocked-IP category, or an empty string when allowed."""
     try:
         addr = ipaddress.ip_address(ip_str)
     except ValueError:
-        return True
+        return "invalid IP address"
+
+    if isinstance(addr, ipaddress.IPv4Address) and addr in _PROXY_INTERCEPT_NET:
+        return (
+            "reserved benchmark range 198.18.0.0/15, often caused by proxy/TUN/DNS "
+            "interception"
+        )
 
     if addr.is_loopback:
-        return True
+        return "loopback address"
     if addr.is_private:
-        return True
+        return "private address"
     if addr.is_link_local:
-        return True
+        return "link-local address"
     if addr.is_reserved:
-        return True
+        return "reserved address"
     if addr.is_multicast:
-        return True
+        return "multicast address"
 
     if isinstance(addr, ipaddress.IPv4Address):
         first_octet = int(ip_str.split(".")[0])
         second_octet = int(ip_str.split(".")[1]) if "." in ip_str else 0
         if first_octet == 100 and 64 <= second_octet <= 127:
-            return True
+            return "CGNAT address"
 
     if ip_str in _METADATA_IPS:
-        return True
+        return "cloud metadata endpoint"
 
-    return False
+    return ""
+
+
+def _is_blocked_ip(ip_str: str) -> bool:
+    """Check if IP address belongs to a blocked range."""
+    return bool(_blocked_ip_reason(ip_str))
 
 
 def _resolve_and_check(hostname: str) -> tuple[bool, str]:
@@ -67,8 +106,9 @@ def _resolve_and_check(hostname: str) -> tuple[bool, str]:
         results = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         for _family, _, _, _, sockaddr in results:
             ip_str = sockaddr[0]
-            if _is_blocked_ip(ip_str):
-                return False, f"DNS resolved to blocked IP: {hostname} → {ip_str}"
+            reason = _blocked_ip_reason(ip_str)
+            if reason:
+                return False, f"DNS resolved to blocked IP: {hostname} → {ip_str} ({reason})"
     except socket.gaierror:
         return False, f"DNS resolution failed: {hostname}"
     return True, ""

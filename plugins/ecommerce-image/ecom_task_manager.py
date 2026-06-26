@@ -43,29 +43,31 @@ def _validate_transition(old_status: str, new_status: str) -> bool:
 # attempting to inject column names.  ``status`` is allowed here so callers
 # that already validated the transition (e.g. update_task_status) can pass it
 # through; ``updated_at`` is set internally by update_task itself.
-_UPDATABLE_COLS: frozenset[str] = frozenset({
-    "feature_id",
-    "module",
-    "task_type",
-    "api_task_id",
-    "api_provider",
-    "status",
-    "prompt",
-    "params_json",
-    "image_urls",
-    "local_paths",
-    "video_url",
-    "local_video_path",
-    "last_frame_url",
-    "progress_current",
-    "progress_total",
-    "failed_at_step",
-    "model",
-    "execution_mode",
-    "batch_parent_id",
-    "error_message",
-    "revised_prompt",
-})
+_UPDATABLE_COLS: frozenset[str] = frozenset(
+    {
+        "feature_id",
+        "module",
+        "task_type",
+        "api_task_id",
+        "api_provider",
+        "status",
+        "prompt",
+        "params_json",
+        "image_urls",
+        "local_paths",
+        "video_url",
+        "local_video_path",
+        "last_frame_url",
+        "progress_current",
+        "progress_total",
+        "failed_at_step",
+        "model",
+        "execution_mode",
+        "batch_parent_id",
+        "error_message",
+        "revised_prompt",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -154,13 +156,24 @@ class TaskManager:
 
     # ── Tasks ──
 
-    async def create_task(self, *, feature_id: str, module: str, task_type: str,
-                          api_provider: str, status: str = "pending",
-                          api_task_id: str = "", prompt: str = "",
-                          model: str = "", execution_mode: str = "",
-                          params: dict | None = None, revised_prompt: str = "",
-                          progress_current: int = 0, progress_total: int = 1,
-                          batch_parent_id: str = "") -> dict:
+    async def create_task(
+        self,
+        *,
+        feature_id: str,
+        module: str,
+        task_type: str,
+        api_provider: str,
+        status: str = "pending",
+        api_task_id: str = "",
+        prompt: str = "",
+        model: str = "",
+        execution_mode: str = "",
+        params: dict | None = None,
+        revised_prompt: str = "",
+        progress_current: int = 0,
+        progress_total: int = 1,
+        batch_parent_id: str = "",
+    ) -> dict:
         task_id = uuid.uuid4().hex[:12]
         now = time.time()
         params_json = json.dumps(params or {}, ensure_ascii=False)
@@ -170,10 +183,25 @@ class TaskManager:
                revised_prompt, progress_current, progress_total, batch_parent_id,
                created_at, updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (task_id, feature_id, module, task_type, api_task_id,
-             api_provider, status, prompt, params_json, model, execution_mode,
-             revised_prompt, progress_current, progress_total, batch_parent_id,
-             now, now),
+            (
+                task_id,
+                feature_id,
+                module,
+                task_type,
+                api_task_id,
+                api_provider,
+                status,
+                prompt,
+                params_json,
+                model,
+                execution_mode,
+                revised_prompt,
+                progress_current,
+                progress_total,
+                batch_parent_id,
+                now,
+                now,
+            ),
         )
         await self._db.commit()
         return await self.get_task(task_id)  # type: ignore
@@ -191,8 +219,15 @@ class TaskManager:
                 return d
         return None
 
-    async def list_tasks(self, *, module: str | None = None, feature_id: str | None = None,
-                         status: str | None = None, offset: int = 0, limit: int = 20) -> tuple[list[dict], int]:
+    async def list_tasks(
+        self,
+        *,
+        module: str | None = None,
+        feature_id: str | None = None,
+        status: str | None = None,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[dict], int]:
         conditions: list[str] = ["batch_parent_id IS NULL OR batch_parent_id = ''"]
         args: list[Any] = []
         if module:
@@ -233,7 +268,8 @@ class TaskManager:
             args.append(api_provider)
         where = " AND ".join(conditions)
         async with self._db.execute(
-            f"SELECT * FROM tasks WHERE {where}", args,
+            f"SELECT * FROM tasks WHERE {where}",
+            args,
         ) as cur:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
@@ -253,7 +289,9 @@ class TaskManager:
                 dropped.append(k)
         if dropped:
             logger.warning(
-                "update_task(%s): dropping unknown columns: %s", task_id, dropped,
+                "update_task(%s): dropping unknown columns: %s",
+                task_id,
+                dropped,
             )
         if not clean:
             return
@@ -261,7 +299,8 @@ class TaskManager:
         set_clause = ", ".join(f"{k} = ?" for k in clean)
         values = list(clean.values()) + [task_id]
         await self._db.execute(
-            f"UPDATE tasks SET {set_clause} WHERE id = ?", values,
+            f"UPDATE tasks SET {set_clause} WHERE id = ?",
+            values,
         )
         await self._db.commit()
 
@@ -274,7 +313,10 @@ class TaskManager:
             return
         if not _validate_transition(old_status, new_status):
             logger.warning(
-                "Invalid transition %s -> %s for task %s", old_status, new_status, task_id,
+                "Invalid transition %s -> %s for task %s",
+                old_status,
+                new_status,
+                task_id,
             )
             return
         await self.update_task(task_id, status=new_status, **extra)
@@ -309,14 +351,16 @@ class TaskManager:
         )
         await self._db.commit()
         async with self._db.execute(
-            "SELECT progress_current FROM tasks WHERE id = ?", (task_id,),
+            "SELECT progress_current FROM tasks WHERE id = ?",
+            (task_id,),
         ) as cur:
             row = await cur.fetchone()
             return row[0] if row else 0
 
     async def get_children(self, parent_id: str) -> list[dict]:
         async with self._db.execute(
-            "SELECT * FROM tasks WHERE batch_parent_id = ? ORDER BY created_at", (parent_id,),
+            "SELECT * FROM tasks WHERE batch_parent_id = ? ORDER BY created_at",
+            (parent_id,),
         ) as cur:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
@@ -338,9 +382,9 @@ class TaskManager:
 
     # ── Assets ──
 
-    async def create_asset(self, *, type: str, file_path: str,
-                           original_name: str | None = None,
-                           size_bytes: int = 0) -> dict:
+    async def create_asset(
+        self, *, type: str, file_path: str, original_name: str | None = None, size_bytes: int = 0
+    ) -> dict:
         asset_id = uuid.uuid4().hex[:12]
         now = time.time()
         await self._db.execute(
@@ -348,7 +392,12 @@ class TaskManager:
             (asset_id, type, file_path, original_name, size_bytes, now),
         )
         await self._db.commit()
-        return {"id": asset_id, "type": type, "file_path": file_path, "original_name": original_name}
+        return {
+            "id": asset_id,
+            "type": type,
+            "file_path": file_path,
+            "original_name": original_name,
+        }
 
     async def get_asset(self, asset_id: str) -> dict | None:
         async with self._db.execute("SELECT * FROM assets WHERE id=?", (asset_id,)) as cur:
@@ -364,14 +413,16 @@ class TaskManager:
 
     async def set_config(self, key: str, value: str) -> None:
         await self._db.execute(
-            "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, value),
+            "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+            (key, value),
         )
         await self._db.commit()
 
     async def set_configs(self, updates: dict[str, str]) -> None:
         for k, v in updates.items():
             await self._db.execute(
-                "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (k, v),
+                "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)",
+                (k, v),
             )
         await self._db.commit()
 

@@ -11,7 +11,7 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '_shared'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "_shared"))
 from baidu_appbuilder import parse_common_args, run_skill_query
 
 
@@ -44,9 +44,9 @@ def main() -> None:
 
     p_notes = sub.add_parser("notes", help="生成视频笔记")
     p_notes.add_argument("video_url", help="视频 URL")
-    p_notes.add_argument("--style", default="",
-                         choices=["outline", "cornell", "mindmap", ""],
-                         help="笔记风格")
+    p_notes.add_argument(
+        "--style", default="", choices=["outline", "cornell", "mindmap", ""], help="笔记风格"
+    )
 
     args = parser.parse_args()
 
@@ -60,4 +60,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -33,7 +33,9 @@ def test_extract_source_used_from_openakita_marker():
 
 
 def test_extract_source_used_ignores_regular_tool_result():
-    assert _extract_source_used({"type": "tool_call_end", "tool": "run_shell", "result": "ok"}) is None
+    assert (
+        _extract_source_used({"type": "tool_call_end", "tool": "run_shell", "result": "ok"}) is None
+    )
 
 
 def test_extract_mcp_call_returns_structured_payload():
@@ -58,25 +60,40 @@ def test_extract_mcp_call_returns_structured_payload():
 
 
 def test_extract_mcp_call_ignores_other_tools():
-    assert _extract_mcp_call({"type": "tool_call_end", "tool": "web_fetch", "result": "[OPENAKITA_MCP] {}"}) is None
-    assert _extract_mcp_call({"type": "tool_call_end", "tool": "call_mcp_tool", "result": "no marker"}) is None
-    assert _extract_mcp_call({"type": "tool_call_end", "tool": "call_mcp_tool", "result": "[OPENAKITA_MCP] not-json"}) is None
+    assert (
+        _extract_mcp_call(
+            {"type": "tool_call_end", "tool": "web_fetch", "result": "[OPENAKITA_MCP] {}"}
+        )
+        is None
+    )
+    assert (
+        _extract_mcp_call({"type": "tool_call_end", "tool": "call_mcp_tool", "result": "no marker"})
+        is None
+    )
+    assert (
+        _extract_mcp_call(
+            {"type": "tool_call_end", "tool": "call_mcp_tool", "result": "[OPENAKITA_MCP] not-json"}
+        )
+        is None
+    )
 
 
 def test_org_file_attachments_convert_to_chat_attachments():
-    attachments = _org_file_attachments_to_chat_attachments([
-        {
-            "filename": "方案.md",
-            "file_path": r"D:\OpenAkita\workspace\方案.md",
-            "file_size": 128,
-        },
-        {
-            "filename": "方案.md",
-            "file_path": r"d:\openakita\workspace\方案.md",
-            "file_size": 128,
-        },
-        {"filename": "ignored.md"},
-    ])
+    attachments = _org_file_attachments_to_chat_attachments(
+        [
+            {
+                "filename": "方案.md",
+                "file_path": r"D:\OpenAkita\workspace\方案.md",
+                "file_size": 128,
+            },
+            {
+                "filename": "方案.md",
+                "file_path": r"d:\openakita\workspace\方案.md",
+                "file_size": 128,
+            },
+            {"filename": "ignored.md"},
+        ]
+    )
 
     assert attachments == [
         {

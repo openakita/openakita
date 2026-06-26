@@ -295,9 +295,7 @@ def _normalize_image_bytes(blob: bytes, ext: str) -> tuple[bytes, str] | None:
                 new_ext = "jpg"
             return buf.getvalue(), new_ext
     except Exception as e:  # noqa: BLE001
-        logger.warning(
-            "avatar-studio: image normalize failed (%s); uploading original", e
-        )
+        logger.warning("avatar-studio: image normalize failed (%s); uploading original", e)
         return None
 
 
@@ -308,6 +306,7 @@ def _safe_rmtree_path(path: Path) -> None:
     file handle on Windows shouldn't bubble up as a 500 to the UI.
     """
     import shutil
+
     try:
         if path.exists():
             shutil.rmtree(path, ignore_errors=True)
@@ -961,8 +960,7 @@ class Plugin(PluginBase):
                 return path
             if hasattr(self, "_api") and self._api is not None:
                 self._api.log(
-                    f"avatar-studio: ignoring invalid custom_data_dir "
-                    f"{custom!r}: {err}",
+                    f"avatar-studio: ignoring invalid custom_data_dir {custom!r}: {err}",
                     level="warning",
                 )
         host = self._api.get_data_dir() if getattr(self, "_api", None) else None
@@ -1160,10 +1158,7 @@ class Plugin(PluginBase):
                 preview_url=preview_url,
                 oss_url=oss_url,
                 detect_status="pending" if oss_url else "skipped",
-                detect_message=(
-                    None if oss_url
-                    else "OSS 未配置或 oss_url 缺失，已跳过预检"
-                ),
+                detect_message=(None if oss_url else "OSS 未配置或 oss_url 缺失，已跳过预检"),
             )
             # Match the REST endpoint's behaviour — the tool flow must
             # also kick off pre-check (only when we have an OSS URL),
@@ -1277,13 +1272,14 @@ class Plugin(PluginBase):
         Keeps OSS access tightly scoped and eliminates the temptation to
         let pipeline code reach for ``self._oss`` directly.
         """
+
         async def _upload(path: Path, fname: str) -> str:
             key = self._oss.build_object_key(
-                scope=f"tasks/{task_id}", filename=fname,
+                scope=f"tasks/{task_id}",
+                filename=fname,
             )
-            return await asyncio.to_thread(
-                self._oss.upload_file, path, key=key
-            )
+            return await asyncio.to_thread(self._oss.upload_file, path, key=key)
+
         return _upload
 
     def _make_ensure_images_safe(self, task_id: str) -> Any:
@@ -1309,17 +1305,13 @@ class Plugin(PluginBase):
             out: list[str] = []
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as hc:
                 for url in urls:
-                    new_url = await self._maybe_resize_remote_image(
-                        hc, url, task_id
-                    )
+                    new_url = await self._maybe_resize_remote_image(hc, url, task_id)
                     out.append(new_url)
             return out
 
         return _ensure
 
-    async def _maybe_resize_remote_image(
-        self, hc: Any, url: str, task_id: str
-    ) -> str:
+    async def _maybe_resize_remote_image(self, hc: Any, url: str, task_id: str) -> str:
         """Download → inspect → (optionally) resize + re-upload one URL."""
         if not url or not url.startswith(("http://", "https://")):
             return url
@@ -1328,9 +1320,7 @@ class Plugin(PluginBase):
             resp.raise_for_status()
             blob = resp.content
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "avatar-studio: pre-compose fetch failed for %s: %s", url, e
-            )
+            logger.warning("avatar-studio: pre-compose fetch failed for %s: %s", url, e)
             return url
 
         # Guess extension from Content-Type, falling back to the URL path.
@@ -1367,22 +1357,19 @@ class Plugin(PluginBase):
             return url
 
         try:
-            key = self._oss.build_object_key(
-                scope=f"tasks/{task_id}/resized", filename=fname
-            )
-            new_url = await asyncio.to_thread(
-                self._oss.upload_file, local_path, key=key
-            )
+            key = self._oss.build_object_key(scope=f"tasks/{task_id}/resized", filename=fname)
+            new_url = await asyncio.to_thread(self._oss.upload_file, local_path, key=key)
         except Exception as e:  # noqa: BLE001
             logger.warning(
-                "avatar-studio: resized image upload failed (%s); "
-                "falling back to original URL", e
+                "avatar-studio: resized image upload failed (%s); falling back to original URL", e
             )
             return url
 
         logger.info(
             "avatar-studio: resized oversized image for task %s (%d → %d bytes)",
-            task_id, len(blob), len(new_bytes),
+            task_id,
+            len(blob),
+            len(new_bytes),
         )
         return new_url
 
@@ -1544,10 +1531,14 @@ class Plugin(PluginBase):
                 return {"ok": False, "message": str(exc)}
             url = res.get("output_url")
             if not url:
-                return {"ok": False, "message": "DashScope 未返回输出文件，链接可能已过期（24 小时有效）"}
+                return {
+                    "ok": False,
+                    "message": "DashScope 未返回输出文件，链接可能已过期（24 小时有效）",
+                }
             local_path: str | None = None
             try:
                 import httpx
+
                 task_dir = self._data_dir / "tasks" / task_id
                 task_dir.mkdir(parents=True, exist_ok=True)
                 async with httpx.AsyncClient(timeout=90.0) as hc:
@@ -1631,10 +1622,7 @@ class Plugin(PluginBase):
 
             sys_rows = [{**v.to_dict(), "is_system": True} for v in SYSTEM_VOICES]
             try:
-                custom_rows = [
-                    {**row, "is_system": False}
-                    for row in await self._tm.list_voices()
-                ]
+                custom_rows = [{**row, "is_system": False} for row in await self._tm.list_voices()]
             except RuntimeError as exc:
                 # _async_init() is scheduled in the background during plugin
                 # load. The UI may request /voices immediately, before SQLite
@@ -1732,7 +1720,10 @@ class Plugin(PluginBase):
             if not ok:
                 raise HTTPException(
                     status_code=404,
-                    detail={"code": "not_found", "message": "未找到该自定义音色（或为系统音色不可改名）"},
+                    detail={
+                        "code": "not_found",
+                        "message": "未找到该自定义音色（或为系统音色不可改名）",
+                    },
                 )
             return {"ok": True, "voice_id": voice_id, "label": label}
 
@@ -1805,8 +1796,7 @@ class Plugin(PluginBase):
             # message rather than spinning forever in 'pending'.
             initial_status = "pending" if oss_url else "skipped"
             initial_msg = (
-                None if oss_url
-                else "OSS 未配置或上传失败，DashScope 无法 fetch 该图片，已跳过预检"
+                None if oss_url else "OSS 未配置或上传失败，DashScope 无法 fetch 该图片，已跳过预检"
             )
 
             fig_id = await self._tm.create_figure(
@@ -1873,10 +1863,7 @@ class Plugin(PluginBase):
         async def list_python_deps() -> dict[str, Any]:
             return {
                 "ok": True,
-                "components": [
-                    _python_dep_status(dep_id)
-                    for dep_id in PYTHON_DEPS
-                ],
+                "components": [_python_dep_status(dep_id) for dep_id in PYTHON_DEPS],
             }
 
         @router.get("/system/python-deps/{dep_id}/status")
@@ -1914,10 +1901,15 @@ class Plugin(PluginBase):
             cfg["oss_secret_set"] = bool(str(cfg.get("oss_access_key_secret") or "").strip())
             cfg["oss_status_message"] = ""
             if not cfg["oss_configured"]:
-                any_filled = any(str(cfg.get(k) or "").strip() for k in (
-                    "oss_endpoint", "oss_bucket",
-                    "oss_access_key_id", "oss_access_key_secret",
-                ))
+                any_filled = any(
+                    str(cfg.get(k) or "").strip()
+                    for k in (
+                        "oss_endpoint",
+                        "oss_bucket",
+                        "oss_access_key_id",
+                        "oss_access_key_secret",
+                    )
+                )
                 if any_filled:
                     try:
                         OssConfig.from_settings(cfg)
@@ -1936,9 +1928,7 @@ class Plugin(PluginBase):
                     cfg["data_dir_status"] = err
                     cfg["data_dir_pending_reload"] = False
                 else:
-                    cfg["data_dir_pending_reload"] = (
-                        str(resolved) != str(self._data_dir)
-                    )
+                    cfg["data_dir_pending_reload"] = str(resolved) != str(self._data_dir)
             else:
                 cfg["data_dir_pending_reload"] = False
             # Backend configuration status for UI
@@ -2044,21 +2034,25 @@ class Plugin(PluginBase):
                 worst = "available"
                 for dep in deps:
                     r = by_model.get(dep) or {
-                        "model": dep, "status": "unknown",
-                        "http": None, "message": "未参与本次探测",
+                        "model": dep,
+                        "status": "unknown",
+                        "http": None,
+                        "message": "未参与本次探测",
                     }
                     per_dep.append(r)
                     if r["status"] == "denied":
                         worst = "denied"
                     elif r["status"] == "unknown" and worst != "denied":
                         worst = "unknown"
-                modes_out.append({
-                    "id": mode_id,
-                    "label_zh": spec.label_zh,
-                    "label_en": spec.label_en,
-                    "status": worst,
-                    "deps": per_dep,
-                })
+                modes_out.append(
+                    {
+                        "id": mode_id,
+                        "label_zh": spec.label_zh,
+                        "label_en": spec.label_en,
+                        "status": worst,
+                        "deps": per_dep,
+                    }
+                )
             return {
                 "ok": True,
                 "ts": time.time(),
@@ -2166,6 +2160,7 @@ class Plugin(PluginBase):
 
             import subprocess
             import sys
+
             try:
                 if sys.platform == "win32":
                     subprocess.Popen(["explorer", str(target)])
@@ -2186,42 +2181,64 @@ class Plugin(PluginBase):
         @router.get("/storage/list-dir")
         async def list_dir(path: str = "") -> dict[str, Any]:
             import sys
+
             raw = (path or "").strip()
             # Empty path → return anchor list (Home, common subfolders,
             # plus drives on Windows / "/" elsewhere).
             if not raw:
                 anchors: list[dict[str, Any]] = []
                 home = Path.home()
-                anchors.append({
-                    "name": "Home", "path": str(home), "is_dir": True, "kind": "home",
-                })
+                anchors.append(
+                    {
+                        "name": "Home",
+                        "path": str(home),
+                        "is_dir": True,
+                        "kind": "home",
+                    }
+                )
                 for sub in ("Desktop", "Documents", "Downloads", "Pictures", "Videos", "Movies"):
                     p = home / sub
                     if p.is_dir():
-                        anchors.append({
-                            "name": sub, "path": str(p), "is_dir": True, "kind": "shortcut",
-                        })
+                        anchors.append(
+                            {
+                                "name": sub,
+                                "path": str(p),
+                                "is_dir": True,
+                                "kind": "shortcut",
+                            }
+                        )
                 if sys.platform == "win32":
                     import string
+
                     for letter in string.ascii_uppercase:
                         drv = Path(f"{letter}:/")
                         try:
                             if drv.exists():
-                                anchors.append({
-                                    "name": f"{letter}:",
-                                    "path": str(drv),
-                                    "is_dir": True,
-                                    "kind": "drive",
-                                })
+                                anchors.append(
+                                    {
+                                        "name": f"{letter}:",
+                                        "path": str(drv),
+                                        "is_dir": True,
+                                        "kind": "drive",
+                                    }
+                                )
                         except OSError:
                             continue
                 else:
-                    anchors.append({
-                        "name": "/", "path": "/", "is_dir": True, "kind": "drive",
-                    })
+                    anchors.append(
+                        {
+                            "name": "/",
+                            "path": "/",
+                            "is_dir": True,
+                            "kind": "drive",
+                        }
+                    )
                 return {
-                    "ok": True, "path": "", "parent": None,
-                    "items": anchors, "is_anchor": True,
+                    "ok": True,
+                    "path": "",
+                    "parent": None,
+                    "items": anchors,
+                    "is_anchor": True,
                 }
 
             try:
@@ -2250,8 +2267,11 @@ class Plugin(PluginBase):
             items.sort(key=lambda it: it["name"].lower())
             parent_path = str(target.parent) if target.parent != target else None
             return {
-                "ok": True, "path": str(target), "parent": parent_path,
-                "items": items, "is_anchor": False,
+                "ok": True,
+                "path": str(target),
+                "parent": parent_path,
+                "items": items,
+                "is_anchor": False,
             }
 
         @router.post("/storage/mkdir")
@@ -2316,6 +2336,7 @@ class Plugin(PluginBase):
         @router.get("/workflows/recommended")
         async def workflows_recommended() -> dict[str, Any]:
             import json as _json
+
             wf_path = Path(__file__).parent / "workflows" / "recommended.json"
             try:
                 data = _json.loads(wf_path.read_text(encoding="utf-8"))
@@ -2394,9 +2415,7 @@ class Plugin(PluginBase):
             # blob is already in range.
             normalize_note: str | None = None
             if kind == "image":
-                normalized = await asyncio.to_thread(
-                    _normalize_image_bytes, content, ext
-                )
+                normalized = await asyncio.to_thread(_normalize_image_bytes, content, ext)
                 if normalized is not None:
                     new_bytes, new_ext = normalized
                     if new_ext != ext:
@@ -2420,9 +2439,7 @@ class Plugin(PluginBase):
             oss_error: str | None = None
             if self._oss.is_configured():
                 try:
-                    oss_key = self._oss.build_object_key(
-                        scope=f"uploads/{subdir}", filename=fname
-                    )
+                    oss_key = self._oss.build_object_key(scope=f"uploads/{subdir}", filename=fname)
                     oss_url = await asyncio.to_thread(
                         self._oss.upload_file, local_path, key=oss_key
                     )
@@ -2466,4 +2483,3 @@ class Plugin(PluginBase):
         # silent-drop violations. We don't add a custom handler here
         # because ``APIRouter`` does not expose ``exception_handler`` —
         # only the top-level ``FastAPI`` app does.
-

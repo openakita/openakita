@@ -84,7 +84,7 @@ export function WechatQRModal({
   const { t } = useTranslation();
   const [state, setState] = useState<OnboardState>("idle");
   const [qrUrl, setQrUrl] = useState("");
-  const [qrCode, setQrCode] = useState("");
+  const [, setQrCode] = useState("");
   const [error, setError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);

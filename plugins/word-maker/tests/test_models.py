@@ -29,4 +29,3 @@ def test_project_spec_rejects_invalid_type() -> None:
 def test_project_spec_requires_title() -> None:
     with pytest.raises(ValueError, match="title is required"):
         ProjectSpec(title=" ").validate()
-

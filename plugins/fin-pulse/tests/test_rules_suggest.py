@@ -32,13 +32,16 @@ class _BrainResponse:
 
 
 class _StubBrain:
-    def __init__(self, *, replies: list[str] | None = None,
-                 exceptions: dict[int, Exception] | None = None) -> None:
+    def __init__(
+        self, *, replies: list[str] | None = None, exceptions: dict[int, Exception] | None = None
+    ) -> None:
         self.replies = list(replies or [])
         self.exceptions = dict(exceptions or {})
         self.calls: list[dict[str, Any]] = []
 
-    async def chat(self, *, messages: list[dict[str, str]], system: str, **kw: Any) -> _BrainResponse:
+    async def chat(
+        self, *, messages: list[dict[str, str]], system: str, **kw: Any
+    ) -> _BrainResponse:
         idx = len(self.calls)
         self.calls.append({"messages": messages, "system": system, **kw})
         if idx in self.exceptions:

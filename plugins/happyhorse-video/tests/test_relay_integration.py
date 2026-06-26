@@ -40,6 +40,7 @@ def _read_settings_factory(**overrides):
         s = make_default_settings()
         s.update(overrides)
         return s
+
     return _read
 
 
@@ -75,7 +76,9 @@ def _install_stub_relay_module(monkeypatch, *, refs_by_name=None, raises=None):
     monkeypatch.setitem(sys.modules, "openakita.relay", fake_pkg)
 
 
-def _make_ref(name="yunwu-video", base_url="https://relay.example.com/v1", api_key="sk-relay", supported=None):
+def _make_ref(
+    name="yunwu-video", base_url="https://relay.example.com/v1", api_key="sk-relay", supported=None
+):
     return SimpleNamespace(
         name=name,
         base_url=base_url,
@@ -85,7 +88,9 @@ def _make_ref(name="yunwu-video", base_url="https://relay.example.com/v1", api_k
         models_synced_at=None,
         note=None,
         extra={},
-        supports_model=lambda m: not supported or (m or "").lower() in {x.lower() for x in supported},
+        supports_model=lambda m: (
+            not supported or (m or "").lower() in {x.lower() for x in supported}
+        ),
     )
 
 

@@ -20,7 +20,7 @@ def test_envelope_marks_success_with_server_and_tool():
         reconnected=False,
     )
     assert line.startswith("[OPENAKITA_MCP] ")
-    payload = json.loads(line[len("[OPENAKITA_MCP] "):])
+    payload = json.loads(line[len("[OPENAKITA_MCP] ") :])
     assert payload == {
         "status": "ok",
         "server": "github",
@@ -37,7 +37,7 @@ def test_envelope_includes_error_for_failures():
         tool="list_repos",
         error="connection refused",
     )
-    payload = json.loads(line[len("[OPENAKITA_MCP] "):])
+    payload = json.loads(line[len("[OPENAKITA_MCP] ") :])
     assert payload["status"] == "error"
     assert payload["error"] == "connection refused"
     assert payload["auto_connected"] is False
@@ -46,5 +46,5 @@ def test_envelope_includes_error_for_failures():
 def test_envelope_truncates_overly_long_errors():
     long = "x" * 1000
     line = _build_mcp_envelope(status="error", server="s", tool="t", error=long)
-    payload = json.loads(line[len("[OPENAKITA_MCP] "):])
+    payload = json.loads(line[len("[OPENAKITA_MCP] ") :])
     assert len(payload["error"]) == 400

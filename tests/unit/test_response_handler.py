@@ -141,9 +141,7 @@ class TestVerifyTaskCompletionPrefixBypass:
         handler = ResponseHandler(brain=None, memory_manager=None)
 
         is_completed = await handler.verify_task_completion(
-            user_request=(
-                "[用户指令最终汇总] 你最初接到的用户指令所触发的所有委派任务均已关闭。"
-            ),
+            user_request=("[用户指令最终汇总] 你最初接到的用户指令所触发的所有委派任务均已关闭。"),
             assistant_response="（任意纯文本汇总，无附件）",
             executed_tools=["read_file"],
             delivery_receipts=[],
@@ -271,19 +269,11 @@ class TestStripInternalTraceMarkers:
         assert strip_internal_trace_markers(text) == "桌面 333.txt 文件的内容是：\n\n你好"
 
     def test_strip_external_content_unclosed_begin(self):
-        text = (
-            "Visible answer.\n\n"
-            "<<<EXTERNAL_CONTENT_BEGIN nonce=8790a5b2 source=tool_trace>>>\n"
-        )
+        text = "Visible answer.\n\n<<<EXTERNAL_CONTENT_BEGIN nonce=8790a5b2 source=tool_trace>>>\n"
         assert strip_internal_trace_markers(text) == "Visible answer."
 
     def test_external_content_inside_fenced_code_block_preserved(self):
-        text = (
-            "Example:\n\n"
-            "```\n"
-            "<<<EXTERNAL_CONTENT_BEGIN nonce=demo source=tool_trace>>>\n"
-            "```\n"
-        )
+        text = "Example:\n\n```\n<<<EXTERNAL_CONTENT_BEGIN nonce=demo source=tool_trace>>>\n```\n"
         # strip_internal_trace_markers historically rstrip()s final whitespace;
         # the important invariant is that the fenced marker itself is preserved.
         assert strip_internal_trace_markers(text) == text.rstrip()
@@ -295,10 +285,7 @@ class TestStripInternalTraceMarkers:
     def test_strip_legacy_chinese_marker(self):
         """旧 marker `[执行摘要]` / `[子Agent工作总结]` 兼容已存档历史。"""
         assert strip_internal_trace_markers("Reply.\n\n[执行摘要]\n- foo") == "Reply."
-        assert (
-            strip_internal_trace_markers("Reply.\n\n[子Agent工作总结]\n- bar")
-            == "Reply."
-        )
+        assert strip_internal_trace_markers("Reply.\n\n[子Agent工作总结]\n- bar") == "Reply."
 
     def test_whole_message_is_trace(self):
         """整段消息都是 trace 摘要 → 返回空串。"""
@@ -322,17 +309,11 @@ class TestStripInternalTraceMarkers:
     def test_trace_terminator_keeps_next_section(self):
         """trace 段被下一段起始符 ``\\n\\n##`` 终止 → 保留下一段。"""
         text = "Before\n\n<<TOOL_TRACE>>\n- a\n\n## Next section\nMore text"
-        assert (
-            strip_internal_trace_markers(text)
-            == "Before\n\n## Next section\nMore text"
-        )
+        assert strip_internal_trace_markers(text) == "Before\n\n## Next section\nMore text"
 
     def test_multiple_traces_collapsed(self):
         """多个 trace 段连续（trace + delegation） → 整体剥离。"""
-        text = (
-            "Trace then delegation:\n\n<<TOOL_TRACE>>\n- t1"
-            "\n\n<<DELEGATION_TRACE>>\n- d1"
-        )
+        text = "Trace then delegation:\n\n<<TOOL_TRACE>>\n- t1\n\n<<DELEGATION_TRACE>>\n- d1"
         assert strip_internal_trace_markers(text) == "Trace then delegation:"
 
     def test_single_newline_separator_also_stripped(self):
@@ -381,11 +362,8 @@ class TestCleanLLMResponseOrder:
     def test_trace_with_thinking_tag_inside(self):
         """``<think>...</think>`` 出现在 trace 段内 → 先 strip thinking
         再 strip trace 都应得到干净结果。"""
-        text = (
-            "Reply.\n\n<<TOOL_TRACE>>\n<think>internal</think>\n- foo"
-        )
+        text = "Reply.\n\n<<TOOL_TRACE>>\n<think>internal</think>\n- foo"
         result = clean_llm_response(text)
         assert "<<TOOL_TRACE>>" not in result
         assert "<think>" not in result
         assert result == "Reply."
-

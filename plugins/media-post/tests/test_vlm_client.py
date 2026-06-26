@@ -134,9 +134,7 @@ def _vlm_response(payload: list[dict[str, Any]]) -> _MockResponse:
 
 
 def _qwen_plus_response(text: str) -> _MockResponse:
-    return _MockResponse(
-        200, json_payload={"choices": [{"message": {"content": text}}]}
-    )
+    return _MockResponse(200, json_payload={"choices": [{"message": {"content": text}}]})
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +144,7 @@ def _qwen_plus_response(text: str) -> _MockResponse:
 
 class TestStripJsonFence:
     def test_handles_json_fence(self) -> None:
-        raw = "preface\n```json\n[{\"a\": 1}]\n```\nepilogue"
+        raw = 'preface\n```json\n[{"a": 1}]\n```\nepilogue'
         assert _strip_json_fence(raw) == '[{"a": 1}]'
 
     def test_handles_unlabeled_fence(self) -> None:
@@ -162,7 +160,7 @@ class TestStripJsonFence:
 
 class TestParseVlmJsonList:
     def test_happy_path(self) -> None:
-        raw = "```json\n[{\"x\": 1}, {\"x\": 2}]\n```"
+        raw = '```json\n[{"x": 1}, {"x": 2}]\n```'
         out = _parse_vlm_json_list(raw, expected_len=2)
         assert out == [{"x": 1}, {"x": 2}]
 
@@ -252,9 +250,7 @@ class TestCallVlmBatch:
     def test_happy_path_returns_parsed_list(self, mock_httpx) -> None:
         _, mock_client = mock_httpx
         client = MediaPostVlmClient(api_key="sk-test", max_retries=0)
-        mock_client.responses = [
-            _vlm_response([{"score": 4.2}, {"score": 3.8}])
-        ]
+        mock_client.responses = [_vlm_response([{"score": 4.2}, {"score": 3.8}])]
         out = _run(
             client.call_vlm_batch(
                 ["b64a", "b64b"],
@@ -272,22 +268,10 @@ class TestCallVlmBatch:
         mock_client.responses = [
             _MockResponse(
                 200,
-                json_payload={
-                    "choices": [
-                        {
-                            "message": {
-                                "content": "```json\n[{\"a\":1}]\n```"
-                            }
-                        }
-                    ]
-                },
+                json_payload={"choices": [{"message": {"content": '```json\n[{"a":1}]\n```'}}]},
             )
         ]
-        out = _run(
-            client.call_vlm_batch(
-                ["b64"], [0], "p {frame_count}", {"frame_count": 1}
-            )
-        )
+        out = _run(client.call_vlm_batch(["b64"], [0], "p {frame_count}", {"frame_count": 1}))
         assert out == [{"a": 1}]
 
     def test_length_mismatch_returns_none(self, mock_httpx) -> None:
@@ -332,21 +316,13 @@ class TestCallVlmBatch:
     def test_missing_api_key_raises_auth(self, mock_httpx) -> None:
         client = MediaPostVlmClient(api_key="", max_retries=0)
         with pytest.raises(MediaPostError) as exc_info:
-            _run(
-                client.call_vlm_batch(
-                    ["b"], [0], "p {frame_count}", {"frame_count": 1}
-                )
-            )
+            _run(client.call_vlm_batch(["b"], [0], "p {frame_count}", {"frame_count": 1}))
         assert exc_info.value.kind == "auth"
 
     def test_template_format_error_raises_format(self, mock_httpx) -> None:
         client = MediaPostVlmClient(api_key="sk-test", max_retries=0)
         with pytest.raises(MediaPostError) as exc_info:
-            _run(
-                client.call_vlm_batch(
-                    ["b"], [0], "p {missing_key}", {"frame_count": 1}
-                )
-            )
+            _run(client.call_vlm_batch(["b"], [0], "p {missing_key}", {"frame_count": 1}))
         assert exc_info.value.kind == "format"
 
     def test_finally_clears_buffers_even_on_error(self, mock_httpx) -> None:
@@ -359,18 +335,10 @@ class TestCallVlmBatch:
             _vlm_response([{"score": 5}]),
         ]
         with pytest.raises(MediaPostError) as exc_info:
-            _run(
-                client.call_vlm_batch(
-                    ["b"], [0], "p {frame_count}", {"frame_count": 1}
-                )
-            )
+            _run(client.call_vlm_batch(["b"], [0], "p {frame_count}", {"frame_count": 1}))
         assert exc_info.value.kind == "auth"
         # Second call is still healthy.
-        out = _run(
-            client.call_vlm_batch(
-                ["b"], [0], "p {frame_count}", {"frame_count": 1}
-            )
-        )
+        out = _run(client.call_vlm_batch(["b"], [0], "p {frame_count}", {"frame_count": 1}))
         assert out == [{"score": 5}]
 
 
@@ -425,9 +393,7 @@ class TestCallVlmConcurrent:
     def test_empty_input_returns_empty(self, mock_httpx) -> None:
         client = MediaPostVlmClient(api_key="sk-test", max_retries=0)
         out = _run(
-            client.call_vlm_concurrent(
-                [], [], "p", lambda idxs: {}, batch_size=8, concurrency=2
-            )
+            client.call_vlm_concurrent([], [], "p", lambda idxs: {}, batch_size=8, concurrency=2)
         )
         assert out == []
 
@@ -436,7 +402,10 @@ class TestCallVlmConcurrent:
         with pytest.raises(MediaPostError) as exc_info:
             _run(
                 client.call_vlm_concurrent(
-                    ["b"], [0], "p", lambda idxs: {},
+                    ["b"],
+                    [0],
+                    "p",
+                    lambda idxs: {},
                     batch_size=MAX_VLM_BATCH_FRAMES + 1,
                     concurrency=1,
                 )
@@ -448,9 +417,12 @@ class TestCallVlmConcurrent:
         with pytest.raises(MediaPostError) as exc_info:
             _run(
                 client.call_vlm_concurrent(
-                    ["b1", "b2"], [0],
-                    "p", lambda idxs: {},
-                    batch_size=8, concurrency=1,
+                    ["b1", "b2"],
+                    [0],
+                    "p",
+                    lambda idxs: {},
+                    batch_size=8,
+                    concurrency=1,
                 )
             )
         assert exc_info.value.kind == "format"
@@ -466,9 +438,7 @@ class TestQwenPlusCall:
         _, mock_client = mock_httpx
         client = MediaPostVlmClient(api_key="sk-test", max_retries=0)
         mock_client.responses = [_qwen_plus_response("hello world")]
-        out = _run(
-            client.qwen_plus_call([{"role": "user", "content": "hi"}])
-        )
+        out = _run(client.qwen_plus_call([{"role": "user", "content": "hi"}]))
         assert out == "hello world"
 
     def test_empty_messages_raises_format(self, mock_httpx) -> None:
@@ -500,9 +470,7 @@ class TestNineErrorKinds:
 
     def _call(self, mock_client) -> Any:
         client = MediaPostVlmClient(api_key="sk-test", max_retries=0)
-        return _run(
-            client.qwen_plus_call([{"role": "user", "content": "x"}])
-        )
+        return _run(client.qwen_plus_call([{"role": "user", "content": "x"}]))
 
     def test_network_500(self, mock_httpx) -> None:
         _, mock_client = mock_httpx
@@ -534,9 +502,7 @@ class TestNineErrorKinds:
 
     def test_moderation_data_inspection(self, mock_httpx) -> None:
         _, mock_client = mock_httpx
-        mock_client.responses = [
-            _MockResponse(400, text='"code":"data_inspection_failed"')
-        ]
+        mock_client.responses = [_MockResponse(400, text='"code":"data_inspection_failed"')]
         with pytest.raises(MediaPostError) as exc_info:
             self._call(mock_client)
         assert exc_info.value.kind == "moderation"

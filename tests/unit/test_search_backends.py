@@ -33,13 +33,15 @@ class TestFTS5Backend:
     def test_search_finds_memory(self, tmp_storage):
         from datetime import datetime
 
-        tmp_storage.save_memory({
-            "id": "m1",
-            "content": "用户喜欢 Python 编程",
-            "type": "PREFERENCE",
-            "created_at": datetime.now().isoformat(),
-            "tags": '["python"]',
-        })
+        tmp_storage.save_memory(
+            {
+                "id": "m1",
+                "content": "用户喜欢 Python 编程",
+                "type": "PREFERENCE",
+                "created_at": datetime.now().isoformat(),
+                "tags": '["python"]',
+            }
+        )
 
         backend = FTS5Backend(tmp_storage)
         results = backend.search("Python")
@@ -50,18 +52,22 @@ class TestFTS5Backend:
         from datetime import datetime
 
         now = datetime.now().isoformat()
-        tmp_storage.save_memory({
-            "id": "m1",
-            "content": "Python 是一种编程语言",
-            "type": "FACT",
-            "created_at": now,
-        })
-        tmp_storage.save_memory({
-            "id": "m2",
-            "content": "Python Python Python 用户最爱",
-            "type": "PREFERENCE",
-            "created_at": now,
-        })
+        tmp_storage.save_memory(
+            {
+                "id": "m1",
+                "content": "Python 是一种编程语言",
+                "type": "FACT",
+                "created_at": now,
+            }
+        )
+        tmp_storage.save_memory(
+            {
+                "id": "m2",
+                "content": "Python Python Python 用户最爱",
+                "type": "PREFERENCE",
+                "created_at": now,
+            }
+        )
 
         backend = FTS5Backend(tmp_storage)
         results = backend.search("Python")
@@ -93,9 +99,7 @@ class TestSearchBackendFactory:
         assert isinstance(backend, FTS5Backend)
 
     def test_api_without_key_falls_back(self, tmp_storage):
-        backend = create_search_backend(
-            "api_embedding", storage=tmp_storage, api_key=""
-        )
+        backend = create_search_backend("api_embedding", storage=tmp_storage, api_key="")
         assert isinstance(backend, FTS5Backend)
 
     def test_fts5_requires_storage(self):
@@ -107,4 +111,3 @@ class TestSearchBackendProtocol:
     def test_fts5_is_search_backend(self, tmp_storage):
         backend = FTS5Backend(tmp_storage)
         assert isinstance(backend, SearchBackend)
-

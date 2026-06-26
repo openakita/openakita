@@ -186,12 +186,14 @@ class TestTranscriptCRUD:
     def test_create_and_get(self, tm: TaskManager):
         run(tm.init())
         try:
-            t = run(tm.create_transcript(
-                source_hash="abc123def456",
-                source_path="/tmp/v.mp4",
-                source_name="v.mp4",
-                duration_sec=120.5,
-            ))
+            t = run(
+                tm.create_transcript(
+                    source_hash="abc123def456",
+                    source_path="/tmp/v.mp4",
+                    source_name="v.mp4",
+                    duration_sec=120.5,
+                )
+            )
             assert t["source_hash"] == "abc123def456"
             assert t["status"] == "pending"
 
@@ -218,7 +220,11 @@ class TestTranscriptCRUD:
         try:
             t = run(tm.create_transcript(source_hash="h1"))
             sentences = [{"text": "hello", "start": 0.0, "end": 1.5}]
-            run(tm.update_transcript(t["id"], status="succeeded", sentences=sentences, full_text="hello"))
+            run(
+                tm.update_transcript(
+                    t["id"], status="succeeded", sentences=sentences, full_text="hello"
+                )
+            )
             updated = run(tm.get_transcript(t["id"]))
             assert updated is not None
             assert updated["status"] == "succeeded"

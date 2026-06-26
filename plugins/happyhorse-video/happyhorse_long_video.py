@@ -125,9 +125,8 @@ async def decompose_storyboard(
     try:
         if hasattr(brain, "think"):
             result = await brain.think(prompt=user_msg, system=system)
-            text = (
-                getattr(result, "content", "")
-                or (result.get("content", "") if isinstance(result, dict) else str(result))
+            text = getattr(result, "content", "") or (
+                result.get("content", "") if isinstance(result, dict) else str(result)
             )
         elif hasattr(brain, "chat"):
             result = await brain.chat(
@@ -252,9 +251,7 @@ async def _concat_lossless(video_paths: list[str], output_path: str) -> bool:
             "copy",
             output_path,
         ]
-        result = await asyncio.to_thread(
-            subprocess.run, cmd, capture_output=True, timeout=120
-        )
+        result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, timeout=120)
 
         if result.returncode != 0:
             logger.error(
@@ -272,9 +269,7 @@ async def _concat_lossless(video_paths: list[str], output_path: str) -> bool:
             Path(list_file).unlink(missing_ok=True)
 
 
-async def _concat_crossfade(
-    video_paths: list[str], output_path: str, fade_dur: float
-) -> bool:
+async def _concat_crossfade(video_paths: list[str], output_path: str, fade_dur: float) -> bool:
     """Crossfade concat using ffmpeg xfade filter (re-encodes via libx264)."""
     if len(video_paths) == 2:
         return await _xfade_two(video_paths[0], video_paths[1], output_path, fade_dur)
@@ -294,9 +289,7 @@ async def _concat_crossfade(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-async def _xfade_two(
-    path_a: str, path_b: str, output: str, fade_dur: float
-) -> bool:
+async def _xfade_two(path_a: str, path_b: str, output: str, fade_dur: float) -> bool:
     """Apply xfade between two videos (re-encodes both)."""
     try:
         probe_cmd = [
@@ -309,9 +302,7 @@ async def _xfade_two(
             "default=noprint_wrappers=1:nokey=1",
             path_a,
         ]
-        probe = await asyncio.to_thread(
-            subprocess.run, probe_cmd, capture_output=True, timeout=10
-        )
+        probe = await asyncio.to_thread(subprocess.run, probe_cmd, capture_output=True, timeout=10)
         dur_a = float(probe.stdout.decode().strip()) if probe.returncode == 0 else 5.0
         offset = max(0, dur_a - fade_dur)
         has_audio_a = await _has_audio_stream(path_a)
@@ -351,9 +342,7 @@ async def _xfade_two(
             "-shortest",
             output,
         ]
-        result = await asyncio.to_thread(
-            subprocess.run, cmd, capture_output=True, timeout=180
-        )
+        result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, timeout=180)
         if result.returncode != 0:
             logger.error("xfade failed: %s", result.stderr.decode(errors="replace"))
             return False
@@ -378,9 +367,7 @@ async def _has_audio_stream(path: str) -> bool:
         path,
     ]
     try:
-        probe = await asyncio.to_thread(
-            subprocess.run, cmd, capture_output=True, timeout=10
-        )
+        probe = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, timeout=10)
         return probe.returncode == 0 and bool(probe.stdout.decode().strip())
     except Exception as exc:  # noqa: BLE001
         logger.warning("audio probe failed for %s: %s", path, exc)
@@ -440,9 +427,7 @@ class ChainGenerator:
         try:
             await self._emit(event, payload)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "long_video: emit %s failed: %s", event, exc
-            )
+            logger.warning("long_video: emit %s failed: %s", event, exc)
 
     async def generate_chain(
         self,
@@ -474,9 +459,7 @@ class ChainGenerator:
         results: list[dict] = []
         total = len(segments)
 
-        async def _submit_one(
-            seg: dict, idx: int, prev_task: dict | None
-        ) -> dict:
+        async def _submit_one(seg: dict, idx: int, prev_task: dict | None) -> dict:
             seg_first_frame = ""
             seg_mode = "t2v"
             if prev_task is not None:
@@ -588,10 +571,7 @@ class ChainGenerator:
             video_path = ""
             if ok and video_url and self._download_segment is not None:
                 try:
-                    fname = (
-                        f"chain_{self._chain_group_id or 'noid'}"
-                        f"_seg{seg_index:03d}.mp4"
-                    )
+                    fname = f"chain_{self._chain_group_id or 'noid'}_seg{seg_index:03d}.mp4"
                     video_path = await self._download_segment(video_url, fname)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
@@ -648,6 +628,7 @@ class ChainGenerator:
             return results
 
         if mode == "parallel":
+
             async def _parallel(seg_idx_pair: tuple[dict, int]) -> dict:
                 seg, i = seg_idx_pair
                 return await _submit_one(seg, i, None)
@@ -727,7 +708,5 @@ class ChainGenerator:
             "is_done": True,
             "is_ok": False,
             "error_kind": "timeout",
-            "error_message": (
-                f"DashScope task {dashscope_id} did not finish in {timeout}s"
-            ),
+            "error_message": (f"DashScope task {dashscope_id} did not finish in {timeout}s"),
         }

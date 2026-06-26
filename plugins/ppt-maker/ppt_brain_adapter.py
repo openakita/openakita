@@ -1026,9 +1026,7 @@ Slide: {json.dumps(slide, ensure_ascii=False)}
         return f"(no excerpt available; original at {path})"
 
     @staticmethod
-    async def _web_search_context(
-        *, title: str, prompt: str, max_results: int
-    ) -> str:
+    async def _web_search_context(*, title: str, prompt: str, max_results: int) -> str:
         query = (title + " " + prompt).strip()
         if not query:
             return ""

@@ -10,7 +10,9 @@ from fastapi.responses import FileResponse
 from .file_utils import assert_within_root
 
 
-def register_upload_preview_routes(router: APIRouter, root: str | Path, *, prefix: str = "/files") -> None:
+def register_upload_preview_routes(
+    router: APIRouter, root: str | Path, *, prefix: str = "/files"
+) -> None:
     root_path = Path(root)
 
     @router.get(f"{prefix}/{{relative_path:path}}", response_class=FileResponse)
@@ -22,4 +24,3 @@ def register_upload_preview_routes(router: APIRouter, root: str | Path, *, prefi
         if not target.exists() or not target.is_file():
             raise HTTPException(status_code=404, detail="File not found")
         return FileResponse(target)
-

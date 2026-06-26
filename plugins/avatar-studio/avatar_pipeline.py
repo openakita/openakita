@@ -231,7 +231,10 @@ async def run_pipeline(
         await _step_image_compose(ctx, plugin_id, client, tm, emit, poll)
         await _step_video_synth(ctx, client, tm, emit, poll)
         await _step_finalize(
-            ctx, plugin_id, tm, emit,
+            ctx,
+            plugin_id,
+            tm,
+            emit,
             base_data_dir=base_data_dir,
             output_subdir_mode=output_subdir_mode,
             output_naming_rule=output_naming_rule,
@@ -398,8 +401,7 @@ async def _step_prepare_assets(
     await tm.update_task_safe(
         ctx.task_id,
         asset_paths_json={
-            k: (v if isinstance(v, str) else ",".join(v))
-            for k, v in ctx.asset_urls.items()
+            k: (v if isinstance(v, str) else ",".join(v)) for k, v in ctx.asset_urls.items()
         },
     )
     await _emit(emit, "task_update", _ctx_payload(ctx, progress=15))
@@ -459,7 +461,7 @@ async def _step_tts_synth(
     # Fix: write under ``uploads/audios/`` with the real extension; the
     # local URL is only used for the preview row in metadata.json — the
     # *actual* URL handed to DashScope is the OSS one we sign below.
-    audios_dir = (ctx.task_dir.parent.parent / "uploads" / "audios")
+    audios_dir = ctx.task_dir.parent.parent / "uploads" / "audios"
     audios_dir.mkdir(parents=True, exist_ok=True)
     fname = f"tts_{ctx.task_id}.{actual_format}"
     audio_path = audios_dir / fname
@@ -552,7 +554,8 @@ async def _step_image_compose(
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "avatar_studio: ensure_images_safe failed (%s); "
-                "forwarding original URLs and letting DashScope reject", e,
+                "forwarding original URLs and letting DashScope reject",
+                e,
             )
 
     # Submit and poll (i2i is a separate async job from s2v).
@@ -588,10 +591,7 @@ async def _step_image_compose(
     await tm.update_task_safe(
         ctx.task_id,
         asset_paths_json={
-            **{
-                k: (v if isinstance(v, str) else ",".join(v))
-                for k, v in ctx.asset_urls.items()
-            },
+            **{k: (v if isinstance(v, str) else ",".join(v)) for k, v in ctx.asset_urls.items()},
             "composed_image_url": composed_url,
         },
     )
@@ -644,9 +644,7 @@ async def _step_video_synth(
         # Step 5 stored the composed portrait under both
         # ``ctx.composed_image_url`` AND ``asset_urls["composed_image_url"]``
         # for downstream symmetry with the other modes.
-        composed = ctx.composed_image_url or str(
-            ctx.asset_urls.get("composed_image_url") or ""
-        )
+        composed = ctx.composed_image_url or str(ctx.asset_urls.get("composed_image_url") or "")
         if not composed:
             raise VendorError(
                 "avatar_compose video_synth missing composed_image_url",
@@ -726,7 +724,8 @@ async def _step_finalize(
             # badge but keep the succeeded status.
             logger.warning(
                 "avatar-studio: archive download failed for task %s: %s",
-                ctx.task_id, e,
+                ctx.task_id,
+                e,
             )
     if output_local is not None:
         ctx.output_path = output_local
@@ -748,7 +747,8 @@ async def _step_finalize(
             except Exception as e:  # noqa: BLE001 - never fail a task on rename
                 logger.warning(
                     "avatar-studio: output relocation failed for task %s: %s",
-                    ctx.task_id, e,
+                    ctx.task_id,
+                    e,
                 )
 
     # ``ctx.params`` may contain non-serialisable runtime hooks (e.g.
@@ -756,8 +756,7 @@ async def _step_finalize(
     # Strip private/underscored keys before persisting metadata so a
     # function reference doesn't crash the json.dumps below.
     persistable_params = {
-        k: v for k, v in ctx.params.items()
-        if not (isinstance(k, str) and k.startswith("_"))
+        k: v for k, v in ctx.params.items() if not (isinstance(k, str) and k.startswith("_"))
     }
     metadata = {
         "task_id": ctx.task_id,
@@ -929,7 +928,9 @@ def _relocate_output(
         stem, dot, ext = final_name.rpartition(".")
         n = 2
         while True:
-            cand = target.parent / f"{stem}-{n}.{ext}" if dot else target.parent / f"{final_name}-{n}"
+            cand = (
+                target.parent / f"{stem}-{n}.{ext}" if dot else target.parent / f"{final_name}-{n}"
+            )
             if not cand.exists():
                 target = cand
                 break
@@ -1117,4 +1118,3 @@ def _len_text(v: Any) -> int | None:
     if not isinstance(v, str) or not v:
         return None
     return len(v)
-

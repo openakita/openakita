@@ -7,7 +7,10 @@ from openakita.agent.context import ContextManager
 
 def test_extract_urls_from_messages_keeps_exact_links():
     messages = [
-        {"role": "user", "content": "读一下 https://example.com/a?x=1 和 http://docs.example.org/page。"},
+        {
+            "role": "user",
+            "content": "读一下 https://example.com/a?x=1 和 http://docs.example.org/page。",
+        },
         {
             "role": "assistant",
             "content": [

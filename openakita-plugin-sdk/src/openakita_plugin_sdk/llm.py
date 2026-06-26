@@ -68,4 +68,3 @@ class ProviderRegistry:
     def list_models(self) -> list[dict]:
         """Return available models. Override in subclass."""
         return []
-

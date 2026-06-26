@@ -62,9 +62,7 @@ def _no_real_sleep(monkeypatch: pytest.MonkeyPatch):
 
 class TestAcquireExecLock:
     def test_o_excl_first_attempt_succeeds(self, lock_dir: Path) -> None:
-        lock = acquire_exec_lock(
-            "task_alpha", lock_dir=lock_dir, expected_runtime_s=60
-        )
+        lock = acquire_exec_lock("task_alpha", lock_dir=lock_dir, expected_runtime_s=60)
         assert lock is not None
         assert lock.task_id == "task_alpha"
         assert lock.pid == os.getpid()
@@ -134,9 +132,7 @@ class TestAcquireExecLock:
 
 class TestHeartbeat:
     def test_heartbeat_pushes_lease_forward(self, lock_dir: Path) -> None:
-        lock = acquire_exec_lock(
-            "task_hb", lock_dir=lock_dir, expected_runtime_s=120
-        )
+        lock = acquire_exec_lock("task_hb", lock_dir=lock_dir, expected_runtime_s=120)
         assert lock is not None
         original_lease = datetime.fromisoformat(lock.lease_until)
         time.sleep_called = 0  # noqa: SLF001  (autouse fixture stubs sleep)
@@ -146,9 +142,7 @@ class TestHeartbeat:
         new_lease = datetime.fromisoformat(lock.lease_until)
         assert new_lease >= original_lease
 
-    def test_heartbeat_returns_false_when_taken_over(
-        self, lock_dir: Path
-    ) -> None:
+    def test_heartbeat_returns_false_when_taken_over(self, lock_dir: Path) -> None:
         lock = acquire_exec_lock("task_takeover", lock_dir=lock_dir)
         assert lock is not None
         # Overwrite the on-disk record with a different execution_id —
@@ -159,9 +153,7 @@ class TestHeartbeat:
         ok = heartbeat_exec_lock(lock)
         assert ok is False
 
-    def test_heartbeat_on_missing_file_returns_false(
-        self, lock_dir: Path
-    ) -> None:
+    def test_heartbeat_on_missing_file_returns_false(self, lock_dir: Path) -> None:
         lock = acquire_exec_lock("task_missing", lock_dir=lock_dir)
         assert lock is not None
         release_exec_lock(lock)
@@ -203,14 +195,10 @@ class TestIsStale:
         assert stale is True
         assert reason == "pid_dead"
 
-    def test_heartbeat_stalled_is_stale(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_heartbeat_stalled_is_stale(self, monkeypatch: pytest.MonkeyPatch) -> None:
         now = datetime.now(UTC)
         very_old = now - timedelta(
-            seconds=locks.HEARTBEAT_INTERVAL_SECONDS
-            * locks.HEARTBEAT_STALE_FACTOR
-            * 2
+            seconds=locks.HEARTBEAT_INTERVAL_SECONDS * locks.HEARTBEAT_STALE_FACTOR * 2
         )
         data = {
             "pid": os.getpid(),
@@ -222,9 +210,7 @@ class TestIsStale:
         assert stale is True
         assert reason == "heartbeat_stalled"
 
-    def test_live_lock_not_stale(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_live_lock_not_stale(self, monkeypatch: pytest.MonkeyPatch) -> None:
         now = datetime.now(UTC)
         data = {
             "pid": os.getpid(),
@@ -379,9 +365,7 @@ class TestTaskSchedulerStartupRecovery:
         assert record["task_id"] == task.id
         assert record["reason"] == "pid_dead"
 
-    def test_stagger_missed_tasks_caps_at_max(
-        self, scheduler_storage: Path
-    ) -> None:
+    def test_stagger_missed_tasks_caps_at_max(self, scheduler_storage: Path) -> None:
         from openakita.scheduler.scheduler import TaskScheduler
 
         scheduler = TaskScheduler(
@@ -442,6 +426,4 @@ class TestTaskSchedulerStartupRecovery:
         assert get_current_scheduled_task_id() is None
         # No lingering lock file.
         lock_file = scheduler.lock_dir / f"exec_{task.id}.json"
-        assert not lock_file.exists(), (
-            f"lock file should be released, but {lock_file} still exists"
-        )
+        assert not lock_file.exists(), f"lock file should be released, but {lock_file} still exists"

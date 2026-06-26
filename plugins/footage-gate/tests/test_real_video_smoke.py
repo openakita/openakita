@@ -48,11 +48,27 @@ def _make_synth_mp4(dest: Path, duration: float = 5.0) -> Path:
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-f", "lavfi", "-i", f"smptebars=size=320x240:rate=30:duration={duration}",
-        "-f", "lavfi", "-i", f"sine=frequency=1000:duration={duration}:sample_rate=44100",
-        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-shortest",
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"smptebars=size=320x240:rate=30:duration={duration}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency=1000:duration={duration}:sample_rate=44100",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-shortest",
         str(dest),
     ]
     subprocess.run(cmd, check=True, timeout=60)
@@ -65,7 +81,9 @@ def synth_mp4(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return _make_synth_mp4(out)
 
 
-def _ctx(mode: str, input_path: Path, work_dir: Path, params: dict[str, Any] | None = None) -> PipelineContext:
+def _ctx(
+    mode: str, input_path: Path, work_dir: Path, params: dict[str, Any] | None = None
+) -> PipelineContext:
     return PipelineContext(
         task_id=f"smoke_{mode}",
         mode=mode,
@@ -105,7 +123,9 @@ def test_real_source_review(synth_mp4: Path, tmp_path: Path) -> None:
 
 def test_real_silence_cut(synth_mp4: Path, tmp_path: Path) -> None:
     ctx = _ctx(
-        "silence_cut", synth_mp4, tmp_path / "sc_work",
+        "silence_cut",
+        synth_mp4,
+        tmp_path / "sc_work",
         params={"threshold_db": -45, "min_silence_len": 0.15, "min_sound_len": 0.05, "pad": 0.05},
     )
     ctx, _events = _run(ctx)
@@ -124,7 +144,9 @@ def test_real_silence_cut(synth_mp4: Path, tmp_path: Path) -> None:
 
 def test_real_auto_color(synth_mp4: Path, tmp_path: Path) -> None:
     ctx = _ctx(
-        "auto_color", synth_mp4, tmp_path / "ac_work",
+        "auto_color",
+        synth_mp4,
+        tmp_path / "ac_work",
         params={"preset": "auto", "hdr_tonemap": True},
     )
     ctx, _events = _run(ctx)
@@ -133,9 +155,7 @@ def test_real_auto_color(synth_mp4: Path, tmp_path: Path) -> None:
     assert ctx.report_path and ctx.report_path.is_file()
     report = json.loads(ctx.report_path.read_text(encoding="utf-8"))
     # Synth source is NOT HDR, so tone-map chain must NOT have been prepended.
-    assert report.get("is_hdr_source") in (False, None, 0), (
-        "synth bars must not be flagged as HDR"
-    )
+    assert report.get("is_hdr_source") in (False, None, 0), "synth bars must not be flagged as HDR"
 
 
 def test_real_cut_qc_no_remux(synth_mp4: Path, tmp_path: Path) -> None:
@@ -152,7 +172,9 @@ def test_real_cut_qc_no_remux(synth_mp4: Path, tmp_path: Path) -> None:
         "output_resolution": [320, 240],
     }
     ctx = _ctx(
-        "cut_qc", synth_mp4, tmp_path / "qc_work",
+        "cut_qc",
+        synth_mp4,
+        tmp_path / "qc_work",
         params={"edl": edl, "auto_remux": False, "max_attempts": 1},
     )
     ctx, _events = _run(ctx)

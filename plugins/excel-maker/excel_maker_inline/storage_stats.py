@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 
-def collect_storage_stats(root: str | Path, groups: dict[str, str | Path] | None = None) -> dict[str, Any]:
+def collect_storage_stats(
+    root: str | Path, groups: dict[str, str | Path] | None = None
+) -> dict[str, Any]:
     root_path = Path(root)
     selected = groups or {
         "uploads": root_path / "uploads",
@@ -18,7 +20,12 @@ def collect_storage_stats(root: str | Path, groups: dict[str, str | Path] | None
         "cache": root_path / "cache",
     }
 
-    result: dict[str, Any] = {"root": str(root_path), "total_bytes": 0, "total_files": 0, "groups": {}}
+    result: dict[str, Any] = {
+        "root": str(root_path),
+        "total_bytes": 0,
+        "total_files": 0,
+        "groups": {},
+    }
     for name, folder in selected.items():
         folder_path = Path(folder)
         bytes_total = 0
@@ -44,4 +51,3 @@ def collect_storage_stats(root: str | Path, groups: dict[str, str | Path] | None
             "extensions": dict(sorted(by_ext.items())),
         }
     return result
-

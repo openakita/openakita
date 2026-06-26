@@ -158,7 +158,9 @@ def test_scheduler_add_task_rejects_invalid_name():
     bad = ScheduledTask.create(
         name="../escape",
         task_type=__import__("openakita.scheduler.task", fromlist=["TaskType"]).TaskType.REMINDER,
-        trigger_type=__import__("openakita.scheduler.task", fromlist=["TriggerType"]).TriggerType.ONCE,
+        trigger_type=__import__(
+            "openakita.scheduler.task", fromlist=["TriggerType"]
+        ).TriggerType.ONCE,
         trigger_config={"run_at": "2030-01-01T00:00:00Z"},
         prompt="x",
         description="x",

@@ -170,8 +170,15 @@ def test_errors_route_lists_nine_kinds(plugin_app: Any) -> None:
     body = r.json()
     kinds = {k["kind"] for k in body["kinds"]}
     assert kinds == {
-        "network", "timeout", "auth", "quota", "moderation",
-        "dependency", "format", "duration", "unknown",
+        "network",
+        "timeout",
+        "auth",
+        "quota",
+        "moderation",
+        "dependency",
+        "format",
+        "duration",
+        "unknown",
     }
     assert set(body["platforms"]) == {"tiktok", "bilibili", "wechat", "xiaohongshu", "youtube"}
     assert set(body["aspects"]) == {"9:16", "1:1"}
@@ -291,9 +298,7 @@ def test_retry_rejects_running_task(plugin_app: Any) -> None:
     client = _client(app)
     created = client.post(_u("/tasks"), json={"mode": "seo_pack"}).json()
     tid = created["id"]
-    asyncio.get_event_loop().run_until_complete(
-        plugin._tm.update_task(tid, status="running")
-    )
+    asyncio.get_event_loop().run_until_complete(plugin._tm.update_task(tid, status="running"))
     r = client.post(_u(f"/tasks/{tid}/retry"))
     assert r.status_code == 400
 

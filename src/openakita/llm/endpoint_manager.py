@@ -148,7 +148,9 @@ class EndpointManager:
 
     def __init__(self, workspace_dir: Path, *, config_path: Path | None = None):
         self._ws_dir = Path(workspace_dir)
-        self._json_path = Path(config_path) if config_path else (self._ws_dir / "data" / "llm_endpoints.json")
+        self._json_path = (
+            Path(config_path) if config_path else (self._ws_dir / "data" / "llm_endpoints.json")
+        )
         self._env_path = self._ws_dir / ".env"
         self._lock = threading.Lock()
 
@@ -232,11 +234,7 @@ class EndpointManager:
                 first = dict(endpoints[0])
                 first_name = str(first.get("name") or "").strip()
                 existing = next(
-                    (
-                        e
-                        for e in config.get(endpoint_type, [])
-                        if e.get("name") == first_name
-                    ),
+                    (e for e in config.get(endpoint_type, []) if e.get("name") == first_name),
                     None,
                 )
                 shared_env_var = self._resolve_env_var(first, existing, config)
@@ -307,7 +305,9 @@ class EndpointManager:
             self._write_env_key(env_var, api_key)
             os.environ[env_var] = api_key
         else:
-            env_var = existing.get("api_key_env", "") if existing else endpoint.get("api_key_env", "")
+            env_var = (
+                existing.get("api_key_env", "") if existing else endpoint.get("api_key_env", "")
+            )
 
         endpoint["api_key_env"] = env_var
 
@@ -354,6 +354,52 @@ class EndpointManager:
             if clean_env:
                 env_var = removed.get("api_key_env", "")
                 if env_var:
+                    still_used = self._find_endpoints_using_env_var(config, env_var)
+                    if not still_used:
+                        self._delete_env_key(env_var)
+                        os.environ.pop(env_var, None)
+
+            self._write_json(config)
+            return removed
+
+    def delete_endpoints(
+        self,
+        names: list[str],
+        endpoint_type: str = "endpoints",
+        clean_env: bool = True,
+    ) -> list[dict]:
+        """Delete multiple endpoints by name in one write."""
+        if endpoint_type not in _ENDPOINT_LISTS:
+            raise ValueError(f"Invalid endpoint_type: {endpoint_type}")
+
+        wanted = {str(name).strip() for name in names if str(name).strip()}
+        if not wanted:
+            raise ValueError("No endpoint names to delete")
+
+        with self._lock:
+            config, _ = self._read_json_versioned()
+            ep_list = config.get(endpoint_type, [])
+
+            removed: list[dict] = []
+            new_list = []
+            for ep in ep_list:
+                if ep.get("name") in wanted:
+                    removed.append(ep)
+                else:
+                    new_list.append(ep)
+
+            if not removed:
+                return []
+
+            config[endpoint_type] = new_list
+
+            if clean_env:
+                removed_env_vars = {
+                    str(ep.get("api_key_env") or "").strip()
+                    for ep in removed
+                    if str(ep.get("api_key_env") or "").strip()
+                }
+                for env_var in sorted(removed_env_vars):
                     still_used = self._find_endpoints_using_env_var(config, env_var)
                     if not still_used:
                         self._delete_env_key(env_var)

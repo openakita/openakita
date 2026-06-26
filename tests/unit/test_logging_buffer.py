@@ -7,7 +7,9 @@ from openakita.logging.session_buffer import SessionLogBuffer, LogEntry
 
 class TestLogEntry:
     def test_create_entry(self):
-        e = LogEntry(timestamp="2026-01-01T00:00:00", level="INFO", module="core", message="Started")
+        e = LogEntry(
+            timestamp="2026-01-01T00:00:00", level="INFO", module="core", message="Started"
+        )
         assert e.level == "INFO"
 
     def test_to_dict(self):
@@ -74,4 +76,3 @@ class TestSessionLogBuffer:
     def test_set_current_session(self, buffer):
         buffer.set_current_session("my-session")
         assert buffer.get_current_session() == "my-session"
-

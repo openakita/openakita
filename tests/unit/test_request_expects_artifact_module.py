@@ -25,9 +25,8 @@ class TestRequestExpectsArtifactModuleLevel:
             None,
             "",
         ):
-            assert (
-                ResponseHandler._request_expects_artifact(sample)
-                == request_expects_artifact(sample)
+            assert ResponseHandler._request_expects_artifact(sample) == request_expects_artifact(
+                sample
             )
 
     def test_new_chinese_delivery_intent_keywords(self):
@@ -73,4 +72,3 @@ class TestRequestExpectsArtifactModuleLevel:
         assert request_expects_artifact(None) is False
         assert request_expects_artifact("") is False
         assert request_expects_artifact("   ") is False
-

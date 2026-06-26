@@ -15,9 +15,7 @@ class NBSFetcher(BaseFetcher):
     source_id = "nbs"
 
     async def fetch(self, **_: Any) -> list[NormalizedItem]:
-        return await fetch_one_feed(
-            self.source_id, _RSS_URL, timeout=self._timeout_sec
-        )
+        return await fetch_one_feed(self.source_id, _RSS_URL, timeout=self._timeout_sec)
 
 
 __all__ = ["NBSFetcher"]

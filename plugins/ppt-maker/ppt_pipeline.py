@@ -85,12 +85,8 @@ class PptPipeline:
         self._activity = activity_logger or PptActivityLogger(data_root=data_root)
         # Brain adapter shares the same activity logger so its LLM calls appear
         # in the same timeline as the pipeline steps.
-        if self._brain_adapter is not None and not getattr(
-            self._brain_adapter, "_activity", None
-        ):
-            self._brain_adapter.bind_activity_logger(
-                self._activity, emit=self._record_emit
-            )
+        if self._brain_adapter is not None and not getattr(self._brain_adapter, "_activity", None):
+            self._brain_adapter.bind_activity_logger(self._activity, emit=self._record_emit)
 
     # ── Public API ─────────────────────────────────────────────────────
 
@@ -335,7 +331,9 @@ class PptPipeline:
             export_path = CreativeImageExporter().export(slides_ir, export_target)
         elif merged_settings.get("exporter") == "pptxgenjs":
             render_model_path = Path(generation_artifacts.get("render_model.json", ""))
-            render_model = _read_json(str(render_model_path)) if render_model_path.exists() else None
+            render_model = (
+                _read_json(str(render_model_path)) if render_model_path.exists() else None
+            )
             export_path = PptxGenJsExporter().export(
                 render_model=render_model or {},
                 legacy_slides_ir=slides_ir,
@@ -717,7 +715,9 @@ class PptPipeline:
         if not dataset.profile_path or not dataset.insights_path or not dataset.chart_specs_path:
             analysis = TableAnalyzer().analyze_to_files(
                 dataset.original_path,
-                _analysis_dir(self._data_root, _load_settings(self._data_root), "datasets", dataset.id),
+                _analysis_dir(
+                    self._data_root, _load_settings(self._data_root), "datasets", dataset.id
+                ),
             )
             dataset = await manager.update_dataset_safe(
                 dataset.id,
@@ -738,10 +738,14 @@ class PptPipeline:
         template = await manager.get_template(project.template_id)
         if template is None:
             return None, None
-        if template.original_path and (not template.brand_tokens_path or not template.layout_map_path):
+        if template.original_path and (
+            not template.brand_tokens_path or not template.layout_map_path
+        ):
             diagnosis = TemplateManager().diagnose_to_files(
                 template.original_path,
-                _analysis_dir(self._data_root, _load_settings(self._data_root), "templates", template.id),
+                _analysis_dir(
+                    self._data_root, _load_settings(self._data_root), "templates", template.id
+                ),
             )
             template = await manager.update_template_safe(
                 template.id,

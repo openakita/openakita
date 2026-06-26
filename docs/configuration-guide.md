@@ -599,12 +599,13 @@ OpenAkita 内置多种预设角色人格：
 
 | 配置项 | 默认值 |
 |--------|--------|
-| AGENT_NAME | `OpenAkita` |
 | MAX_ITERATIONS | `300` |
 | THINKING_MODE | `auto` |
 | AUTO_CONFIRM | `false` |
 | DATABASE_PATH | `data/agent.db` |
 | PERSONA_NAME | `default` |
+
+> 各个 Agent 的显示名称由桌面端「Agents」菜单中的 Agent Profile 管理，不再通过环境变量配置。
 
 ### 活人感与表情包
 

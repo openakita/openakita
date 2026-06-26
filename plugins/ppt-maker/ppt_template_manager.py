@@ -41,8 +41,12 @@ class TemplateManager:
         brand_path = out / "brand_tokens.json"
         layout_path = out / "layout_map.json"
         profile_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
-        brand_path.write_text(json.dumps(brand_tokens, ensure_ascii=False, indent=2), encoding="utf-8")
-        layout_path.write_text(json.dumps(layout_map, ensure_ascii=False, indent=2), encoding="utf-8")
+        brand_path.write_text(
+            json.dumps(brand_tokens, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        layout_path.write_text(
+            json.dumps(layout_map, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         return {
             "template_profile": profile,
             "brand_tokens": brand_tokens,
@@ -83,11 +87,15 @@ class TemplateManager:
             "has_title_layout": any("title" in name or "cover" in name for name in layout_names),
             "has_section_layout": any("section" in name for name in layout_names),
             "has_content_layout": any("content" in name or "body" in name for name in layout_names),
-            "has_picture_layout": any("picture" in name or "image" in name for name in layout_names),
+            "has_picture_layout": any(
+                "picture" in name or "image" in name for name in layout_names
+            ),
             "warnings": warnings,
         }
 
-    def brand_tokens(self, profile: dict[str, Any], manual: dict[str, Any] | None = None) -> dict[str, Any]:
+    def brand_tokens(
+        self, profile: dict[str, Any], manual: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         colors = profile.get("detected_colors") or []
         fonts = profile.get("detected_fonts") or []
         tokens = BrandTokens(
@@ -188,7 +196,9 @@ class TemplateManager:
                 return name
         return None
 
-    def _warnings(self, layouts: list[dict[str, Any]], colors: list[str], fonts: list[str]) -> list[str]:
+    def _warnings(
+        self, layouts: list[dict[str, Any]], colors: list[str], fonts: list[str]
+    ) -> list[str]:
         warnings: list[str] = []
         if not layouts:
             warnings.append("未检测到 slide layout，将使用内置 fallback layout。")
@@ -197,4 +207,3 @@ class TemplateManager:
         if not fonts:
             warnings.append("未检测到主题字体，请在 UI 中手动补充字体。")
         return warnings
-

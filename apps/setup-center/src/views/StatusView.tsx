@@ -40,6 +40,8 @@ export interface StatusViewProps {
     running: boolean;
     pid: number | null;
     pidFile: string;
+    managedBy?: "tauri" | "external" | "unknown";
+    isManagedChild?: boolean;
     port?: number;
     heartbeatPhase?: string;
     heartbeatHttpReady?: boolean;
@@ -87,8 +89,7 @@ export interface StatusViewProps {
   startLocalServiceWithConflictCheck: (wsId: string) => Promise<boolean>;
   refreshStatus: (overrideDataMode?: "local" | "remote", overrideApiBaseUrl?: string, forceAliveCheck?: boolean) => Promise<void>;
   doStopService: (wsId?: string | null) => Promise<void>;
-  waitForServiceDown: (base: string, maxMs?: number) => Promise<boolean>;
-  doStartLocalService: (wsId: string) => Promise<void>;
+  restartService: () => Promise<void>;
   onOpenRuntimeEnvironment: () => void;
   setView: (view: ViewId) => void;
 }
@@ -106,7 +107,7 @@ export function StatusView(props: StatusViewProps) {
     setNewRelease, setUpdateAvailable, setUpdateProgress,
     shouldUseHttpApi, httpApiBase,
     startLocalServiceWithConflictCheck, refreshStatus,
-    doStopService, waitForServiceDown, doStartLocalService,
+    doStopService, restartService,
     onOpenRuntimeEnvironment,
     setView,
   } = props;
@@ -293,12 +294,7 @@ export function StatusView(props: StatusViewProps) {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={async () => {
-                  if (effectiveWsId) {
-                    await doStopService(effectiveWsId);
-                    await doStartLocalService(effectiveWsId);
-                  }
-                }}
+                onClick={() => { void restartService(); }}
               >
                 {t("status.restart")}
               </Button>
@@ -466,15 +462,7 @@ export function StatusView(props: StatusViewProps) {
                   await doStopService(effectiveWsId);
                 } catch (e) { notifyError(String(e)); } finally { dismissLoading(_b); }
               }} disabled={!!busy}><Square size={13} />{t("status.stop")}</Button>
-              <Button size="sm" variant="outline" className="statusBtn" onClick={async () => {
-                const _b = notifyLoading(t("status.restarting"));
-                try {
-                  await doStopService(effectiveWsId);
-                  await waitForServiceDown(httpApiBase(), 15000);
-                  dismissLoading(_b);
-                  await doStartLocalService(effectiveWsId);
-                } catch (e) { notifyError(String(e)); dismissLoading(_b); }
-              }} disabled={!!busy}><RotateCcw size={13} />{t("status.restart")}</Button>
+              <Button size="sm" variant="outline" className="statusBtn" onClick={() => { void restartService(); }} disabled={!!busy}><RotateCcw size={13} />{t("status.restart")}</Button>
             </>)}
           </div>
           )}

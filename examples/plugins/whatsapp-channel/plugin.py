@@ -143,9 +143,7 @@ class WhatsAppAdapter(ChannelAdapter):
         site = web.TCPSite(runner, "0.0.0.0", self._webhook_port)
         await site.start()
         self._webhook_server = runner
-        logger.info(
-            "WhatsApp Cloud API webhook listening on port %d", self._webhook_port
-        )
+        logger.info("WhatsApp Cloud API webhook listening on port %d", self._webhook_port)
 
     async def _webhook_verify(self, request) -> Any:
         """Handle Meta webhook verification (GET)."""
@@ -179,17 +177,14 @@ class WhatsAppAdapter(ChannelAdapter):
                     messages = value.get("messages", [])
                     contacts = value.get("contacts", [])
                     contact_map = {
-                        c["wa_id"]: c.get("profile", {}).get("name", "")
-                        for c in contacts
+                        c["wa_id"]: c.get("profile", {}).get("name", "") for c in contacts
                     }
                     for msg in messages:
                         await self._parse_cloud_message(msg, contact_map)
         except Exception as e:
             logger.error("Error processing WhatsApp payload: %s", e, exc_info=True)
 
-    async def _parse_cloud_message(
-        self, msg: dict, contact_map: dict
-    ) -> None:
+    async def _parse_cloud_message(self, msg: dict, contact_map: dict) -> None:
         """Convert a single Cloud API message to UnifiedMessage and emit."""
         msg_type = msg.get("type", "text")
         from_id = msg.get("from", "")
@@ -207,42 +202,50 @@ class WhatsAppAdapter(ChannelAdapter):
         elif msg_type == "image":
             img = msg.get("image", {})
             text = img.get("caption", "")
-            images.append(MediaFile(
-                id=img.get("id", ""),
-                filename="image.jpg",
-                mime_type=img.get("mime_type", "image/jpeg"),
-                file_id=img.get("id"),
-                status=MediaStatus.PENDING,
-            ))
+            images.append(
+                MediaFile(
+                    id=img.get("id", ""),
+                    filename="image.jpg",
+                    mime_type=img.get("mime_type", "image/jpeg"),
+                    file_id=img.get("id"),
+                    status=MediaStatus.PENDING,
+                )
+            )
         elif msg_type == "document":
             doc = msg.get("document", {})
             text = doc.get("caption", "")
-            files.append(MediaFile(
-                id=doc.get("id", ""),
-                filename=doc.get("filename", "document"),
-                mime_type=doc.get("mime_type", "application/octet-stream"),
-                file_id=doc.get("id"),
-                status=MediaStatus.PENDING,
-            ))
+            files.append(
+                MediaFile(
+                    id=doc.get("id", ""),
+                    filename=doc.get("filename", "document"),
+                    mime_type=doc.get("mime_type", "application/octet-stream"),
+                    file_id=doc.get("id"),
+                    status=MediaStatus.PENDING,
+                )
+            )
         elif msg_type == "audio":
             audio = msg.get("audio", {})
-            voices.append(MediaFile(
-                id=audio.get("id", ""),
-                filename="audio.ogg",
-                mime_type=audio.get("mime_type", "audio/ogg"),
-                file_id=audio.get("id"),
-                status=MediaStatus.PENDING,
-            ))
+            voices.append(
+                MediaFile(
+                    id=audio.get("id", ""),
+                    filename="audio.ogg",
+                    mime_type=audio.get("mime_type", "audio/ogg"),
+                    file_id=audio.get("id"),
+                    status=MediaStatus.PENDING,
+                )
+            )
         elif msg_type == "video":
             vid = msg.get("video", {})
             text = vid.get("caption", "")
-            videos.append(MediaFile(
-                id=vid.get("id", ""),
-                filename="video.mp4",
-                mime_type=vid.get("mime_type", "video/mp4"),
-                file_id=vid.get("id"),
-                status=MediaStatus.PENDING,
-            ))
+            videos.append(
+                MediaFile(
+                    id=vid.get("id", ""),
+                    filename="video.mp4",
+                    mime_type=vid.get("mime_type", "video/mp4"),
+                    file_id=vid.get("id"),
+                    status=MediaStatus.PENDING,
+                )
+            )
 
         is_group = msg.get("context", {}).get("group_id") is not None
         group_id = msg.get("context", {}).get("group_id", "")
@@ -261,9 +264,7 @@ class WhatsAppAdapter(ChannelAdapter):
             videos=videos,
         )
 
-        is_mentioned = bool(mentioned_ids) or (
-            context.get("mentioned") is True
-        )
+        is_mentioned = bool(mentioned_ids) or (context.get("mentioned") is True)
 
         unified = UnifiedMessage(
             channel=self.channel_name,
@@ -295,9 +296,7 @@ class WhatsAppAdapter(ChannelAdapter):
             logger.error("Baileys bridge not found at %s", bridge_dir)
             return
 
-        data_dir = self._bridge_data_dir or str(
-            Path(tempfile.gettempdir()) / "openakita-wa-bridge"
-        )
+        data_dir = self._bridge_data_dir or str(Path(tempfile.gettempdir()) / "openakita-wa-bridge")
         os.makedirs(data_dir, exist_ok=True)
 
         env = {
@@ -317,7 +316,8 @@ class WhatsAppAdapter(ChannelAdapter):
             )
             logger.info(
                 "Baileys bridge started (pid=%d, port=%d)",
-                self._bridge_proc.pid, self._bridge_port,
+                self._bridge_proc.pid,
+                self._bridge_port,
             )
             await asyncio.sleep(2)
         except FileNotFoundError:
@@ -330,9 +330,7 @@ class WhatsAppAdapter(ChannelAdapter):
         if self._mode != "web" or self._http is None:
             return None
         try:
-            resp = await self._http.get(
-                f"http://127.0.0.1:{self._bridge_port}/qr"
-            )
+            resp = await self._http.get(f"http://127.0.0.1:{self._bridge_port}/qr")
             if resp.status_code == 200:
                 data = resp.json()
                 return data.get("qr")
@@ -345,9 +343,7 @@ class WhatsAppAdapter(ChannelAdapter):
         if self._mode != "web" or self._http is None:
             return {"status": "n/a", "mode": self._mode}
         try:
-            resp = await self._http.get(
-                f"http://127.0.0.1:{self._bridge_port}/status"
-            )
+            resp = await self._http.get(f"http://127.0.0.1:{self._bridge_port}/status")
             if resp.status_code == 200:
                 return resp.json()
         except Exception:
@@ -365,10 +361,7 @@ class WhatsAppAdapter(ChannelAdapter):
         """Send a message via Cloud API."""
         if not self._http:
             return ""
-        url = (
-            f"{GRAPH_API_BASE}/{self._api_version}"
-            f"/{self._phone_number_id}/messages"
-        )
+        url = f"{GRAPH_API_BASE}/{self._api_version}/{self._phone_number_id}/messages"
         headers = {
             "Authorization": f"Bearer {self._access_token}",
             "Content-Type": "application/json",
@@ -487,10 +480,7 @@ class WhatsAppAdapter(ChannelAdapter):
         if not self._http or self._mode != "cloud_api":
             return MediaFile.create(path.name, mime_type)
 
-        url = (
-            f"{GRAPH_API_BASE}/{self._api_version}"
-            f"/{self._phone_number_id}/media"
-        )
+        url = f"{GRAPH_API_BASE}/{self._api_version}/{self._phone_number_id}/media"
         try:
             with open(path, "rb") as f:
                 resp = await self._http.post(
@@ -562,10 +552,7 @@ class WhatsAppAdapter(ChannelAdapter):
         """Send typing indicator (Cloud API only)."""
         if self._mode != "cloud_api" or not self._http:
             return
-        url = (
-            f"{GRAPH_API_BASE}/{self._api_version}"
-            f"/{self._phone_number_id}/messages"
-        )
+        url = f"{GRAPH_API_BASE}/{self._api_version}/{self._phone_number_id}/messages"
         try:
             await self._http.post(
                 url,
@@ -629,6 +616,7 @@ class WhatsAppAdapter(ChannelAdapter):
 
 # --- Adapter factory ---
 
+
 def _whatsapp_factory(
     creds: dict,
     *,
@@ -645,6 +633,7 @@ def _whatsapp_factory(
 
 
 # --- Plugin ---
+
 
 class Plugin(PluginBase):
     def __init__(self) -> None:
@@ -707,4 +696,3 @@ class Plugin(PluginBase):
 
     def on_unload(self) -> None:
         self._api = None
-

@@ -99,4 +99,3 @@ class TestFilesEndpoint:
     async def test_serve_root(self, client):
         resp = await client.get("/api/files")
         assert resp.status_code in (200, 400, 404, 500)
-

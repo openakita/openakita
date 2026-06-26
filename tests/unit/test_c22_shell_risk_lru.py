@@ -231,8 +231,8 @@ def test_cached_call_is_significantly_faster_than_uncached() -> None:
     speedup = uncached_elapsed / max(cached_elapsed, 1e-9)
     # Print so it shows in ``pytest -s`` for ops monitoring.
     print(
-        f"\n[bench] shell_risk LRU: uncached={uncached_elapsed*1000:.1f}ms, "
-        f"cached={cached_elapsed*1000:.1f}ms, speedup={speedup:.1f}x"
+        f"\n[bench] shell_risk LRU: uncached={uncached_elapsed * 1000:.1f}ms, "
+        f"cached={cached_elapsed * 1000:.1f}ms, speedup={speedup:.1f}x"
     )
     # Conservative bound; on dev laptop typical speedup is 100-300×.
     assert speedup >= 10.0, (

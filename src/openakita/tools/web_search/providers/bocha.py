@@ -48,9 +48,7 @@ class BochaProvider:
     ) -> list[SearchResult]:
         api_key = (settings.bocha_api_key or "").strip()
         if not api_key:
-            raise MissingCredentialError(
-                "BOCHA_API_KEY not configured", provider_id=self.id
-            )
+            raise MissingCredentialError("BOCHA_API_KEY not configured", provider_id=self.id)
 
         payload = {
             "query": query,
@@ -131,7 +129,8 @@ async def _post_and_parse(
         data = resp.json()
     except ValueError as exc:
         raise NetworkUnreachableError(
-            f"{provider_id} returned non-JSON response", provider_id=provider_id,
+            f"{provider_id} returned non-JSON response",
+            provider_id=provider_id,
         ) from exc
 
     return extractor(data)

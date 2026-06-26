@@ -147,9 +147,7 @@ async def test_policy_config_reloaded_emits_on_success(captured_events):
 
 
 @pytest.mark.asyncio
-async def test_policy_config_reload_failed_emits_on_exception(
-    captured_events, monkeypatch
-):
+async def test_policy_config_reload_failed_emits_on_exception(captured_events, monkeypatch):
     import openakita.core.policy_v2.global_engine as ge
     from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
@@ -171,9 +169,7 @@ async def test_policy_config_reload_failed_emits_on_exception(
 
 
 @pytest.mark.asyncio
-async def test_policy_config_reloaded_no_loop_does_not_warn(
-    captured_events, monkeypatch
-):
+async def test_policy_config_reloaded_no_loop_does_not_warn(captured_events, monkeypatch):
     """No-loop path must not raise nor leak unawaited coroutine."""
     import asyncio as _aio
 
