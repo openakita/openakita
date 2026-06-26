@@ -692,6 +692,56 @@ def _format_desktop_attachment_reference(
     return f"[{label}: {att_name} ({att_mime or att_type})] URL: {att_url}"
 
 
+def _format_vision_unavailable_notice(
+    *,
+    count: int,
+    names: list[str] | None = None,
+    paths: list[str] | None = None,
+    source: str = "图片",
+) -> str:
+    """Build a prompt notice that must surface to the user when images are unseen."""
+    item_label = "张图片" if source == "图片" else source
+    details: list[str] = []
+    clean_names = [n for n in (names or []) if n]
+    clean_paths = [p for p in (paths or []) if p]
+    if clean_names:
+        details.append(f"文件名: {'; '.join(clean_names)}")
+    if clean_paths:
+        details.append(f"本地路径: {'; '.join(clean_paths)}")
+    detail_text = f"（{'；'.join(details)}）" if details else ""
+    return (
+        f"[系统提示：用户本轮发送了 {count} {item_label}{detail_text}，但当前所有可用 LLM "
+        "端点都没有 vision/图片理解能力，所以你无法查看、识别或描述图片内容。"
+        "必须在回复开头明确告知用户：我收到了图片，但当前没有配置支持图片识别的模型端点，"
+        "因此不能判断图片里是什么；不要猜测图片内容，不要回答成自我介绍或闲聊。"
+        "请提示用户在 OpenAkita 设置中心配置带 vision 能力的 LLM 端点"
+        "（例如支持图片输入的 OpenAI、Claude、Qwen-VL/GLM-4V 等模型），"
+        "或改用文字描述图片后再继续。]"
+    )
+
+
+def _has_pending_media_or_attachments(
+    *,
+    pending_images: Any = None,
+    pending_videos: Any = None,
+    pending_audio: Any = None,
+    pending_files: Any = None,
+    attachments: Any = None,
+) -> bool:
+    return any(
+        bool(item)
+        for item in (pending_images, pending_videos, pending_audio, pending_files, attachments)
+    )
+
+
+def _allows_lightweight_fast_reply(
+    *,
+    endpoint_override: str | None = None,
+    turn_has_media: bool = False,
+) -> bool:
+    return not endpoint_override and not turn_has_media
+
+
 # 上下文管理常量（部分迁移至 context_manager.py，压缩相关仍需就地定义）
 from .context_manager import CHARS_PER_TOKEN, CHUNK_MAX_TOKENS
 
@@ -5544,6 +5594,14 @@ class Agent:
         pending_videos = session.get_metadata("pending_videos") if session else None
         pending_audio = session.get_metadata("pending_audio") if session else None
         pending_files = session.get_metadata("pending_files") if session else None
+        turn_has_media = _has_pending_media_or_attachments(
+            pending_images=pending_images,
+            pending_videos=pending_videos,
+            pending_audio=pending_audio,
+            pending_files=pending_files,
+            attachments=attachments,
+        )
+        self._current_turn_has_media_attachments = turn_has_media
         from .current_turn import CurrentTurnInput, SessionObjectRegistry
 
         current_turn = CurrentTurnInput.from_inputs(
@@ -5711,6 +5769,8 @@ class Agent:
 
             content_blocks: list[dict] = []
             _degraded_notices: list[str] = []
+            _degraded_image_names: list[str] = []
+            _degraded_image_paths: list[str] = []
             if compiled_message:
                 content_blocks.append({"type": "text", "text": compiled_message})
             for att in attachments:
@@ -5732,8 +5792,8 @@ class Agent:
                     or (att_url or "").startswith("data:video/")
                 )
 
-                if is_image and att_url:
-                    if _desk_has_vision:
+                if is_image:
+                    if _desk_has_vision and att_url:
                         # 本地 /api/uploads/* URL 远端模型访问不到，先转 data URL
                         _inlined = _maybe_inline_local_image(att_url, att_mime)
                         _final_url = _inlined or att_url
@@ -5745,10 +5805,14 @@ class Agent:
                             content_blocks.append(
                                 {"type": "image_url", "image_url": {"url": _final_url}}
                             )
-                    else:
+                    elif _desk_has_vision:
                         _degraded_notices.append(
-                            f"[用户发送了图片 {att_name}，当前模型不支持图片输入]"
+                            f"[图片 {att_name} 缺少可发送给模型的 URL，已降级为文本，请重新上传后重试]"
                         )
+                    else:
+                        _degraded_image_names.append(att_name)
+                        if att_local_path:
+                            _degraded_image_paths.append(str(att_local_path))
                 elif is_video and att_url:
                     if _desk_has_video:
                         content_blocks.append({"type": "video_url", "video_url": {"url": att_url}})
@@ -5770,6 +5834,15 @@ class Agent:
                             ),
                         }
                     )
+
+            if _degraded_image_names:
+                _degraded_notices.append(
+                    _format_vision_unavailable_notice(
+                        count=len(_degraded_image_names),
+                        names=_degraded_image_names,
+                        paths=_degraded_image_paths,
+                    )
+                )
 
             if _degraded_notices:
                 content_blocks.append(
@@ -5836,13 +5909,14 @@ class Agent:
                 img_paths = [
                     img.get("local_path", "") for img in pending_images if img.get("local_path")
                 ]
-                notice = f"[用户发送了 {len(pending_images)} 张图片，当前模型不支持图片输入"
-                if img_paths:
-                    notice += (
-                        f"。文件路径: {'; '.join(img_paths)}"
-                        f"。如需查看图片内容，请使用 view_image 工具"
-                    )
-                notice += "]"
+                img_names = [
+                    img.get("filename", "") for img in pending_images if img.get("filename")
+                ]
+                notice = _format_vision_unavailable_notice(
+                    count=len(pending_images),
+                    names=img_names,
+                    paths=img_paths,
+                )
                 _text_for_llm = f"{_text_for_llm}\n\n{notice}" if _text_for_llm else notice
                 logger.info(
                     f"[Session:{session_id}] No vision endpoint, "
@@ -6174,6 +6248,7 @@ class Agent:
         self._current_task_definition = ""
         self._current_task_query = ""
         self._current_user_message = ""
+        self._current_turn_has_media_attachments = False
         self._current_session_type = "cli"
         if im_tokens is not None:
             with contextlib.suppress(Exception):
@@ -6452,7 +6527,11 @@ class Agent:
             _intent = getattr(self, "_current_intent", None)
             _fast_usage = None
             _fast_handled = False
-            _allow_lightweight_fast_reply = not endpoint_override
+            _turn_has_media = bool(getattr(self, "_current_turn_has_media_attachments", False))
+            _allow_lightweight_fast_reply = _allows_lightweight_fast_reply(
+                endpoint_override=endpoint_override,
+                turn_has_media=_turn_has_media,
+            )
 
             _risk_intent = _classify_risk_intent(_intent, message) if _intent else None
             _risk_pre_authorized = _consume_risk_authorization(session, message)
@@ -7042,7 +7121,11 @@ class Agent:
             _fast_usage = None
             _request_id = request_id or f"{conversation_id}:stream"
             _turn_id = turn_id or f"{conversation_id}:{int(time.time() * 1000)}"
-            _allow_lightweight_fast_reply = not endpoint_override
+            _turn_has_media = bool(getattr(self, "_current_turn_has_media_attachments", False))
+            _allow_lightweight_fast_reply = _allows_lightweight_fast_reply(
+                endpoint_override=endpoint_override,
+                turn_has_media=_turn_has_media,
+            )
 
             # 决定 fast-path 是否启用思考链：
             # - thinking_mode == "on"：用户显式开启 → 同步开思维链
