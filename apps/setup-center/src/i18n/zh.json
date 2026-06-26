@@ -1755,7 +1755,12 @@
     "updateReady": "更新已就绪",
     "updateFailed": "更新失败",
     "restartNow": "立即重启",
-    "retry": "重试"
+    "retry": "重试",
+    "releaseNotesTitle": "更新日志",
+    "releaseNotesButton": "查看更新日志",
+    "releasePubDate": "发布时间 {{date}}",
+    "releaseNotesLoadFailed": "更新日志加载失败：{{error}}",
+    "releaseNotesEmpty": "暂无更新日志。"
   },
   "onboarding": {
     "defaultWorkspace": "默认工作区",

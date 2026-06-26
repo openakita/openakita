@@ -1755,7 +1755,12 @@
     "updateReady": "Update Ready",
     "updateFailed": "Update Failed",
     "restartNow": "Restart Now",
-    "retry": "Retry"
+    "retry": "Retry",
+    "releaseNotesTitle": "Release Notes",
+    "releaseNotesButton": "View release notes",
+    "releasePubDate": "Published {{date}}",
+    "releaseNotesLoadFailed": "Failed to load release notes: {{error}}",
+    "releaseNotesEmpty": "No release notes available."
   },
   "onboarding": {
     "defaultWorkspace": "Default Workspace",
