@@ -396,6 +396,38 @@ def _tool_use_encouragement() -> str:
     )
 
 
+def _tool_quality_guidance() -> str:
+    """Focused tool-use guidance to raise relevance + reliability (v22 P1.2).
+
+    Exploratory testing surfaced three recurring quality issues that waste
+    rounds and cause node failures, all of which the model can largely avoid
+    with explicit guidance (no engine change needed):
+
+    * Web search / browse wandered onto irrelevant pages (music MVs, unrelated
+      entertainment) instead of staying on the task topic.
+    * ``write_file`` of a very large document was truncated when the whole body
+      was stuffed into one tool-call argument (JSON arg size), failing the call.
+    * A node read stale/off-topic material and drifted away from the CURRENT
+      task theme (defense-in-depth on top of the per-command workspace sandbox).
+
+    Appended only alongside :func:`_tool_use_encouragement` (i.e. when the node
+    actually has tools), so zero-tool personas keep their lean prompt.
+    """
+
+    return (
+        "工具使用质量要求："
+        "1) 检索/浏览：查询词要紧扣【本次任务主题与关键词】，先看标题与摘要、"
+        "只打开明显高相关的少数结果，跳过明显无关内容（如音乐 MV、无关娱乐、"
+        "广告页），不要逐条点击；一次检索不理想就换更精确的关键词，而不是反复"
+        "翻无关页面。"
+        "2) 写大文档：当正文很长时分成多段、分多次写入落盘（先写主体再分段补充），"
+        "不要把超长正文一次性塞进单个工具参数，以免内容被截断或调用失败；若写入"
+        "失败，缩小单次内容后立即重试，不要因此放弃任务。"
+        "3) 主题锚定：始终以【本次指令的主题】为准；若读到的资料与当前主题不一致"
+        "（例如另一个题材的旧报告），以本次指令主题为准，绝不要被无关或过期资料带偏。"
+    )
+
+
 def _persona_system_prompt(
     spec: AgentSpec, *, depth: int = 0, has_tools: bool = False
 ) -> str:
@@ -446,6 +478,7 @@ def _persona_system_prompt(
         parts.append(_leaf_worker_instructions())
     if has_tools:
         parts.append(_tool_use_encouragement())
+        parts.append(_tool_quality_guidance())
     parts.append(_language_consistency_rule())
     return "\n".join(parts)
 
