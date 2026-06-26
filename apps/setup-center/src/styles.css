@@ -2600,6 +2600,97 @@ button.btnApplyRestart:hover {
   color: var(--text);
 }
 
+.releaseNotesDialogContent {
+  width: min(720px, calc(100vw - 32px));
+  max-width: 720px;
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.releaseNotesView {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+  min-height: 0;
+  padding: 18px;
+}
+
+.releaseNotesHeader {
+  padding-right: 40px;
+  flex-shrink: 0;
+}
+
+.releaseNotesBody {
+  overflow: auto;
+  min-height: 260px;
+  padding: 14px 2px 0;
+}
+
+.releaseNotesBody::-webkit-scrollbar {
+  width: 8px;
+}
+
+.releaseNotesBody::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.releaseNotesBody::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+}
+
+.releaseNotesState {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  min-height: 260px;
+  text-align: center;
+}
+
+.releaseNotesError {
+  align-items: center;
+  flex-direction: column;
+}
+
+.releaseNotesPlain {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.feedbackMdContent.inboxMarkdown.releaseNotesMarkdown {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.78;
+}
+
+.feedbackMdContent.inboxMarkdown.releaseNotesMarkdown h1 {
+  font-size: 1.35em;
+}
+
+.feedbackMdContent.inboxMarkdown.releaseNotesMarkdown h2 {
+  font-size: 1.22em;
+}
+
+.feedbackMdContent.inboxMarkdown.releaseNotesMarkdown h3 {
+  font-size: 1.1em;
+}
+
+.feedbackMdContent.inboxMarkdown.releaseNotesMarkdown ul,
+.feedbackMdContent.inboxMarkdown.releaseNotesMarkdown ol {
+  margin: 0.5em 0 0.85em;
+  padding-left: 1.35rem;
+}
+
+.feedbackMdContent.inboxMarkdown.releaseNotesMarkdown li {
+  margin: 0.3em 0;
+}
+
 /* Dialog sections */
 .dialogSection {
   margin-bottom: 16px;
