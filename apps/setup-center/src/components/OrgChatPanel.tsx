@@ -40,7 +40,7 @@ interface ChatMsg {
    * 事件聚合后渲染出的活动时间线 bubble，CSS 用 `.ocp-msg-activity` 给中性
    * 颜色覆盖。
    */
-  kind?: "activity";
+  kind?: "activity" | "final_report";
 }
 
 /** 后端 failure_diagnoser 生成的结构化诊断 payload */
@@ -984,6 +984,9 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
               content: `### 📋 ${t("org.chat.finalReportHeading", "任务完成汇报")}\n\n${text}${manifest}`,
               timestamp: (ts || Date.now()) + 1,
               attachments: files.length > 0 ? files : undefined,
+              // v21: tag so it renders at the BOTTOM of the command center
+              // (below the 编排过程 timeline), consistent with the live finalize.
+              kind: "final_report",
             });
           } catch {
             /* best effort: a missing/old command must not break history load */
@@ -1125,20 +1128,36 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           (Array.isArray(actData?.items) ? actData.items : []) as ActivityItem[],
           nameFmt2,
         );
-        const merged = [...actMsgs, ...histMsgs].sort(
-          (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
-        );
-        const deduped: ChatMsg[] = [];
-        const seen = new Set<string>();
-        for (const m of merged) {
-          if (m.id && seen.has(m.id)) continue;
-          if (m.id) seen.add(m.id);
-          deduped.push(m);
-        }
-        if (deduped.length > 0) {
-          setMessages(deduped);
-          saveToLocalStorage(convId, deduped);
-        }
+        // v21 FIX: this WS-triggered refresh used to ``setMessages(deduped)``
+        // with ONLY actMsgs(用户指令) + histMsgs — which WIPED the live final
+        // report bubble that ``finalizeResult`` had just appended (it is a
+        // local message, not persisted to session history nor reconstructible
+        // from /activity). Because ``org:command_done`` ALSO triggers this
+        // refresh, the 最终汇报 flashed then vanished ~250ms later. We now
+        // preserve any current ``kind==="final_report"`` bubbles across the
+        // refresh so the closing summary + download cards stay put.
+        setMessages(prev => {
+          const merged = [...actMsgs, ...histMsgs].sort(
+            (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
+          );
+          const deduped: ChatMsg[] = [];
+          const seen = new Set<string>();
+          for (const m of merged) {
+            if (m.id && seen.has(m.id)) continue;
+            if (m.id) seen.add(m.id);
+            deduped.push(m);
+          }
+          const keptReports = prev.filter(
+            m => m.kind === "final_report" && !(m.id && seen.has(m.id)),
+          );
+          const next = deduped.length > 0 || keptReports.length > 0
+            ? [...deduped, ...keptReports].sort(
+                (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
+              )
+            : prev;
+          if (next !== prev) saveToLocalStorage(convId, next);
+          return next;
+        });
       } catch {
         /* ignore */
       }
@@ -1700,14 +1719,20 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       if (mountedRef.current) {
         setMessages(prev => {
           const next = prev.map(m =>
-            m.id === placeholderId ? { ...m, content, streaming: false, role, attachments: atts } : m
+            // v21: tag the finalized deliverable so the render can place it +
+            // its downloadable cards at the BOTTOM of the command center
+            // (用户指令 → 编排过程 → 最终汇报), and so the reload path can
+            // reconstruct it from the persisted command_done event.
+            m.id === placeholderId
+              ? { ...m, content, streaming: false, role, attachments: atts, kind: "final_report" as const }
+              : m
           );
           messagesRef.current = next;
           return next;
         });
       } else {
         const existing = loadFromLocalStorage(convId);
-        const msg: ChatMsg = { id: placeholderId, role, content, timestamp: Date.now(), attachments: atts };
+        const msg: ChatMsg = { id: placeholderId, role, content, timestamp: Date.now(), attachments: atts, kind: "final_report" };
         const hasUser = existing.some(m => m.id === userMsg.id);
         const toSave = hasUser ? [...existing, msg] : [...existing, userMsg, msg];
         saveToLocalStorage(convId, toSave);
@@ -1914,6 +1939,44 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     }
   };
 
+  // Shared message-bubble renderer so the main scroll column and the bottom
+  // "最终汇报" block (rendered after the timeline) stay identical.
+  const renderMsgBubble = (m: ChatMsg) => (
+    <div
+      key={m.id}
+      className={[
+        "ocp-msg",
+        `ocp-msg-${m.role}`,
+        m.kind ? `ocp-msg-${m.kind}` : "",
+        m.streaming ? "ocp-msg-streaming" : "",
+      ].filter(Boolean).join(" ")}
+    >
+      <div className={`ocp-msg-bubble ${m.role !== "user" ? "chatMdContent" : ""}`}>
+        {m.role === "user" ? (
+          m.content
+        ) : md ? (
+          <md.ReactMarkdown remarkPlugins={md.remarkPlugins} rehypePlugins={md.rehypePlugins}>
+            {m.content}
+          </md.ReactMarkdown>
+        ) : (
+          m.content
+        )}
+        {m.streaming && <span className="ocp-typing">●</span>}
+        {m.attachments && m.attachments.length > 0 && (
+          /* P10: 不再用 !m.streaming 阻塞 attachments 渲染——进度阶段
+             收到的图片/视频可以即时显示给用户，避免任务完成前用户
+             一直看不到媒体。FileAttachmentCard 已根据扩展名渲染
+             img / video 内嵌预览。 */
+          <div style={{ borderTop: "1px solid rgba(100,116,139,0.2)", marginTop: 10, paddingTop: 8, display: "flex", flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+            {m.attachments.map((f, i) => (
+              <FileAttachmentCard key={f.file_path || i} file={f} apiBaseUrl={apiBaseUrl} inline />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="ocp-root">
       {showHeader && (
@@ -1985,41 +2048,16 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
             <div className="ocp-empty-hint">{t("org.chat.inputTip")}</div>
           </div>
         )}
-        {messages.map(m => (
-          <div
-            key={m.id}
-            className={[
-              "ocp-msg",
-              `ocp-msg-${m.role}`,
-              m.kind ? `ocp-msg-${m.kind}` : "",
-              m.streaming ? "ocp-msg-streaming" : "",
-            ].filter(Boolean).join(" ")}
-          >
-            <div className={`ocp-msg-bubble ${m.role !== "user" ? "chatMdContent" : ""}`}>
-              {m.role === "user" ? (
-                m.content
-              ) : md ? (
-                <md.ReactMarkdown remarkPlugins={md.remarkPlugins} rehypePlugins={md.rehypePlugins}>
-                  {m.content}
-                </md.ReactMarkdown>
-              ) : (
-                m.content
-              )}
-              {m.streaming && <span className="ocp-typing">●</span>}
-              {m.attachments && m.attachments.length > 0 && (
-                /* P10: 不再用 !m.streaming 阻塞 attachments 渲染——进度阶段
-                   收到的图片/视频可以即时显示给用户，避免任务完成前用户
-                   一直看不到媒体。FileAttachmentCard 已根据扩展名渲染
-                   img / video 内嵌预览。 */
-                <div style={{ borderTop: "1px solid rgba(100,116,139,0.2)", marginTop: 10, paddingTop: 8, display: "flex", flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                  {m.attachments.map((f, i) => (
-                    <FileAttachmentCard key={f.file_path || i} file={f} apiBaseUrl={apiBaseUrl} inline />
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
+        {messages.map(m => {
+          // v21 命令中心读作：用户指令 → 编排过程(时间线) → 最终汇报。
+          // (1) 图1 删除：v2 组织的实时进度已由下方 ProgressLedgerTimeline
+          //     完整呈现，不再渲染 "组织正在处理中…" 流式占位气泡。
+          if (m.streaming && runtime === "v2") return null;
+          // (2) 最终汇报气泡 + 可下载卡片移到时间线【下方】渲染（见下），
+          //     这里跳过它，避免重复出现在时间线上方。
+          if (m.kind === "final_report") return null;
+          return renderMsgBubble(m);
+        })}
         {/* UI redesign: the v2 live-process feed now lives INSIDE the single
             message scroll column (was a detached 168px strip above it), so the
             command center reads as one continuous conversation that scrolls as
@@ -2043,6 +2081,11 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
             />
           </div>
         )}
+        {/* v21 最终交付：根节点(主编)的总结汇报气泡 + 可下载卡片落在指挥台
+            【底部】，位于编排过程之后；reload 后由 activityItemsToMessages 从
+            command_done / final_report_pdf / agent_run_finished 事件重建，
+            因此刷新也仍在（图片/视频由 FileAttachmentCard 内嵌预览）。 */}
+        {messages.filter(m => m.kind === "final_report").map(m => renderMsgBubble(m))}
       </div>
 
       {/* Non-header mode: show clear button inline */}
