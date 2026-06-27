@@ -33,7 +33,7 @@ from .double_texting import DoubleTextingPolicy
 
 logger = logging.getLogger(__name__)
 
-BUSY_TIMEOUT_SECONDS = 600  # 10 min auto-release
+BUSY_TIMEOUT_SECONDS = 600  # 10 min idle lease auto-release
 
 
 @dataclass
@@ -44,6 +44,9 @@ class BusyInfo:
     # v1.27.14: optional per-turn idempotency key (S1.6).  None when the
     # caller did not supply one or for legacy endpoints.
     turn_id: str | None = None
+    # Last positive liveness signal from the owner.  ``start_time`` remains
+    # the user-visible "busy since" value; stale cleanup uses this lease clock.
+    last_heartbeat: float = field(default_factory=time.time)
 
 
 @dataclass
@@ -199,12 +202,15 @@ class ConversationLifecycleManager:
                     )
                 took_over = existing
 
+            now = time.time()
             self._generation_counter += 1
             gen = self._generation_counter
             self._busy[conversation_id] = BusyInfo(
                 client_id=client_id,
+                start_time=now,
                 generation=gen,
                 turn_id=turn_id,
+                last_heartbeat=now,
             )
             # FIX 3 (v1.27.14 b-cut): wake & drop the stale idle Event.
             #
@@ -288,6 +294,36 @@ class ConversationLifecycleManager:
         )
         return True
 
+    async def refresh(
+        self,
+        conversation_id: str,
+        *,
+        generation: int | None = None,
+    ) -> bool:
+        """Refresh the active busy lease for a still-running owner.
+
+        ``start_time`` is intentionally unchanged so clients keep seeing the
+        original "busy since" timestamp.  The optional generation guard mirrors
+        :meth:`finish` and prevents stale streams from extending a newer lock.
+        """
+        if not conversation_id:
+            return False
+        async with self._lock:
+            existing = self._busy.get(conversation_id)
+            if existing is None:
+                return False
+            if generation is not None and existing.generation != generation:
+                logger.debug(
+                    "[Lifecycle] refresh() skipped: generation mismatch "
+                    "conv=%s current=%d requested=%d",
+                    conversation_id,
+                    existing.generation,
+                    generation,
+                )
+                return False
+            existing.last_heartbeat = time.time()
+            return True
+
     async def wait_for_idle(
         self,
         conversation_id: str,
@@ -355,6 +391,7 @@ class ConversationLifecycleManager:
                         "conversation_id": conversation_id,
                         "client_id": info.client_id,
                         "since": info.start_time,
+                        "last_heartbeat": info.last_heartbeat,
                     }
                 return {"busy": False, "conversation_id": conversation_id}
             return {
@@ -363,6 +400,7 @@ class ConversationLifecycleManager:
                         "conversation_id": cid,
                         "client_id": info.client_id,
                         "since": info.start_time,
+                        "last_heartbeat": info.last_heartbeat,
                     }
                     for cid, info in self._busy.items()
                 ],
@@ -379,9 +417,9 @@ class ConversationLifecycleManager:
             pass
 
     def _expire_stale(self) -> None:
-        """Remove entries older than BUSY_TIMEOUT_SECONDS.  Caller holds ``self._lock``."""
+        """Remove entries whose owner has not refreshed its lease in time."""
         now = time.time()
-        stale = [k for k, v in self._busy.items() if now - v.start_time > BUSY_TIMEOUT_SECONDS]
+        stale = [k for k, v in self._busy.items() if now - v.last_heartbeat > BUSY_TIMEOUT_SECONDS]
         for k in stale:
             logger.info("[Lifecycle] Auto-releasing stale busy lock: conv=%s", k)
             del self._busy[k]
