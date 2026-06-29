@@ -21,8 +21,9 @@ Two surfaces:
 
 Key catalogue (≥ 15 synthetic keys; documented in the YAML template):
     cf_net_profit                  净利润 (PL_NET_PROFIT)
-    cf_depreciation                折旧 (manual_input fallback)
-    cf_amortization                摊销 (manual_input fallback)
+    cf_depreciation                折旧 (累计折旧 1602 增额；manual 可覆盖)
+    cf_amortization                摊销 (累计摊销 1702 增额；manual 可覆盖)
+    cf_dep_amort                   折旧+摊销合计 (间接法加回行)
     cf_finance_cost                财务费用
     cf_ar_delta                    应收账款减少（+）/ 增加（-）
     cf_ap_delta                    应付账款增加（+）/ 减少（-）
@@ -74,6 +75,12 @@ ACCOUNT_BUCKETS: dict[str, dict[str, list[str]]] = {
     "fixed":       {"direction": "debit",  "prefixes": ["1601"]},
     "intangible":  {"direction": "debit",  "prefixes": ["1701"]},
     "lt_invest":   {"direction": "debit",  "prefixes": ["1501"]},
+    # Accumulated depreciation / amortization — contra-asset (credit
+    # balance) accounts.  Their period increase equals the depreciation /
+    # amortization charged to P&L, which is exactly the non-cash add-back
+    # the indirect method needs (see compute()).
+    "accum_dep":   {"direction": "credit", "prefixes": ["1602"]},
+    "accum_amort": {"direction": "credit", "prefixes": ["1702"]},
     # Financing activities.
     "st_borrow":   {"direction": "credit", "prefixes": ["2001"]},
     "lt_borrow":   {"direction": "credit", "prefixes": ["2501"]},
@@ -150,8 +157,11 @@ class IndirectCashFlowEngine:
         out["cf_finance_cost"] = _D(pl_cells.get("PL_FINANCE_COST"))
 
         # ---- manual non-cash items ----
+        # NB: cf_depreciation / cf_amortization are derived below (from the
+        # accumulated-depreciation / -amortization balance-sheet deltas) with
+        # a manual override, so they are intentionally absent from this list.
         for k in (
-            "cf_depreciation", "cf_amortization", "cf_asset_impairment",
+            "cf_asset_impairment",
             "cf_dividends_paid", "cf_interest_paid", "cf_interest_received",
             "cf_tax_refund", "cf_other_operating_cash_in",
             "cf_other_operating_cash_out", "cf_other_investing_cash_in",
@@ -167,6 +177,25 @@ class IndirectCashFlowEngine:
         prv: dict[str, Decimal] = {
             b: _bucket_value(prior_rows, ACCOUNT_BUCKETS[b]) for b in ACCOUNT_BUCKETS
         }
+
+        # ---- depreciation / amortization (non-cash add-backs) ----
+        # Prefer a balance-sheet derivation: the period increase in
+        # accumulated depreciation (1602) / amortization (1702) equals the
+        # depreciation / amortization charged to P&L.  This is what stops the
+        # add-back line from being hard-wired to a manual input nobody fills
+        # (the old behaviour left it unbound and therefore永远=0).  Fall back
+        # to a manual override when the user supplied one, or when there is no
+        # prior period to diff against (a single period cannot isolate the
+        # *period* charge from the cumulative balance).
+        has_prior = bool(prior_rows)
+        dep_manual = _D(manual_inputs.get("cf_depreciation", 0))
+        amort_manual = _D(manual_inputs.get("cf_amortization", 0))
+        dep_bs = (cur["accum_dep"] - prv["accum_dep"]) if has_prior else Decimal("0")
+        amort_bs = (cur["accum_amort"] - prv["accum_amort"]) if has_prior else Decimal("0")
+        out["cf_depreciation"] = dep_manual if dep_manual != 0 else dep_bs
+        out["cf_amortization"] = amort_manual if amort_manual != 0 else amort_bs
+        # Combined add-back the indirect-method template renders on one line.
+        out["cf_dep_amort"] = out["cf_depreciation"] + out["cf_amortization"]
 
         # Convention for indirect method: a *decrease* in an asset adds cash
         # (positive); an *increase* in a liability adds cash (positive).

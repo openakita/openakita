@@ -153,7 +153,8 @@ def register_cash_flow_endpoints(
         return {
             "synthetic_keys": [
                 "cf_net_profit", "cf_operating_profit", "cf_finance_cost",
-                "cf_depreciation", "cf_amortization", "cf_asset_impairment",
+                "cf_depreciation", "cf_amortization", "cf_dep_amort",
+                "cf_asset_impairment",
                 "cf_ar_delta", "cf_ap_delta", "cf_other_receivables_delta",
                 "cf_other_payables_delta", "cf_advance_from_customers_delta",
                 "cf_advance_to_suppliers_delta", "cf_inventory_delta",

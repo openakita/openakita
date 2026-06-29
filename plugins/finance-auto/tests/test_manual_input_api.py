@@ -399,10 +399,16 @@ async def test_cash_flow_warns_on_missing_manual_inputs(api):
     # whole point of v0.2 Part 1 §1.4.5 "缺失项报警但不阻塞生成".
     assert r.status_code == 201, r.text
     body = r.json()
-    # All 7 manual_input cells should render as 0 and the warnings list
-    # should mention each missing key.
-    warning_text = " ".join(body["report"]["warnings"])
-    assert "vat_output" in warning_text
-    assert "interest_paid" in warning_text
+    warnings = body["report"]["warnings"]
+    # The 7 unfilled manual_input cells are now folded into ONE gentle,
+    # category-level hint instead of one noisy line per key (the report
+    # viewer used to be flooded with "is not yet filled" lines).
+    pending = [w for w in warnings if "补充项待" in w]
+    assert len(pending) == 1, warnings
+    assert pending[0].startswith("7 个补充项待"), pending[0]
+    # Human-readable labels appear; raw field keys and per-line noise do not.
+    assert "支付的利息" in pending[0]
+    assert "vat_output" not in " ".join(warnings)
+    assert not any("is not yet filled" in w for w in warnings)
     cells = {c["reference_code"]: c for c in body["cells"]}
     assert cells["CF_OPERATING_NET"]["value"] == pytest.approx(0.0)

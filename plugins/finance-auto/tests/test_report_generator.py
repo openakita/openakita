@@ -91,6 +91,52 @@ def test_generate_balance_sheet_small_basic() -> None:
     assert "row_1001" in by_code["BS_1001"].source_rows
 
 
+def test_indirect_cash_flow_warnings_are_quiet() -> None:
+    """间接法现金流量表：无 manual_input 时不应刷屏。
+
+    - 模板里 manual_input 规则带 manual_input_key → 不再产生 "code is missing"。
+    - 折旧/摊销行改为 manual_input(cf_dep_amort) → 不再有 "unbound identifier"。
+    - 未录入的补充项被聚合为单条温和提示，而非逐项刷屏。
+    """
+    template = load_template(SHIPPED / "cash_flow_indirect_general_enterprise.yaml")
+    gen = generate_report(
+        template=template,
+        org_id="org_x",
+        period_id="2025-FY",
+        accounting_standard="general_enterprise",
+        balance_lines=[],
+        source_import_id=None,
+        manual_input_values=None,  # nothing persisted yet
+    )
+    assert not any("code is missing" in w for w in gen.warnings), gen.warnings
+    assert not any("unbound identifier" in w for w in gen.warnings), gen.warnings
+    pending = [w for w in gen.warnings if "补充项待" in w]
+    assert len(pending) == 1, gen.warnings
+    # The single condensed line covers the manual-input lines that fell back
+    # to 0; per-line "is not yet filled" noise must be gone.
+    assert not any("is not yet filled" in w for w in gen.warnings), gen.warnings
+
+
+def test_indirect_cash_flow_no_warnings_when_filled() -> None:
+    """补充项全部录入后，间接法现金流量表零告警。"""
+    template = load_template(SHIPPED / "cash_flow_indirect_general_enterprise.yaml")
+    manual = {
+        r.manual_input_key: 1.0
+        for r in template.rules
+        if r.data_source == "manual_input" and r.manual_input_key
+    }
+    gen = generate_report(
+        template=template,
+        org_id="org_x",
+        period_id="2025-FY",
+        accounting_standard="general_enterprise",
+        balance_lines=[],
+        source_import_id=None,
+        manual_input_values=manual,
+    )
+    assert gen.warnings == [], gen.warnings
+
+
 def test_generate_general_enterprise_emits_tbd() -> None:
     template = load_template(SHIPPED / "balance_sheet_general_enterprise.yaml")
     gen = generate_report(

@@ -357,9 +357,42 @@ def generate_report(
         if source_ids:
             cell.source_rows = source_ids
 
+    warnings = _condense_warnings(warnings, cells)
     instance.cell_count = len(cells)
     instance.warnings = warnings
     return GeneratedReport(instance=instance, cells=cells, warnings=warnings)
+
+
+_UNFILLED_MI_RE = re.compile(
+    r"^(?P<code>\S+) manual_input '.*?' is not yet filled; rendered as 0$"
+)
+
+
+def _condense_warnings(warnings: list[str], cells: list[ReportCell]) -> list[str]:
+    """Collapse the per-line "manual_input is not yet filled" warnings into a
+    single category summary so the report viewer shows one gentle hint
+    instead of one noisy line per supplementary item.
+
+    Genuine errors (formula parse failures, unbound identifiers, account
+    rules missing a filter, TBD lines, …) are left untouched and still
+    surface individually.
+    """
+    label_by_code = {c.reference_code: (c.target_label or c.reference_code) for c in cells}
+    pending: list[str] = []
+    rest: list[str] = []
+    for w in warnings:
+        m = _UNFILLED_MI_RE.match(w)
+        if m:
+            code = m.group("code")
+            pending.append(label_by_code.get(code, code))
+        else:
+            rest.append(w)
+    if pending:
+        joined = "、".join(pending)
+        rest.append(
+            f"{len(pending)} 个补充项待在现金流量表补充项中录入（当前按 0 计）：{joined}"
+        )
+    return rest
 
 
 def _balance_kind_to_amount(line: TrialBalanceLine, kind: str) -> float:

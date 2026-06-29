@@ -37,8 +37,9 @@ rules:
     target_line_no: 3
     target_label: "2. 加：折旧 / 摊销"
     indent_level: 1
-    data_source: formula
-    formula: cf_depreciation + cf_amortization
+    data_source: manual_input
+    manual_input_key: cf_dep_amort
+    notes: 引擎按累计折旧(1602)/累计摊销(1702)期间增额推导，亦可手工覆盖
 
   - reference_code: CF_ASSET_IMPAIRMENT
     target_line_no: 4

@@ -99,6 +99,60 @@ def test_pure_compute_full_picture() -> None:
     assert len(non_zero) >= 8, f"only {len(non_zero)} non-zero keys"
 
 
+def test_depreciation_derived_from_accumulated_balances() -> None:
+    """折旧/摊销从累计折旧(1602)/累计摊销(1702)期间增额推导，不再恒为 0。"""
+    # Accumulated depreciation / amortization are contra-asset accounts that
+    # sit on the credit side; their period increase = the charge to P&L.
+    cur = [
+        _row(1, "1602.01", "累计折旧", 0, 300000),
+        _row(2, "1702.01", "累计摊销", 0, 50000),
+    ]
+    prv = [
+        _row(1, "1602.01", "累计折旧", 0, 220000),  # +80k depreciation
+        _row(2, "1702.01", "累计摊销", 0, 30000),   # +20k amortization
+    ]
+    out = IndirectCashFlowEngine.compute(
+        current_rows=cur,
+        prior_rows=prv,
+        pl_cells={"PL_NET_PROFIT": Decimal("100000")},
+        manual_inputs={},  # no manual override → must derive from the BS
+    )
+    assert out["cf_depreciation"] == Decimal("80000")
+    assert out["cf_amortization"] == Decimal("20000")
+    assert out["cf_dep_amort"] == Decimal("100000")
+    # The add-backs flow into operating_net: 100k profit + 100k dep/amort.
+    assert out["cf_operating_net"] == Decimal("200000")
+
+
+def test_manual_depreciation_overrides_balance_derivation() -> None:
+    """手工录入的折旧值优先于 BS 推导（间接法允许人工覆盖）。"""
+    cur = [_row(1, "1602.01", "累计折旧", 0, 300000)]
+    prv = [_row(1, "1602.01", "累计折旧", 0, 220000)]  # BS would yield 80k
+    out = IndirectCashFlowEngine.compute(
+        current_rows=cur,
+        prior_rows=prv,
+        pl_cells={},
+        manual_inputs={"cf_depreciation": Decimal("95000")},
+    )
+    assert out["cf_depreciation"] == Decimal("95000")
+    # Amortization has neither manual value nor a 1702 balance → 0.
+    assert out["cf_amortization"] == Decimal("0")
+    assert out["cf_dep_amort"] == Decimal("95000")
+
+
+def test_depreciation_zero_without_prior_period() -> None:
+    """单期无对比期时不能从累计余额臆断期间折旧，回退为 0（除非手工录入）。"""
+    cur = [_row(1, "1602.01", "累计折旧", 0, 300000)]
+    out = IndirectCashFlowEngine.compute(
+        current_rows=cur,
+        prior_rows=[],
+        pl_cells={},
+        manual_inputs={},
+    )
+    assert out["cf_depreciation"] == Decimal("0")
+    assert out["cf_dep_amort"] == Decimal("0")
+
+
 @pytest.fixture()
 def app_db(tmp_path: Path):
     db_path = tmp_path / "cf.sqlite"

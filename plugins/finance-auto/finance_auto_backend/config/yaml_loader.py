@@ -241,7 +241,14 @@ def _build_rule(
 
     code_value = raw.get("code")
     if code_value is None:
-        if data_source not in {"section", "formula"}:
+        # A ``manual_input`` rule is fully identified by its
+        # ``manual_input_key`` (looked up in the manual_inputs table), so an
+        # absent ``code`` is expected rather than a defect.  Emitting an
+        # author warning for it is pure noise — it is what made the
+        # indirect cash-flow template spray ~20 "code is missing" lines into
+        # the end-user report viewer.
+        has_manual_key = data_source == "manual_input" and bool(raw.get("manual_input_key"))
+        if data_source not in {"section", "formula"} and not has_manual_key:
             warnings.append(
                 YamlValidationWarning(
                     reference_code, "code", "code is missing; expected for non-section/non-formula rules",
