@@ -1341,6 +1341,30 @@ class OrgRuntime:
                         "content": preview or "",
                     },
                 )
+            elif event_name == "file_output_registered":
+                # test11 P2: a node just wrote / delivered a file. Mirror it onto
+                # the command center as a live downloadable card (过程+最终文件)
+                # so the user sees deliverables appear during the run, not only
+                # after a refresh. Reuse the ``resource`` shape the chat panel
+                # already renders for blackboard resources.
+                fpath = str(payload.get("path") or "")
+                if fpath:
+                    fname = fpath.replace("\\", "/").rsplit("/", 1)[-1]
+                    fsize = payload.get("size_bytes")
+                    await self._broadcast_ws_safe(
+                        "org:file_output_registered",
+                        {
+                            "org_id": org_id,
+                            "node_id": node_id or "",
+                            "command_id": payload.get("command_id") or "",
+                            "memory_type": "resource",
+                            "filename": fname,
+                            "file_path": fpath,
+                            "path": fpath,
+                            "file_size": fsize,
+                            "size": fsize,
+                        },
+                    )
             elif event_name in ("command_done", "org_command_done"):
                 # Forward status/result/error so the command center can render
                 # the final receipt straight from the WS event instead of

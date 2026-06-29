@@ -60,9 +60,9 @@ describe("ProgressLedgerTimeline", () => {
     // this keeps exactly one segment per status label for the assertions.
     render(<ProgressLedgerTimeline events={events} running={true} />);
     expect(screen.getByText("已完成")).toBeInTheDocument();
-    expect(screen.getByText("检测到循环")).toBeInTheDocument();
+    expect(screen.getByText("疑似重复")).toBeInTheDocument();
     expect(screen.getByText("进行中")).toBeInTheDocument();
-    expect(screen.getByText("停滞")).toBeInTheDocument();
+    expect(screen.getByText("进展缓慢")).toBeInTheDocument();
     expect(screen.queryByText("DONE")).toBeNull();
   });
 

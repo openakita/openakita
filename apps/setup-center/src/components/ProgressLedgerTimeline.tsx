@@ -92,10 +92,26 @@ const TERMINAL: ReadonlySet<SegStatus> = new Set<SegStatus>(["done", "incomplete
 const STATUS_LABEL: Record<SegStatus, string> = {
   running: "进行中",
   done: "已完成",
-  loop: "检测到循环",
-  stall: "停滞",
-  incomplete: "未通过校验",
+  loop: "疑似重复",
+  stall: "进展缓慢",
+  incomplete: "校验未通过",
   failed: "失败",
+};
+
+// test11 P1: the old pills ("检测到循环"/"停滞") read like scary errors with no
+// explanation of WHAT happened, WHY, or the NEXT step — users couldn't tell if
+// the org was broken. These tooltips spell out the meaning + that the
+// supervisor automatically intervenes (it is NOT a dead end).
+const STATUS_TOOLTIP: Record<SegStatus, string> = {
+  running: "该节点正在执行任务。",
+  done: "该节点已完成并通过校验。",
+  loop:
+    "调度大脑判断最近几轮在重复相似动作、进展不明显，已自动调整分工/换人继续推进——不是报错，无需手动干预。",
+  stall:
+    "本轮相比上一轮没有取得明显进展，调度大脑会换思路或补充信息后继续，必要时换节点处理。",
+  incomplete:
+    "该节点本轮产出未通过完成度校验（如内容过短/仍是中间思考），已被退回重做或交由上级补全，不会作为最终交付。",
+  failed: "该节点本轮执行失败，已记录异常并交由调度大脑重试或换人接手。",
 };
 
 const STATUS_CLASS: Record<SegStatus, string> = {
@@ -337,7 +353,7 @@ export function ProgressLedgerTimeline({
                 onClick={() => setOpenKeys((p) => ({ ...p, [seg.key]: !open }))}
               >
                 <span className="plt-node">{seg.node}</span>
-                <span className={STATUS_CLASS[seg.status]}>{STATUS_LABEL[seg.status]}</span>
+                <span className={STATUS_CLASS[seg.status]} title={STATUS_TOOLTIP[seg.status]}>{STATUS_LABEL[seg.status]}</span>
                 <span className="plt-time">{fmtTs(seg.ts)}</span>
                 {seg.lines.length > 0 && (
                   <span className="plt-caret">{open ? "▾" : "▸"}</span>

@@ -282,18 +282,6 @@ function normalizeActivity(item: ActivityItem): {
   return { kind, from, to, content, outputLen: item.output_len };
 }
 
-function activitySourceLabel(item: ActivityItem): string {
-  const s = item?.source?.surface;
-  if (s === "im") {
-    const ch = item?.source?.channel || "";
-    return ch ? `IM·${ch}` : "IM";
-  }
-  if (s === "desktop_chat") return "桌面聊天";
-  if (s === "org_console") return "指挥台";
-  if (s === "org" || !s) return "组织";
-  return s;
-}
-
 function activityTs(item: ActivityItem): number {
   const raw = item?.ts ?? item?.at;
   if (typeof raw === "number") return raw < 1e12 ? raw * 1000 : raw;
@@ -304,14 +292,6 @@ function activityTs(item: ActivityItem): number {
     if (!Number.isNaN(n)) return n < 1e12 ? n * 1000 : n;
   }
   return Date.now();
-}
-
-function fmtClock(ms: number): string {
-  const d = new Date(ms);
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  const ss = String(d.getSeconds()).padStart(2, "0");
-  return `${hh}:${mm}:${ss}`;
 }
 
 /** 单条活动事件渲染成一行（不含时间戳前缀；时间戳由 group 渲染器统一加）。 */
@@ -961,21 +941,33 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const j = await r.json();
         const evs = Array.isArray(j) ? j : Array.isArray(j?.events) ? j.events : [];
         const seenByCmd = new Map<string, Set<string>>();
+        // test11 P2: ``file_output_registered`` (emitted the moment a node's
+        // write_file / append_file / deliver_artifacts succeeds) is the
+        // RELIABLE, universal source of downloadable deliverables -- it covers
+        // the real write_file outputs + delivered media (img/video/pdf) that
+        // the agent_run_finished.artifact_path (output-text dump) + final PDF
+        // alone missed. We accept all three so every completion path shows
+        // cards after a refresh.
+        const DELIVERABLE_RE = /\.(md|markdown|txt|pdf|png|jpe?g|gif|webp|svg|mp4|mov|webm|csv|json|html?|docx?|pptx?|xlsx?|zip)$/i;
         for (const e of evs) {
           const etype = (e?.type || e?.event_type || "") as string;
-          if (etype !== "agent_run_finished" && etype !== "final_report_pdf") continue;
+          const isFileOut = etype === "file_output_registered";
+          if (etype !== "agent_run_finished" && etype !== "final_report_pdf" && !isFileOut) continue;
           if (e?.incomplete) continue; // 质量门禁: 未通过的不作为交付物
           const cid = String(e?.command_id || "");
-          const apath = String(e?.artifact_path || "");
+          // file_output_registered carries ``path`` + ``size_bytes``; the other
+          // two carry ``artifact_path`` + ``output_len``.
+          const apath = String((isFileOut ? e?.path : e?.artifact_path) || "");
           if (!cid || !apath) continue;
-          if (!/\.(md|pdf)$/i.test(apath)) continue;
+          if (!DELIVERABLE_RE.test(apath)) continue;
           let seen = seenByCmd.get(cid);
           if (!seen) { seen = new Set(); seenByCmd.set(cid, seen); }
           if (seen.has(apath)) continue;
           seen.add(apath);
           const fname = apath.replace(/\\/g, "/").split("/").pop() || "deliverable";
+          const size = Number(isFileOut ? e?.size_bytes : e?.output_len) || undefined;
           const arr = byCmd.get(cid) || [];
-          arr.push({ filename: fname, file_path: apath, file_size: Number(e?.output_len) || undefined });
+          arr.push({ filename: fname, file_path: apath, file_size: size });
           byCmd.set(cid, arr);
         }
       } catch {
@@ -1778,8 +1770,12 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           pushSegLine(seg, t("org.chat.incomplete", { name: `**${nn(nid)}**`, reason: reasonLabel }));
         }
         updatePreview();
-      } else if (event === "org:blackboard_update") {
-        const mt = d.memory_type as string;
+      } else if (event === "org:blackboard_update" || event === "org:file_output_registered") {
+        // test11 P2: ``org:file_output_registered`` fires the moment a node's
+        // write_file / append_file / deliver_artifacts succeeds, carrying the
+        // same ``resource`` shape — so deliverable cards (含 过程/最终 文件 +
+        // 图片/视频/pdf) appear live, then persist via the events.jsonl reload.
+        const mt = (d.memory_type as string) || (event === "org:file_output_registered" ? "resource" : "");
         const fname = (d.filename || d.name) as string | undefined;
         const fpath = (d.file_path || d.path) as string | undefined;
         const fsize = (d.file_size ?? d.size) as number | undefined;
