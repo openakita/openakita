@@ -514,6 +514,8 @@ def _guarded_write_violation(tool_name: str, tool_input: Mapping[str, Any]) -> s
     return None
 
 __all__ = [
+    "MAX_SEARCH_CALLS",
+    "MAX_TOOL_CALLS",
     "MAX_TOOL_ROUNDS",
     "NodeToolEmit",
     "NodeToolHostProvider",
@@ -578,6 +580,49 @@ budget is spent the loop forces ONE final tool-less LLM call so the node
 still returns a clean text answer instead of leaking another tool_use /
 thinking turn. This is the cost guard the roadmap required before
 lifting :data:`MAX_TOOL_ROUNDS` above 1."""
+
+
+MAX_SEARCH_CALLS = _env_int("OPENAKITA_ORG_MAX_SEARCH_CALLS", 6, lo=1, hi=40)
+"""Per-activation cap on *retrieval* tool calls (``web_search`` /
+``news_search``).
+
+Efficiency root-fix (adversarial re-test, 2026-06): a research/analysis
+node (e.g. ``data_analyst``) would burn its WHOLE :data:`MAX_TOOL_CALLS`
+budget firing back-to-back searches and then return an empty deliverable
+— and because it never wrote anything up, the parent gate reworked it,
+which re-activated it for ANOTHER ~16 searches. Across a few rework
+rounds that compounded into ~50 searches with no written output.
+
+Capping retrieval calls specifically (instead of just lowering the
+global tool budget, which would also starve legitimate ``write_file`` /
+``read_file`` work) forces the node off the search treadmill: once it
+has made :data:`MAX_SEARCH_CALLS` searches in one activation, further
+search calls short-circuit with a "够用即止 — stop searching and write up
+now" instruction so the node spends its remaining budget producing the
+deliverable. Env-overridable so an operator can widen it for genuinely
+search-heavy orgs without a code change."""
+
+
+# Retrieval tools the per-activation search cap applies to. File / memory /
+# planning tools are intentionally NOT here — the cap is about wasteful
+# *external retrieval* spinning, not about writing the deliverable.
+_SEARCH_TOOL_NAMES: frozenset[str] = frozenset({"web_search", "news_search"})
+
+
+_SEARCH_BUDGET_NOTE = (
+    "[检索次数已达本轮上限（{cap} 次）。请立即停止继续检索，"
+    "直接基于【已经检索到的信息】完成当前任务并成文交付："
+    "把完整结论写清楚（需要落盘的用 write_file/append_file 写成文件），"
+    "不要再请求 web_search/news_search。若个别数据仍缺失，可在产出中"
+    "明确标注‘该项暂未联网核实’，但仍要给出完整、成文的成果。]"
+)
+
+
+_FINALIZE_DIRECTIVE = (
+    "[你已用完本轮工具预算。现在必须基于上面已经获得的工具结果，"
+    "直接输出完整、成文的最终成果（不要再请求任何工具、不要只回复一句"
+    "状态或‘正在整理’）。如有未核实项可简短标注，但主体内容必须完整成文。]"
+)
 
 
 # Best-effort emitter signature: ``(event_name, payload_dict) -> Awaitable[None]``.
@@ -924,8 +969,9 @@ async def execute_node_tool(
     # Lazy import: the host module pulls a small graph but the
     # exception class is hashable so a late import keeps the orgs_v2
     # package import-time light.
-    from ._runtime_agent_host import ToolNotAvailable
     from openakita.tools.tool_hints import ToolConfigError
+
+    from ._runtime_agent_host import ToolNotAvailable
 
     try:
         if tool_host is not None:
@@ -1161,6 +1207,7 @@ async def run_with_tools(
 
     rounds = 0
     total_tool_calls = 0
+    search_calls = 0
     # First turn always offers tools (unless the caller passed none).
     response = await _call_brain(messages, with_tools=bool(tools))
 
@@ -1192,6 +1239,46 @@ async def run_with_tools(
         for block in tool_blocks:
             tool_name = block["name"]
             tool_input = block["input"] if isinstance(block["input"], dict) else {}
+            # Efficiency cap: once a node has spent its per-activation
+            # retrieval budget, short-circuit further search calls with a
+            # "stop searching, write up now" note instead of executing them.
+            # This is what stops a research node from burning its whole
+            # budget on back-to-back searches and delivering nothing.
+            if tool_name in _SEARCH_TOOL_NAMES and search_calls >= MAX_SEARCH_CALLS:
+                _LOGGER.info(
+                    "[node-tool] search budget reached (org=%s node=%s searches=%d); "
+                    "short-circuiting %s and asking node to write up",
+                    org_id,
+                    node_id,
+                    search_calls,
+                    tool_name,
+                )
+                await _safe_emit(
+                    emit,
+                    "node_tool_failed",
+                    {
+                        "org_id": org_id,
+                        "node_id": node_id,
+                        "command_id": command_id,
+                        "tool_name": tool_name,
+                        "reason": "search_budget_reached",
+                        "search_calls": search_calls,
+                    },
+                )
+                text, is_error = (
+                    _SEARCH_BUDGET_NOTE.format(cap=MAX_SEARCH_CALLS),
+                    False,
+                )
+                total_tool_calls += 1
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block["id"],
+                        "content": text,
+                        "is_error": is_error,
+                    }
+                )
+                continue
             text, is_error = await execute_node_tool(
                 tool_name=tool_name,
                 tool_input=tool_input,
@@ -1202,6 +1289,8 @@ async def run_with_tools(
                 tool_host=tool_host,
             )
             total_tool_calls += 1
+            if tool_name in _SEARCH_TOOL_NAMES:
+                search_calls += 1
             tool_results.append(
                 {
                     "type": "tool_result",
@@ -1225,6 +1314,17 @@ async def run_with_tools(
             )
             # Force a clean text answer: no tools on the last call so the
             # LLM cannot emit another tool_use we would return as "output".
+            # We also splice an explicit "write it up now" directive into the
+            # last user turn so the forced call produces a real deliverable
+            # instead of another "let me search again" / thinking stub (the
+            # empty-output-after-budget bug from the adversarial re-test).
+            last = messages[-1]
+            if isinstance(last.get("content"), list):
+                last["content"].append({"type": "text", "text": _FINALIZE_DIRECTIVE})
+            else:
+                messages.append(
+                    {"role": "user", "content": [{"type": "text", "text": _FINALIZE_DIRECTIVE}]}
+                )
             return await _call_brain(messages, with_tools=False), rounds
 
         response = await _call_brain(messages, with_tools=True)

@@ -480,7 +480,7 @@ def test_run_with_tools_forces_text_when_budget_exhausted(monkeypatch) -> None:
         tools: list[dict[str, Any]],
         cancel_event: Any = None,
     ) -> SimpleNamespace:
-        calls.append({"tools": tools})
+        calls.append({"tools": tools, "messages": messages})
         # Always wants another tool UNLESS no tools are offered (forced final).
         if tools:
             return SimpleNamespace(
@@ -518,6 +518,95 @@ def test_run_with_tools_forces_text_when_budget_exhausted(monkeypatch) -> None:
     assert response.content[0].text == "forced final"
     # The final call must have been made with tools=[] (the force).
     assert calls[-1]["tools"] == []
+    # The forced final user turn must carry the "write it up now" directive
+    # so the node produces a real deliverable instead of an empty stub.
+    final_user = calls[-1]["messages"][-1]
+    spliced = "".join(
+        b.get("text", "")
+        for b in final_user["content"]
+        if isinstance(b, dict) and b.get("type") == "text"
+    )
+    assert "必须基于上面已经获得的工具结果" in spliced
+
+
+def test_run_with_tools_caps_search_then_asks_to_write(monkeypatch) -> None:
+    """case id: p05.tools.loop.search_budget_short_circuits
+
+    A node that keeps firing ``web_search`` must stop ACTUALLY searching
+    once it spends :data:`MAX_SEARCH_CALLS`; further search calls are
+    short-circuited (handler NOT invoked) and answered with a "stop
+    searching, write it up" note so the node spends remaining budget on
+    the deliverable instead of spinning on retrieval.
+    """
+
+    from openakita.orgs import _runtime_node_tools as nt
+
+    monkeypatch.setattr(nt, "MAX_SEARCH_CALLS", 2)
+    monkeypatch.setattr(nt, "MAX_TOOL_ROUNDS", 10)
+    monkeypatch.setattr(nt, "MAX_TOOL_CALLS", 20)
+
+    brain_calls = {"n": 0}
+
+    async def fake_brain_call(
+        *,
+        messages: list[dict[str, Any]],
+        system: str,
+        tools: list[dict[str, Any]],
+        cancel_event: Any = None,
+    ) -> SimpleNamespace:
+        brain_calls["n"] += 1
+        # Emit a search on the first 4 tool-offering turns, then finish.
+        if tools and brain_calls["n"] <= 4:
+            return SimpleNamespace(
+                content=[
+                    SimpleNamespace(
+                        type="tool_use",
+                        id=f"tu_{brain_calls['n']}",
+                        name="web_search",
+                        input={"query": "q"},
+                    )
+                ]
+            )
+        return SimpleNamespace(content=[SimpleNamespace(text="final write-up")])
+
+    brain = SimpleNamespace(messages_create_async=fake_brain_call)
+
+    executed = {"n": 0}
+
+    async def fake_handler(tool_name: str, params: dict[str, Any]) -> str:
+        executed["n"] += 1
+        return "search result body"
+
+    import openakita.tools.handlers as handlers_mod
+
+    monkeypatch.setattr(
+        handlers_mod.default_handler_registry, "execute_by_tool", fake_handler
+    )
+
+    captured: list[dict[str, Any]] = []
+
+    async def emit(event: str, payload: dict[str, Any]) -> None:
+        captured.append({"event": event, **payload})
+
+    response, _rounds = asyncio.run(
+        run_with_tools(
+            brain=brain,
+            system_prompt="sys",
+            user_content="go",
+            tools=[{"name": "web_search", "description": "s", "input_schema": {"type": "object"}}],
+            org_id="o1",
+            node_id="n1",
+            command_id="c1",
+            emit=emit,
+        )
+    )
+
+    # Only the first MAX_SEARCH_CALLS (2) searches actually hit the handler.
+    assert executed["n"] == 2
+    # The 3rd/4th search were short-circuited and emitted a budget event.
+    budget_events = [c for c in captured if c.get("reason") == "search_budget_reached"]
+    assert len(budget_events) == 2
+    assert response.content[0].text == "final write-up"
 
 
 # ---------------------------------------------------------------------------
