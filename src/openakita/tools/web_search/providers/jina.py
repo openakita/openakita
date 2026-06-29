@@ -21,6 +21,7 @@ from ..base import (
     SearchResult,
 )
 from ..registry import register
+from ._http import describe_httpx_failure, search_httpx_client_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -58,16 +59,18 @@ class JinaProvider:
         import httpx
 
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(
+                **search_httpx_client_kwargs(timeout=timeout, target_url=url)
+            ) as client:
                 resp = await client.get(url, headers=headers)
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
             raise NetworkUnreachableError(
-                f"jina transport failure: {type(exc).__name__}: {exc}",
+                f"jina transport failure: {describe_httpx_failure(exc)}",
                 provider_id=self.id,
             ) from exc
         except httpx.HTTPError as exc:
             raise NetworkUnreachableError(
-                f"jina HTTP error: {type(exc).__name__}: {exc}",
+                f"jina HTTP error: {describe_httpx_failure(exc)}",
                 provider_id=self.id,
             ) from exc
 

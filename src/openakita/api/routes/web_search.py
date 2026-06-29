@@ -40,6 +40,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/tools/web-search", tags=["搜索源"])
 
 
+def _proxy_diagnostic() -> str:
+    """Return a scrubbed proxy hint for diagnostics without exposing credentials."""
+    try:
+        from ...llm.providers.proxy_utils import format_proxy_hint
+
+        return format_proxy_hint().strip()
+    except Exception as exc:  # pragma: no cover - diagnostics must not break tests
+        return f"proxy diagnostic unavailable: {type(exc).__name__}: {exc}"
+
+
 class TestSearchRequest(BaseModel):
     """Body for ``POST /test``."""
 
@@ -127,10 +137,25 @@ async def test_search(req: TestSearchRequest) -> TestSearchResponse:
     Always 200 (no HTTPException), with structured ``ok`` + ``error_code`` so
     the frontend can render an inline result instead of a generic error toast.
     """
+    logger.info(
+        "[web_search.test] start provider=%s query_len=%d max_results=%d timeout=%.1fs proxy=%s",
+        req.provider_id,
+        len(req.query or ""),
+        req.max_results,
+        req.timeout_seconds,
+        _proxy_diagnostic() or "none",
+    )
     # Validate provider_id up front to give a clear UI message.
     try:
         get_provider(req.provider_id)
     except KeyError:
+        logger.warning(
+            "[web_search.test] failed provider=%s error_type=%s error_code=%s proxy=%s",
+            req.provider_id,
+            "KeyError",
+            "missing_credential",
+            _proxy_diagnostic() or "none",
+        )
         return TestSearchResponse(
             ok=False,
             provider_id=req.provider_id,
@@ -148,6 +173,14 @@ async def test_search(req: TestSearchRequest) -> TestSearchResponse:
             timeout_seconds=req.timeout_seconds,
         )
     except NoProviderAvailable as exc:
+        logger.warning(
+            "[web_search.test] failed provider=%s error_type=%s error_code=%s proxy=%s message=%s",
+            req.provider_id,
+            type(exc).__name__,
+            exc.error_code,
+            _proxy_diagnostic() or "none",
+            str(exc),
+        )
         return TestSearchResponse(
             ok=False,
             provider_id=req.provider_id,
@@ -155,14 +188,28 @@ async def test_search(req: TestSearchRequest) -> TestSearchResponse:
             message=str(exc) or "搜索源不可用",
         )
     except ProviderError as exc:
+        error_code = getattr(exc, "error_code", "unknown")
+        logger.warning(
+            "[web_search.test] failed provider=%s error_type=%s error_code=%s proxy=%s message=%s",
+            req.provider_id,
+            type(exc).__name__,
+            error_code,
+            _proxy_diagnostic() or "none",
+            str(exc),
+        )
         return TestSearchResponse(
             ok=False,
             provider_id=req.provider_id,
-            error_code=getattr(exc, "error_code", "unknown"),
+            error_code=error_code,
             message=str(exc) or "测试失败",
         )
     except Exception as exc:  # pragma: no cover - defensive
-        logger.exception("[web_search.test] unexpected error testing %s", req.provider_id)
+        logger.exception(
+            "[web_search.test] unexpected provider=%s error_type=%s proxy=%s",
+            req.provider_id,
+            type(exc).__name__,
+            _proxy_diagnostic() or "none",
+        )
         return TestSearchResponse(
             ok=False,
             provider_id=req.provider_id,
@@ -170,6 +217,13 @@ async def test_search(req: TestSearchRequest) -> TestSearchResponse:
             message=f"{type(exc).__name__}: {exc}",
         )
 
+    logger.info(
+        "[web_search.test] success provider=%s result_provider=%s results=%d proxy=%s",
+        req.provider_id,
+        bundle.provider_id,
+        len(bundle.results),
+        _proxy_diagnostic() or "none",
+    )
     return TestSearchResponse(
         ok=True,
         provider_id=bundle.provider_id,

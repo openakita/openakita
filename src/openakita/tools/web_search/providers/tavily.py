@@ -20,6 +20,7 @@ from ..base import (
     SearchResult,
 )
 from ..registry import register
+from ._http import describe_httpx_failure, search_httpx_client_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -62,16 +63,18 @@ class TavilyProvider:
         import httpx
 
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx.AsyncClient(
+                **search_httpx_client_kwargs(timeout=timeout, target_url=self._ENDPOINT)
+            ) as client:
                 resp = await client.post(self._ENDPOINT, json=payload)
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
             raise NetworkUnreachableError(
-                f"tavily transport failure: {type(exc).__name__}: {exc}",
+                f"tavily transport failure: {describe_httpx_failure(exc)}",
                 provider_id=self.id,
             ) from exc
         except httpx.HTTPError as exc:
             raise NetworkUnreachableError(
-                f"tavily HTTP error: {type(exc).__name__}: {exc}",
+                f"tavily HTTP error: {describe_httpx_failure(exc)}",
                 provider_id=self.id,
             ) from exc
 

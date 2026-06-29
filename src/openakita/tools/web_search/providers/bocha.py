@@ -20,6 +20,7 @@ from ..base import (
     SearchResult,
 )
 from ..registry import register
+from ._http import describe_httpx_failure, search_httpx_client_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -89,16 +90,18 @@ async def _post_and_parse(
     import httpx
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(
+            **search_httpx_client_kwargs(timeout=timeout, target_url=url)
+        ) as client:
             resp = await client.post(url, headers=headers, json=json_body)
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
         raise NetworkUnreachableError(
-            f"{provider_id} transport failure: {type(exc).__name__}: {exc}",
+            f"{provider_id} transport failure: {describe_httpx_failure(exc)}",
             provider_id=provider_id,
         ) from exc
     except httpx.HTTPError as exc:
         raise NetworkUnreachableError(
-            f"{provider_id} HTTP error: {type(exc).__name__}: {exc}",
+            f"{provider_id} HTTP error: {describe_httpx_failure(exc)}",
             provider_id=provider_id,
         ) from exc
 
