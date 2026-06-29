@@ -128,6 +128,115 @@ def _sanitize_retrieval_result(tool_name: str, text: str) -> tuple[str, int]:
     )
     return clean, dropped
 
+
+# ── Node-written file tracking (test11 P1/P2 fix) ─────────────────────────
+# Root cause (read from org_34856abd2e8c real events): a node that does its
+# real work by WRITING A FILE (writer-a wrote a 12 KB rezero_fan_meeting_plan.md
+# via write_file) but ends its turn with EMPTY final text was judged "空产出"
+# by the parent review and bounced / escalated -- the on-disk deliverable was
+# ignored. Separately, write_file / deliver_artifacts in the node path NEVER
+# emitted ``file_output_registered``, so the command-center delivery cards had
+# nothing to show even though files existed. Both are fixed by recording the
+# files a node writes (keyed by org+command+node) and emitting a
+# ``file_output_registered`` event the moment a write/deliver tool succeeds.
+import time as _time  # noqa: E402 -- local to keep import graph light at top
+
+# (org_id, command_id, node_id) -> list[(abs_path, ts, tool_name)]
+_NODE_FILE_OUTPUTS: dict[tuple[str, str, str], list[tuple[str, float, str]]] = {}
+
+# Tools whose successful call means "a deliverable file now exists on disk".
+_FILE_PRODUCING_TOOLS: frozenset[str] = frozenset(
+    {"write_file", "append_file", "edit_file", "create_file"}
+)
+
+
+def _extract_written_paths(tool_name: str, tool_input: Mapping[str, Any]) -> list[str]:
+    """Best-effort list of absolute file paths a successful tool just wrote.
+
+    Covers the write-class tools (path/file_path keys, already redirected into
+    the per-command workspace) and ``deliver_artifacts`` (its ``artifacts`` list
+    of ``{type:'file', path:...}`` entries).
+    """
+
+    if not isinstance(tool_input, Mapping):
+        return []
+    out: list[str] = []
+    if tool_name in _FILE_PRODUCING_TOOLS:
+        for key in _WRITE_DEST_KEYS.get(tool_name, ("path", "file_path")):
+            v = tool_input.get(key)
+            if isinstance(v, str) and v.strip():
+                out.append(v)
+                break
+    elif tool_name == "deliver_artifacts":
+        arts = tool_input.get("artifacts")
+        if isinstance(arts, (list, tuple)):
+            for a in arts:
+                if isinstance(a, Mapping):
+                    pth = a.get("path") or a.get("file_path")
+                    if isinstance(pth, str) and pth.strip():
+                        out.append(pth)
+    return out
+
+
+def record_node_file_output(
+    org_id: str, command_id: str | None, node_id: str, path: str, tool_name: str
+) -> int | None:
+    """Record one node-written file; returns its size in bytes (or ``None``).
+
+    No-op (returns ``None``) when the file does not exist on disk yet, so a
+    failed / clamped write never registers a phantom deliverable.
+    """
+
+    if not command_id:
+        return None
+    try:
+        p = Path(path)
+        if not p.is_file():
+            return None
+        size = p.stat().st_size
+    except OSError:
+        return None
+    key = (org_id, command_id, node_id)
+    _NODE_FILE_OUTPUTS.setdefault(key, []).append((str(p), _time.time(), tool_name))
+    return size
+
+
+def pop_node_file_outputs(
+    org_id: str, command_id: str | None, node_id: str, *, since_ts: float = 0.0
+) -> list[dict[str, Any]]:
+    """Return (and clear) files a node wrote in this command at/after ``since_ts``.
+
+    The executor calls this right after a node run to recover a deliverable
+    when the node's final TEXT was empty but it wrote a real file.
+    """
+
+    if not command_id:
+        return []
+    key = (org_id, command_id, node_id)
+    entries = _NODE_FILE_OUTPUTS.get(key)
+    if not entries:
+        return []
+    kept: list[tuple[str, float, str]] = []
+    matched: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for path, ts, tool in entries:
+        if ts >= since_ts:
+            if path not in seen:
+                seen.add(path)
+                size = None
+                try:
+                    size = Path(path).stat().st_size
+                except OSError:
+                    pass
+                matched.append({"path": path, "ts": ts, "tool_name": tool, "size_bytes": size})
+        else:
+            kept.append((path, ts, tool))
+    if kept:
+        _NODE_FILE_OUTPUTS[key] = kept
+    else:
+        _NODE_FILE_OUTPUTS.pop(key, None)
+    return matched
+
 # ── Org-node write sandbox (isolation guard) ──────────────────────────────
 # Org node agents share the desktop Agent's FileTool, whose ``_resolve_path``
 # returns absolute paths verbatim and resolves relative paths under CWD (= the
@@ -907,6 +1016,28 @@ async def execute_node_tool(
             node_id,
             command_id,
         )
+    # test11 P1/P2: a write/deliver tool just succeeded -> record the on-disk
+    # deliverable and emit ``file_output_registered`` so (a) the command-center
+    # delivery cards populate live for EVERY write path (not just the final PDF)
+    # and (b) the executor can recover a node whose final TEXT was empty but
+    # which actually produced a file.
+    for _wpath in _extract_written_paths(tool_name, tool_input):
+        _size = record_node_file_output(org_id, command_id, node_id, _wpath, tool_name)
+        if _size is None:
+            continue
+        await _safe_emit(
+            emit,
+            "file_output_registered",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                "path": _wpath,
+                "size_bytes": _size,
+            },
+        )
+
     # UI 留痕: carry a bounded preview of the tool RESULT (not just the char
     # count) so the command center can let the user expand "返回 N 字" into an
     # actual content summary. Collapse whitespace + cap so the event stays

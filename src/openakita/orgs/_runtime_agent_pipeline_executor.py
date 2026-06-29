@@ -54,6 +54,53 @@ def _env_int(name: str, default: int, *, lo: int, hi: int) -> int:
     return max(lo, min(hi, val))
 
 
+# Max chars we read back from a recovered on-disk deliverable so a huge file
+# can't blow the parent-review / upstream prompt budget. The head of a long
+# doc is enough for the parent to judge completeness; the FULL file stays on
+# disk and is registered as the downloadable artifact.
+_RECOVER_READ_CAP = 40000
+
+
+def _pick_recoverable_deliverable(written: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Choose the best on-disk file to adopt as an empty-text node's output.
+
+    Prefers text-like deliverables (``.md`` / ``.txt`` / ``.json`` / ``.csv``),
+    then the LARGEST by byte size (the substantive document over a stub). Binary
+    media (images / video) is skipped here -- those are surfaced as delivery
+    cards via ``file_output_registered`` but are not a substitute for a missing
+    textual deliverable the parent must review.
+    """
+
+    if not written:
+        return None
+    text_like = (".md", ".txt", ".json", ".csv", ".markdown", ".html")
+
+    def _score(d: dict[str, Any]) -> tuple[int, int]:
+        path = str(d.get("path") or "").lower()
+        is_text = 1 if path.endswith(text_like) else 0
+        size = int(d.get("size_bytes") or 0)
+        return (is_text, size)
+
+    best = max(written, key=_score)
+    # Only adopt a file with real content (a 0-byte stub is not a deliverable).
+    if int(best.get("size_bytes") or 0) <= 0:
+        return None
+    return best
+
+
+def _read_text_bounded(path: str, *, cap: int = _RECOVER_READ_CAP) -> str:
+    """Read a recovered deliverable's text, bounded + fail-silent."""
+
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            data = fh.read(cap + 1)
+    except OSError:
+        return ""
+    if len(data) > cap:
+        data = data[:cap] + "\n\n[...内容较长，完整文件见下载附件...]"
+    return data
+
+
 # Defaults for the orchestration knobs. They are read DYNAMICALLY (see the
 # ``_rework_max`` / ``_review_enabled`` / ``_node_timeout_s`` helpers) so a
 # deployment can override them via env at runtime and the test-suite can pin
@@ -377,6 +424,10 @@ class AgentPipelineExecutor:
         # Expose THIS run's chain so a ``<dispatch>`` the agent emits is
         # attributed to it as the child's ``parent_chain_id``.
         chain_token = current_chain_id_var.set(run_chain_id)
+        # test11 P1: timestamp the run start so we only adopt files THIS run
+        # wrote (not a stale file from an earlier attempt) when recovering an
+        # empty-text node from its on-disk deliverable.
+        run_start_ts = time.time()
         try:
             # Sprint-13 H1 (RC-4 §6 H1): forward ``cancel_event`` so
             # the agent's ``run`` (and through it
@@ -523,10 +574,43 @@ class AgentPipelineExecutor:
         # as its only guard against delivering a raw ``thinking…`` leak.
         has_upstream_reviewer = bool(parent_node_id)
         quality_status, quality_reason = classify_node_output(output_text)
-        is_incomplete = (quality_status != "ok") and not has_upstream_reviewer
         get_org_dir = getattr(self._lookup, "get_org_dir", None)
         artifact_path: str | None = None
-        if output_text and command_id and not is_incomplete:
+        # test11 P1 (有输出却空产出): a node that did its real work by WRITING A
+        # FILE (e.g. writer-a wrote a 12 KB plan via write_file) but ended its
+        # turn with empty / mid-reasoning TEXT must NOT be judged 空产出 -- the
+        # on-disk deliverable IS the work. Recover it: adopt the largest file
+        # the node wrote during THIS run as the deliverable so the parent review
+        # sees real content, the artifact is registered, and the node is not
+        # needlessly bounced / escalated (which is what fizzled writer-b).
+        recovered_from_file = False
+        if quality_status != "ok" and command_id:
+            try:
+                from ._runtime_node_tools import pop_node_file_outputs
+
+                written = pop_node_file_outputs(
+                    org_id, command_id, node_id, since_ts=run_start_ts
+                )
+            except Exception:  # noqa: BLE001 -- recovery must never crash the run
+                written = []
+            doc = _pick_recoverable_deliverable(written)
+            if doc is not None:
+                recovered_text = _read_text_bounded(doc["path"])
+                if recovered_text.strip():
+                    output_text = recovered_text
+                    artifact_path = doc["path"]
+                    quality_status, quality_reason = ("ok", "recovered_from_file")
+                    recovered_from_file = True
+                    _LOGGER.info(
+                        "[quality-gate] recovered empty-text node from on-disk file "
+                        "(org=%s node=%s path=%s len=%d): treated as deliverable",
+                        org_id,
+                        node_id,
+                        doc["path"],
+                        len(output_text),
+                    )
+        is_incomplete = (quality_status != "ok") and not has_upstream_reviewer
+        if output_text and command_id and not is_incomplete and not recovered_from_file:
             try:
                 artifact_path = persist_node_artifact(
                     org_id=org_id,
@@ -548,6 +632,28 @@ class AgentPipelineExecutor:
             except Exception:  # noqa: BLE001 -- belt-and-braces
                 _LOGGER.debug(
                     "node artefact persistence raised (org=%s node=%s)",
+                    org_id,
+                    node_id,
+                    exc_info=True,
+                )
+        elif recovered_from_file and command_id:
+            # The deliverable file already lives on disk (the node wrote it),
+            # so we DON'T re-persist an artifact; we still write the bounded
+            # memory summary so downstream nodes can consult what this node
+            # produced.
+            try:
+                persist_node_memory(
+                    org_id=org_id,
+                    command_id=command_id,
+                    node_id=node_id,
+                    output=output_text,
+                    role=spec.role,
+                    parent_node_id=parent_node_id,
+                    get_org_dir=get_org_dir,
+                )
+            except Exception:  # noqa: BLE001 -- belt-and-braces
+                _LOGGER.debug(
+                    "recovered-node memory persist raised (org=%s node=%s)",
                     org_id,
                     node_id,
                     exc_info=True,
@@ -577,6 +683,8 @@ class AgentPipelineExecutor:
             finished_payload["parent_node_id"] = parent_node_id
         if artifact_path:
             finished_payload["artifact_path"] = artifact_path
+        if recovered_from_file:
+            finished_payload["recovered_from_file"] = True
         if is_incomplete:
             finished_payload["incomplete"] = True
             finished_payload["quality_reason"] = quality_reason
