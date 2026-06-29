@@ -684,82 +684,296 @@
       //
       // Tab B / C 在后续 commit 实装。
       // ─────────────────────────────────────────────────────────────────
+      // ═══════════════════════════════════════════════════════════════════
+      //  账套工作台 = 6 步分步主线（stepper）
+      //
+      //  ① 上传余额表 → ② 处理不明数据 → ③ 生成报表 → ④ 调整与追溯
+      //  → ⑤ 审计报告 → ⑥ 导出/打包
+      //
+      //  · 顶部进度条显示「下一步」，每步一张面板；未满足前置条件的步骤禁用并
+      //    说明原因（gating 信号来自导入 / 不明数据 / 报表三个轻量查询）。
+      //  · 「全过程可追溯」做成贯穿能力：相关步骤都给「导出此表 / 重新导入修改版」
+      //    入口（卖点显性化）。
+      //  · 既有的增值税 / 重分类 / 跨期校验 / 现金流量(间接法) 不删，收进步骤下方的
+      //    「辅助工具」一栏，随时可达。
+      // ═══════════════════════════════════════════════════════════════════
       function OrgDetailView({ orgId, period, setPeriod, onBack, onOpenReport, toast }) {
-        const [tab, setTab] = useState("import");
+        const [view, setView] = useState("import");
         const orgs = useFetch("/orgs", []);
         const org = useMemo(() => {
           if (!orgs.data) return null;
           return orgs.data.organizations.find((o) => o.id === orgId);
         }, [orgs.data, orgId]);
 
+        // ── gating 信号 ────────────────────────────────────────────────
+        const imports = useFetch(`/orgs/${orgId}/imports`, [orgId]);
+        const hasImport = ((imports.data && imports.data.imports) || []).some((i) => i.status === "ok");
+        const issues = useFetch(`/orgs/${orgId}/parse-issues?status=pending&limit=1`, [orgId]);
+        const mustFix = (issues.data && issues.data.must_fix_pending) || 0;
+        const pending = (issues.data && issues.data.pending) || 0;
+        const reportsF = useFetch(`/orgs/${orgId}/reports`, [orgId]);
+        const reportCount = ((reportsF.data && reportsF.data.reports) || []).length;
+        const reloadGating = () => { imports.reload(); issues.reload(); reportsF.reload(); };
+
+        const STEPS = [
+          {
+            key: "import", n: 1, title: "上传余额表", enabled: true, done: hasImport,
+            hint: hasImport ? "已有成功导入" : "导入科目余额表（金蝶/用友/管家婆等）",
+          },
+          {
+            key: "issues", n: 2, title: "处理不明数据", enabled: hasImport,
+            done: hasImport && pending === 0,
+            hint: !hasImport ? "需先上传余额表" : (mustFix > 0 ? `${mustFix} 项必修复待处理` : (pending > 0 ? `${pending} 项待确认` : "无待处理")),
+          },
+          {
+            key: "report", n: 3, title: "生成报表", enabled: hasImport && mustFix === 0,
+            done: reportCount > 0,
+            hint: !hasImport ? "需先上传余额表" : (mustFix > 0 ? "需先处理必修复的不明数据" : "资产负债表 / 利润表 / 现金流量表"),
+          },
+          {
+            key: "trace", n: 4, title: "调整与追溯", enabled: reportCount > 0, done: false,
+            hint: reportCount > 0 ? "单元格溯源 · 简化 · 重分类" : "需先生成报表",
+          },
+          {
+            key: "audit", n: 5, title: "审计报告", enabled: reportCount > 0, done: false,
+            hint: reportCount > 0 ? "统一格式 + AI 审计意见" : "需先生成报表",
+          },
+          {
+            key: "export", n: 6, title: "导出/打包", enabled: reportCount > 0, done: false,
+            hint: reportCount > 0 ? "导出各表 · 可追溯再导入" : "需先生成报表",
+          },
+        ];
+        const stepIdx = Math.max(0, STEPS.findIndex((s) => s.key === view));
+
+        const TOOLS = [
+          { key: "tool-cashflow", label: "现金流量(间接法)" },
+          { key: "tool-reclass",  label: "重分类规则" },
+          { key: "tool-xperiod",  label: "跨期校验" },
+          { key: "tool-vat",      label: "增值税申报" },
+        ];
+
+        const goStep = (s) => {
+          if (!s.enabled) { toast(s.hint, "warn"); return; }
+          setView(s.key);
+        };
+
         return (
           <>
-            <div className="flex items-center justify-between mb-3" style={{ gap: 12 }}>
+            <div className="fa-org-bar">
               <div style={{ minWidth: 0 }}>
-                <h2 className="page-title">
+                <div className="fa-org-bar__name">
                   {org ? org.name : <span className="skeleton" style={{ width: 200 }} />}
-                  {org && <span className="badge info" style={{ marginLeft: 10 }}>{(STANDARD_OPTS.find((x) => x.v === org.standard) || {}).l}</span>}
-                </h2>
-                <p className="page-subtitle">
-                  {org && (
-                    <>
-                      <span className="mono">{org.code}</span>
-                      {" · "}{(INDUSTRY_OPTS.find((x) => x.v === org.industry) || {}).l || org.industry}
-                      {" · "}辅助核算：{(AUX_OPTS.find((x) => x.v === org.aux_mode) || {}).l || org.aux_mode}
-                    </>
-                  )}
-                </p>
+                  {org && <span className="oa-pill running" style={{ marginLeft: 10 }}>{(STANDARD_OPTS.find((x) => x.v === org.standard) || {}).l}</span>}
+                </div>
+                {org && (
+                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    <span className="mono">{org.code}</span>
+                    {" · "}{(INDUSTRY_OPTS.find((x) => x.v === org.industry) || {}).l || org.industry}
+                    {" · 辅助核算："}{(AUX_OPTS.find((x) => x.v === org.aux_mode) || {}).l || org.aux_mode}
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-3" style={{ flexShrink: 0 }}>
-                <PeriodPicker period={period} setPeriod={setPeriod} />
-                <button className="btn" onClick={onBack}>← 返回账套列表</button>
-              </div>
+              <span className="spacer" />
+              <PeriodPicker period={period} setPeriod={setPeriod} />
+              <button className="oa-btn" onClick={onBack}>← 账套列表</button>
             </div>
 
             {orgs.error && (
-              <div className="card upload-result err">
-                无法读取账套元信息：{orgs.error.message}
+              <div className="oa-error-coach" style={{ marginBottom: 14 }}>
+                <div className="cause">账套元信息</div>
+                <div className="why">无法读取账套元信息</div>
+                <div className="what">{orgs.error.message}</div>
               </div>
             )}
 
-            <div className="tabs">
-              <button className={`tab ${tab === "import" ? "active" : ""}`} onClick={() => setTab("import")}>余额表导入</button>
-              <button className={`tab ${tab === "report" ? "active" : ""}`} onClick={() => setTab("report")}>报表生成</button>
-              <button className={`tab ${tab === "vat" ? "active" : ""}`} onClick={() => setTab("vat")}>增值税申报</button>
-              <button
-                className={`tab ${tab === "issues" ? "active" : ""}`}
-                onClick={() => setTab("issues")}
-                data-testid="tab-issues"
-              >
-                数据分流
-                <PendingIssuesBadge orgId={orgId} />
-              </button>
-              <button className={`tab ${tab === "reclass" ? "active" : ""}`} onClick={() => setTab("reclass")} data-testid="tab-reclass">重分类规则</button>
-              <button className={`tab ${tab === "xperiod" ? "active" : ""}`} onClick={() => setTab("xperiod")} data-testid="tab-xperiod">跨期校验</button>
-              <button className={`tab ${tab === "cashflow" ? "active" : ""}`} onClick={() => setTab("cashflow")} data-testid="tab-cashflow">现金流量</button>
+            {/* ── 分步主线 stepper ── */}
+            <div className="fa-stepper" role="tablist" aria-label="账套处理主线">
+              {STEPS.map((s) => (
+                <button
+                  key={s.key}
+                  className={`fa-step ${view === s.key ? "active" : ""} ${s.done ? "done" : ""}`}
+                  disabled={!s.enabled}
+                  onClick={() => goStep(s)}
+                  title={!s.enabled ? s.hint : ""}
+                  data-testid={`step-${s.key}`}
+                >
+                  <span className="fa-step__num">{s.done ? "✓" : s.n}</span>
+                  <span className="fa-step__body">
+                    <span className="fa-step__title">{s.title}</span>
+                    <span className="fa-step__hint">{s.hint}</span>
+                  </span>
+                </button>
+              ))}
             </div>
 
-            {tab === "import" && (
-              <ImportTab orgId={orgId} period={period} toast={toast} onGoto={setTab} />
+            {/* ── 辅助工具（保留全部既有功能，不删） ── */}
+            <div className="fa-org-bar" style={{ marginBottom: 14 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-subtle)" }}>辅助工具</span>
+              {TOOLS.map((t) => (
+                <button
+                  key={t.key}
+                  className={`oa-btn ${view === t.key ? "oa-btn-primary" : ""}`}
+                  style={{ padding: "5px 10px", fontSize: 12 }}
+                  onClick={() => setView(t.key)}
+                  data-testid={t.key}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* ── 各步骤面板 ── */}
+            {view === "import" && (
+              <ImportTab orgId={orgId} period={period} toast={toast} onGoto={(t) => { reloadGating(); setView(t === "report" ? "report" : t === "issues" ? "issues" : t); }} />
             )}
-            {tab === "report" && (
-              <ReportTab orgId={orgId} period={period} onOpenReport={onOpenReport} toast={toast} />
-            )}
-            {tab === "vat" && (
-              <VatTab orgId={orgId} toast={toast} />
-            )}
-            {tab === "issues" && (
+            {view === "issues" && (
               <ParseIssueQueueView orgId={orgId} period={period} toast={toast} />
             )}
-            {tab === "reclass" && (
-              <ReclassificationView orgId={orgId} period={period} toast={toast} />
+            {view === "report" && (
+              <>
+                <ReportTab orgId={orgId} period={period} onOpenReport={onOpenReport} toast={toast} />
+                <div className="oa-config-banner oa-config-banner--info">
+                  <span className="oa-config-banner__icon"><NavIcon name="sparkles" /></span>
+                  <div className="oa-config-banner__text">
+                    现金流量表需要先有间接法的 cf_* 取数。可用「辅助工具 · 现金流量(间接法)」计算并写入，再回到这里生成现金流量表。
+                  </div>
+                  <button className="oa-config-banner__action" onClick={() => setView("tool-cashflow")}>去计算 →</button>
+                </div>
+              </>
             )}
-            {tab === "xperiod" && (
-              <CrossPeriodView orgId={orgId} period={period} toast={toast} />
+            {view === "trace" && (
+              <WorkspaceTraceStep orgId={orgId} period={period} onOpenReport={onOpenReport} onGotoImport={() => setView("import")} toast={toast} />
             )}
-            {tab === "cashflow" && (
-              <CashFlowView orgId={orgId} period={period} toast={toast} />
+            {view === "audit" && (
+              <WorkspaceAuditStep orgId={orgId} toast={toast} />
             )}
+            {view === "export" && (
+              <ExportPackagePanel orgId={orgId} onGotoImport={() => setView("import")} toast={toast} />
+            )}
+
+            {view === "tool-cashflow" && <CashFlowView orgId={orgId} period={period} toast={toast} />}
+            {view === "tool-reclass" && <ReclassificationView orgId={orgId} period={period} toast={toast} />}
+            {view === "tool-xperiod" && <CrossPeriodView orgId={orgId} period={period} toast={toast} />}
+            {view === "tool-vat" && <VatTab orgId={orgId} toast={toast} />}
+          </>
+        );
+      }
+
+      // 通用：把一张报表导出为 xlsx（当前视图 / 完整明细），与 ReportView 的导出
+      // 逻辑一致——「全过程可追溯」要求每张中间表/报表都有明显的导出入口。
+      async function downloadReportXlsx(orgId, reportId, mode, toast) {
+        try {
+          const qs = mode === "full" ? "?format=xlsx&expand=full" : "?format=xlsx";
+          const resp = await api("GET", `/orgs/${orgId}/reports/${reportId}/export${qs}`, null, { raw: true, timeoutMs: 60000 });
+          if (!resp.ok) { const txt = await resp.text(); throw new Error(`${resp.status} · ${txt.slice(0, 200)}`); }
+          const blob = await resp.blob();
+          const disp = resp.headers.get("content-disposition") || "";
+          let filename = `${reportId}${mode === "full" ? "_full" : ""}.xlsx`;
+          const m = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+          if (m) filename = decodeURIComponent(m[1]);
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = filename;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1500);
+          toast(`已下载 ${filename}`);
+        } catch (e) {
+          toast(`导出失败：${e.message}`, "err");
+        }
+      }
+
+      // 步骤 ④：调整与追溯 —— 报表清单（点开做单元格溯源 / 简化）+ 重分类 + 跨期。
+      function WorkspaceTraceStep({ orgId, period, onOpenReport, onGotoImport, toast }) {
+        const reports = useFetch(`/orgs/${orgId}/reports`, [orgId]);
+        const items = (reports.data && reports.data.reports) || [];
+        return (
+          <>
+            <div className="fa-trace-bar">
+              <span className="fa-trace-bar__icon"><NavIcon name="workspace" /></span>
+              <span><strong>全过程可追溯：</strong>点开任一报表可逐单元格溯源到余额表行、开关简化；导出 Excel 修改后，回到「上传余额表」即可重新导入修订版。</span>
+              <span className="spacer" />
+              <button className="oa-btn" onClick={onGotoImport}>重新导入修改版 →</button>
+            </div>
+            <div className="oa-card">
+              <h3>报表清单（{items.length}）</h3>
+              <p>点「追溯」打开单元格溯源 + 简化视图。</p>
+              {reports.loading && <div className="oa-thinking"><span className="dot" /><span className="dot" /><span className="dot" /> 加载中</div>}
+              {!reports.loading && items.length === 0 && <p>还没有报表，先到「生成报表」步骤。</p>}
+              {items.map((r) => (
+                <div className="oa-row" key={r.id} style={{ justifyContent: "space-between", borderTop: "1px solid var(--oa-border)", paddingTop: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>
+                      {(REPORT_KINDS.find((x) => x.v === r.sheet_kind) || {}).l || r.sheet_kind}
+                      <span className="mono" style={{ color: "var(--oa-text-muted)", marginLeft: 8, fontSize: 11 }}>{r.period_id}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--oa-text-muted)" }}>{fmtTs(r.generated_at)} · {r.cell_count} 行</div>
+                  </div>
+                  <div className="oa-row" style={{ margin: 0 }}>
+                    <button className="oa-btn" onClick={() => downloadReportXlsx(orgId, r.id, "view", toast)} data-testid={`trace-export-${r.id}`}>导出此表</button>
+                    <button className="oa-btn oa-btn-primary" onClick={() => onOpenReport(r.id)} data-testid={`trace-open-${r.id}`}>追溯 →</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <details className="oa-collapse">
+              <summary className="oa-collapse__summary"><span className="oa-collapse__chevron"><NavIcon name="chevron" /></span> 调整工具：重分类规则</summary>
+              <div className="oa-collapse__body"><ReclassificationView orgId={orgId} period={period} toast={toast} /></div>
+            </details>
+            <details className="oa-collapse">
+              <summary className="oa-collapse__summary"><span className="oa-collapse__chevron"><NavIcon name="chevron" /></span> 调整工具：跨期校验</summary>
+              <div className="oa-collapse__body"><CrossPeriodView orgId={orgId} period={period} toast={toast} /></div>
+            </details>
+          </>
+        );
+      }
+
+      // 步骤 ⑤：审计报告 —— AI 审计意见 + 指引到报表附注（统一格式产出物）。
+      function WorkspaceAuditStep({ orgId, toast }) {
+        return (
+          <>
+            <div className="oa-config-banner oa-config-banner--info">
+              <span className="oa-config-banner__icon"><NavIcon name="review" /></span>
+              <div className="oa-config-banner__text">
+                审计报告由「AI 审计意见」+「报表附注」共同构成统一格式产出物。附注可在左侧「更多 · 报表附注」编辑，AI 调用前会先做脱敏说明并预估成本。
+              </div>
+            </div>
+            <AuditOpinionCard toast={toast} />
+          </>
+        );
+      }
+
+      // 步骤 ⑥：导出/打包 —— 每张报表的 xlsx 导出（当前视图 / 完整明细）+ 可追溯再导入。
+      function ExportPackagePanel({ orgId, onGotoImport, toast }) {
+        const reports = useFetch(`/orgs/${orgId}/reports`, [orgId]);
+        const items = (reports.data && reports.data.reports) || [];
+        return (
+          <>
+            <div className="fa-trace-bar">
+              <span className="fa-trace-bar__icon"><NavIcon name="workspace" /></span>
+              <span><strong>可追溯导出/导入：</strong>每张表都能导出为 Excel（当前视图或完整明细）。在外部改完后，回到「上传余额表」重新导入修订版，全过程留痕。</span>
+              <span className="spacer" />
+              <button className="oa-btn" onClick={onGotoImport}>重新导入修改版 →</button>
+            </div>
+            <div className="oa-card">
+              <h3>导出报表（{items.length}）</h3>
+              {reports.loading && <div className="oa-thinking"><span className="dot" /><span className="dot" /><span className="dot" /> 加载中</div>}
+              {!reports.loading && items.length === 0 && <p>还没有报表可导出，先到「生成报表」步骤。</p>}
+              {items.map((r) => (
+                <div className="oa-row" key={r.id} style={{ justifyContent: "space-between", borderTop: "1px solid var(--oa-border)", paddingTop: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>
+                      {(REPORT_KINDS.find((x) => x.v === r.sheet_kind) || {}).l || r.sheet_kind}
+                      <span className="mono" style={{ color: "var(--oa-text-muted)", marginLeft: 8, fontSize: 11 }}>{r.period_id}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--oa-text-muted)" }}>{r.cell_count} 行</div>
+                  </div>
+                  <div className="oa-row" style={{ margin: 0 }}>
+                    <button className="oa-btn" onClick={() => downloadReportXlsx(orgId, r.id, "view", toast)} data-testid={`export-view-${r.id}`}>导出(当前视图)</button>
+                    <button className="oa-btn" onClick={() => downloadReportXlsx(orgId, r.id, "full", toast)} data-testid={`export-full-${r.id}`}>导出(完整明细)</button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </>
         );
       }
@@ -6372,6 +6586,7 @@
         peer: '<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>',
         sparkles: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/>',
         key: '<path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78z"/><path d="M15.5 7.5l3 3L22 7l-3-3"/>',
+        chevron: '<polyline points="9 18 15 12 9 6"/>',
         settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
       };
       function NavIcon({ name }) {
