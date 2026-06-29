@@ -70,6 +70,15 @@ def wired_app(
     presents ``client.host == "testclient"`` and so fails the
     ``_is_local_request`` bypass in :mod:`openakita.api.auth`; we mint
     a real access token to authenticate, mirroring the desktop GUI.
+
+    Because ``project_root`` points at a *fresh* ``tmp_path``, the app's
+    ``WebAccessConfig`` (rooted at ``tmp_path/data``) has no password set,
+    so the setup gate middleware — which runs ahead of auth/business
+    logic — would 428 the non-loopback ``"testclient"`` host before the
+    warmup GET ever reached the org routers. We therefore complete the
+    setup step (``change_password``) on the app's own config, exactly as a
+    properly provisioned deployment would, instead of skipping the test or
+    relaxing the production gate.
     """
     monkeypatch.setattr(settings, "project_root", tmp_path, raising=False)
     monkeypatch.setattr(settings, "runtime_v2_enabled", True, raising=False)
@@ -77,6 +86,9 @@ def wired_app(
     reset_default_store()
 
     app = create_app()
+    # Satisfy the setup gate: provision a web password on the same config
+    # instance the gate middleware closed over (``app.state.web_access_config``).
+    app.state.web_access_config.change_password("contract-test-setup-pass")
     token = app.state.web_access_config.create_access_token()
     client = TestClient(app, raise_server_exceptions=True)
     client.headers.update({"Authorization": f"Bearer {token}"})
