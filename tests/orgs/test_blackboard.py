@@ -97,6 +97,28 @@ class TestWriteRead:
 
         assert len(entries) == 20
 
+    def test_read_org_ignores_corrupt_nul_tail_line(self, blackboard: OrgBlackboard):
+        blackboard.write_org("保留的组织记忆", "node_ceo", importance=0.7)
+        bb_path = blackboard._memory_dir / "blackboard.jsonl"
+        with bb_path.open("ab") as f:
+            f.write(b"\x00" * 128)
+
+        entries = blackboard.read_org()
+
+        assert [entry.content for entry in entries] == ["保留的组织记忆"]
+
+    def test_read_org_recovers_json_line_with_appended_nul_tail(
+        self, blackboard: OrgBlackboard
+    ):
+        blackboard.write_org("尾部 NUL 不应隐藏这一条", "node_ceo", importance=0.7)
+        bb_path = blackboard._memory_dir / "blackboard.jsonl"
+        content = bb_path.read_bytes().rstrip(b"\r\n") + (b"\x00" * 128)
+        bb_path.write_bytes(content)
+
+        entries = blackboard.read_org()
+
+        assert [entry.content for entry in entries] == ["尾部 NUL 不应隐藏这一条"]
+
 
 class TestTagFilter:
     def test_read_with_tag(self, blackboard: OrgBlackboard):

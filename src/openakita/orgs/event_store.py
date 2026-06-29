@@ -31,6 +31,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from .jsonl_utils import iter_jsonl_objects_reverse, read_jsonl_objects
 from .models import _new_id
 
 logger = logging.getLogger(__name__)
@@ -174,7 +175,7 @@ class OrgEventStore:
 
         return event
 
-    def _read_jsonl_safely(self, path: Path) -> list[str]:
+    def _read_jsonl_safely(self, path: Path) -> list[dict]:
         """Read a JSONL day file under ``self._lock`` so we don't see a
         torn line if another thread is mid-``emit``.
 
@@ -185,10 +186,7 @@ class OrgEventStore:
         vanishingly rare for our event sizes (a few hundred bytes).
         """
         with self._lock:
-            try:
-                return path.read_text(encoding="utf-8").strip().split("\n")
-            except OSError:
-                return []
+            return [record for record in read_jsonl_objects(path, log=logger) if isinstance(record, dict)]
 
     def query(
         self,
@@ -217,32 +215,25 @@ class OrgEventStore:
                 if day > until.replace("-", "")[:8]:
                     continue
 
-            lines = self._read_jsonl_safely(f)
-            try:
-                for line in reversed(lines):
-                    if not line.strip():
-                        continue
-                    evt = json.loads(line)
-                    ts = evt.get("timestamp", "")
-                    if since and ts < since:
-                        enough = True
-                        break
-                    if until and ts > until:
-                        continue
-                    if event_type and evt.get("event_type") != event_type:
-                        continue
-                    if actor and evt.get("actor") != actor:
-                        continue
-                    data = evt.get("data") or {}
-                    if chain_id is not None and data.get("chain_id") != chain_id:
-                        continue
-                    if task_id is not None and data.get("task_id") != task_id:
-                        continue
-                    results.append(evt)
-                    if len(results) >= limit:
-                        return results
-            except Exception as e:
-                logger.warning(f"[EventStore] Failed to parse {f}: {e}")
+            for evt in reversed(self._read_jsonl_safely(f)):
+                ts = evt.get("timestamp", "")
+                if since and ts < since:
+                    enough = True
+                    break
+                if until and ts > until:
+                    continue
+                if event_type and evt.get("event_type") != event_type:
+                    continue
+                if actor and evt.get("actor") != actor:
+                    continue
+                data = evt.get("data") or {}
+                if chain_id is not None and data.get("chain_id") != chain_id:
+                    continue
+                if task_id is not None and data.get("task_id") != task_id:
+                    continue
+                results.append(evt)
+                if len(results) >= limit:
+                    return results
 
         return results
 
@@ -250,19 +241,12 @@ class OrgEventStore:
         """Find the last pending/in-progress event for a node (for restart recovery)."""
         files = sorted(self._events_dir.glob("*.jsonl"), reverse=True)
         for f in files[:3]:
-            lines = self._read_jsonl_safely(f)
-            try:
-                for line in reversed(lines):
-                    if not line.strip():
-                        continue
-                    evt = json.loads(line)
-                    if evt.get("actor") == node_id and evt.get("event_type") in (
-                        "task_started",
-                        "node_activated",
-                    ):
-                        return evt
-            except Exception:
-                continue
+            for evt in iter_jsonl_objects_reverse(f, log=logger):
+                if evt.get("actor") == node_id and evt.get("event_type") in (
+                    "task_started",
+                    "node_activated",
+                ):
+                    return evt
         return None
 
     # ------------------------------------------------------------------

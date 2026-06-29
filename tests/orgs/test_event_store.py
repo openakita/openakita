@@ -49,6 +49,27 @@ class TestEmitAndQuery:
     def test_query_empty(self, event_store: OrgEventStore):
         assert event_store.query() == []
 
+    def test_query_ignores_corrupt_nul_tail_line(self, event_store: OrgEventStore):
+        event_store.emit("task_completed", "n1", {"x": 1})
+        event_store.emit("task_failed", "n2", {"err": "timeout"})
+        day_file = next(event_store._events_dir.glob("*.jsonl"))
+        with day_file.open("ab") as f:
+            f.write(b"\x00" * 128)
+
+        events = event_store.query()
+
+        assert [event["event_type"] for event in events] == ["task_failed", "task_completed"]
+
+    def test_query_recovers_json_line_with_appended_nul_tail(self, event_store: OrgEventStore):
+        event_store.emit("task_completed", "n1", {"x": 1})
+        day_file = next(event_store._events_dir.glob("*.jsonl"))
+        content = day_file.read_bytes().rstrip(b"\r\n") + (b"\x00" * 128)
+        day_file.write_bytes(content)
+
+        events = event_store.query()
+
+        assert [event["event_type"] for event in events] == ["task_completed"]
+
 
 class TestGetLastPending:
     def test_finds_last_activated(self, event_store: OrgEventStore):
@@ -60,6 +81,17 @@ class TestGetLastPending:
 
     def test_returns_none_when_empty(self, event_store: OrgEventStore):
         assert event_store.get_last_pending("nonexistent") is None
+
+    def test_ignores_corrupt_nul_tail_line(self, event_store: OrgEventStore):
+        event_store.emit("node_activated", "node_ceo", {"prompt": "test"})
+        day_file = next(event_store._events_dir.glob("*.jsonl"))
+        with day_file.open("ab") as f:
+            f.write(b"\x00" * 128)
+
+        pending = event_store.get_last_pending("node_ceo")
+
+        assert pending is not None
+        assert pending["event_type"] == "node_activated"
 
 
 class TestAuditLog:

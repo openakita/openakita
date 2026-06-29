@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .jsonl_utils import read_jsonl_objects
 from .models import MemoryScope, MemoryType, OrgMemoryEntry
 
 logger = logging.getLogger(__name__)
@@ -248,20 +249,15 @@ class OrgBlackboard:
         for fpath in self._all_memory_files():
             if not fpath.is_file():
                 continue
-            lines = fpath.read_text(encoding="utf-8").strip().split("\n")
             new_lines = []
             found = False
-            for line in lines:
-                if not line.strip():
+            for data in read_jsonl_objects(fpath, log=logger):
+                if not isinstance(data, dict):
                     continue
-                try:
-                    data = json.loads(line)
-                    if data.get("id") == memory_id:
-                        found = True
-                        continue
-                except Exception:
-                    pass
-                new_lines.append(line)
+                if data.get("id") == memory_id:
+                    found = True
+                    continue
+                new_lines.append(json.dumps(data, ensure_ascii=False))
             if found:
                 fpath.write_text("\n".join(new_lines) + "\n" if new_lines else "", encoding="utf-8")
                 return True
@@ -300,18 +296,19 @@ class OrgBlackboard:
         if not path.is_file():
             return []
         entries: list[OrgMemoryEntry] = []
-        try:
-            for line in path.read_text(encoding="utf-8").strip().split("\n"):
-                if not line.strip():
-                    continue
-                e = OrgMemoryEntry.from_dict(json.loads(line))
+        for e in read_jsonl_objects(
+            path,
+            log=logger,
+            decoder=OrgMemoryEntry.from_dict,
+        ):
+            try:
                 if tag and tag not in e.tags:
                     continue
                 if self._is_expired(e):
                     continue
                 entries.append(e)
-        except Exception as exc:
-            logger.warning(f"Failed to read memory {path}: {exc}")
+            except Exception as exc:
+                logger.warning(f"Failed to read memory entry from {path}: {exc}")
         entries.sort(key=lambda e: _safe_float(e.importance), reverse=True)
         return entries[:limit]
 
@@ -323,18 +320,12 @@ class OrgBlackboard:
         prefix = content[:prefix_len].strip()
         if not prefix:
             return False
-        try:
-            for line in path.read_text(encoding="utf-8").strip().split("\n"):
-                if not line.strip():
-                    continue
-                try:
-                    existing = json.loads(line).get("content", "")
-                    if existing[:prefix_len].strip() == prefix:
-                        return True
-                except (json.JSONDecodeError, KeyError):
-                    continue
-        except Exception:
-            pass
+        for record in read_jsonl_objects(path, log=logger):
+            if not isinstance(record, dict):
+                continue
+            existing = record.get("content", "")
+            if isinstance(existing, str) and existing[:prefix_len].strip() == prefix:
+                return True
         return False
 
     def _append(self, path: Path, entry: OrgMemoryEntry, max_entries: int) -> None:
@@ -348,18 +339,22 @@ class OrgBlackboard:
         """Remove expired and least important entries if over capacity."""
         if not path.is_file():
             return
-        lines = [ln for ln in path.read_text(encoding="utf-8").strip().split("\n") if ln.strip()]
+        records = [record for record in read_jsonl_objects(path, log=logger) if isinstance(record, dict)]
 
         live_entries: list[tuple[float, str]] = []
         expired_count = 0
-        for line in lines:
+        for record in records:
             try:
-                d = json.loads(line)
-                entry = OrgMemoryEntry.from_dict(d)
+                entry = OrgMemoryEntry.from_dict(record)
                 if self._is_expired(entry):
                     expired_count += 1
                     continue
-                live_entries.append((_safe_float(entry.importance), line))
+                live_entries.append(
+                    (
+                        _safe_float(entry.importance),
+                        json.dumps(record, ensure_ascii=False),
+                    )
+                )
             except Exception:
                 continue
 
