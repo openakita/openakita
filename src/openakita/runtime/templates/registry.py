@@ -304,6 +304,7 @@ class TemplateRegistry:
                     parent_id=(
                         id_map[parent_handle] if parent_handle is not None else None
                     ),
+                    department=spec_node.department,
                 )
             )
 

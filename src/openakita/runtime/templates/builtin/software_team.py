@@ -134,6 +134,7 @@ def software_team() -> TemplateSpec:
                 label="技术负责人",
                 persona_prompt=_TECH_LEAD_PERSONA,
                 tool_subset=common_tools,
+                department="工程",
             ),
             NodeSpec(
                 id="fe_lead",
@@ -142,6 +143,7 @@ def software_team() -> TemplateSpec:
                 label="前端组长",
                 persona_prompt=_FE_LEAD_PERSONA,
                 tool_subset=common_tools,
+                department="前端组",
             ),
             NodeSpec(
                 id="fe_dev_a",
@@ -150,6 +152,7 @@ def software_team() -> TemplateSpec:
                 label="前端开发A",
                 persona_prompt=_FE_DEV_PERSONA,
                 tool_subset=dev_tools,
+                department="前端组",
             ),
             NodeSpec(
                 id="fe_dev_b",
@@ -158,6 +161,7 @@ def software_team() -> TemplateSpec:
                 label="前端开发B",
                 persona_prompt=_FE_DEV_PERSONA,
                 tool_subset=dev_tools,
+                department="前端组",
             ),
             NodeSpec(
                 id="be_lead",
@@ -166,6 +170,7 @@ def software_team() -> TemplateSpec:
                 label="后端组长",
                 persona_prompt=_BE_LEAD_PERSONA,
                 tool_subset=common_tools,
+                department="后端组",
             ),
             NodeSpec(
                 id="be_dev_a",
@@ -174,6 +179,7 @@ def software_team() -> TemplateSpec:
                 label="后端开发A",
                 persona_prompt=_BE_DEV_PERSONA,
                 tool_subset=dev_tools,
+                department="后端组",
             ),
             NodeSpec(
                 id="be_dev_b",
@@ -182,6 +188,7 @@ def software_team() -> TemplateSpec:
                 label="后端开发B",
                 persona_prompt=_BE_DEV_PERSONA,
                 tool_subset=dev_tools,
+                department="后端组",
             ),
             NodeSpec(
                 id="qa",
@@ -190,6 +197,7 @@ def software_team() -> TemplateSpec:
                 label="QA 工程师",
                 persona_prompt=_QA_PERSONA,
                 tool_subset=dev_tools,
+                department="工程",
             ),
             NodeSpec(
                 id="devops_eng",
@@ -198,6 +206,7 @@ def software_team() -> TemplateSpec:
                 label="DevOps 工程师",
                 persona_prompt=_DEVOPS_PERSONA,
                 tool_subset=dev_tools,
+                department="工程",
             ),
             NodeSpec(
                 id="tech_writer",
@@ -206,6 +215,7 @@ def software_team() -> TemplateSpec:
                 label="技术文档",
                 persona_prompt=_WRITER_PERSONA,
                 tool_subset=("research", "filesystem", "memory"),
+                department="工程",
             ),
         ),
         edges=(

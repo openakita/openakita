@@ -181,6 +181,14 @@ class NodeSpec:
     workbench: WorkbenchBindingSpec | None = None
     runtime: NodeRuntimeOverridesSpec = field(default_factory=NodeRuntimeOverridesSpec)
     guardrails: tuple[GuardrailSpec, ...] = ()
+    # Org-chart department this node belongs to (元数据). The v1 dict
+    # templates carried this; the v2 schema migration dropped it, which
+    # left v2-instantiated orgs with an empty ``department`` (so the
+    # blackboard's department tier could not group them). It is pure
+    # metadata — dispatch/review key on edges, not on department — so it
+    # defaults to "" and is optional; built-in templates fill it, and
+    # user-authored templates may leave it blank rather than inventing one.
+    department: str = ""
 
     def validate(self) -> None:
         if not isinstance(self.id, str) or not _ROLE_HANDLE_RE.match(self.id):
@@ -199,6 +207,8 @@ class NodeSpec:
             raise TemplateValidationError(
                 "NodeSpec.persona_prompt must be a string or None"
             )
+        if not isinstance(self.department, str):
+            raise TemplateValidationError("NodeSpec.department must be a string")
         if self.tool_subset is not None:
             if not all(isinstance(t, str) and t for t in self.tool_subset):
                 raise TemplateValidationError(
@@ -235,6 +245,7 @@ class NodeSpec:
             ),
             "runtime": self.runtime.to_jsonable(),
             "guardrails": [g.to_jsonable() for g in self.guardrails],
+            "department": self.department,
         }
 
 

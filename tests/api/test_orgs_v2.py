@@ -105,7 +105,11 @@ def test_list_returns_jsonable_node_and_edge_records(client: TestClient) -> None
     sample = aigc["nodes"][0]
     assert {"id", "type", "role", "label"}.issubset(sample.keys())
     assert "position" not in sample, "v2 wire format must not leak legacy x/y"
-    assert "department" not in sample, "v2 wire format must not leak legacy department"
+    # ``department`` is now a first-class (but optional) v2 schema field —
+    # the migration originally dropped it, which left v2-instantiated orgs
+    # with an empty department and broke the blackboard's department tier.
+    # Built-in templates populate it (producer -> 制作部).
+    assert sample.get("department") == "制作部"
 
 
 # ---------------------------------------------------------------------------
@@ -407,3 +411,46 @@ def test_instantiate_content_ops_projects_correct_levels(client: TestClient) -> 
     writer_levels = [n["level"] for n in data["nodes"] if n["agent_profile_id"] == "writer"]
     assert writer_levels == [2, 2]
     assert {n["level"] for n in data["nodes"]} == {0, 1, 2}
+
+
+def test_v1_v2_content_ops_departments_match(client: TestClient) -> None:
+    """Dual-path parity: the v2-instantiated content_ops org must project
+    the SAME department per role as the legacy v1 dict template.
+
+    Before the fix the v2 schema dropped ``department`` entirely, so every
+    projected node landed with ``department=""`` while v1 carried
+    编辑部/创作组/运营组 — which broke the blackboard's department tier."""
+    from openakita.api.routes.orgs_v2 import _orgv2_dict_to_organization_data
+    from openakita.orgs._runtime_templates import CONTENT_OPS
+
+    # v1 dict path: role_title -> department (role_title is the stable label)
+    v1_by_role = {n["id"].replace("-", "_"): n["department"] for n in CONTENT_OPS["nodes"]}
+
+    org = _instantiate(client, name="Depts")
+    data = _orgv2_dict_to_organization_data(org)
+    # every projected node carries a non-empty department
+    assert all(n["department"] for n in data["nodes"])
+    # role-handle survives into agent_profile_id; group departments by role
+    v2_by_role: dict[str, set[str]] = {}
+    for n in data["nodes"]:
+        v2_by_role.setdefault(n["agent_profile_id"], set()).add(n["department"])
+    # spot-check parity against the v1 dict's intent
+    assert v2_by_role["editor_in_chief"] == {"编辑部"}
+    assert v2_by_role["content_planner"] == {"编辑部"}
+    assert v2_by_role["writer"] == {"创作组"}
+    assert v2_by_role["visual_designer"] == {"创作组"}
+    assert v2_by_role["seo_optimizer"] == {"运营组"}
+    assert v2_by_role["data_analyst"] == {"运营组"}
+    # the full department set matches the v1 dict's department set
+    assert {n["department"] for n in data["nodes"]} == set(v1_by_role.values())
+
+
+def test_instantiate_omits_department_for_user_template_without_one(
+    client: TestClient,
+) -> None:
+    """Graceful empty: a NodeV2 with no department must project to "" rather
+    than an invented value (user-authored templates may not model depts)."""
+    from openakita.api.routes.orgs_v2 import _orgv2_node_dict_to_orgnode_data
+
+    projected = _orgv2_node_dict_to_orgnode_data({"id": "n1", "role": "x"}, level=0)
+    assert projected["department"] == ""

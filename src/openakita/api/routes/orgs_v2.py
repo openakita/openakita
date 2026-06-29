@@ -484,6 +484,8 @@ def _orgv2_node_dict_to_orgnode_data(
       ``OrgNode`` keys hierarchy on ``level`` + edges (it has no
       ``parent_id`` field), so we set only ``level`` for parity with the
       legacy dict-template path.
+    * ``department`` -> 1:1 (NodeV2 now mirrors it from the template
+      NodeSpec; blank for user templates that don't model departments).
     * everything else: dropped (not representable in OrgNode)
     """
     role = (node_dict.get("role") or "").strip()
@@ -504,6 +506,10 @@ def _orgv2_node_dict_to_orgnode_data(
         "external_tools": list(node_dict.get("tool_subset") or []),
         "plugin_origin": plugin_origin,
         "level": level,
+        # NodeV2 now carries ``department`` (mirrored from the template
+        # NodeSpec); forward it so v2-instantiated orgs match the v1 dict
+        # path and the blackboard's department tier can group nodes.
+        "department": str(node_dict.get("department") or ""),
     }
 
 

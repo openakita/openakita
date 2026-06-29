@@ -294,6 +294,9 @@ class NodeV2:
     workbench: WorkbenchBinding | None = None
     runtime_overrides: NodeRuntimeOverrides = field(default_factory=NodeRuntimeOverrides)
     parent_id: NodeId | None = None
+    # Org-chart department (元数据 mirrored from the template's NodeSpec).
+    # Defaults to "" so older persisted payloads keep deserialising.
+    department: str = ""
     status: NodeStatus = NodeStatus.CREATED
     last_seen: datetime | None = None
     last_progress_at: datetime | None = None
@@ -311,6 +314,7 @@ class NodeV2:
             "workbench": self.workbench.to_jsonable() if self.workbench else None,
             "runtime_overrides": self.runtime_overrides.to_jsonable(),
             "parent_id": self.parent_id,
+            "department": self.department,
             "status": self.status.value,
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
             "last_progress_at": (
@@ -334,6 +338,7 @@ class NodeV2:
             workbench=WorkbenchBinding.from_jsonable(wb) if wb else None,
             runtime_overrides=NodeRuntimeOverrides.from_jsonable(data.get("runtime_overrides")),
             parent_id=data.get("parent_id"),
+            department=data.get("department", ""),
             status=NodeStatus(data.get("status", NodeStatus.CREATED.value)),
             last_seen=datetime.fromisoformat(data["last_seen"]) if data.get("last_seen") else None,
             last_progress_at=(

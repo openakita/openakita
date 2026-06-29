@@ -189,6 +189,7 @@ def aigc_video_studio() -> TemplateSpec:
                 label="制片人",
                 persona_prompt=_PRODUCER_PERSONA,
                 tool_subset=("research", "planning", "filesystem", "memory"),
+                department="制作部",
             ),
             NodeSpec(
                 id="screenwriter",
@@ -203,6 +204,7 @@ def aigc_video_studio() -> TemplateSpec:
                     "memory",
                     "hh_storyboard_decompose",
                 ),
+                department="创意",
             ),
             NodeSpec(
                 id="art_director",
@@ -211,6 +213,7 @@ def aigc_video_studio() -> TemplateSpec:
                 label="美术指导",
                 persona_prompt=_ART_DIRECTOR_PERSONA,
                 tool_subset=("research", "planning", "filesystem", "memory"),
+                department="美术",
             ),
             NodeSpec(
                 id="wb_image",
@@ -222,6 +225,7 @@ def aigc_video_studio() -> TemplateSpec:
                     plugin_id=PLUGIN_ID,
                     mode="image_artist",
                 ),
+                department="图像生成",
             ),
             NodeSpec(
                 id="wb_video",
@@ -233,6 +237,7 @@ def aigc_video_studio() -> TemplateSpec:
                     plugin_id=PLUGIN_ID,
                     mode="video_animator",
                 ),
+                department="视频生成",
             ),
             NodeSpec(
                 id="wb_human",
@@ -244,6 +249,7 @@ def aigc_video_studio() -> TemplateSpec:
                     plugin_id=PLUGIN_ID,
                     mode="portrait_actor",
                 ),
+                department="数字人",
             ),
             NodeSpec(
                 id="wb_long",
@@ -263,6 +269,7 @@ def aigc_video_studio() -> TemplateSpec:
                     mode="art_director",
                     capabilities=("storyboard", "long_video", "video_concat"),
                 ),
+                department="后期",
             ),
         ),
         edges=(

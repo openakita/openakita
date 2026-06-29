@@ -99,6 +99,7 @@ def content_ops() -> TemplateSpec:
                 label="主编",
                 persona_prompt=_EDITOR_PERSONA,
                 tool_subset=("research", "planning", "memory"),
+                department="编辑部",
             ),
             NodeSpec(
                 id="planner",
@@ -107,6 +108,7 @@ def content_ops() -> TemplateSpec:
                 label="策划编辑",
                 persona_prompt=_PLANNER_PERSONA,
                 tool_subset=("research", "planning", "memory"),
+                department="编辑部",
             ),
             NodeSpec(
                 id="writer_a",
@@ -115,6 +117,7 @@ def content_ops() -> TemplateSpec:
                 label="文案写手A",
                 persona_prompt=_WRITER_A_PERSONA,
                 tool_subset=("research", "filesystem", "memory"),
+                department="创作组",
             ),
             NodeSpec(
                 id="writer_b",
@@ -123,6 +126,7 @@ def content_ops() -> TemplateSpec:
                 label="文案写手B",
                 persona_prompt=_WRITER_B_PERSONA,
                 tool_subset=("research", "filesystem", "memory"),
+                department="创作组",
             ),
             NodeSpec(
                 id="visual",
@@ -131,6 +135,7 @@ def content_ops() -> TemplateSpec:
                 label="视觉设计",
                 persona_prompt=_VISUAL_PERSONA,
                 tool_subset=("browser", "filesystem"),
+                department="创作组",
             ),
             NodeSpec(
                 id="seo_opt",
@@ -139,6 +144,7 @@ def content_ops() -> TemplateSpec:
                 label="SEO 优化师",
                 persona_prompt=_SEO_PERSONA,
                 tool_subset=("research", "memory"),
+                department="运营组",
             ),
             NodeSpec(
                 id="data_analyst",
@@ -147,6 +153,7 @@ def content_ops() -> TemplateSpec:
                 label="数据分析",
                 persona_prompt=_DATA_PERSONA,
                 tool_subset=("research", "memory"),
+                department="运营组",
             ),
         ),
         edges=(

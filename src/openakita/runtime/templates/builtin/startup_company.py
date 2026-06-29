@@ -157,6 +157,7 @@ def startup_company() -> TemplateSpec:
                 label="CEO",
                 persona_prompt=_CEO_PERSONA,
                 tool_subset=director_tools,
+                department="管理层",
             ),
             NodeSpec(
                 id="cto",
@@ -165,6 +166,7 @@ def startup_company() -> TemplateSpec:
                 label="CTO",
                 persona_prompt=_CTO_PERSONA,
                 tool_subset=director_full,
+                department="技术部",
             ),
             NodeSpec(
                 id="architect",
@@ -173,6 +175,7 @@ def startup_company() -> TemplateSpec:
                 label="架构师",
                 persona_prompt=_ARCHITECT_PERSONA,
                 tool_subset=("research", "filesystem", "memory"),
+                department="技术部",
             ),
             NodeSpec(
                 id="dev_a",
@@ -181,6 +184,7 @@ def startup_company() -> TemplateSpec:
                 label="全栈工程师A",
                 persona_prompt=_DEV_A_PERSONA,
                 tool_subset=builder_tools,
+                department="技术部",
             ),
             NodeSpec(
                 id="dev_b",
@@ -189,6 +193,7 @@ def startup_company() -> TemplateSpec:
                 label="全栈工程师B",
                 persona_prompt=_DEV_B_PERSONA,
                 tool_subset=builder_tools,
+                department="技术部",
             ),
             NodeSpec(
                 id="devops",
@@ -197,6 +202,7 @@ def startup_company() -> TemplateSpec:
                 label="DevOps 工程师",
                 persona_prompt=_DEVOPS_PERSONA,
                 tool_subset=builder_tools,
+                department="技术部",
             ),
             NodeSpec(
                 id="cpo",
@@ -205,6 +211,7 @@ def startup_company() -> TemplateSpec:
                 label="CPO",
                 persona_prompt=_CPO_PERSONA,
                 tool_subset=director_tools,
+                department="产品部",
             ),
             NodeSpec(
                 id="pm",
@@ -213,6 +220,7 @@ def startup_company() -> TemplateSpec:
                 label="产品经理",
                 persona_prompt=_PM_PERSONA,
                 tool_subset=("research", "planning", "memory"),
+                department="产品部",
             ),
             NodeSpec(
                 id="ui_designer",
@@ -221,6 +229,7 @@ def startup_company() -> TemplateSpec:
                 label="UI 设计师",
                 persona_prompt=_UI_PERSONA,
                 tool_subset=("browser", "filesystem"),
+                department="产品部",
             ),
             NodeSpec(
                 id="cmo",
@@ -229,6 +238,7 @@ def startup_company() -> TemplateSpec:
                 label="CMO",
                 persona_prompt=_CMO_PERSONA,
                 tool_subset=director_tools,
+                department="市场部",
             ),
             NodeSpec(
                 id="content_op",
@@ -237,6 +247,7 @@ def startup_company() -> TemplateSpec:
                 label="内容运营",
                 persona_prompt=_CONTENT_PERSONA,
                 tool_subset=("research", "filesystem", "memory"),
+                department="市场部",
             ),
             NodeSpec(
                 id="seo",
@@ -245,6 +256,7 @@ def startup_company() -> TemplateSpec:
                 label="SEO 专员",
                 persona_prompt=_SEO_PERSONA,
                 tool_subset=research_only,
+                department="市场部",
             ),
             NodeSpec(
                 id="social_media",
@@ -253,6 +265,7 @@ def startup_company() -> TemplateSpec:
                 label="社媒运营",
                 persona_prompt=_SOCIAL_PERSONA,
                 tool_subset=research_only,
+                department="市场部",
             ),
             NodeSpec(
                 id="cfo",
@@ -261,6 +274,7 @@ def startup_company() -> TemplateSpec:
                 label="CFO",
                 persona_prompt=_CFO_PERSONA,
                 tool_subset=research_only,
+                department="行政支持",
             ),
             NodeSpec(
                 id="hr",
@@ -269,6 +283,7 @@ def startup_company() -> TemplateSpec:
                 label="HR",
                 persona_prompt=_HR_PERSONA,
                 tool_subset=research_only,
+                department="行政支持",
             ),
             NodeSpec(
                 id="legal",
@@ -277,6 +292,7 @@ def startup_company() -> TemplateSpec:
                 label="法务顾问",
                 persona_prompt=_LEGAL_PERSONA,
                 tool_subset=research_only,
+                department="行政支持",
             ),
         ),
         edges=(
