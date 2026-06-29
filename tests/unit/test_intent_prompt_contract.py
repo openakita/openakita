@@ -17,7 +17,6 @@ from openakita.core.intent_analyzer import (
     _try_fast_query_shortcut,
 )
 from openakita.llm.types import (
-    DEFAULT_CONTEXT_WINDOW,
     LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
     EndpointConfig,
 )
@@ -246,13 +245,14 @@ def test_previous_answer_replay_hint_preserves_original_user_request():
 
 
 def test_local_endpoint_missing_context_window_uses_small_model_budget():
-    endpoint = EndpointConfig(
-        name="ollama-qwen3-4b",
-        provider="ollama",
-        api_type="openai",
-        base_url="http://localhost:11434/v1",
-        model="qwen3:4b",
-        context_window=DEFAULT_CONTEXT_WINDOW,
+    endpoint = EndpointConfig.from_dict(
+        {
+            "name": "ollama-qwen3-4b",
+            "provider": "ollama",
+            "api_type": "openai",
+            "base_url": "http://localhost:11434/v1",
+            "model": "qwen3:4b",
+        }
     )
 
     assert endpoint.context_window == LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW

@@ -3,7 +3,12 @@ from types import SimpleNamespace
 from openakita.core.brain import Brain
 from openakita.llm.client import _friendly_error_hint
 from openakita.llm.error_types import FailoverReason
-from openakita.llm.types import LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW, EndpointConfig
+from openakita.llm.types import (
+    DEFAULT_CONTEXT_WINDOW,
+    LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
+    EndpointConfig,
+    normalize_context_window,
+)
 from openakita.tools.handlers.config import ConfigHandler
 
 
@@ -21,7 +26,7 @@ def test_local_endpoint_missing_context_window_uses_small_safe_default():
     assert endpoint.context_window == LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW
 
 
-def test_local_endpoint_legacy_large_default_is_normalized():
+def test_local_endpoint_explicit_default_sized_context_window_is_preserved():
     endpoint = EndpointConfig.from_dict(
         {
             "name": "localai-gemma",
@@ -33,7 +38,22 @@ def test_local_endpoint_legacy_large_default_is_normalized():
         }
     )
 
-    assert endpoint.context_window == LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW
+    assert endpoint.context_window == DEFAULT_CONTEXT_WINDOW
+
+
+def test_local_endpoint_context_normalization_distinguishes_missing_from_explicit_default():
+    assert (
+        normalize_context_window(None, provider="lmstudio", base_url="http://127.0.0.1:1234/v1")
+        == LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW
+    )
+    assert (
+        normalize_context_window(
+            DEFAULT_CONTEXT_WINDOW,
+            provider="lmstudio",
+            base_url="http://127.0.0.1:1234/v1",
+        )
+        == DEFAULT_CONTEXT_WINDOW
+    )
 
 
 def test_local_endpoint_explicit_large_context_window_is_preserved():
