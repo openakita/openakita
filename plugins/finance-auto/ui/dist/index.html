@@ -848,7 +848,7 @@
               <WorkspaceAuditStep orgId={orgId} toast={toast} />
             )}
             {view === "export" && (
-              <ExportPackagePanel orgId={orgId} onGotoImport={() => setView("import")} toast={toast} />
+              <ExportPackagePanel orgId={orgId} period={period} onGotoImport={() => setView("import")} toast={toast} />
             )}
 
             {view === "tool-cashflow" && <CashFlowView orgId={orgId} period={period} toast={toast} />}
@@ -879,6 +879,27 @@
           toast(`已下载 ${filename}`);
         } catch (e) {
           toast(`导出失败：${e.message}`, "err");
+        }
+      }
+
+      // 步骤⑥「一键打包」：把 BS/IS/CF（含汇总/审计页）打成单一多 sheet xlsx。
+      async function downloadReportBundle(orgId, periodId, toast) {
+        try {
+          const resp = await api("GET", `/orgs/${orgId}/report-bundle/export?period_id=${encodeURIComponent(periodId)}&format=xlsx`, null, { raw: true, timeoutMs: 60000 });
+          if (!resp.ok) { const txt = await resp.text(); throw new Error(`${resp.status} · ${txt.slice(0, 200)}`); }
+          const blob = await resp.blob();
+          const disp = resp.headers.get("content-disposition") || "";
+          let filename = `bundle_${periodId}.xlsx`;
+          const m = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+          if (m) filename = decodeURIComponent(m[1]);
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = filename;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1500);
+          toast(`已打包下载 ${filename}`);
+        } catch (e) {
+          toast(`打包导出失败：${e.message}`, "err");
         }
       }
 
@@ -943,19 +964,33 @@
       }
 
       // 步骤 ⑥：导出/打包 —— 每张报表的 xlsx 导出（当前视图 / 完整明细）+ 可追溯再导入。
-      function ExportPackagePanel({ orgId, onGotoImport, toast }) {
+      function ExportPackagePanel({ orgId, period, onGotoImport, toast }) {
         const reports = useFetch(`/orgs/${orgId}/reports`, [orgId]);
         const items = (reports.data && reports.data.reports) || [];
+        // 打包默认用工作台当前期间；若该期间无报表则回退到最新报表的期间。
+        const bundlePeriod = items.some((r) => r.period_id === period)
+          ? period
+          : (items[0] && items[0].period_id) || period;
+        const bundleCount = items.filter((r) => r.period_id === bundlePeriod).length;
         return (
           <>
             <div className="fa-trace-bar">
               <span className="fa-trace-bar__icon"><NavIcon name="workspace" /></span>
-              <span><strong>可追溯导出/导入：</strong>每张表都能导出为 Excel（当前视图或完整明细）。在外部改完后，回到「上传余额表」重新导入修订版，全过程留痕。</span>
+              <span><strong>可追溯导出/导入：</strong>每张表都能导出为 Excel（当前视图或完整明细），也可「一键打包」把资产负债表 / 利润表 / 现金流量表（含汇总审计页）打成单一 Excel。在外部改完后，回到「上传余额表」重新导入修订版，全过程留痕。</span>
               <span className="spacer" />
               <button className="oa-btn" onClick={onGotoImport}>重新导入修改版 →</button>
             </div>
             <div className="oa-card">
-              <h3>导出报表（{items.length}）</h3>
+              <div className="oa-row" style={{ justifyContent: "space-between", alignItems: "center", margin: 0 }}>
+                <h3 style={{ margin: 0 }}>导出报表（{items.length}）</h3>
+                <button
+                  className="oa-btn oa-btn-primary"
+                  onClick={() => downloadReportBundle(orgId, bundlePeriod, toast)}
+                  disabled={bundleCount === 0}
+                  title={bundleCount === 0 ? "当前期间还没有报表可打包" : `打包 ${bundlePeriod} 期间的全部主表`}
+                  data-testid="export-bundle"
+                >一键打包（{bundlePeriod} · {bundleCount} 张）</button>
+              </div>
               {reports.loading && <div className="oa-thinking"><span className="dot" /><span className="dot" /><span className="dot" /> 加载中</div>}
               {!reports.loading && items.length === 0 && <p>还没有报表可导出，先到「生成报表」步骤。</p>}
               {items.map((r) => (

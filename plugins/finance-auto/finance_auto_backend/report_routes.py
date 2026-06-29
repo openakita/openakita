@@ -22,8 +22,10 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
+
+from .rbac import require_permission
 
 from .config.yaml_loader import LoadedTemplate, load_template
 from .models import (
@@ -295,19 +297,16 @@ def _row_to_cell(row: Any) -> ReportCell:
 # ---------------------------------------------------------------------------
 
 
-def _build_workbook(template: LoadedTemplate, instance: ReportInstance,
-                    cells: list[ReportCell]) -> Path:
-    import openpyxl
+def _render_report_sheet(
+    ws, template: LoadedTemplate, instance: ReportInstance,
+    cells: list[ReportCell],
+) -> None:
+    """Lay one report (header + cell rows) onto an openpyxl worksheet.
+
+    Extracted from ``_build_workbook`` so the single-report export and the
+    multi-sheet bundle export share byte-identical formatting.
+    """
     from openpyxl.styles import Alignment, Font, PatternFill
-
-    fd, name = tempfile.mkstemp(suffix=".xlsx", prefix="finauto_report_")
-    import os as _os
-    _os.close(fd)
-    out = Path(name)
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = template.sheet_kind[:31]
 
     title = (
         f"{template.name} - {instance.period_id} "
@@ -366,6 +365,93 @@ def _build_workbook(template: LoadedTemplate, instance: ReportInstance,
     ws.column_dimensions["B"].width = 16
     ws.column_dimensions["C"].width = 16
     ws.column_dimensions["D"].width = 40
+
+
+def _build_workbook(template: LoadedTemplate, instance: ReportInstance,
+                    cells: list[ReportCell]) -> Path:
+    import openpyxl
+
+    fd, name = tempfile.mkstemp(suffix=".xlsx", prefix="finauto_report_")
+    import os as _os
+    _os.close(fd)
+    out = Path(name)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = template.sheet_kind[:31]
+    _render_report_sheet(ws, template, instance, cells)
+    wb.save(str(out))
+    wb.close()
+    return out
+
+
+# Stable sheet-name labels for the one-click bundle (Excel caps at 31 chars).
+_BUNDLE_SHEET_TITLES = {
+    "balance_sheet": "资产负债表",
+    "income_statement": "利润表",
+    "cash_flow": "现金流量表",
+}
+
+
+def _build_bundle_workbook(
+    org_name: str,
+    period_id: str,
+    sections: list[tuple[LoadedTemplate, ReportInstance, list[ReportCell]]],
+) -> Path:
+    """Pack BS / IS / CF (plus a cover + audit summary) into one workbook.
+
+    ``sections`` is an ordered list of ``(template, instance, cells)``; one
+    worksheet is produced per section reusing :func:`_render_report_sheet`,
+    preceded by a cover sheet that doubles as the audit summary (per-report
+    status, cell count, and any generation warnings).
+    """
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    fd, name = tempfile.mkstemp(suffix=".xlsx", prefix="finauto_bundle_")
+    import os as _os
+    _os.close(fd)
+    out = Path(name)
+
+    wb = openpyxl.Workbook()
+    cover = wb.active
+    cover.title = "汇总"
+    cover["A1"] = f"{org_name} · {period_id} · 财务报表汇总"
+    cover["A1"].font = Font(bold=True, size=14)
+    hdr = ["报表", "准则", "状态", "行数", "生成时间", "提示/警告"]
+    for i, h in enumerate(hdr, start=1):
+        c = cover.cell(row=3, column=i, value=h)
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor="DDEBF7")
+    r = 4
+    used_titles: set[str] = set()
+    for template, instance, cells in sections:
+        base = _BUNDLE_SHEET_TITLES.get(instance.sheet_kind, instance.sheet_kind)
+        sheet_title = base[:31]
+        # Guard against duplicate sheet names (e.g. two of the same kind).
+        suffix = 2
+        while sheet_title in used_titles:
+            sheet_title = f"{base[:28]}_{suffix}"
+            suffix += 1
+        used_titles.add(sheet_title)
+
+        cover.cell(row=r, column=1, value=base)
+        cover.cell(row=r, column=2, value=instance.accounting_standard)
+        cover.cell(row=r, column=3, value=instance.status or "ok")
+        cover.cell(row=r, column=4, value=instance.cell_count or len(cells))
+        cover.cell(row=r, column=5, value=instance.generated_at or "")
+        cover.cell(row=r, column=6, value="; ".join(instance.warnings or []) or "—")
+        r += 1
+
+        ws = wb.create_sheet(title=sheet_title)
+        _render_report_sheet(ws, template, instance, cells)
+
+    cover.column_dimensions["A"].width = 16
+    cover.column_dimensions["B"].width = 18
+    cover.column_dimensions["C"].width = 10
+    cover.column_dimensions["D"].width = 8
+    cover.column_dimensions["E"].width = 22
+    cover.column_dimensions["F"].width = 50
     wb.save(str(out))
     wb.close()
     return out
@@ -379,6 +465,78 @@ def _build_workbook(template: LoadedTemplate, instance: ReportInstance,
 def register_report_endpoints(
     router: APIRouter, service: FinanceAutoService
 ) -> None:
+    @router.get(
+        "/orgs/{org_id}/report-bundle/export",
+        summary="一键打包导出：BS/IS/CF（含汇总/审计）为单一多 sheet xlsx",
+        response_class=FileResponse,
+    )
+    async def export_report_bundle(
+        org_id: str,
+        period_id: str = Query(..., description="结账期间，如 2025-FY"),
+        format: str = Query(default="xlsx", pattern="^(xlsx)$"),
+        _user: str = Depends(require_permission("report", "read")),
+    ) -> FileResponse:
+        org = await service.get_org(org_id)
+        # Gather every report for (org, period); keep the most recent of
+        # each kind so the bundle holds at most one BS / IS / CF sheet.
+        async with service.db.conn.execute(
+            "SELECT * FROM reports WHERE org_id=? AND period_id=? "
+            "ORDER BY generated_at DESC",
+            (org_id, period_id),
+        ) as cur:
+            rows = await cur.fetchall()
+        latest_by_kind: dict[str, Any] = {}
+        for row in rows:
+            kind = row["sheet_kind"]
+            if kind not in latest_by_kind:
+                latest_by_kind[kind] = row
+        if not latest_by_kind:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no generated reports for org={org_id} period={period_id}; "
+                    "generate the statements first"
+                ),
+            )
+
+        # Stable BS → IS → CF ordering, with any other kinds appended.
+        kind_order = ["balance_sheet", "income_statement", "cash_flow"]
+        ordered_kinds = [k for k in kind_order if k in latest_by_kind]
+        ordered_kinds += [k for k in latest_by_kind if k not in kind_order]
+
+        sections: list[tuple[LoadedTemplate, ReportInstance, list[ReportCell]]] = []
+        for kind in ordered_kinds:
+            row = latest_by_kind[kind]
+            instance = _row_to_report(row)
+            async with service.db.conn.execute(
+                "SELECT * FROM report_cells WHERE report_id=? "
+                "ORDER BY target_line_no ASC",
+                (instance.id,),
+            ) as cur:
+                cell_rows = await cur.fetchall()
+            cells = [_row_to_cell(c) for c in cell_rows]
+            template = load_template(
+                _resolve_template_path(
+                    instance.sheet_kind, instance.accounting_standard
+                )
+            )
+            sections.append((template, instance, cells))
+
+        out_path = _build_bundle_workbook(
+            org_name=org.name or org_id,
+            period_id=period_id,
+            sections=sections,
+        )
+        safe_org = (org.code or org_id)[-12:]
+        filename = f"bundle_{safe_org}_{period_id}.xlsx"
+        return FileResponse(
+            str(out_path),
+            media_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            filename=filename,
+        )
+
     @router.post(
         "/orgs/{org_id}/reports/{kind}/generate",
         status_code=201,
