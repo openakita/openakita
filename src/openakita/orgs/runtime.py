@@ -1296,14 +1296,32 @@ class OrgRuntime:
                     },
                 )
             elif event_name in ("agent_run_finished", "agent_run_failed", "agent_run_cancelled") and node_id:
-                try:
-                    await self._node_lifecycle.set_node_status(org_id, node_id, "idle")
-                except Exception:  # noqa: BLE001
-                    pass
-                await self._broadcast_ws_safe(
-                    "org:node_status",
-                    {"org_id": org_id, "node_id": node_id, "status": "idle"},
-                )
+                # Root-node completion semantics: the level-0 root/主编 orchestrates
+                # the WHOLE command across multiple supervisor turns (它先派单、下游
+                # 逐级回流、最后整合汇报). Its FIRST agent_run_finished is NOT the end
+                # of the command -- the supervisor may run more turns (integration /
+                # final synthesis) afterwards. Idling the root here made the node
+                # graph show 主编"空闲/已完成" while下级仍在工作 (与设计不符). Keep the
+                # root "busy/进行中" until the command actually converges; the
+                # authoritative idle is applied once by ``_reset_busy_nodes_to_idle``
+                # from :meth:`emit_command_done`. Non-root nodes idle as before.
+                is_root_node = False
+                if event_name == "agent_run_finished":
+                    try:
+                        org = self.get_org(org_id)
+                        node = org.get_node(node_id) if org is not None else None
+                        is_root_node = node is not None and getattr(node, "level", None) == 0
+                    except Exception:  # noqa: BLE001
+                        is_root_node = False
+                if not is_root_node:
+                    try:
+                        await self._node_lifecycle.set_node_status(org_id, node_id, "idle")
+                    except Exception:  # noqa: BLE001
+                        pass
+                    await self._broadcast_ws_safe(
+                        "org:node_status",
+                        {"org_id": org_id, "node_id": node_id, "status": "idle"},
+                    )
                 if event_name == "agent_run_finished":
                     finished_incomplete = bool(payload.get("incomplete"))
                     await self._broadcast_ws_safe(
