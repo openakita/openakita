@@ -1514,33 +1514,19 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     const activity = { last: Date.now() };
     let lastBlockerSummary = "";
 
-    // P8.2: 30s 内复用 done segment，避免 wb-hh-* 节点 busy → idle → busy
-    // 频繁切换时把一条任务被切成多个碎片。done 之后第一次再 busy 起来
-    // 通常是上游的 fan-out 通知（如 task_accepted 后跟一条 workbench_tool
-    // 重启），保留在同一 segment 里更可读。超过 SEG_REUSE_AFTER_DONE_MS
-    // 还有新 busy 才认为是一段全新的工作。
-    const SEG_REUSE_AFTER_DONE_MS = 30_000;
-
-    function findOrCreateSeg(nodeId: string): TimelineSegment {
-      const idx = activeSegIdx.get(nodeId);
-      if (idx != null) {
-        const cur = segments[idx];
-        if (!cur.done) return cur;
-        const sinceDone = Date.now() - (cur.doneAt ?? 0);
-        if (sinceDone <= SEG_REUSE_AFTER_DONE_MS) {
-          // P9.2: 复用 segment 时把上一轮的失败状态一并重置，否则
-          // 节点先失败（max_iterations / timeout）再重启成功的场景下
-          // segment 会一直顶着红色的 ⚠ 和默认展开，掩盖最终成功结果。
-          cur.done = false;
-          cur.doneAt = undefined;
-          cur.failed = false;
-          cur.exitReason = undefined;
-          cur.diagnosis = undefined;
-          cur.resultPreview = undefined;
-          cur.paused = undefined;
-          return cur;
-        }
-      }
+    // Task B: node 忙/闲的唯一真源是 ``org:node_status``。segment 的开合必须
+    // 与编排图节点状态 1:1。历史上有两处启发式会让"已 idle 的节点"在指挥台
+    // 里被重新点亮成"进行中"，与编排图不符：
+    //   1) 30s 内复用 done segment（SEG_REUSE_AFTER_DONE_MS）；
+    //   2) 审阅/blackboard/工具等非状态事件走 findOrCreateSeg 时，若上一段已
+    //      done 就重开一段。
+    // 现在拆成两条严格路径：
+    //   * ``openBusySeg`` —— 只由 ``org:node_status=busy``（以及 error）调用，
+    //     是唯一可以"开/续"一个节点段的入口。绝不复用已 done 的段：idle 之后
+    //     再次 busy 一律开新段（= 编排图里节点重新变忙）。
+    //   * ``activeSeg`` —— 返回该节点当前**未收口**的段，没有则返回 null。所有
+    //     非状态事件只能往它补充内容；节点已 idle（null）时直接丢弃，绝不重开。
+    function newSeg(nodeId: string): TimelineSegment {
       const seg: TimelineSegment = {
         nodeId,
         nodeName: nn(nodeId),
@@ -1553,6 +1539,63 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       segments.push(seg);
       activeSegIdx.set(nodeId, segments.length - 1);
       return seg;
+    }
+
+    function openBusySeg(nodeId: string): TimelineSegment {
+      const idx = activeSegIdx.get(nodeId);
+      if (idx != null) {
+        const cur = segments[idx];
+        if (!cur.done) return cur; // 仍在忙 → 续用当前打开的段
+        // 已 done → 不复用、不重开；一次全新的 busy 开一段全新的工作。
+      }
+      return newSeg(nodeId);
+    }
+
+    // system 层通知（阻塞/长时间运行/空闲提醒）不是编排图节点，不受
+    // node_status 契约约束，保留单段复用。
+    function findOrCreateSystemSeg(): TimelineSegment {
+      const idx = activeSegIdx.get("system");
+      if (idx != null && segments[idx]) return segments[idx];
+      return newSeg("system");
+    }
+
+    // 该节点当前"进行中"（未收口）的段；节点空闲时返回 null。
+    function activeSeg(nodeId: string): TimelineSegment | null {
+      const idx = activeSegIdx.get(nodeId);
+      if (idx == null) return null;
+      const seg = segments[idx];
+      return seg && !seg.done ? seg : null;
+    }
+
+    // 强制收口某节点所有未收口的段（idle/error 的权威信号）。
+    function closeNodeSegs(
+      nodeId: string,
+      mut: (seg: TimelineSegment) => void,
+    ): boolean {
+      let acted = false;
+      for (const seg of segments) {
+        if (seg.nodeId === nodeId && !seg.done) {
+          mut(seg);
+          acted = true;
+        }
+      }
+      return acted;
+    }
+
+    // 文件类交付物补充：优先并入当前打开的段；节点已 idle 时并入它最近的
+    // （已 done 的）段但**不重开**该段，从而既保留可下载/预览附件，又不会让
+    // 已空闲节点在指挥台里错误地重新显示为"进行中"。
+    function supplementFile(
+      nodeId: string,
+      file: FileAttachment,
+    ): { seg: TimelineSegment | null; added: boolean } {
+      let seg = activeSeg(nodeId);
+      if (!seg) {
+        const idx = activeSegIdx.get(nodeId);
+        seg = idx != null ? segments[idx] : null;
+      }
+      if (!seg) return { seg: null, added: false };
+      return { seg, added: pushSegFile(seg, file) };
     }
 
     // 进度行去重：相邻同内容、且与上一次 push 间隔 < 1s 视为重复事件，跳过。
@@ -1665,44 +1708,54 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       if (event === "org:node_status") {
         const st = d.status as string;
         if (st === "busy") {
+          // 唯一可以"开/续"节点段的入口。
           const task = (d.current_task || "") as string;
           if (task.startsWith(t("org.chat.notification"))) return;
-          const seg = findOrCreateSeg(nid);
+          const seg = openBusySeg(nid);
           if (pushSegLine(seg, `${t("org.chat.startProcessing", { name: `**${nn(nid)}**` })}${task ? `: ${task}` : ""}`)) {
             updatePreview();
           }
         } else if (st === "idle") {
+          // 权威收口：强制关闭该节点所有未收口的段（正常只有一段）。
           const exitReason = (d.exit_reason as string) || "normal";
-          const idx = activeSegIdx.get(nid);
-          if (idx != null && segments[idx]) {
-            const seg = segments[idx];
+          const soft = isSoftOrgExitReason(exitReason);
+          closeNodeSegs(nid, seg => {
             seg.done = true; seg.doneAt = Date.now();
             seg.exitReason = exitReason;
             // 软退出在用户界面按完成/等待处理；真正异常交给后续事件显示极简状态。
-            if (isSoftOrgExitReason(exitReason)) {
+            if (soft) {
               seg.failed = false;
               pushSegLine(seg, t("org.chat.completed", { name: `**${nn(nid)}**` }));
             } else {
               seg.failed = true;
             }
-          }
+          });
           updatePreview();
         } else if (st === "error") {
-          const seg = findOrCreateSeg(nid);
-          seg.done = true; seg.doneAt = Date.now();
-          pushSegLine(seg, t("org.chat.errored", { name: `**${nn(nid)}**` }));
+          // error 同属状态事件：收口未收口段；若该节点没有已打开的段，则开一段
+          // 用于呈现失败（这是唯一允许 error 开段的场景）。
+          const acted = closeNodeSegs(nid, seg => {
+            seg.done = true; seg.doneAt = Date.now();
+            pushSegLine(seg, t("org.chat.errored", { name: `**${nn(nid)}**` }));
+          });
+          if (!acted) {
+            const seg = openBusySeg(nid);
+            seg.done = true; seg.doneAt = Date.now();
+            pushSegLine(seg, t("org.chat.errored", { name: `**${nn(nid)}**` }));
+          }
           updatePreview();
         }
       } else if (event === "org:task_delegated") {
+        // 非状态事件：只能补充到该节点当前打开的段；已 idle 则丢弃，不重开。
         const task = ((d.task || "") as string);
-        const seg = findOrCreateSeg(nid);
-        if (pushSegLine(seg, t("org.chat.taskAssigned", { from: `**${nn(nid)}**`, to: `**${nn(toN)}**`, task }))) {
+        const seg = activeSeg(nid);
+        if (seg && pushSegLine(seg, t("org.chat.taskAssigned", { from: `**${nn(nid)}**`, to: `**${nn(toN)}**`, task }))) {
           updatePreview();
         }
       } else if (event === "org:task_delivered") {
         const summary = ((d.summary || "") as string);
-        const seg = findOrCreateSeg(nid);
-        if (pushSegLine(seg, `${t("org.chat.delivered", { name: `**${nn(nid)}**` })}${summary ? `: ${summary}` : ""}`)) {
+        const seg = activeSeg(nid);
+        if (seg && pushSegLine(seg, `${t("org.chat.delivered", { name: `**${nn(nid)}**` })}${summary ? `: ${summary}` : ""}`)) {
           updatePreview();
         }
       } else if (event === "org:task_complete") {
@@ -1780,15 +1833,23 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const fpath = (d.file_path || d.path) as string | undefined;
         const fsize = (d.file_size ?? d.size) as number | undefined;
         if (mt === "resource" && fname && fpath) {
-          const seg = findOrCreateSeg(nid);
-          const added = pushSegFile(seg, { filename: fname, file_path: fpath, file_size: fsize });
-          if (added) {
-            pushSegLine(seg, t("org.chat.fileOutput", { name: `**${nn(nid)}**`, file: fname }));
+          // 交付物：并入打开的段（含提示行）；节点已 idle 时并入其最近的已 done
+          // 段以保留附件，但不重开该段、不新增"进行中"行。
+          const { seg, added } = supplementFile(nid, {
+            filename: fname,
+            file_path: fpath,
+            file_size: fsize,
+          });
+          if (seg && added) {
+            if (!seg.done) {
+              pushSegLine(seg, t("org.chat.fileOutput", { name: `**${nn(nid)}**`, file: fname }));
+            }
             updatePreview();
           }
         } else {
-          const seg = findOrCreateSeg(nid);
-          if (pushSegLine(seg, t("org.chat.blackboardUpdate", { name: `**${nn(nid)}**` }))) {
+          // 纯 blackboard 更新是非状态事件：只补充打开的段，已 idle 则丢弃。
+          const seg = activeSeg(nid);
+          if (seg && pushSegLine(seg, t("org.chat.blackboardUpdate", { name: `**${nn(nid)}**` }))) {
             updatePreview();
           }
         }
@@ -1797,7 +1858,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const minutes = Math.floor(idle / 60);
         const sec = idle % 60;
         const idleStr = minutes > 0 ? t("org.chat.idleMinSec", { m: minutes, s: sec }) : t("org.chat.idleSec", { s: sec });
-        const seg = findOrCreateSeg("system");
+        const seg = findOrCreateSystemSeg();
         if (pushSegLine(
           seg,
           t("org.chat.orgIdle", { duration: idleStr }),
@@ -1818,7 +1879,9 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           return;
         }
         wbToolStatusDedupe.set(wbKey, now);
-        const seg = findOrCreateSeg(nid);
+        // 工具事件是非状态事件：只能补充到当前打开的段；已 idle 则丢弃，不重开。
+        const seg = activeSeg(nid);
+        if (!seg) return;
         const line =
           status === "running"
             ? t("org.chat.workbenchToolRunning", { tool: toolName })
@@ -2014,7 +2077,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
             const pd = await poll.json();
             if (pd.status === "running" && typeof pd.blocker_summary === "string" && pd.blocker_summary.trim()) {
               const blockerSummary = pd.blocker_summary.trim();
-              const seg = findOrCreateSeg("system");
+              const seg = findOrCreateSystemSeg();
               const line = t("org.chat.commandBlocker", { reason: blockerSummary });
               if (blockerSummary !== lastBlockerSummary && pushSegLine(seg, line)) {
                 lastBlockerSummary = blockerSummary;
@@ -2040,7 +2103,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
             const min = Math.floor(elapsed / 60);
             const sec = elapsed % 60;
             const timeStr = min > 0 ? t("org.chat.idleMinSec", { m: min, s: sec }) : t("org.chat.idleSec", { s: sec });
-            const seg = findOrCreateSeg("system");
+            const seg = findOrCreateSystemSeg();
             seg.lines = [`... ${t("org.chat.longRunning", { duration: timeStr })} ...`];
             updatePreview();
           }
