@@ -926,6 +926,18 @@ export function OrgEditorView({
     }
   }, [selectedOrgId, visible, fetchOrg]);
 
+  // Auto-close the "节点详情" (node detail) sidebar whenever the user leaves the
+  // 编排 (canvas) view for the 项目/看板 tabs, or switches to a different org.
+  // The detail panel only makes sense over the canvas; leaving it open while
+  // the center switches to the project board / dashboard (or another org) is
+  // stale UI. Keyed on viewMode + selectedOrgId only, so selecting a node on
+  // the canvas is unaffected (selectedNodeId is not a dependency here).
+  useEffect(() => {
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    setShowNodeChat(false);
+  }, [viewMode, selectedOrgId]);
+
 
   // ── WebSocket for real-time org events ──
 
