@@ -582,6 +582,22 @@ thinking turn. This is the cost guard the roadmap required before
 lifting :data:`MAX_TOOL_ROUNDS` above 1."""
 
 
+MAX_LLM_CALL_S = _env_int("OPENAKITA_ORG_NODE_LLM_CALL_TIMEOUT_S", 240, lo=0, hi=1800)
+"""Per-brain-call wall-clock cap inside the node ReAct loop (seconds).
+
+test13 RCA fix (a).2: the leaf node activation cap
+(:data:`_runtime_agent_pipeline_executor._NODE_TIMEOUT_DEFAULT` = 420s) is
+calibrated to the WORST-CASE HEALTHY leaf (up to :data:`MAX_TOOL_ROUNDS` rounds,
+each an LLM call + a possibly-slow ``web_fetch``), so lowering it globally would
+kill legitimate slow-but-progressing research leaves. writer-b did NOT exhaust
+that healthy budget -- a SINGLE ``messages_create_async`` hung after the
+truncated ``write_file`` and ate the whole remaining node budget. This cap is the
+precise "no-progress" backstop: it bounds ONE brain call so a hung provider call
+fails the node fast (≈4min) and returns budget to the root finalization, without
+touching the healthy multi-round path. Generous by design (a real single node
+call never legitimately runs this long); ``0`` disables it and env overrides it."""
+
+
 MAX_SEARCH_CALLS = _env_int("OPENAKITA_ORG_MAX_SEARCH_CALLS", 6, lo=1, hi=40)
 """Per-activation cap on *retrieval* tool calls (``web_search`` /
 ``news_search``).
@@ -943,6 +959,51 @@ async def execute_node_tool(
         },
     )
 
+    # test13 fix (a): the LLM's tool-call argument JSON was truncated by the
+    # provider, so ``convert_tool_calls_from_openai`` injected ``__parse_error__``
+    # into the input instead of the real ``path`` / ``content``. Running the
+    # handler with that broken input silently mis-executes (writer-b's病根: the
+    # write never happened, the node then ground on to the 420s hard timeout).
+    # Short-circuit HERE with a crisp, actionable directive so the model
+    # self-corrects WITHIN its ReAct budget -- switch to chunked append_file /
+    # smaller single-write bodies -- instead of hanging. Surfaced as an error
+    # tool_result (is_error=True) so the model treats it as a failed call to fix.
+    from openakita.llm.converters.tools import PARSE_ERROR_KEY
+
+    if isinstance(tool_input, Mapping) and PARSE_ERROR_KEY in tool_input:
+        original = str(tool_input.get(PARSE_ERROR_KEY) or "").strip()
+        directive = (
+            f"[工具 `{tool_name}` 调用失败：参数 JSON 被模型输出/接口截断，未能解析出有效参数"
+            "（如 path/content 丢失或不完整），本次调用未执行、文件未写入。\n"
+            "请立即改用【分段小写入】策略，不要重复整段大参数调用：\n"
+            "1) 先用 write_file 写入开头部分（单次 content 控制在 6000 字符以内）；\n"
+            "2) 再用 append_file 多次续写后续内容（每次 content 同样 < 6000 字符），"
+            "直到全文写完；\n"
+            "3) 切勿把超长正文一次性塞进单个工具参数，否则会再次被截断。]"
+        )
+        if original:
+            directive = f"{directive}\n[底层解析器提示]{original}"
+        await _safe_emit(
+            emit,
+            "node_tool_failed",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                "reason": "arg_parse_truncated",
+            },
+        )
+        _LOGGER.warning(
+            "[node-tool] fast-failed %s: truncated arg JSON (__parse_error__) "
+            "(org=%s node=%s cmd=%s) -- returning append_file directive",
+            tool_name,
+            org_id,
+            node_id,
+            command_id,
+        )
+        return (directive, True)
+
     # Isolation guard: block write-class tools whose target escapes into the
     # OpenAkita source tree (the "stray tool_handler.py" pollution incident).
     violation = _guarded_write_violation(tool_name, tool_input)
@@ -1195,15 +1256,38 @@ async def run_with_tools(
     async def _call_brain(turn_messages: list[dict[str, Any]], *, with_tools: bool) -> Any:
         # Subsequent turns prefer the test hook so fixtures can capture
         # the spliced tool_result history. The hook ignores the
-        # tools/system kwargs (it stubs the LLM entirely).
+        # tools/system kwargs (it stubs the LLM entirely) and is never
+        # time-boxed (it is a synchronous stub, not a live provider call).
         if second_round_caller is not None and len(turn_messages) > 1:
             return await second_round_caller(turn_messages)
-        return await brain.messages_create_async(
+        call = brain.messages_create_async(
             messages=turn_messages,
             system=system_prompt,
             tools=tools if with_tools else [],
             cancel_event=cancel_event,
         )
+        # test13 fix (a).2: bound ONE brain call so a hung provider request
+        # cannot silently consume the whole node activation budget. On timeout
+        # we raise a plain RuntimeError (NOT TimeoutError, which the executor
+        # would mis-attribute to the node-level activation cap) so the executor
+        # surfaces an accurate ``agent_run_failed`` and moves on fast.
+        if MAX_LLM_CALL_S <= 0:
+            return await call
+        try:
+            return await asyncio.wait_for(call, timeout=MAX_LLM_CALL_S)
+        except TimeoutError as exc:
+            _LOGGER.warning(
+                "[node-tool] brain call exceeded %ss (org=%s node=%s cmd=%s); "
+                "failing node fast to free budget",
+                MAX_LLM_CALL_S,
+                org_id,
+                node_id,
+                command_id,
+            )
+            raise RuntimeError(
+                f"node LLM call exceeded {MAX_LLM_CALL_S}s (likely a hung provider "
+                "request); failing this node so the org can continue"
+            ) from exc
 
     rounds = 0
     total_tool_calls = 0

@@ -234,6 +234,69 @@ async def test_execute_node_tool_appends_into_per_command_workspace(
 
 
 # ---------------------------------------------------------------------------
+# 4b) Truncated tool-arg fast-fail + per-brain-call timeout (test13 fix a)
+# ---------------------------------------------------------------------------
+
+
+async def test_execute_node_tool_fast_fails_on_truncated_write_args(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # writer-b病根: the write_file arg JSON was truncated -> __parse_error__.
+    # The handler must NOT run with that broken input; instead we return a crisp
+    # append_file directive so the model self-corrects within its ReAct budget.
+    import openakita.orgs._runtime_node_tools as nt
+    from openakita.llm.converters.tools import PARSE_ERROR_KEY
+    from openakita.tools.handlers import default_handler_registry
+
+    calls = {"n": 0}
+
+    async def _boom(name: str, inp: dict[str, Any]) -> str:
+        calls["n"] += 1
+        return "should never run"
+
+    monkeypatch.setattr(default_handler_registry, "execute_by_tool", _boom)
+    text, is_error = await nt.execute_node_tool(
+        tool_name="write_file",
+        tool_input={PARSE_ERROR_KEY: "⚠️ 你的 write_file 调用因内容过长被 API 截断"},
+        org_id="o",
+        node_id="writer-b",
+        command_id="c",
+        tool_host=None,
+    )
+    assert is_error is True
+    assert "append_file" in text
+    # the broken input never reached the handler (no phantom mis-execution)
+    assert calls["n"] == 0
+
+
+async def test_run_with_tools_fails_fast_on_hung_brain_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A single hung provider call must fail the node fast (RuntimeError) rather
+    # than silently consuming the whole node activation budget to the 420s cap.
+    import asyncio
+
+    import openakita.orgs._runtime_node_tools as nt
+
+    monkeypatch.setattr(nt, "MAX_LLM_CALL_S", 1)
+
+    class _HangBrain:
+        async def messages_create_async(self, **_kw: Any) -> Any:
+            await asyncio.sleep(30)  # never returns before the 1s cap
+
+    with pytest.raises(RuntimeError, match="hung provider"):
+        await nt.run_with_tools(
+            brain=_HangBrain(),
+            system_prompt="s",
+            user_content="u",
+            tools=[{"name": "write_file", "description": "", "input_schema": {}}],
+            org_id="o",
+            node_id="writer-b",
+            command_id="c",
+        )
+
+
+# ---------------------------------------------------------------------------
 # 5) Node graceful degradation on content-moderation rejection (data-analyst ①)
 # ---------------------------------------------------------------------------
 
