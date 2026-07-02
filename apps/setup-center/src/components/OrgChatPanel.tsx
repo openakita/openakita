@@ -866,20 +866,24 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         case "node_tool_failed": {
           speaker = nameOf(node);
           const failReason = (p.reason as string) || "";
-          // test16 "进展缓慢" 收敛: a benign resource cap is NOT a stall. When a
-          // node's web_search hits ``search_budget_reached`` it has gathered
-          // enough and moves straight to composing its deliverable -- flagging
-          // is_progress_being_made=false there made the timeline read "进展缓慢"
-          // at the exact moment the node was most productive (data-analyst 成文期
-          // 被误判). Treat known-benign caps as an informational notice that keeps
-          // progress, so only genuine tool errors surface as a stall.
+          // test17 "进展缓慢"/自动折叠 收敛: a SINGLE tool failure during an
+          // otherwise-active node is normal execution churn, NOT a stall. A
+          // failed read_file / web_fetch / web_search / list_directory (a bad
+          // path, a 404, a search-budget cap, a flaky network read) is something
+          // the node routinely recovers from -- it retries, adapts, or moves on
+          // to compose its deliverable. Marking is_progress_being_made=false
+          // here flipped the node's segment to status="stall", which BOTH
+          // rendered "进展缓慢" AND (because a stalled segment is no longer
+          // "running") collapsed the in-flight process log to a single line --
+          // exactly the false report the user saw during read_file / 联网检索.
+          // Keep the node "进行中" (progress stays true) and surface the failure
+          // as an informational line in the expanded body; only a NODE-level
+          // failure (agent_run_failed) or escalation is a genuine stall/error.
           if (failReason === "search_budget_reached") {
             note = `ℹ 工具 \`${toolName || "?"}\` 检索预算已用尽，转入基于已获取信息成文`;
-            phase = "active";
-            break;
+          } else {
+            note = `⚠ 工具 \`${toolName || "?"}\` 失败${failReason ? `（${failReason}）` : ""}，节点将重试或改用其他方式`;
           }
-          note = `⚠ 工具 \`${toolName || "?"}\` 失败${failReason ? `（${failReason}）` : ""}`;
-          progress = false;
           phase = "active";
         }
           break;

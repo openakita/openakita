@@ -239,4 +239,40 @@ describe("ProgressLedgerTimeline", () => {
     expect(screen.getByText("globalNode")).toBeInTheDocument();
     expect(screen.getByText("cmdNode")).toBeInTheDocument();
   });
+
+  // test17 图2: a running node that is actively calling tools stays 进行中 AND
+  // stays expanded -- its process lines must NOT collapse to a single line just
+  // because a tool call happened. Only real stalls/terminal steps collapse.
+  it("keeps a running tool-active node expanded and 进行中 (no premature collapse)", () => {
+    const mk = (
+      id: string,
+      phase: ProgressLedgerEvent["phase"],
+      instruction: string,
+    ): ProgressLedgerEvent => ({
+      id,
+      ts: `${1000 + Number(id)}`,
+      is_request_satisfied: false,
+      is_in_loop: false,
+      is_progress_being_made: true,
+      next_speaker: "data-analyst",
+      instruction_or_question: instruction,
+      nodeId: "data-analyst",
+      phase,
+      commandId: "cmd_1",
+    });
+    const events: ProgressLedgerEvent[] = [
+      mk("1", "start", "开始执行：调研 AI 沙龙"),
+      mk("2", "active", "🛠 调用工具 `read_file`：report.md"),
+      mk("3", "active", "⚠ 工具 `web_fetch` 失败（network timeout），节点将重试或改用其他方式"),
+    ];
+    render(<ProgressLedgerTimeline events={events} running={true} />);
+    // The node reads 进行中, never 进展缓慢.
+    expect(screen.getByText("进行中")).toBeInTheDocument();
+    expect(screen.queryByText("进展缓慢")).toBeNull();
+    // Expanded: EVERY process line is visible (not collapsed to a one-line
+    // summary), so a mid-run tool call does not hide the ongoing work.
+    expect(screen.getByText(/调用工具/)).toBeInTheDocument();
+    expect(screen.getByText(/开始执行/)).toBeInTheDocument();
+    expect(screen.getByText(/web_fetch/)).toBeInTheDocument();
+  });
 });
