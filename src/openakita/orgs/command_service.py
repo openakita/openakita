@@ -101,6 +101,30 @@ def _looks_like_kickoff_text(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# test17 Task2 -- lightweight, budget-capped org history context.
+#
+# When a NEW command starts, the supervisor/root gets NO memory of what the
+# organization already handled, so a follow-up like "再补一版" or "把上次的
+# 方案改成…" lands with zero context. We inject a compact digest of the most
+# recent prior commands (each command's user instruction + the root node's
+# FINAL summary) as background. Aggressive budget control keeps the prompt from
+# bloating: at most a few commands, each field head-truncated, with a hard total
+# cap. Source = the persisted per-org event store (survives restarts), not the
+# in-memory ``_commands`` map (which is purged).
+# ---------------------------------------------------------------------------
+ORG_HISTORY_MAX_COMMANDS = 3
+ORG_HISTORY_INSTRUCTION_CHARS = 160
+ORG_HISTORY_SUMMARY_CHARS = 400
+ORG_HISTORY_TOTAL_CHARS = 2000
+
+
+def _clip(text: str, limit: int) -> str:
+    """Head-truncate ``text`` to ``limit`` chars with an ellipsis marker."""
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
+# ---------------------------------------------------------------------------
 # Public service Protocol
 # ---------------------------------------------------------------------------
 
@@ -721,6 +745,21 @@ class OrgCommandService:
                 ensure_proj(request.org_id, command_id, root_node_id, request.content or "")
         except Exception:  # noqa: BLE001
             pass
+
+        # test17 Task2: prepend a lightweight, budget-capped org history digest
+        # so a fresh command is aware of what the organization already delivered.
+        # Skipped for continue_previous (it carries its own continuation context
+        # via checkpoint resume or ``_build_continue_content``). Best-effort:
+        # never let history assembly block or fail a submission.
+        if not request.continue_previous:
+            try:
+                history = self._build_history_context(
+                    request.org_id, root_node_id, command_id
+                )
+                if history:
+                    run_content = f"{history}\n{run_content}"
+            except Exception:  # noqa: BLE001
+                pass
 
         run_request = OrgCommandRequest(
             org_id=request.org_id,
@@ -1678,6 +1717,80 @@ class OrgCommandService:
             "history below, then continue from where the cancellation "
             "left off without redoing finished work.\n\n"
             f"{context}\n\n[new user instruction]\n{content}"
+        )
+
+    def _build_history_context(
+        self, org_id: str, root_node_id: str, current_command_id: str
+    ) -> str:
+        """Compact, budget-capped digest of this org's recent command history.
+
+        Reads the persisted event store (``user_command`` + ``command_done``),
+        pairs each prior command's instruction with its root final summary, and
+        returns a short markdown block (most-recent ``ORG_HISTORY_MAX_COMMANDS``
+        commands, each field head-truncated, hard total cap). Empty string when
+        there is no usable history. Best-effort: any read error yields "".
+        """
+        es = self._runtime.get_event_store(org_id)
+        if es is None or not hasattr(es, "query"):
+            return ""
+        try:
+            user_cmds = es.query(event_type="user_command", limit=60) or []
+            done_cmds = es.query(event_type="command_done", limit=60) or []
+        except Exception:  # noqa: BLE001
+            return ""
+
+        instr_by_cmd: dict[str, tuple[str, float]] = {}
+        for e in user_cmds:
+            cid = str(e.get("command_id") or "")
+            if not cid or cid == current_command_id:
+                continue
+            txt = str(e.get("content") or e.get("content_preview") or "").strip()
+            if not txt:
+                continue
+            ts = float(e.get("ts") or e.get("at") or 0.0)
+            # keep the FIRST (earliest) instruction ts but latest text is fine
+            instr_by_cmd[cid] = (txt, ts)
+
+        summary_by_cmd: dict[str, tuple[str, str]] = {}
+        for e in done_cmds:
+            cid = str(e.get("command_id") or "")
+            if not cid or cid == current_command_id:
+                continue
+            status = str(e.get("status") or "")
+            result = e.get("result")
+            summ = ""
+            if isinstance(result, dict):
+                summ = str(
+                    result.get("final_message") or result.get("deliverable") or ""
+                ).strip()
+            summary_by_cmd[cid] = (status, summ)
+
+        # Most-recent-first by instruction ts, then back to chronological order.
+        known = sorted(instr_by_cmd, key=lambda c: instr_by_cmd[c][1], reverse=True)
+        recent = list(reversed(known[:ORG_HISTORY_MAX_COMMANDS]))
+        if not recent:
+            return ""
+
+        blocks: list[str] = []
+        for i, cid in enumerate(recent, 1):
+            instr = _clip(instr_by_cmd[cid][0], ORG_HISTORY_INSTRUCTION_CHARS)
+            status, summ = summary_by_cmd.get(cid, ("", ""))
+            line = [f"{i}. 指令：{instr}"]
+            if summ:
+                line.append(f"   最终成果摘要：{_clip(summ, ORG_HISTORY_SUMMARY_CHARS)}")
+            elif status:
+                line.append(f"   （该指令终态：{status}，无最终成果摘要）")
+            blocks.append("\n".join(line))
+
+        body = "\n".join(blocks)
+        if len(body) > ORG_HISTORY_TOTAL_CHARS:
+            body = body[:ORG_HISTORY_TOTAL_CHARS].rstrip() + "…"
+        return (
+            "[组织历史参考｜仅供背景，非本次任务]\n"
+            "以下是本组织最近处理过的指令及其最终成果摘要，供你理解组织语境与"
+            "延续性。请聚焦【本次指令】，不要重复交付历史成果；若本次与历史相关，"
+            "可自然衔接、复用已定结论。\n\n"
+            f"{body}\n\n[本次指令]"
         )
 
     def _find_recent_previous_command(
