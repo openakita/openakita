@@ -583,6 +583,48 @@ function extractCommandResultText(
   return null;
 }
 
+// test15: the file extensions we treat as downloadable deliverables. Kept in
+// sync with the reload path's ``DELIVERABLE_RE`` so the live and reload receipts
+// attach the same cards.
+const _DELIVERABLE_RE =
+  /\.(md|markdown|txt|pdf|png|jpe?g|gif|webp|svg|mp4|mov|webm|csv|json|html?|docx?|pptx?|xlsx?|zip)$/i;
+
+// test15: reconstruct a command's registered deliverables (md/pdf/media) from
+// the org event store, filtered to a single command_id. Used by the always-on
+// final-report listener so a LIVE completion (of a command this panel did NOT
+// dispatch) still shows downloadable cards, exactly like the reload path.
+async function fetchCommandDeliverables(
+  apiBaseUrl: string,
+  orgId: string,
+  cid: string,
+): Promise<FileAttachment[]> {
+  try {
+    const r = await safeFetch(
+      `${apiBaseUrl}/api/v2/orgs/${encodeURIComponent(orgId)}/events?limit=800`,
+    );
+    const j = await r.json();
+    const evs = Array.isArray(j) ? j : Array.isArray(j?.events) ? j.events : [];
+    const seen = new Set<string>();
+    const out: FileAttachment[] = [];
+    for (const e of evs) {
+      const etype = (e?.type || e?.event_type || "") as string;
+      const isFileOut = etype === "file_output_registered";
+      if (etype !== "agent_run_finished" && etype !== "final_report_pdf" && !isFileOut) continue;
+      if (e?.incomplete) continue; // 质量门禁: 未通过的不作为交付物
+      if (String(e?.command_id || "") !== cid) continue;
+      const apath = String((isFileOut ? e?.path : e?.artifact_path) || "");
+      if (!apath || !_DELIVERABLE_RE.test(apath) || seen.has(apath)) continue;
+      seen.add(apath);
+      const fname = apath.replace(/\\/g, "/").split("/").pop() || "deliverable";
+      const size = Number(isFileOut ? e?.size_bytes : e?.output_len) || undefined;
+      out.push({ filename: fname, file_path: apath, file_size: size });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, title, onClose, nodeNames, runtime }: OrgChatPanelProps) {
   const { t } = useTranslation();
   const md = useMdModules();
@@ -1323,6 +1365,86 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
+
+  // test15 ROOT FIX: an ALWAYS-ON final-report listener for the command center.
+  //
+  // Reproduced live (headless): a command that completed while this panel was
+  // mounted but which THIS panel did not dispatch (the user hard-refreshed
+  // mid-run, killing the in-flight ``sendCommand`` subscriber; or the command
+  // came from IM / another surface / a prior session) produced NO closing
+  // "任务完成汇报" bubble -- the count stayed flat across command_done. The only
+  // live builder was the in-flight ``sendCommand`` subscription, scoped to the
+  // one command_id it dispatched; and because the drawer is display-toggled
+  // (never remounted) reopening it did not re-run the mount-time reload path.
+  // That is exactly why "硬刷+重跑仍没根治": the refresh removed the sole
+  // subscriber, then the command finished unheard.
+  //
+  // This listener runs for the whole lifetime of the mounted command-center
+  // panel and, on ANY command's completion for this org, rebuilds the same
+  // ``final-report-<cid>`` bubble from the persisted command result + its
+  // registered deliverables. It is idempotent (stable id upserts, dedups vs the
+  // reload path) and defers to an in-flight ``sendCommand`` when one owns the
+  // command (so in-session dispatch is not double-rendered).
+  useEffect(() => {
+    const wholeOrgView = !nodeId || String(nodeId).trim() === "";
+    if (!wholeOrgView) return;
+    const unsub = onWsEvent((evt, raw) => {
+      if (evt !== "org:command_done" && evt !== "org:command_cancelled") return;
+      const d = raw as Record<string, unknown> | null;
+      if (!d) return;
+      if (d.org_id && String(d.org_id) !== orgId) return;
+      const cid = String(d.command_id || "");
+      if (!cid) return;
+      // In-flight sendCommand in THIS session owns this command -> let it render
+      // the bubble; avoid a duplicate. Orphaned/foreign completions fall through.
+      if (_pendingCmds.get(convId)?.commandId === cid) return;
+      void (async () => {
+        try {
+          const r = await safeFetch(
+            `${apiBaseUrl}/api/v2/orgs/${encodeURIComponent(orgId)}/commands/${encodeURIComponent(cid)}`,
+          );
+          const cd = await r.json();
+          const st = String(cd?.status || "");
+          if (st !== "done" && st !== "error") return;
+          const text = extractCommandResultText(
+            cd.result as Record<string, unknown> | null | undefined,
+          );
+          if (!text) return;
+          const files = (await fetchCommandDeliverables(apiBaseUrl, orgId, cid)).sort((a, b) => {
+            const ap = /\.pdf$/i.test(a.filename) ? 0 : 1;
+            const bp = /\.pdf$/i.test(b.filename) ? 0 : 1;
+            if (ap !== bp) return ap - bp;
+            return (b.file_size || 0) - (a.file_size || 0);
+          });
+          const manifest = files.length > 0
+            ? `\n\n**📎 ${t("org.chat.deliverablesHeading", "交付物清单")}（${files.length}）**\n\n`
+              + files.map(f => `- \`${f.filename}\``).join("\n")
+            : "";
+          const msg: ChatMsg = {
+            id: `final-report-${cid}`,
+            role: "assistant",
+            content: `### 📋 ${t("org.chat.finalReportHeading", "任务完成汇报")}\n\n${text}${manifest}`,
+            timestamp: Date.now(),
+            attachments: files.length > 0 ? files : undefined,
+            kind: "final_report",
+          };
+          if (!mountedRef.current) return;
+          setMessages(prev => {
+            const idx = prev.findIndex(m => m.id === msg.id);
+            const next = idx >= 0
+              ? prev.map((m, i) => (i === idx ? { ...m, ...msg } : m))
+              : [...prev, msg];
+            messagesRef.current = next;
+            saveToLocalStorage(convId, next);
+            return next;
+          });
+        } catch {
+          /* best effort: a missing/racing command must not break the panel */
+        }
+      })();
+    });
+    return unsub;
+  }, [nodeId, orgId, apiBaseUrl, convId, t]);
 
   // Push messages to backend session (explicit params to avoid stale-ref bugs)
   const persistToBackend = useCallback(async (
