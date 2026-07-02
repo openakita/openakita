@@ -478,21 +478,24 @@ function activityItemsToLedger(
     if (norm.kind === "user_command") continue; // shown as right-side bubble
     const line = formatActivityLine(it, { nameFmt });
     if (!line.trim()) continue;
-    // Item 3 (2026-06): review/rework events carry parent_node_id (reviewer) +
+    // review/rework events carry parent_node_id (reviewer) +
     // node_id/child_node_id (the reviewed CHILD). normalizeActivity puts the
-    // PARENT in ``from`` first, so on reload these were attributed to the
-    // coordinator and — being unscoped — spawned a fresh consecutive segment
-    // each time, i.e. one coordinator that reviewed N children showed up as N
-    // duplicate "主编/策划编辑" rows. The LIVE path attributes them to the child;
-    // mirror that here so they fold into the child's segment as trace lines
-    // (no phase change) instead of multiplying the parent.
+    // PARENT in ``from`` and the CHILD in ``to``.
+    // test16 审阅归属修复: 审核这个动作由【上级】(reviewer) 执行，因此
+    // ``review_passed`` 必须归属到 ``from``(上级)——与 LIVE 路径保持一致。每条
+    // 审核行都带不同的被审下级名("审阅通过下级X")，语义清晰、不是重复行。
+    // 而【退回重做】/【上报升级】要重新点亮或聚焦【被审下级】自身，仍归属到
+    // ``to``(child)。
     const isReviewKind =
       norm.kind === "review_passed" ||
       norm.kind === "rework_requested" ||
       norm.kind === "review_escalated";
-    const node = isReviewKind
-      ? norm.to || norm.from || ""
-      : norm.from || norm.to || "";
+    const node =
+      norm.kind === "review_passed"
+        ? norm.from || norm.to || ""
+        : isReviewKind
+          ? norm.to || norm.from || ""
+          : norm.from || norm.to || "";
     const satisfied = norm.kind === "task_completed";
     // 图3: attribute the entry to its acting node + lifecycle phase so the
     // reload/rebuild timeline groups all of a node's rounds into ONE
@@ -898,7 +901,12 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         // 图3: attribute the entry to its node so the timeline groups all of a
         // node's rounds into one converging segment (subtask_assigned keys to
         // the dispatching parent so the coordination row sits under it).
-        nodeId: (etype === "subtask_assigned" || etype === "child_dispatch")
+        // test16 审阅归属修复: node_review_passed 的 ``node_id`` 是【被审下级】，
+        // 但审核这个动作是【上级】执行的。过去按 node（被审下级）归属，导致
+        // "✅审阅通过下级X"挂在 X 已收口的段上、又因非终态事件重开一段而错误
+        // 显示"进行中"。审核语义上属于上级：keyed 到 parent（reviewer），它在
+        // 复核期本就是 busy/running，命令结束后随上级收敛为"已完成"。
+        nodeId: (etype === "subtask_assigned" || etype === "child_dispatch" || etype === "node_review_passed")
           ? (parent || node || undefined)
           : (node || undefined),
         phase,
