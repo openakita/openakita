@@ -134,6 +134,43 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
+def detect_command_language(text: str) -> str:
+    """Best-effort language tag for a command instruction.
+
+    Returns ``"zh"`` when CJK characters dominate the alphabetic content,
+    ``"en"`` otherwise. Used to keep delivered file names + content in the same
+    language the user wrote in (test17 item 6).
+    """
+    s = str(text or "")
+    cjk = sum(1 for ch in s if "\u4e00" <= ch <= "\u9fff")
+    latin = sum(1 for ch in s if ch.isascii() and ch.isalpha())
+    if cjk == 0 and latin == 0:
+        return "zh"  # default to the product's primary locale
+    return "zh" if cjk >= latin else "en"
+
+
+def delivery_language_directive(text: str) -> str:
+    """A short mandate that delivered artifacts match the instruction language.
+
+    File names are chosen by the LLM nodes; without guidance a Chinese task
+    produced English file/dir names (e.g. ``00_Cover_Executive_Summary.md``).
+    This directive tells every node to keep BOTH file names and content in the
+    user's language. Prompt-level (LLM-dependent) -- see report.
+    """
+    lang = detect_command_language(text)
+    if lang == "zh":
+        return (
+            "【交付语言规范】本次为中文任务：所有产出文件的文件名、目录名与正文内容"
+            "一律使用简体中文（例如“执行摘要.md”“宣传文案.md”），不要使用英文文件名"
+            "或拼音；确需保留的专有名词（如 AIR780、ESP32、SEO）可原样保留。"
+        )
+    return (
+        "[Delivery language] This is an English task: name every delivered file "
+        "and folder in English and write their contents in English to match the "
+        "user's language."
+    )
+
+
 def _headline(text: str, limit: int) -> str:
     """First meaningful line of ``text`` (a title), stripped of md/quote marks.
 
@@ -783,6 +820,15 @@ class OrgCommandService:
                     run_content = f"{history}\n{run_content}"
             except Exception:  # noqa: BLE001
                 pass
+
+        # test17 item 6: keep delivered file names + content in the user's
+        # language. Best-effort, prompt-level; never block submission.
+        try:
+            directive = delivery_language_directive(content)
+            if directive:
+                run_content = f"{run_content}\n\n{directive}"
+        except Exception:  # noqa: BLE001
+            pass
 
         run_request = OrgCommandRequest(
             org_id=request.org_id,

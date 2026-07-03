@@ -20,7 +20,25 @@ from openakita.orgs.command_service import (
     ORG_HISTORY_MAX_COMMANDS,
     ORG_HISTORY_SUMMARY_CHARS,
     OrgCommandService,
+    delivery_language_directive,
+    detect_command_language,
 )
+
+
+def test_detect_command_language_zh_vs_en() -> None:
+    assert detect_command_language("帮我整理一份AIR780分享会策划案") == "zh"
+    assert detect_command_language("Draft an ESP32 meetup plan") == "en"
+    # empty / symbol-only defaults to the product's primary locale.
+    assert detect_command_language("") == "zh"
+
+
+def test_delivery_language_directive_matches_instruction_language() -> None:
+    zh = delivery_language_directive("帮我做一份中文策划案")
+    assert "中文" in zh and "文件名" in zh
+    # keeps proper nouns exempt so AIR780/ESP32 are not forced to translate.
+    assert "AIR780" in zh or "ESP32" in zh
+    en = delivery_language_directive("Make an English deck")
+    assert "English" in en and "file" in en.lower()
 
 
 class _Node:
@@ -226,3 +244,6 @@ async def test_submit_prepends_history_for_fresh_command_only() -> None:
     assert task.index("组织历史背景") < task.index("把上次的方案改成30人精简版")
     # issue C: the injected task hard-requires dispatch, never invites reuse.
     assert "dispatch" in task and "跳过分派" in task
+    # test17 item 6: a Chinese instruction appends the Chinese delivery-language
+    # directive so nodes name files in Chinese.
+    assert "交付语言规范" in task
