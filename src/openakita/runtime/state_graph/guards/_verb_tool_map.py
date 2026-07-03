@@ -65,6 +65,15 @@ VERB_TO_TOOL_FRAGMENTS: dict[str, tuple[str, ...]] = {
         "schedule_task",
     ),
     "保存到记忆": ("add_memory", "update_user_profile"),
+    # "更新" 覆盖 F1 场景常见的"我更新一下记录/已更新记录"措辞——若无实际记忆/
+    # 文件写入工具凭证，则按虚假声称降级告警（不覆盖原文，仅追加一致性提示）。
+    "更新": (
+        "update_user_profile",
+        "add_memory",
+        "edit_file",
+        "write_file",
+        "update_scheduled_task",
+    ),
     "记住": ("add_memory", "update_user_profile"),
     "记录": ("add_memory", "create_todo", "schedule_task", "create_plan_file"),
     "存入": ("add_memory", "update_user_profile", "write_file"),

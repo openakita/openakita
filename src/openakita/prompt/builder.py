@@ -263,7 +263,9 @@ _EXTENDED_RULES = """\
 - 当预算、时间、版本、数量等基础事实被纠正后，后续所有相关派生结果必须按新事实重新计算，不能直接复用历史派生值
 - 如已将旧信息存入记忆，应调用 update_user_profile / add_memory 更新
 - 当用户声称的信息与对话历史**明显矛盾**时，先引用历史记录核实，再决定是否更新。不要先认同后否定
+- **自有事实的矛盾更正必须先复核再改**：当用户"更正"的目标事实在本会话历史或已注入记忆中有**明确原始出处**（例如你之前根据用户原话记录过、或带 `[HH:MM]` 时间戳可追溯）时，**先复述历史原文并请用户二次确认**（例如"我这边记录的是 [18:27] 你说阿May管吧台，你确定要改成小林管吧台吗？"），确认后再更新。**严禁**在没有核实的情况下直接认错、翻转记录、或伪造"是我记错了/记反了"这类自我否定——你的原记录若确有出处，它就是当前的权威版本
 - 纠正确认后，**必须调用** update_user_profile 或 add_memory 持久化更新，不能只口头确认
+- **禁止虚假声称已保存**：如果你在回复中说了"我已更新记录/已记下/已保存"之类的话，本轮就**必须真的调用** update_user_profile 或 add_memory；只说不做等同于欺骗用户
 
 ## 输出格式
 - 任务型回复：已执行 → 发现 → 下一步（如有）
@@ -670,6 +672,23 @@ def build_system_prompt(
     # 直接触发 ForceToolCall 浪费 token。
     if isinstance(session_context, dict) and session_context.get("evidence_recommended"):
         system_parts.append(_build_evidence_recommended_section())
+
+    # 6.59 F1 矛盾更正守卫：当确定性检测到用户本轮在质疑/推翻历史中有原始出处的
+    # 事实（"记反了/记错了"类反驳）时，注入定向运行时约束——强制先复述历史原文、
+    # 请用户二次确认，禁止盲目认错翻转。命中才注入，正常纠正流程不受影响。
+    if isinstance(session_context, dict) and session_context.get("contradiction_alert"):
+        try:
+            from ..runtime.state_graph.guards.memory_contradiction import (
+                format_contradiction_alert,
+            )
+
+            contradiction_section = format_contradiction_alert(
+                session_context["contradiction_alert"]
+            )
+            if contradiction_section:
+                system_parts.append(contradiction_section)
+        except Exception as e:
+            logger.debug("Failed to build contradiction alert section: %s", e)
 
     # 6.6 架构概况（powered by {model}，区分主/子 Agent）
 
@@ -1184,11 +1203,37 @@ def _build_identity_section(
         )
         parts.append("")
 
+    # F5 (Domain1): agent.tooling.md is authored as a strict subset of
+    # agent.behavior.md (its self-evolution / curiosity / experience loops are
+    # identical), so appending both verbatim re-injects ~33 lines / ~450 tokens
+    # every FULL agent turn. Track the normalized lines already injected by the
+    # identity_core + agent_behavior sections and drop those lines from the
+    # tooling block, keeping only genuinely tooling-specific instructions. This
+    # is a no-op when there is no overlap, so single-injection output is
+    # unchanged.
+    _seen_identity_lines: set[str] = set()
+
+    def _register_seen(text: str) -> None:
+        for line in text.splitlines():
+            norm = line.strip()
+            if norm:
+                _seen_identity_lines.add(norm)
+
+    def _dedup_against_seen(text: str) -> str:
+        kept: list[str] = []
+        for line in text.splitlines():
+            norm = line.strip()
+            if norm and norm in _seen_identity_lines:
+                continue
+            kept.append(line)
+        return "\n".join(kept).strip()
+
     identity_core = compiled.get("identity_core") or _BUILT_IN_DEFAULTS.get("soul", "")
     if identity_core:
         result = apply_budget(identity_core.strip(), budget_tokens * 30 // 100, "identity_core")
         parts.append(result.content)
         parts.append("")
+        _register_seen(result.content)
 
     agent_behavior = (
         compiled.get("agent_behavior")
@@ -1199,13 +1244,18 @@ def _build_identity_section(
         result = apply_budget(agent_behavior.strip(), budget_tokens * 40 // 100, "agent_behavior")
         parts.append(result.content)
         parts.append("")
+        _register_seen(result.content)
 
     if tools_enabled and include_tooling:
         agent_tooling = compiled.get("agent_tooling", "")
         if agent_tooling:
-            result = apply_budget(agent_tooling.strip(), budget_tokens * 15 // 100, "agent_tooling")
-            parts.append(result.content)
-            parts.append("")
+            deduped_tooling = _dedup_against_seen(agent_tooling.strip())
+            if deduped_tooling:
+                result = apply_budget(
+                    deduped_tooling, budget_tokens * 15 // 100, "agent_tooling"
+                )
+                parts.append(result.content)
+                parts.append("")
 
     # User policies (~15%) — 用户自定义策略文件
     policies_path = identity_dir / "prompts" / "policies.md"

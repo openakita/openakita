@@ -96,6 +96,24 @@ def test_guard_silent_when_matching_tool_ran() -> None:
     assert result == text
 
 
+def test_guard_flags_unbacked_update_memory_claim() -> None:
+    # F1 turn-17 shape: model claims "已更新记录" but no memory tool ran.
+    text = "\u597d\u7684\uff0c\u6211\u5df2\u66f4\u65b0\u8bb0\u5f55\u3002"  # "already updated the record"
+    result = guard_unbacked_action_claim(text, [])
+    assert result != text
+    assert "\u26a0" in result
+
+
+def test_guard_silent_when_update_backed_by_profile_tool() -> None:
+    text = "\u5df2\u66f4\u65b0\u8bb0\u5f55\u3002"  # "already updated the record"
+    result = guard_unbacked_action_claim(
+        text,
+        ["update_user_profile"],
+        [{"tool_name": "update_user_profile", "is_error": False}],
+    )
+    assert result == text
+
+
 @pytest.mark.parametrize(
     "text, tools, results",
     [

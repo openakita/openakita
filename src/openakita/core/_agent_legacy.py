@@ -3579,6 +3579,32 @@ class Agent:
                             session_context["evidence_recommended"] = True
                 except Exception:
                     pass
+                # F1 矛盾更正守卫：确定性检测本轮用户消息是否在"质疑/推翻"历史中
+                # 有原始出处的事实（"记反了/记错了"类反驳）。命中则把定向约束信号
+                # 传给 prompt builder，注入"先复述历史原文 + 二次确认 + 禁止盲目认错"
+                # 的运行时指令。仅命中才注入，正常纠正流程零摩擦。
+                try:
+                    _cur_msg = str(getattr(self, "_current_user_message", "") or "")
+                    if _cur_msg.strip() and session.context:
+                        from ..runtime.state_graph.guards.memory_contradiction import (
+                            detect_memory_contradiction,
+                        )
+
+                        _contradiction = detect_memory_contradiction(
+                            _cur_msg,
+                            getattr(session.context, "messages", None),
+                            getattr(session.context, "working_facts", {}),
+                        )
+                        if _contradiction is not None:
+                            session_context["contradiction_alert"] = _contradiction.to_dict()
+                            logger.info(
+                                "[F1Guard] contradiction correction detected "
+                                "(terms=%s, evidence=%d)",
+                                _contradiction.matched_terms,
+                                len(_contradiction.evidence),
+                            )
+                except Exception as e:
+                    logger.debug("[F1Guard] contradiction detection skipped: %s", e)
             except Exception:
                 pass
 
@@ -3614,6 +3640,17 @@ class Agent:
             )
         except Exception:
             _working_facts_cache_key = ""
+        # 矛盾守卫命中信号纳入缓存 key：命中/未命中必须产出不同的 system prompt，
+        # 且不同证据内容也应各自缓存，避免上一轮命中缓存串到本轮未命中。
+        try:
+            _contradiction_cache_key = json.dumps(
+                (session_context or {}).get("contradiction_alert", None),
+                sort_keys=True,
+                ensure_ascii=False,
+                default=str,
+            )
+        except Exception:
+            _contradiction_cache_key = ""
         _resolved_voice = self._resolve_agent_voice()
         _identity_dir = self._prepare_prompt_identity_dir()
         _cache_key = (
@@ -3634,6 +3671,7 @@ class Agent:
             tuple(sorted(_mem_keywords)) if _mem_keywords else (),
             _working_facts_cache_key,
             bool((session_context or {}).get("evidence_recommended", False)),
+            _contradiction_cache_key,
             _resolved_voice,
             str(_identity_dir),
         )
@@ -3849,7 +3887,7 @@ class Agent:
 - 独立任务用 `delegate_parallel` 并行，有依赖的串行
 - message 必须包含充分上下文，让目标 Agent 独立完成
 - 结果返回后整合并用你自己的语气回复用户
-- 委派深度上限 5 层，每会话最多 5 个动态 Agent
+- **单跳委派**：子 Agent 被剥离全部委派工具，无法再向下委派（不存在孙 Agent），不要规划多层递归委派；每会话最多 5 个动态 Agent
 - 对话历史中的 <<DELEGATION_TRACE>> 和 <<TOOL_TRACE>>（旧版 [子Agent工作总结] / [执行摘要]）是已完成的事实，不要重复执行
 - **重要**：这两个 marker 是系统注入的、由真实工具凭证支撑的回放摘要；不要在你自己的回复中模仿这种格式编造执行结果"""
 
