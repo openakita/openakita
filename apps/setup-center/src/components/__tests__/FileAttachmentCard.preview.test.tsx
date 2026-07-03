@@ -11,6 +11,15 @@ vi.mock("../../platform", () => ({
 vi.mock("../../platform/auth", () => ({ getAccessToken: () => "test-token" }));
 vi.mock("../../views/chat/hooks/useMdModules", () => ({ useMdModules: () => null }));
 
+// Stub the pdf.js viewer so this test focuses on the card's preview wiring
+// (the real pdf.js render is covered by PdfCanvasViewer.test.tsx + the headless
+// Chromium render evidence).
+vi.mock("../PdfCanvasViewer", () => ({
+  PdfCanvasViewer: ({ url }: { url: string }) => (
+    <div data-testid="pdf-canvas-viewer-stub" data-url={url} />
+  ),
+}));
+
 const safeFetch = vi.fn(async () => ({ ok: true, status: 200 } as unknown as Response));
 vi.mock("../../providers", () => ({ safeFetch: (...a: unknown[]) => safeFetch(...(a as [string])) }));
 
@@ -22,7 +31,7 @@ describe("FileAttachmentCard PDF preview (test18)", () => {
     safeFetch.mockClear();
   });
 
-  it("previews a PDF via a direct authed inline URL (CSP-allowed), not blob, and does NOT download", async () => {
+  it("previews a PDF with the pdf.js canvas viewer (not a native iframe) and does NOT download", async () => {
     const { getByTitle } = render(
       <FileAttachmentCard
         file={{ filename: "最终报告.pdf", file_path: "D:/o/最终报告.pdf" }}
@@ -33,21 +42,19 @@ describe("FileAttachmentCard PDF preview (test18)", () => {
     const previewBtn = getByTitle("点击预览 · 右键更多操作");
     await act(async () => { fireEvent.click(previewBtn); });
 
-    // The preview modal is portaled to document.body, not the render container.
+    // The preview modal is portaled to document.body.
     await waitFor(() => {
-      const iframe = document.body.querySelector("iframe");
-      expect(iframe).not.toBeNull();
-      const src = iframe?.getAttribute("src") || "";
-      // Direct backend inline URL (CSP frame-src allows the local origin),
-      // carrying the middleware ?token= so online auth passes. NOT a blob: URL
-      // (which the Tauri CSP frame-src blocks).
-      expect(src).not.toMatch(/^blob:/);
-      expect(src).toContain("inline=1");
-      expect(src).toContain("token=test-token");
+      const viewer = document.body.querySelector('[data-testid="pdf-canvas-viewer-stub"]');
+      expect(viewer).not.toBeNull();
+      // The pdf.js viewer is handed the inline URL (it fetches + renders itself,
+      // authed, via canvas -- no native iframe PDF plugin dependency).
+      const url = viewer?.getAttribute("data-url") || "";
+      expect(url).toContain("inline=1");
+      expect(url).not.toMatch(/^blob:/);
     });
-    // A bare PDF preview must not fetch the body itself (the iframe does) and
-    // must never trigger a download.
-    expect(safeFetch).not.toHaveBeenCalled();
+    // No native PDF iframe.
+    expect(document.body.querySelector("iframe")).toBeNull();
+    // Preview must never trigger a download.
     expect(saveAttachment).not.toHaveBeenCalled();
   });
 });

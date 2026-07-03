@@ -6,6 +6,7 @@ import { getFileTypeIcon, IconDownload } from "../icons";
 import { safeFetch } from "../providers";
 import { useMdModules } from "../views/chat/hooks/useMdModules";
 import { MarkdownContent } from "../views/chat/components/MarkdownContent";
+import { PdfCanvasViewer } from "./PdfCanvasViewer";
 
 // When the app runs in web/online mode the backend requires auth. A plain
 // <img>/<video>/<iframe> ``src`` cannot send the Authorization header, so the
@@ -98,22 +99,10 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
   const [docText, setDocText] = useState<string | null>(null);
   const [docLoading, setDocLoading] = useState(false);
   const [docError, setDocError] = useState<string | null>(null);
-  // PDF is rendered by pointing the iframe at the backend's inline URL DIRECTLY
-  // (with the middleware ``?token=`` so online auth passes). test18 图3 root
-  // cause: last round used a ``blob:`` object URL, but the Tauri desktop CSP
-  // ``frame-src`` allow-list is ``'self' http://127.0.0.1:* http://localhost:*
-  // https://*.alibaba.com`` and does NOT include ``blob:`` -- so the blob
-  // iframe was blocked by CSP and the viewer showed "未能加载 PDF 文档". A direct
-  // URL to the local backend IS on that allow-list (and the backend already
-  // serves ``Content-Type: application/pdf`` + ``Content-Disposition: inline``),
-  // so the native viewer loads it. The CSP was also widened to allow ``blob:``
-  // as defense-in-depth.
-  const pdfViewerUrl = useMemo(() => withAuthToken(inlineUrl), [inlineUrl]);
-
   const openDocPreview = useCallback(async () => {
     if (!docKind) return;
     setDocPreviewOpen(true);
-    if (docKind === "pdf") return; // rendered via <iframe src=pdfViewerUrl>
+    if (docKind === "pdf") return; // rendered by <PdfCanvasViewer> (pdf.js)
     if (docText !== null) return; // already loaded
     setDocLoading(true);
     setDocError(null);
@@ -303,11 +292,7 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
           background: docKind === "pdf" ? "#525659" : "var(--panel2)",
         }}>
           {docKind === "pdf" ? (
-            <iframe
-              src={pdfViewerUrl}
-              title={file.filename}
-              style={{ width: "100%", height: "100%", border: "none" }}
-            />
+            <PdfCanvasViewer url={inlineUrl} />
           ) : docLoading ? (
             <div style={{ padding: 24, color: "var(--muted)", fontSize: 13 }}>正在加载预览…</div>
           ) : docError ? (
