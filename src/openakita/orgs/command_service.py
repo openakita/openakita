@@ -666,7 +666,11 @@ class OrgCommandService:
 
         org = self._require_org_running(request.org_id)
         if request.target_node_id and not org.get_node(request.target_node_id):
-            raise OrgCommandError(f"Node not found: {request.target_node_id}")
+            # Same missing-resource semantics as the org-not-found case above:
+            # a target node that does not exist is a 404, not a 400.
+            node_err = OrgCommandError(f"Node not found: {request.target_node_id}")
+            node_err.status_code = 404
+            raise node_err
         root_node_id = self._resolve_command_root_id(org, request.target_node_id)
         if not root_node_id:
             raise OrgCommandError("Organization has no root nodes")
@@ -1638,7 +1642,13 @@ class OrgCommandService:
         """
         org = self._lookup.get_org(org_id)
         if not org:
-            raise OrgCommandError("Organization not found")
+            # "Organization not found" is a missing-resource condition, so the
+            # API layer (orgs_v2_runtime_dispatch) must surface it as 404 —
+            # ``OrgCommandError`` defaults to 400, which mislabels it as a
+            # malformed request. ``status_code`` is read via getattr there.
+            err = OrgCommandError("Organization not found")
+            err.status_code = 404
+            raise err
         status = getattr(org, "status", None)
         status_value = getattr(status, "value", None) or str(status)
         # v1 imports OrgStatus from openakita.orgs.models; v2 stays
@@ -2147,80 +2157,310 @@ class OrgCommandService:
         ceiling = self._hard_ceiling_seconds()
         if ceiling <= 0:
             return await supervisor.run()
-        try:
-            return await asyncio.wait_for(supervisor.run(), timeout=ceiling)
-        except TimeoutError as exc:
-            logger.warning(
-                "[OrgCmd] supervisor hard ceiling exceeded for cid=%s "
-                "(ceiling=%ds); forcing cancel",
-                command_id,
-                ceiling,
-            )
-            # Stamp the outcome cache BEFORE firing the token cancel so the
-            # executor's ``cancel_source_provider`` (get_cancel_source) resolves
-            # ``hard_ceiling`` when the propagating CancelledError reaches an
-            # in-flight node run. test13 RCA: the stamp used to happen AFTER the
-            # cancel + a 0.5s grace sleep, so a node cancelled by the ceiling
-            # emitted ``agent_run_cancelled reason=user_cancel`` (the default) --
-            # misattributing a system timeout to the user.
-            prior = self._command_outcomes.get(command_id) or {}
-            prior.update(
-                {
-                    "event": "agent_run_cancelled",
-                    "cancelled_by": "hard_ceiling",
-                    "reason": "supervisor_hard_ceiling_exceeded",
-                    "ts": time.time(),
-                }
-            )
-            self._command_outcomes[command_id] = prior
-            try:
-                supervisor.cancel_token.cancel("hard_ceiling")
-            except Exception:  # noqa: BLE001 -- defensive, we are already aborting
-                logger.debug(
-                    "[OrgCmd] cancel_token.cancel raised under hard ceiling",
-                    exc_info=True,
-                )
-            # Brief grace window so the supervisor's cooperative
-            # ``_terminate`` can write its final checkpoint before
-            # the outer finally clears bookkeeping. 0.5s is enough
-            # for an in-process checkpoint write; LLM-stuck supervisors
-            # will not observe it anyway and the slot is still released.
-            with suppress(Exception):
-                await asyncio.sleep(0.5)
-            # Best-effort: fabricate a SupervisorOutcome so
-            # ``_reflect_supervisor_outcome`` writes a FAILED state
-            # consistent with cooperative-cancel paths instead of the
-            # generic ``except Exception`` branch's plain "error".
-            try:
-                from openakita.runtime.supervisor import FinalOutcome, SupervisorOutcome
 
-                # RC-conv: even on the hard-ceiling fallback, salvage whatever
-                # concrete output the run produced so the command can degrade
-                # to a "completed-with-partial-result" instead of a bare error.
+        # RC-conv P2 soft-landing watchdog. The cooperative soft budget is only
+        # re-checked at *turn boundaries* (Supervisor._inner_loop). When a single
+        # orchestration/node brain call is wedged -- e.g. a provider 403 that
+        # triggers a failover-retry storm with no cooperative cancel point -- no
+        # turn boundary is ever reached, so the graceful OUT_OF_TURNS landing
+        # cannot fire and the run drifts all the way to the hard ceiling, where it
+        # is force-cancelled into a (often output-less) error. This watchdog runs
+        # a wall-clock timer *decoupled* from turn boundaries: once the soft
+        # budget elapses it interrupts the wedged run and salvages a best-effort
+        # deliverable, guaranteeing the soft landing lands *before* the hard
+        # ceiling. The hard ceiling ``asyncio.wait_for`` below stays as the final
+        # backstop (soft landing disabled via ratio<=0, or a pathological unwind
+        # that overruns the watchdog's own grace). Both paths co-operate with the
+        # turn-boundary check via the shared cancel token -- whichever fires first
+        # wins, and the token's idempotent ``cancel`` prevents double-triggering.
+        loop = asyncio.get_running_loop()
+        run_task: asyncio.Task[Any] = loop.create_task(
+            supervisor.run(),
+            name=f"openakita-orgs-supervisor-run-{command_id}",
+        )
+        soft = self._soft_landing_seconds(ceiling)
+        soft_state: dict[str, bool] = {"fired": False}
+        watchdog: asyncio.Task[None] | None = None
+        if 0.0 < soft < float(ceiling):
+            watchdog = loop.create_task(
+                self._soft_ceiling_watchdog(
+                    supervisor, command_id, run_task, soft, soft_state
+                ),
+                name=f"openakita-orgs-supervisor-soft-watchdog-{command_id}",
+            )
+        try:
+            try:
+                outcome = await asyncio.wait_for(run_task, timeout=ceiling)
+            except TimeoutError as exc:
+                logger.warning(
+                    "[OrgCmd] supervisor hard ceiling exceeded for cid=%s "
+                    "(ceiling=%ds); forcing cancel",
+                    command_id,
+                    ceiling,
+                )
+                # Stamp the outcome cache BEFORE firing the token cancel so the
+                # executor's ``cancel_source_provider`` (get_cancel_source)
+                # resolves ``hard_ceiling`` when the propagating CancelledError
+                # reaches an in-flight node run. test13 RCA: the stamp used to
+                # happen AFTER the cancel + a 0.5s grace sleep, so a node
+                # cancelled by the ceiling emitted ``agent_run_cancelled
+                # reason=user_cancel`` (the default) -- misattributing a system
+                # timeout to the user.
+                prior = self._command_outcomes.get(command_id) or {}
+                prior.update(
+                    {
+                        "event": "agent_run_cancelled",
+                        "cancelled_by": "hard_ceiling",
+                        "reason": "supervisor_hard_ceiling_exceeded",
+                        "ts": time.time(),
+                    }
+                )
+                self._command_outcomes[command_id] = prior
                 try:
-                    ceiling_deliverable = supervisor.best_effort_deliverable()
+                    supervisor.cancel_token.cancel("hard_ceiling")
+                except Exception:  # noqa: BLE001 -- defensive, already aborting
+                    logger.debug(
+                        "[OrgCmd] cancel_token.cancel raised under hard ceiling",
+                        exc_info=True,
+                    )
+                # Brief grace window so the supervisor's cooperative
+                # ``_terminate`` can write its final checkpoint before
+                # the outer finally clears bookkeeping. 0.5s is enough
+                # for an in-process checkpoint write; LLM-stuck supervisors
+                # will not observe it anyway and the slot is still released.
+                with suppress(Exception):
+                    await asyncio.sleep(0.5)
+                # Best-effort: fabricate a SupervisorOutcome so
+                # ``_reflect_supervisor_outcome`` writes a FAILED state
+                # consistent with cooperative-cancel paths instead of the
+                # generic ``except Exception`` branch's plain "error".
+                try:
+                    from openakita.runtime.supervisor import (
+                        FinalOutcome,
+                        SupervisorOutcome,
+                    )
+
+                    # RC-conv: even on the hard-ceiling fallback, salvage
+                    # whatever concrete output the run produced so the command
+                    # can degrade to a "completed-with-partial-result" instead
+                    # of a bare error.
+                    try:
+                        ceiling_deliverable = supervisor.best_effort_deliverable()
+                    except Exception:  # noqa: BLE001 -- never block cleanup
+                        ceiling_deliverable = ""
+                    synthetic = SupervisorOutcome(
+                        outcome=FinalOutcome.FAILED,
+                        final_message=(
+                            f"supervisor hard ceiling exceeded\n\n{ceiling_deliverable}"
+                            if ceiling_deliverable
+                            else "supervisor hard ceiling exceeded"
+                        ),
+                        final_checkpoint_id=getattr(supervisor, "last_checkpoint_id", None),
+                        n_turns=int(getattr(getattr(supervisor, "stall_detector", None), "n_turns", 0) or 0),
+                        n_replans=int(getattr(supervisor, "n_replans", 0) or 0),
+                        reason="hard_ceiling",
+                        deliverable=ceiling_deliverable,
+                    )
+                    self._reflect_supervisor_outcome(command_id, supervisor, synthetic)
                 except Exception:  # noqa: BLE001 -- never block the cleanup path
-                    ceiling_deliverable = ""
-                synthetic = SupervisorOutcome(
-                    outcome=FinalOutcome.FAILED,
-                    final_message=(
-                        f"supervisor hard ceiling exceeded\n\n{ceiling_deliverable}"
-                        if ceiling_deliverable
-                        else "supervisor hard ceiling exceeded"
-                    ),
-                    final_checkpoint_id=getattr(supervisor, "last_checkpoint_id", None),
-                    n_turns=int(getattr(getattr(supervisor, "stall_detector", None), "n_turns", 0) or 0),
-                    n_replans=int(getattr(supervisor, "n_replans", 0) or 0),
-                    reason="hard_ceiling",
-                    deliverable=ceiling_deliverable,
+                    logger.debug(
+                        "[OrgCmd] hard-ceiling outcome reflection failed",
+                        exc_info=True,
+                    )
+                raise exc
+
+            # Happy path OR soft-landing salvage. When the watchdog fired it
+            # interrupted a wedged run cooperatively; ``Supervisor.run`` absorbs
+            # the cancel and unwinds to a bare CANCELLED outcome (whose
+            # ``_terminate`` does not salvage a deliverable). Convert that shape
+            # into a graceful OUT_OF_TURNS carrying the best-effort output so the
+            # command degrades to partial/done instead of a bare cancelled/error.
+            # A run that reached a *real* terminal (DONE / OUT_OF_TURNS / ...) in
+            # the same tick the watchdog fired keeps its own authoritative
+            # outcome.
+            if soft_state["fired"] and self._is_bare_cancel_outcome(outcome):
+                return self._build_soft_landing_outcome(
+                    supervisor, command_id, outcome
                 )
-                self._reflect_supervisor_outcome(command_id, supervisor, synthetic)
-            except Exception:  # noqa: BLE001 -- never block the cleanup path
-                logger.debug(
-                    "[OrgCmd] hard-ceiling outcome reflection failed",
-                    exc_info=True,
-                )
-            raise exc
+            return outcome
+        finally:
+            # Always tear the watchdog down: normal completion, hard ceiling,
+            # external cancel of the enclosing ``_run`` task, or any exception.
+            # ``cancel`` on an already-finished task is a no-op, so this is safe
+            # to run unconditionally and cannot leave a dangling timer.
+            if watchdog is not None and not watchdog.done():
+                watchdog.cancel()
+                with suppress(BaseException):
+                    await watchdog
+
+    def _soft_landing_seconds(self, ceiling: int) -> float:
+        """Wall-clock second at which the soft-landing watchdog should fire.
+
+        Derived from the SAME ``orgs_supervisor_soft_ceiling_ratio`` that feeds
+        the supervisor's cooperative turn-boundary soft budget
+        (``supervisor_hard_ceiling_s * ratio``). The watchdog, however, fires a
+        little *after* that budget so the graceful turn-boundary landing keeps
+        priority for healthy runs (which finish a turn and self-terminate at the
+        soft budget); the watchdog only needs to intervene when a single call is
+        wedged and no turn boundary is reached. The extra grace is a fraction
+        (``orgs_supervisor_soft_watchdog_grace_ratio``, default 0.5) of the
+        window between the soft budget and the hard ceiling, and is clamped to
+        stay strictly below the hard ceiling so the salvage + cooperative unwind
+        still finish before the hard ``wait_for`` would fire.
+
+        Returns ``0.0`` (= watchdog disabled) when soft landing is turned off
+        (ratio outside ``(0, 1)``) or any config read fails -- in which case the
+        hard ceiling alone governs, byte-for-byte the pre-watchdog behaviour.
+        """
+        try:
+            from openakita.config import settings as _settings
+
+            ratio = float(
+                getattr(_settings, "orgs_supervisor_soft_ceiling_ratio", 0.8) or 0.0
+            )
+            if ratio <= 0.0 or ratio >= 1.0:
+                return 0.0
+            soft_budget = float(ceiling) * ratio
+            grace_ratio = float(
+                getattr(_settings, "orgs_supervisor_soft_watchdog_grace_ratio", 0.5)
+                or 0.0
+            )
+            grace_ratio = min(max(grace_ratio, 0.0), 1.0)
+            fire = soft_budget + (float(ceiling) - soft_budget) * grace_ratio
+            # Keep a strict >=1s margin below the hard ceiling so the salvage can
+            # complete before the hard backstop; also guarantees soft < hard.
+            fire = min(fire, float(ceiling) - 1.0)
+            if fire <= 0.0 or fire >= float(ceiling):
+                return 0.0
+            return fire
+        except Exception:  # noqa: BLE001 -- config must never break the run
+            logger.debug(
+                "[OrgCmd] soft-landing budget read failed; watchdog disabled",
+                exc_info=True,
+            )
+            return 0.0
+
+    async def _soft_ceiling_watchdog(
+        self,
+        supervisor: Supervisor,
+        command_id: str,
+        run_task: asyncio.Task[Any],
+        soft: float,
+        soft_state: dict[str, bool],
+    ) -> None:
+        """Fire the decoupled soft landing once the soft budget elapses.
+
+        Sleeps ``soft`` seconds, then -- if the run is still going -- stamps the
+        outcome cache with ``cancelled_by="soft_ceiling"`` (BEFORE the token
+        cancel, mirroring the hard-ceiling ordering so an in-flight node's
+        ``cancel_source`` resolves ``soft_ceiling`` instead of ``user_cancel``),
+        fires the cooperative ``cancel_token.cancel("soft_ceiling")``, and
+        coercively cancels ``run_task`` so a wedged provider call actually
+        unwinds (the cooperative token alone cannot interrupt a hung ``httpx``
+        request -- see the RC-4 note on ``_cooperative_cancel``).
+
+        Idempotent + leak-free: cancelled while sleeping (normal completion /
+        teardown) it returns immediately; if the run already finished it is a
+        no-op; the token's own ``cancel`` idempotency prevents fighting a
+        concurrent user-cancel or the turn-boundary soft budget.
+        """
+        try:
+            await asyncio.sleep(soft)
+        except asyncio.CancelledError:
+            return
+        if run_task.done():
+            return
+        logger.warning(
+            "[OrgCmd] supervisor soft ceiling reached for cid=%s (soft=%.0fs); "
+            "soft-landing before hard ceiling",
+            command_id,
+            soft,
+        )
+        prior = self._command_outcomes.get(command_id) or {}
+        prior.update(
+            {
+                "event": "agent_run_cancelled",
+                "cancelled_by": "soft_ceiling",
+                "reason": "supervisor_soft_ceiling_soft_landing",
+                "ts": time.time(),
+            }
+        )
+        self._command_outcomes[command_id] = prior
+        try:
+            supervisor.cancel_token.cancel("soft_ceiling")
+        except Exception:  # noqa: BLE001 -- defensive, token API is sync + safe
+            logger.debug(
+                "[OrgCmd] cancel_token.cancel raised under soft ceiling",
+                exc_info=True,
+            )
+        soft_state["fired"] = True
+        if not run_task.done():
+            run_task.cancel()
+
+    @staticmethod
+    def _is_bare_cancel_outcome(outcome: Any) -> bool:
+        """True when ``outcome`` is a CANCELLED terminal (no salvaged deliverable).
+
+        The soft-landing watchdog cancels a wedged run; ``Supervisor.run``
+        absorbs the cancel into a graceful CANCELLED outcome. We only rewrite
+        *that* shape into a best-effort soft landing -- a run that reached a real
+        terminal (DONE / OUT_OF_TURNS / REPLAN_BUDGET_EXHAUSTED / FAILED) in the
+        same tick keeps its own outcome.
+        """
+        try:
+            from openakita.runtime.supervisor import FinalOutcome
+
+            value = getattr(getattr(outcome, "outcome", None), "value", None)
+            return value == FinalOutcome.CANCELLED.value
+        except Exception:  # noqa: BLE001 -- never block the salvage decision
+            return False
+
+    def _build_soft_landing_outcome(
+        self, supervisor: Supervisor, command_id: str, prior_outcome: Any
+    ) -> Any:
+        """Synthesise the graceful soft-landing outcome carrying best-effort output.
+
+        Mirrors the hard-ceiling salvage but keeps the machine-readable outcome
+        at OUT_OF_TURNS (a graceful degradation terminal) so
+        :meth:`_reflect_supervisor_outcome` classifies it as done/partial when a
+        usable deliverable survived, and only as ``error`` when nothing usable
+        was produced. Attribution is the ``soft_ceiling`` marker already stamped
+        in the outcome cache by the watchdog, surfaced via
+        :meth:`_degraded_reason`.
+        """
+        from openakita.runtime.supervisor import FinalOutcome, SupervisorOutcome
+
+        try:
+            deliverable = supervisor.best_effort_deliverable()
+        except Exception:  # noqa: BLE001 -- never block the cleanup path
+            deliverable = ""
+        n_turns = int(
+            getattr(prior_outcome, "n_turns", 0)
+            or getattr(getattr(supervisor, "stall_detector", None), "n_turns", 0)
+            or 0
+        )
+        n_replans = int(
+            getattr(prior_outcome, "n_replans", 0)
+            or getattr(supervisor, "n_replans", 0)
+            or 0
+        )
+        final_cp = getattr(prior_outcome, "final_checkpoint_id", None) or getattr(
+            supervisor, "last_checkpoint_id", None
+        )
+        note = (
+            "本次任务已达到预设的软时间预算，已在硬性时限之前主动收尾，"
+            "并交付当前阶段的最佳结果。"
+        )
+        final_message = f"{note}\n\n{deliverable}" if deliverable else note
+        return SupervisorOutcome(
+            outcome=FinalOutcome.OUT_OF_TURNS,
+            final_message=final_message,
+            final_checkpoint_id=final_cp,
+            n_turns=n_turns,
+            n_replans=n_replans,
+            reason="soft_ceiling",
+            deliverable=deliverable,
+        )
 
     @staticmethod
     def _hard_ceiling_seconds() -> int:
@@ -2445,6 +2685,11 @@ class OrgCommandService:
         oc = self._command_outcomes.get(command_id) or {}
         if oc.get("cancelled_by") == "hard_ceiling":
             return "wall_clock_ceiling"
+        # P2 soft landing: the decoupled watchdog fired before the hard ceiling
+        # and salvaged a best-effort deliverable. Distinct from a turn-budget
+        # exit so the UI can label it "触达软时限（已提前收尾）".
+        if oc.get("cancelled_by") == "soft_ceiling":
+            return "wall_clock_soft_landing"
         if outcome_value == FinalOutcome.OUT_OF_TURNS.value:
             return "turn_budget"
         if outcome_value == FinalOutcome.REPLAN_BUDGET_EXHAUSTED.value:

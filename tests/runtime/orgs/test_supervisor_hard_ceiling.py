@@ -145,6 +145,13 @@ def _make_service(*, supervisor: _SleepForeverSupervisor) -> OrgCommandService:
 async def test_hard_ceiling_triggers_cancel_and_releases_slot(monkeypatch) -> None:
     """Hard ceiling = 2s; sleep-forever supervisor must release the slot."""
     monkeypatch.setattr(settings, "supervisor_hard_ceiling_s", 2, raising=False)
+    # Isolate the hard-ceiling contract: disable the P2 soft-landing watchdog so
+    # the run drifts straight to the hard ceiling (with soft landing enabled the
+    # watchdog would intercept first -- that path is covered by
+    # test_supervisor_soft_ceiling_watchdog.py).
+    monkeypatch.setattr(
+        settings, "orgs_supervisor_soft_ceiling_ratio", 0.0, raising=False
+    )
 
     supervisor = _SleepForeverSupervisor()
     svc = _make_service(supervisor=supervisor)
