@@ -243,6 +243,44 @@ async def test_node_tool_host_classifies_plugin_not_loaded(tmp_path: Path) -> No
     assert failed["reason"] == "plugin_not_loaded"
 
 
+@pytest.mark.asyncio
+async def test_node_tool_host_steers_phantom_dispatch_tool(tmp_path: Path) -> None:
+    """case id: test18.host.phantom_dispatch_steered
+
+    test18: coordinator nodes delegate via ``<dispatch target="...">`` XML
+    text blocks, NOT a callable tool. A node LLM sometimes hallucinates a
+    ``dispatch`` tool anyway; the generic ``plugin_not_loaded`` path made it
+    re-call the phantom tool until its budget drained. The host must instead
+    return a precise corrective (the XML syntax) and tag telemetry with a
+    distinct ``use_dispatch_xml`` reason.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    jsonl = tmp_path / "logs" / "events.jsonl"
+    store = OrgEventStore(org_id="org-int", jsonl_path=jsonl)
+    agent = _FakeAgent(workspace=workspace)
+    host = NodeToolHost(agent=agent, org_id="org-int")
+
+    result, is_error = await execute_node_tool(
+        tool_name="dispatch",
+        tool_input={"target": "writer-a", "prompt": "write it"},
+        org_id="org-int",
+        node_id="planner",
+        command_id="cmd-003",
+        emit=_make_emit(store),
+        tool_host=host,
+    )
+
+    assert is_error is True
+    # Corrective must teach the exact XML syntax so the node self-corrects.
+    assert "<dispatch target=" in result
+    events = _read_events(jsonl)
+    failed = next(e for e in events if e.get("type") == "node_tool_failed")
+    assert failed["tool_name"] == "dispatch"
+    assert failed["reason"] == "use_dispatch_xml"
+
+
 # ---------------------------------------------------------------------------
 # P0-3 -- plugin tool definitions surface through resolve_node_tools
 # ---------------------------------------------------------------------------

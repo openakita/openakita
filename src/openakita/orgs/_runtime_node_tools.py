@@ -553,6 +553,43 @@ def _env_int(name: str, default: int, *, lo: int, hi: int) -> int:
         return default
 
 
+# test18: coordinator nodes delegate via ``<dispatch target="...">`` XML text
+# blocks (parsed by ``_default_agent_builder``), NOT via a tool call. Some LLMs
+# hallucinate a callable ``dispatch``/``delegate`` tool anyway; that hit the
+# generic ``plugin_not_loaded`` path and the node burned several rounds
+# re-calling the phantom tool. When an UNKNOWN tool name is one of these
+# delegation verbs we return a precise corrective (the exact XML syntax) so the
+# node self-corrects on the next round instead of retrying a dead tool.
+_DELEGATION_VERB_ALIASES: frozenset[str] = frozenset(
+    {
+        "dispatch",
+        "delegate",
+        "delegate_to",
+        "delegate_to_agent",
+        "delegate_parallel",
+        "delegate_to_role",
+        "delegate_to_pool",
+        "assign",
+        "assign_task",
+        "assign_subtask",
+        "handoff",
+        "hand_off",
+    }
+)
+
+
+def _dispatch_corrective_text(tool_name: str) -> str:
+    """The corrective returned when a node calls a phantom delegation tool."""
+    return (
+        f'There is no "{tool_name}" tool. To delegate to a direct report, do '
+        "NOT call a tool -- instead emit one or more XML blocks directly in "
+        'your reply text using EXACTLY this syntax: <dispatch target="NODE_ID">'
+        "instruction for that node</dispatch>. The target must be one of your "
+        "direct reports. If a part is your own job, just do it yourself "
+        "(write the file / call the real tool)."
+    )
+
+
 MAX_TOOL_ROUNDS = _env_int("OPENAKITA_ORG_MAX_TOOL_ROUNDS", 6, lo=1, hi=12)
 """Cap on tool-call ROUNDS per node activation (one round == one
 ``tool_use`` -> ``tool_result`` -> next LLM call cycle).
@@ -1060,6 +1097,30 @@ async def execute_node_tool(
         # this tool as an error.
         raise
     except ToolNotAvailable as exc:
+        # test18: a coordinator node hallucinated a ``dispatch``/``delegate``
+        # TOOL (delegation is XML-block based, not a tool). Return the exact
+        # corrective so it self-corrects next round instead of re-calling the
+        # phantom tool until its budget drains. Telemetry gets a distinct
+        # reason so this is not confused with a real missing plugin.
+        if tool_name.strip().lower() in _DELEGATION_VERB_ALIASES:
+            _LOGGER.info(
+                "[orgs_v2 node tool] %s called phantom delegation tool %s; "
+                "steering to <dispatch> XML syntax",
+                node_id,
+                tool_name,
+            )
+            await _safe_emit(
+                emit,
+                "node_tool_failed",
+                {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "command_id": command_id,
+                    "tool_name": tool_name,
+                    "reason": "use_dispatch_xml",
+                },
+            )
+            return (_dispatch_corrective_text(tool_name), True)
         # Sprint-6 P0-3: classify "plugin tool not loaded" distinctly
         # from a generic handler crash so events.jsonl readers can
         # tell whether ``hh_*`` failed because the plugin manifest
