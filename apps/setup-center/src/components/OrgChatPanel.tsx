@@ -376,6 +376,23 @@ function formatActivityLine(item: ActivityItem, opts?: { nameFmt?: (id: string) 
 }
 
 /** 按 command_id（缺失时退化到 chain_id / "ungrouped"）聚合到 bubble。 */
+// test18 (c): the org bridge /history reconstructs every finished command's
+// final report as a plain assistant message using the SAME "### 📋 任务完成汇报"
+// heading (locale-independent 📋 marker). In the WHOLE-ORG command center that
+// message is a strictly-inferior duplicate of the AUTHORITATIVE
+// ``final-report-<cid>`` bubble rebuilt from ``/commands/<cid>`` -- which alone
+// carries the deliverable manifest + downloadable attachments. Because the
+// authoritative bubble appends a manifest, its content differs from the echo
+// byte-for-byte, so the render-time signature dedup missed it and both showed
+// (one WITH attachments, one WITHOUT -- exactly the reported bug). Dropping the
+// echo at ingestion keeps /commands the single source of truth for the closing
+// report. The user instruction bubble is NOT affected: it is reconstructed from
+// /activity as ``user-cmd-<cid>``, so /history is not needed for it here.
+const FINAL_REPORT_ECHO_RE = /^\s*#{1,6}\s*📋/;
+function isFinalReportEcho(m: { role?: string; content?: string }): boolean {
+  return m.role === "assistant" && FINAL_REPORT_ECHO_RE.test(m.content || "");
+}
+
 function activityItemsToMessages(
   items: ActivityItem[],
   nameFmt?: (id: string) => string,
@@ -1235,12 +1252,16 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         ]);
         const data = await res.json();
         if (cancelled) return;
-        const histMsgs: ChatMsg[] = (data.messages || []).map((m: any) => ({
-          id: m.id || genId(),
-          role: m.role || "assistant",
-          content: m.content || "",
-          timestamp: m.timestamp || Date.now(),
-        }));
+        const histMsgs: ChatMsg[] = (data.messages || [])
+          .map((m: any) => ({
+            id: m.id || genId(),
+            role: m.role || "assistant",
+            content: m.content || "",
+            timestamp: m.timestamp || Date.now(),
+          }))
+          // test18 (c): drop /history final-report echoes for the whole-org
+          // view -- the authoritative report comes from /commands.
+          .filter((m: ChatMsg) => !(wholeOrgView && isFinalReportEcho(m)));
         const merged = [...activityMsgs, ...histMsgs].sort(
           (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
         );
@@ -1312,12 +1333,16 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           : Promise.resolve({ items: [] });
         const [histData, actData] = await Promise.all([histPromise, activityPromise]);
         if (!mountedRef.current) return;
-        const histMsgs: ChatMsg[] = (histData.messages || []).map((m: any) => ({
-          id: m.id || genId(),
-          role: m.role || "assistant",
-          content: m.content || "",
-          timestamp: m.timestamp || Date.now(),
-        }));
+        const histMsgs: ChatMsg[] = (histData.messages || [])
+          .map((m: any) => ({
+            id: m.id || genId(),
+            role: m.role || "assistant",
+            content: m.content || "",
+            timestamp: m.timestamp || Date.now(),
+          }))
+          // test18 (c): same as the initial load -- the final-report echo from
+          // /history is superseded by the authoritative /commands bubble.
+          .filter((m: ChatMsg) => !(wholeOrgView && isFinalReportEcho(m)));
         const nameFmt2 = (id: string) => nodeNamesRef.current?.[id] || id;
         const actMsgs: ChatMsg[] = activityItemsToMessages(
           (Array.isArray(actData?.items) ? actData.items : []) as ActivityItem[],
