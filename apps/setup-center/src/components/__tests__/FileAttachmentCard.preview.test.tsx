@@ -11,50 +11,61 @@ vi.mock("../../platform", () => ({
 vi.mock("../../platform/auth", () => ({ getAccessToken: () => "test-token" }));
 vi.mock("../../views/chat/hooks/useMdModules", () => ({ useMdModules: () => null }));
 
-// Stub the pdf.js viewer so this test focuses on the card's preview wiring
-// (the real pdf.js render is covered by PdfCanvasViewer.test.tsx + the headless
-// Chromium render evidence).
-vi.mock("../PdfCanvasViewer", () => ({
-  PdfCanvasViewer: ({ url }: { url: string }) => (
-    <div data-testid="pdf-canvas-viewer-stub" data-url={url} />
-  ),
-}));
-
-const safeFetch = vi.fn(async () => ({ ok: true, status: 200 } as unknown as Response));
+const safeFetch = vi.fn(async () => ({
+  ok: true,
+  status: 200,
+  text: async () => "# 标题\n\n正文内容ABC",
+} as unknown as Response));
 vi.mock("../../providers", () => ({ safeFetch: (...a: unknown[]) => safeFetch(...(a as [string])) }));
 
 import { FileAttachmentCard } from "../FileAttachmentCard";
 
-describe("FileAttachmentCard PDF preview (test18)", () => {
+describe("FileAttachmentCard preview (test18: HTML preview + PDF download/standalone)", () => {
   beforeEach(() => {
     saveAttachment.mockClear();
     safeFetch.mockClear();
   });
 
-  it("previews a PDF with the pdf.js canvas viewer (not a native iframe) and does NOT download", async () => {
+  it("opens a PDF standalone in a new tab (no embed, no modal, no download)", async () => {
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
     const { getByTitle } = render(
       <FileAttachmentCard
         file={{ filename: "最终报告.pdf", file_path: "D:/o/最终报告.pdf" }}
         apiBaseUrl="http://test"
       />,
     );
-    // The primary click is preview (docKind), not download.
-    const previewBtn = getByTitle("点击预览 · 右键更多操作");
-    await act(async () => { fireEvent.click(previewBtn); });
+    // Primary click on a PDF => 独立查看 (open in a new tab), NOT a modal.
+    const btn = getByTitle("点击独立查看（新标签）· 右键下载");
+    await act(async () => { fireEvent.click(btn); });
 
-    // The preview modal is portaled to document.body.
-    await waitFor(() => {
-      const viewer = document.body.querySelector('[data-testid="pdf-canvas-viewer-stub"]');
-      expect(viewer).not.toBeNull();
-      // The pdf.js viewer is handed the inline URL (it fetches + renders itself,
-      // authed, via canvas -- no native iframe PDF plugin dependency).
-      const url = viewer?.getAttribute("data-url") || "";
-      expect(url).toContain("inline=1");
-      expect(url).not.toMatch(/^blob:/);
-    });
-    // No native PDF iframe.
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    const url = String(openSpy.mock.calls[0][0]);
+    expect(url).toContain("inline=1");
+    expect(url).toContain("token=test-token");
+    // No embedded PDF anywhere, and no download triggered by a preview click.
     expect(document.body.querySelector("iframe")).toBeNull();
-    // Preview must never trigger a download.
+    expect(document.body.querySelector("canvas")).toBeNull();
+    expect(saveAttachment).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
+  it("previews markdown as rendered HTML in a full-screen modal (not a download)", async () => {
+    const { getByTitle } = render(
+      <FileAttachmentCard
+        file={{ filename: "报告.md", file_path: "D:/o/报告.md" }}
+        apiBaseUrl="http://test"
+      />,
+    );
+    const btn = getByTitle("点击预览 · 右键更多操作");
+    await act(async () => { fireEvent.click(btn); });
+
+    // Modal is portaled to document.body and shows the fetched markdown content.
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("正文内容ABC");
+    });
+    // Rendered through the HTML markdown container, not a raw download.
+    expect(document.body.querySelector(".file-preview-md")).not.toBeNull();
+    expect(safeFetch).toHaveBeenCalled();
     expect(saveAttachment).not.toHaveBeenCalled();
   });
 });

@@ -6,7 +6,6 @@ import { getFileTypeIcon, IconDownload } from "../icons";
 import { safeFetch } from "../providers";
 import { useMdModules } from "../views/chat/hooks/useMdModules";
 import { MarkdownContent } from "../views/chat/components/MarkdownContent";
-import { PdfCanvasViewer } from "./PdfCanvasViewer";
 
 // When the app runs in web/online mode the backend requires auth. A plain
 // <img>/<video>/<iframe> ``src`` cannot send the Authorization header, so the
@@ -99,10 +98,19 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
   const [docText, setDocText] = useState<string | null>(null);
   const [docLoading, setDocLoading] = useState(false);
   const [docError, setDocError] = useState<string | null>(null);
+  // 独立查看: open the PDF in a new browser tab (native viewer / download),
+  // carrying the middleware ?token= so online auth passes. Following the
+  // media-strategy direction, PDFs are NOT embedded in the preview modal --
+  // only markdown/text render as styled HTML in-modal, which reads far better.
+  const openInNewTab = useCallback(() => {
+    window.open(withAuthToken(inlineUrl), "_blank", "noopener,noreferrer");
+  }, [inlineUrl]);
+
   const openDocPreview = useCallback(async () => {
     if (!docKind) return;
+    // PDF has no HTML preview -- open it standalone instead of a blank modal.
+    if (docKind === "pdf") { openInNewTab(); return; }
     setDocPreviewOpen(true);
-    if (docKind === "pdf") return; // rendered by <PdfCanvasViewer> (pdf.js)
     if (docText !== null) return; // already loaded
     setDocLoading(true);
     setDocError(null);
@@ -115,7 +123,7 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
     } finally {
       setDocLoading(false);
     }
-  }, [docKind, docText, mediaUrl]);
+  }, [docKind, docText, mediaUrl, openInNewTab]);
 
   const handleDownload = useCallback(async () => {
     try {
@@ -177,7 +185,16 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
       >
         下载文件
       </button>
-      {docKind && (
+      {docKind === "pdf" ? (
+        <button
+          style={menuItemStyle}
+          onMouseEnter={e => { e.currentTarget.style.background = "rgba(99,102,241,0.15)"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "none"; }}
+          onClick={() => { setMenuOpen(false); openInNewTab(); }}
+        >
+          独立查看
+        </button>
+      ) : docKind ? (
         <button
           style={menuItemStyle}
           onMouseEnter={e => { e.currentTarget.style.background = "rgba(99,102,241,0.15)"; }}
@@ -186,7 +203,7 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
         >
           预览
         </button>
-      )}
+      ) : null}
       {(mediaKind === "image" || mediaKind === "video") && (
         <button
           style={menuItemStyle}
@@ -240,7 +257,7 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          width: docKind === "pdf" ? "min(1000px, 92vw)" : "min(820px, 92vw)",
+          width: "min(860px, 92vw)",
           height: "88vh", display: "flex", flexDirection: "column",
           background: "var(--bg-app, #0f172a)",
           border: "1px solid var(--line, rgba(100,116,139,0.3))",
@@ -289,10 +306,19 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
           // fell back to near-black; on the light theme the (dark) --text was
           // then invisible against it (test18 图2). --panel2 is defined in every
           // theme and always contrasts with --text.
-          background: docKind === "pdf" ? "#525659" : "var(--panel2)",
+          background: "var(--panel2)",
         }}>
           {docKind === "pdf" ? (
-            <PdfCanvasViewer url={inlineUrl} />
+            // Defensive: PDFs normally open in a new tab and never reach this
+            // modal. If one does (e.g. a caller forces it open), degrade to a
+            // clear placeholder with download + 独立查看 -- never a blank pane.
+            <div style={{ padding: 28, color: "var(--text)", fontSize: 13, display: "flex", flexDirection: "column", gap: 12, alignItems: "flex-start" }}>
+              <div>该文件为 PDF，暂不支持在弹窗内 HTML 预览。请下载或在新标签独立查看。</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" onClick={openInNewTab} style={docModalActionBtnStyle}>独立查看</button>
+                <button type="button" onClick={handleDownload} style={docModalActionBtnStyle}>下载</button>
+              </div>
+            </div>
           ) : docLoading ? (
             <div style={{ padding: 24, color: "var(--muted)", fontSize: 13 }}>正在加载预览…</div>
           ) : docError ? (
@@ -431,7 +457,13 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
             textAlign: "left", fontSize: 12,
             transition: "background 0.15s",
           }}
-          title={docKind ? "点击预览 · 右键更多操作" : file.file_path}
+          title={
+            docKind === "pdf"
+              ? "点击独立查看（新标签）· 右键下载"
+              : docKind
+                ? "点击预览 · 右键更多操作"
+                : file.file_path
+          }
           onMouseEnter={e => { e.currentTarget.style.background = "rgba(8,145,178,0.16)"; }}
           onMouseLeave={e => { e.currentTarget.style.background = "rgba(8,145,178,0.08)"; }}
           onClick={docKind ? () => { void openDocPreview(); } : handleDownload}
@@ -453,7 +485,12 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
               预览失败
             </span>
           )}
-          {docKind ? (
+          {docKind === "pdf" ? (
+            // external-link: PDF opens standalone in a new tab.
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "#0891b2" }} aria-hidden>
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+          ) : docKind ? (
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "#0891b2" }} aria-hidden>
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
             </svg>
@@ -496,4 +533,17 @@ const menuItemStyle: React.CSSProperties = {
   textAlign: "left",
   borderRadius: 4,
   color: "var(--text)",
+};
+
+const docModalActionBtnStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  background: "rgba(8,145,178,0.12)",
+  border: "1px solid rgba(8,145,178,0.25)",
+  color: "#0891b2",
+  borderRadius: 5,
+  padding: "6px 12px",
+  cursor: "pointer",
+  fontSize: 12,
 };
