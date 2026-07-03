@@ -2453,15 +2453,26 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       m.commandId ||
       (m.id.startsWith("final-report-") ? m.id.slice("final-report-".length) : "") ||
       (m.id.startsWith("user-cmd-") ? m.id.slice("user-cmd-".length) : "");
+    // Normalize any epoch (s) / epoch (ms) / ISO ts to milliseconds so block
+    // ordering never mixes scales (a live ledger ts in seconds vs a bubble ts in
+    // ms would otherwise sort a finished command into the middle). Issue B.
+    const toMs = (v: string | number | undefined): number => {
+      if (typeof v === "number") return v < 1e12 ? v * 1000 : v;
+      const s = String(v || "").trim();
+      if (!s) return 0;
+      if (/^\d+(\.\d+)?$/.test(s)) { const n = Number(s); return n < 1e12 ? n * 1000 : n; }
+      const p = Date.parse(s);
+      return Number.isNaN(p) ? 0 : p;
+    };
+    const sig = (m: ChatMsg): string => `${m.role}\u0000${(m.content || "").trim()}`;
 
-    interface Block { cid: string; user?: ChatMsg; report?: ChatMsg; ts: number }
+    interface Block { cid: string; user?: ChatMsg; report?: ChatMsg; createTs: number; ledgerTs: number }
     const blocks = new Map<string, Block>();
     const loose: ChatMsg[] = [];
     const cmdOrder: string[] = [];
-    const touch = (cid: string, ts: number): Block => {
+    const touch = (cid: string): Block => {
       let b = blocks.get(cid);
-      if (!b) { b = { cid, ts }; blocks.set(cid, b); cmdOrder.push(cid); }
-      b.ts = Math.min(b.ts, ts);
+      if (!b) { b = { cid, createTs: Infinity, ledgerTs: Infinity }; blocks.set(cid, b); cmdOrder.push(cid); }
       return b;
     };
 
@@ -2469,12 +2480,18 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       if (m.streaming) continue; // v2 live process lives in the timeline
       const cid = parseCid(m);
       if (m.kind === "final_report") {
-        if (cid) touch(cid, m.timestamp).report = m;
+        // A command owns exactly ONE report bubble; if two arrive for the same
+        // command (live final-report-<cid> + a reload/always-on rebuild) keep
+        // the later one. Reports never set createTs (they finish AFTER the
+        // command started, so they must not drag the block's position down).
+        if (cid) touch(cid).report = m;
         else loose.push(m);
         continue;
       }
       if (m.role === "user" && cid) {
-        touch(cid, m.timestamp).user = m;
+        const b = touch(cid);
+        b.user = m;
+        b.createTs = Math.min(b.createTs, toMs(m.timestamp));
         continue;
       }
       loose.push(m); // system / activity / un-attributed bubbles
@@ -2483,18 +2500,44 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     // any bubble exists) still deserve a block.
     for (const e of v2LedgerEvents) {
       const cid = (e.commandId || "").trim();
-      if (cid && !blocks.has(cid)) {
-        const tnum = /^\d+$/.test(e.ts || "") ? Number(e.ts) : Date.parse(e.ts || "") || 0;
-        touch(cid, tnum);
-      }
+      if (!cid) continue;
+      const b = touch(cid);
+      b.ledgerTs = Math.min(b.ledgerTs, toMs(e.ts));
     }
 
-    type Unit = { ts: number; el: JSX.Element };
+    // Issue B dedupe: the org transcript is persisted to the session /history as
+    // plain {role,content}, so on refresh the user instruction and the final
+    // report come back as loose bubbles with fresh random ids (no kind /
+    // commandId). Those are echoes of content already grouped into a command
+    // block -- drop them so the result is never shown twice and never floats to
+    // a wrong position by its own (later) timestamp.
+    const claimed = new Set<string>();
+    for (const b of blocks.values()) {
+      if (b.user) claimed.add(sig(b.user));
+      if (b.report) claimed.add(sig(b.report));
+    }
+    const seenLoose = new Set<string>();
+    const looseKept: ChatMsg[] = [];
+    for (const m of loose) {
+      const s = sig(m);
+      if (claimed.has(s) || seenLoose.has(s)) continue;
+      seenLoose.add(s);
+      looseKept.push(m);
+    }
+
+    type Unit = { ts: number; seq: number; el: JSX.Element };
     const units: Unit[] = [];
-    for (const m of loose) units.push({ ts: m.timestamp, el: renderMsgBubble(m) });
+    let seq = 0;
+    for (const m of looseKept) units.push({ ts: toMs(m.timestamp), seq: seq++, el: renderMsgBubble(m) });
 
     for (const cid of cmdOrder) {
       const b = blocks.get(cid)!;
+      // Stable creation-ordered position: the user instruction time if known,
+      // else the first orchestration event time. Finishing a command never
+      // changes this, so completed commands stay put (issue B).
+      const blockTs = Number.isFinite(b.createTs)
+        ? b.createTs
+        : (Number.isFinite(b.ledgerTs) ? b.ledgerTs : 0);
       const evForCmd = v2LedgerEvents.filter(e => (e.commandId || "").trim() === cid);
       const isActive = pendingCmdId === cid;
       const timeline = evForCmd.length > 0 ? (
@@ -2529,10 +2572,12 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           {b.report && renderMsgBubble(b.report)}
         </div>
       );
-      units.push({ ts: b.ts, el });
+      units.push({ ts: blockTs, seq: seq++, el });
     }
 
-    units.sort((a, b) => a.ts - b.ts);
+    // Stable sort by creation time; ties keep first-seen order so nothing
+    // reshuffles when two events share a timestamp.
+    units.sort((a, b) => (a.ts - b.ts) || (a.seq - b.seq));
     // Each unit's element already carries a stable key (msg id / cmd id).
     return <>{units.map((u) => u.el)}</>;
   };
