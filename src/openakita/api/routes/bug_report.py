@@ -1082,7 +1082,7 @@ async def _build_bug_zip(
                 zf,
                 data_dir / "orgs",
                 "orgs",
-                patterns=("*.jsonl", "*.md"),
+                patterns=("*.jsonl", "*.json", "*.md"),
                 max_total_bytes=2 * 1024 * 1024,
             )
             _add_dir_recent(

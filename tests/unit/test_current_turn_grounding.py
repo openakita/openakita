@@ -24,6 +24,53 @@ def test_current_turn_url_allows_explicit_history_reference():
     assert blocked is None
 
 
+def test_current_turn_url_trims_adjacent_cjk_instruction_suffix():
+    turn = CurrentTurnInput.from_inputs("https://github.com/DietrichGebert/ponytail安装")
+
+    assert len(turn.urls) == 1
+    assert turn.urls[0].value == "https://github.com/DietrichGebert/ponytail"
+    assert (
+        turn.validate_tool_call(
+            "web_fetch",
+            {"url": "https://github.com/DietrichGebert/ponytail"},
+        )
+        is None
+    )
+
+
+def test_current_turn_url_trims_long_adjacent_cjk_instruction_suffix():
+    turn = CurrentTurnInput.from_inputs("https://github.com/libtv-labs/libtv-skills帮我安装这个skill")
+
+    assert len(turn.urls) == 1
+    assert turn.urls[0].value == "https://github.com/libtv-labs/libtv-skills"
+    assert (
+        turn.validate_tool_call(
+            "web_fetch",
+            {"url": "https://github.com/libtv-labs/libtv-skills"},
+        )
+        is None
+    )
+
+
+def test_current_turn_url_guard_matches_existing_dirty_cjk_instruction_suffix():
+    turn = CurrentTurnInput.from_inputs("https://github.com/DietrichGebert/ponytail")
+    turn.urls = (
+        type(turn.urls[0])(
+            kind="url",
+            value="https://github.com/DietrichGebert/ponytail安装",
+            label="https://github.com/DietrichGebert/ponytail安装",
+        ),
+    )
+
+    assert (
+        turn.validate_tool_call(
+            "web_fetch",
+            {"url": "https://github.com/DietrichGebert/ponytail"},
+        )
+        is None
+    )
+
+
 def test_browser_page_read_requires_navigation_to_current_url():
     turn = CurrentTurnInput.from_inputs("看看这个 https://example.com/current")
 

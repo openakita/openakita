@@ -20,6 +20,7 @@ from ..base import (
     SearchResult,
 )
 from ..registry import register
+from ._http import describe_httpx_failure, search_httpx_client_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -58,20 +59,23 @@ class SearXNGProvider:
             "language": _region_to_lang(region),
         }
         timeout = timeout_seconds if timeout_seconds and timeout_seconds > 0 else 30.0
+        endpoint = self._endpoint()
 
         import httpx
 
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.get(self._endpoint(), params=params)
+            async with httpx.AsyncClient(
+                **search_httpx_client_kwargs(timeout=timeout, target_url=endpoint)
+            ) as client:
+                resp = await client.get(endpoint, params=params)
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
             raise NetworkUnreachableError(
-                f"searxng transport failure: {type(exc).__name__}: {exc}",
+                f"searxng transport failure: {describe_httpx_failure(exc)}",
                 provider_id=self.id,
             ) from exc
         except httpx.HTTPError as exc:
             raise NetworkUnreachableError(
-                f"searxng HTTP error: {type(exc).__name__}: {exc}",
+                f"searxng HTTP error: {describe_httpx_failure(exc)}",
                 provider_id=self.id,
             ) from exc
 

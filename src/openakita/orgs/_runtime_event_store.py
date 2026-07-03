@@ -18,6 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .jsonl_utils import read_jsonl_objects
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -42,18 +44,9 @@ class OrgEventStore:
         self._events: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         if jsonl_path is not None and jsonl_path.is_file():
-            try:
-                with jsonl_path.open("r", encoding="utf-8") as fh:
-                    for raw in fh:
-                        line = raw.strip()
-                        if not line:
-                            continue
-                        try:
-                            self._events.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            continue
-            except OSError as exc:  # noqa: BLE001
-                _LOGGER.warning("OrgEventStore replay failed for %s: %s", org_id, exc)
+            for record in read_jsonl_objects(jsonl_path, log=_LOGGER):
+                if isinstance(record, dict):
+                    self._events.append(record)
 
     def append(self, event: dict[str, Any]) -> dict[str, Any]:
         """Append ``event``; stamps ``org_id`` + ``at`` + ``ts`` if absent.

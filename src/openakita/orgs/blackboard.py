@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from .jsonl_utils import read_jsonl_objects
 from .memory_models import MemoryScope, MemoryType, OrgMemoryEntry
 
 __all__ = [
@@ -157,14 +158,11 @@ class JsonFileBlackboardBackend:
         if not prefix or not path.is_file():
             return False
         with self._lock:
-            raw = path.read_text(encoding="utf-8")
-        for line in raw.strip().splitlines():
-            if not line.strip():
+            records = read_jsonl_objects(path, log=logger)
+        for record in records:
+            if not isinstance(record, dict):
                 continue
-            try:
-                existing = json.loads(line).get("content", "")
-            except (json.JSONDecodeError, AttributeError):
-                continue
+            existing = record.get("content", "")
             if isinstance(existing, str) and existing[:prefix_len].strip() == prefix:
                 return True
         return False
@@ -191,19 +189,15 @@ class JsonFileBlackboardBackend:
             for path in self._all_memory_files():
                 if not path.is_file():
                     continue
-                lines = path.read_text(encoding="utf-8").splitlines()
                 kept: list[str] = []
                 found = False
-                for line in lines:
-                    if not line.strip():
+                for record in read_jsonl_objects(path, log=logger):
+                    if not isinstance(record, dict):
                         continue
-                    try:
-                        if json.loads(line).get("id") == memory_id:
-                            found = True
-                            continue
-                    except (json.JSONDecodeError, AttributeError):
-                        pass
-                    kept.append(line)
+                    if record.get("id") == memory_id:
+                        found = True
+                        continue
+                    kept.append(json.dumps(record, ensure_ascii=False))
                 if found:
                     path.write_text(
                         ("\n".join(kept) + "\n") if kept else "", encoding="utf-8"
@@ -237,19 +231,19 @@ class JsonFileBlackboardBackend:
         if not path.is_file():
             return
         with self._lock:
-            lines = [
-                ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()
+            records = [
+                r for r in read_jsonl_objects(path, log=logger) if isinstance(r, dict)
             ]
             live: list[tuple[float, str]] = []
-            for line in lines:
+            for record in records:
                 try:
-                    entry = OrgMemoryEntry.from_dict(json.loads(line))
-                except (json.JSONDecodeError, ValueError, TypeError):
+                    entry = OrgMemoryEntry.from_dict(record)
+                except (ValueError, TypeError):
                     continue
                 if self._is_expired(entry):
                     continue
-                live.append((entry.importance, line))
-            if len(live) <= max_entries and len(live) == len(lines):
+                live.append((entry.importance, json.dumps(record, ensure_ascii=False)))
+            if len(live) <= max_entries and len(live) == len(records):
                 return
             live.sort(key=lambda x: x[0], reverse=True)
             kept = live[:max_entries]
@@ -268,20 +262,11 @@ class JsonFileBlackboardBackend:
         with self._lock:
             if not path.is_file():
                 return []
-            try:
-                raw = path.read_text(encoding="utf-8")
-            except OSError as exc:
-                logger.warning("[Blackboard] read failed for %s: %s", path, exc)
-                return []
+            records = read_jsonl_objects(
+                path, log=logger, decoder=OrgMemoryEntry.from_dict
+            )
         entries: list[OrgMemoryEntry] = []
-        for line in raw.strip().splitlines():
-            if not line.strip():
-                continue
-            try:
-                entry = OrgMemoryEntry.from_dict(json.loads(line))
-            except (json.JSONDecodeError, ValueError, TypeError) as exc:
-                logger.debug("[Blackboard] dropping malformed row: %s", exc)
-                continue
+        for entry in records:
             if self._is_expired(entry):
                 continue
             if tag and tag not in entry.tags:

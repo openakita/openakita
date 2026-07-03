@@ -90,6 +90,10 @@ class SSESession:
     _events: deque[SSEEvent] = field(default_factory=deque, repr=False)
     _seq: int = 0
     _replay_floor: int = 0
+    # Terminal marker for the current turn.  ``done`` may be evicted from the
+    # ringbuffer, but resume still needs to know that this turn actually ended.
+    _terminal_seq: int = 0
+    _terminal_event_type: str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _last_activity: float = field(default_factory=time.time)
 
@@ -109,6 +113,9 @@ class SSESession:
             )
             self._events.append(evt)
             self._last_activity = evt.ts
+            if event_type == "done":
+                self._terminal_seq = evt.seq
+                self._terminal_event_type = event_type
             return evt
 
     def begin_turn(self) -> int:
@@ -125,6 +132,8 @@ class SSESession:
         with self._lock:
             if self._seq > self._replay_floor:
                 self._replay_floor = self._seq
+            self._terminal_seq = 0
+            self._terminal_event_type = ""
             return self._replay_floor
 
     def replay_from(self, last_seq: int | None) -> list[SSEEvent]:
@@ -168,6 +177,21 @@ class SSESession:
     def last_activity(self) -> float:
         with self._lock:
             return self._last_activity
+
+    @property
+    def is_terminal(self) -> bool:
+        with self._lock:
+            return self._terminal_seq > 0
+
+    @property
+    def terminal_seq(self) -> int:
+        with self._lock:
+            return self._terminal_seq
+
+    @property
+    def terminal_event_type(self) -> str:
+        with self._lock:
+            return self._terminal_event_type
 
     def __len__(self) -> int:  # noqa: D401 - len of buffered events
         with self._lock:

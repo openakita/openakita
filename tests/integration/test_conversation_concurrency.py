@@ -206,6 +206,54 @@ class TestConversationLifecycleStart:
         assert ok is False
 
 
+class TestConversationLifecycleRefresh:
+    @pytest.mark.asyncio
+    async def test_refresh_extends_busy_lease_without_changing_since(self, monkeypatch) -> None:
+        from openakita.api.routes import conversation_lifecycle as lifecycle_mod
+
+        now = 1000.0
+        monkeypatch.setattr(lifecycle_mod.time, "time", lambda: now)
+
+        mgr = ConversationLifecycleManager()
+        r = await mgr.start("conv-lease", "client-A", policy=DoubleTextingPolicy.QUEUE)
+        assert r.generation == 1
+        assert mgr._busy["conv-lease"].start_time == 1000.0
+        assert mgr._busy["conv-lease"].last_heartbeat == 1000.0
+
+        now = 1500.0
+        assert await mgr.refresh("conv-lease", generation=r.generation) is True
+        assert mgr._busy["conv-lease"].start_time == 1000.0
+        assert mgr._busy["conv-lease"].last_heartbeat == 1500.0
+
+        now = 2099.0
+        status = await mgr.get_busy_status("conv-lease")
+        assert status["busy"] is True
+        assert status["since"] == 1000.0
+        assert status["last_heartbeat"] == 1500.0
+
+        now = 2101.0
+        status = await mgr.get_busy_status("conv-lease")
+        assert status["busy"] is False
+
+    @pytest.mark.asyncio
+    async def test_refresh_generation_mismatch_does_not_extend_lease(self, monkeypatch) -> None:
+        from openakita.api.routes import conversation_lifecycle as lifecycle_mod
+
+        now = 1000.0
+        monkeypatch.setattr(lifecycle_mod.time, "time", lambda: now)
+
+        mgr = ConversationLifecycleManager()
+        r = await mgr.start("conv-lease", "client-A", policy=DoubleTextingPolicy.QUEUE)
+
+        now = 1500.0
+        assert await mgr.refresh("conv-lease", generation=r.generation + 1) is False
+        assert mgr._busy["conv-lease"].last_heartbeat == 1000.0
+
+        now = 1601.0
+        status = await mgr.get_busy_status("conv-lease")
+        assert status["busy"] is False
+
+
 # ── S1.5: TaskState settled_event / abandoned ─────────────────────────
 
 

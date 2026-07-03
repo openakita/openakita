@@ -17,6 +17,18 @@ from urllib.parse import urlunparse
 from ..utils.url_safety import safe_urlparse
 
 _URL_RE = re.compile(r"https?://[^\s<>'\"`，。！？、；；）)\]}】]+", re.IGNORECASE)
+_URL_SAFE_ASCII_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._~!$&'()*+,;=:@%-]+$")
+_CJK_CHAR_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_URL_TRAILING_INSTRUCTION_RE = re.compile(
+    r"^(?:"
+    r"(?:请|麻烦|帮我|帮忙|给我|替我|顺手|怎么|如何)?"
+    r"(?:安装|装一下|装|读取|读一下|读|打开|看看|看下|看一下|分析|总结|访问|进入|下载|克隆)"
+    r"(?:这个|该|一下|下|吧)?"
+    r"(?:skill|插件|项目|仓库|repo|库|链接|网址|网页|页面|文档|文件|说明|教程|readme|mcp)?"
+    r"|(?:这个|该)(?:skill|插件|项目|仓库|repo|库|链接|网址|网页|页面|文档|文件)?"
+    r")$",
+    re.IGNORECASE,
+)
 _HISTORY_REF_RE = re.compile(
     r"(上次|之前|以前|历史|旧的|老的|上午|下午|昨天|前面|先前|上一[个张份条]|刚才那个)"
 )
@@ -199,10 +211,7 @@ class CurrentTurnInput:
     ) -> CurrentTurnInput:
         """Build current-turn state from text plus Desktop/IM attachment shapes."""
         text_value = text if isinstance(text, str) else ""
-        urls = tuple(
-            TurnObject(kind="url", value=_normalize_url(m.group(0)), label=m.group(0))
-            for m in _URL_RE.finditer(text_value)
-        )
+        urls = tuple(_url_objects_from_text(text_value))
 
         images: list[TurnObject] = []
         videos: list[TurnObject] = []
@@ -562,8 +571,69 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def _normalize_url(url: str) -> str:
+def _url_objects_from_text(text: str) -> list[TurnObject]:
+    objects: list[TurnObject] = []
+    for match in _URL_RE.finditer(text or ""):
+        normalized = _normalize_url(match.group(0))
+        if not normalized:
+            continue
+        objects.append(TurnObject(kind="url", value=normalized, label=normalized))
+    return objects
+
+
+def _clean_extracted_url(url: str) -> str:
     raw = (url or "").strip().rstrip(".,;:!?'\"`)）】")
+    if not raw:
+        return raw
+
+    parsed = safe_urlparse(raw)
+    if not parsed.scheme or not parsed.netloc or not parsed.path:
+        return raw
+
+    path = _strip_trailing_instruction_from_path(parsed.path)
+    if path == parsed.path:
+        return raw
+
+    return urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
+
+
+def _strip_trailing_instruction_from_path(path: str) -> str:
+    head, sep, segment = path.rpartition("/")
+    if not segment or not _CJK_CHAR_RE.search(segment):
+        return path
+
+    first_cjk = _first_cjk_index(segment)
+    if first_cjk <= 0:
+        return path
+
+    url_segment = segment[:first_cjk]
+    suffix = segment[first_cjk:]
+    if not _URL_SAFE_ASCII_SEGMENT_RE.fullmatch(url_segment):
+        return path
+    if not _URL_TRAILING_INSTRUCTION_RE.fullmatch(suffix):
+        return path
+
+    return f"{head}{sep}{url_segment}"
+
+
+def _first_cjk_index(value: str) -> int:
+    for index, char in enumerate(value):
+        if _CJK_CHAR_RE.match(char):
+            return index
+    return -1
+
+
+def _normalize_url(url: str) -> str:
+    raw = _clean_extracted_url(url)
     parsed = safe_urlparse(raw)
     if not parsed.scheme or not parsed.netloc:
         return raw

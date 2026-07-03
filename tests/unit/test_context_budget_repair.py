@@ -112,6 +112,23 @@ def test_loop_budget_readonly_stagnation_has_soft_warning():
     assert not warn.should_stop
 
 
+def test_loop_budget_treats_network_reads_as_readonly_stagnation():
+    for tool_name in ("web_fetch", "web_search", "news_search"):
+        guard = LoopBudgetGuard(readonly_stagnation_limit=2, readonly_stagnation_hard_limit=3)
+        call = [{"name": tool_name}]
+        results = [{"content": "same network result"}]
+
+        assert not guard.record_tool_results(call, results).should_stop
+        assert not guard.record_tool_results(call, results).should_stop
+        warn = guard.record_tool_results(call, results)
+        assert warn.should_warn
+        assert not warn.should_stop
+
+        stop = guard.record_tool_results(call, results)
+        assert stop.should_stop
+        assert stop.exit_reason == "readonly_stagnation"
+
+
 def test_microcompact_dedupes_cached_and_repeated_tool_results():
     messages = [
         {

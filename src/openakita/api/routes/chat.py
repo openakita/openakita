@@ -82,6 +82,22 @@ def _chat_endpoint_names() -> set[str]:
         return set()
 
 
+def _should_emit_resume_task_idle(
+    *,
+    busy: bool,
+    terminal_seen: bool,
+    seconds_since_event: float,
+) -> bool:
+    """Whether ``/api/chat/resume`` may close with synthetic task_idle.
+
+    Busy state alone is not a completion signal: the lifecycle lease can be
+    released by stale cleanup, explicit cancel, or background handoff.  Resume
+    only uses synthetic ``done`` after the SSE session itself has observed a
+    real terminal event for the current turn.
+    """
+    return (not busy) and terminal_seen and seconds_since_event > 1.0
+
+
 def _format_controlled_action_result(
     decision: ConfirmationDecision,
     result: dict,
@@ -1162,6 +1178,30 @@ async def _stream_chat(
     _save_done = False
     session = None
     conversation_id = chat_request.conversation_id or ""
+    _BUSY_REFRESH_INTERVAL = 60.0
+    _last_busy_refresh_ts = 0.0
+
+    async def _refresh_busy_lease(*, force: bool = False) -> None:
+        nonlocal _last_busy_refresh_ts
+        if not conversation_id or not busy_generation:
+            return
+        now = time.time()
+        if not force and now - _last_busy_refresh_ts < _BUSY_REFRESH_INTERVAL:
+            return
+        try:
+            refreshed = await get_lifecycle_manager().refresh(
+                conversation_id,
+                generation=busy_generation,
+            )
+            if refreshed:
+                _last_busy_refresh_ts = now
+        except Exception:
+            logger.debug(
+                "[Chat API] busy lease refresh failed (conv=%s, gen=%d)",
+                conversation_id,
+                busy_generation,
+                exc_info=True,
+            )
 
     try:
         # ── Turn-scoped replay floor (cross-turn replay guard) ──
@@ -1211,6 +1251,7 @@ async def _stream_chat(
         conversation_id = chat_request.conversation_id or f"api_{_uuid.uuid4().hex[:12]}"
         turn_id = f"{conversation_id}:{request_id or _uuid.uuid4().hex[:12]}"
         session_messages_history: list[dict] = []
+        await _refresh_busy_lease(force=True)
 
         if session_manager and conversation_id:
             try:
@@ -1419,6 +1460,7 @@ async def _stream_chat(
             return out
 
         while True:
+            await _refresh_busy_lease()
             try:
                 event = await asyncio.wait_for(_agent_queue.get(), timeout=COALESCER_TICK_INTERVAL)
             except TimeoutError:
@@ -1439,6 +1481,7 @@ async def _stream_chat(
             if event is None:
                 break
 
+            await _refresh_busy_lease()
             event_type = event.get("type", "")
 
             # Observe every raw event (before coalescing / disconnect gating) so
@@ -1987,8 +2030,33 @@ async def _stream_org_command_chat(
     target_node_id = chat_request.org_node_id or None
     queue = None
     command_id = ""
+    _BUSY_REFRESH_INTERVAL = 60.0
+    _last_busy_refresh_ts = 0.0
+
+    async def _refresh_busy_lease(*, force: bool = False) -> None:
+        nonlocal _last_busy_refresh_ts
+        if not conversation_id or not busy_generation:
+            return
+        now = time.time()
+        if not force and now - _last_busy_refresh_ts < _BUSY_REFRESH_INTERVAL:
+            return
+        try:
+            refreshed = await get_lifecycle_manager().refresh(
+                conversation_id,
+                generation=busy_generation,
+            )
+            if refreshed:
+                _last_busy_refresh_ts = now
+        except Exception:
+            logger.debug(
+                "[Chat API] org busy lease refresh failed (conv=%s, gen=%d)",
+                conversation_id,
+                busy_generation,
+                exc_info=True,
+            )
 
     try:
+        await _refresh_busy_lease(force=True)
         if session_manager:
             session = session_manager.get_session(
                 channel="desktop",
@@ -2070,12 +2138,14 @@ async def _stream_org_command_chat(
         # 事件实时构建独立的 timeline 卡片，不再需要把它塞进 text_replace 正文。
         progress_entries: list[dict] = []
         while True:
+            await _refresh_busy_lease()
             try:
                 item = await asyncio.wait_for(queue.get(), timeout=30)
             except TimeoutError:
                 yield _sse("heartbeat", {"org_id": org_id, "command_id": command_id})
                 continue
 
+            await _refresh_busy_lease()
             if item.get("type") == "org_progress":
                 summary = item.get("summary") or ""
                 if summary:
@@ -3104,10 +3174,11 @@ async def chat_resume(
     2. Tail-poll the ringbuffer every 100ms; whenever ``current_seq``
        advances, flush the newly-buffered events.
     3. Exit when ANY of:
-       - Client disconnects (``request.is_disconnected()``).
-       - Lifecycle reports the conversation idle (task ended).
-       - 15 minutes elapse with no new events (matches the SSE
-         disconnect grace period — beyond this we'd just be a leak).
+        - Client disconnects (``request.is_disconnected()``).
+        - The SSE session has seen this turn's terminal event and
+          lifecycle also reports the conversation idle.
+        - 15 minutes elapse with no new events (matches the SSE
+          disconnect grace period — beyond this we'd just be a leak).
 
     The same conversation can have multiple concurrent ``/resume``
     subscribers (e.g. user has the app open on two devices); each gets
@@ -3206,22 +3277,29 @@ async def chat_resume(
                     _last_event_time = _now
                     _last_ping_time = _now
                 else:
-                    # No new events.  Check if the lifecycle says the
-                    # conversation is no longer busy and we've quiesced
-                    # for a bit — then we can close cleanly.
+                    # No new events.  Busy state alone is not a terminal
+                    # signal: stale lease cleanup or background handoff can
+                    # make lifecycle look idle while the agent is still
+                    # between events.  Only close with synthetic done after
+                    # the ringbuffer has observed this turn's real done.
                     try:
                         status = await lifecycle.get_busy_status(conversation_id)
                         busy = bool(status.get("busy"))
                     except Exception:
                         busy = False
-                    if not busy and time.time() - _last_event_time > 1.0:
+                    if _should_emit_resume_task_idle(
+                        busy=busy,
+                        terminal_seen=sse_session.is_terminal,
+                        seconds_since_event=time.time() - _last_event_time,
+                    ):
                         # Emit a synthetic done so the client can clean up.
                         yield (
                             f"data: {json.dumps({'type': 'done', 'reason': 'task_idle', 'last_seq': _last_emitted_seq}, ensure_ascii=False)}\n\n"
                         )
                         break
-                    # Idle but still busy — periodic keepalive ping so
-                    # the connection survives long LLM thinking turns.
+                    # No terminal event yet — periodic keepalive ping so the
+                    # connection survives long LLM thinking turns even if the
+                    # lifecycle lease is momentarily absent.
                     if time.time() - _last_ping_time >= 15.0:
                         yield (
                             f": ping resume-tail elapsed={(time.time() - _tail_started_at):.0f}s\n\n"

@@ -97,6 +97,23 @@ class TestSSESession:
         time.sleep(0.03)
         assert s.is_idle() is True
 
+    def test_done_marks_session_terminal(self) -> None:
+        s = SSESession(session_id="conv_terminal")
+        assert s.is_terminal is False
+        evt = s.add_event("done", {})
+        assert s.is_terminal is True
+        assert s.terminal_seq == evt.seq
+        assert s.terminal_event_type == "done"
+
+    def test_begin_turn_clears_terminal_marker(self) -> None:
+        s = SSESession(session_id="conv_terminal_clear")
+        s.add_event("done", {})
+        assert s.is_terminal is True
+        s.begin_turn()
+        assert s.is_terminal is False
+        assert s.terminal_seq == 0
+        assert s.terminal_event_type == ""
+
 
 # ---------------------------------------------------------------------------
 # Turn-boundary replay floor — the cross-turn replay guard.

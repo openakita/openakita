@@ -48,7 +48,7 @@ from .cancel_cleanup import (
     synthesize_tool_results_for_orphans,
 )
 from .errors import UserCancelledError
-from .loop_budget_guard import LoopBudgetGuard
+from .loop_budget_guard import READONLY_EXPLORATION_TOOLS, LoopBudgetGuard
 from .resource_budget import BudgetAction, ResourceBudget, create_budget_from_settings
 from .response_handler import (
     ResponseHandler,
@@ -179,20 +179,7 @@ def _build_tool_end_events(
 
 
 _CACHEABLE_READONLY_TOOLS = frozenset({"web_fetch", "web_search", "news_search"})
-_READONLY_EXPLORATION_TOOLS = frozenset(
-    {
-        "read_file",
-        "list_directory",
-        "grep",
-        "glob",
-        "get_tool_info",
-        "list_skills",
-        "get_skill_info",
-        "search_memory",
-        "get_memory_stats",
-        "get_session_context",
-    }
-)
+_READONLY_EXPLORATION_TOOLS = READONLY_EXPLORATION_TOOLS
 _READONLY_STAGNATION_LIMIT = 3
 
 

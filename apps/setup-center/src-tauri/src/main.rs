@@ -984,6 +984,10 @@ fn runtime_cache_dir() -> PathBuf {
     runtime_root_dir().join("cache")
 }
 
+fn runtime_uv_cache_dir() -> PathBuf {
+    runtime_cache_dir().join("uv")
+}
+
 fn runtime_venv_python_path(venv_dir: &Path) -> PathBuf {
     if cfg!(windows) {
         venv_dir.join("Scripts").join("python.exe")
@@ -1094,7 +1098,7 @@ fn ensure_runtime_layout() -> Result<(), String> {
         agent_venv_dir(),
         runtime_logs_dir(),
         runtime_cache_dir().join("wheels"),
-        runtime_cache_dir().join("uv"),
+        runtime_uv_cache_dir(),
         runtime_cache_dir().join("python"),
     ] {
         if let Err(e) = fs::create_dir_all(&dir) {
@@ -1430,7 +1434,7 @@ fn apply_runtime_bootstrap_env(cmd: &mut Command, pip_index: Option<&RuntimePipI
     cmd.env("UV_PYTHON_INSTALL_DIR", &py_install);
     cmd.env("UV_PYTHON_BIN_DIR", &py_install);
     // 给 uv 的下载缓存也定向到 runtime/cache/uv/，与现有 cache layout 一致。
-    cmd.env("UV_CACHE_DIR", runtime_cache_dir().join("uv"));
+    cmd.env("UV_CACHE_DIR", runtime_uv_cache_dir());
 }
 
 fn apply_runtime_core_env(cmd: &mut Command) {
@@ -1495,6 +1499,56 @@ fn health_check_python(py: &Path, code: &str, log_path: &Path) -> bool {
             false
         }
         Err(_) => false,
+    }
+}
+
+fn quarantine_runtime_uv_cache(report: &mut String) {
+    let cache_dir = runtime_uv_cache_dir();
+    if !cache_dir.exists() {
+        report.push_str(&format!("uv cache absent: {}\n", cache_dir.display()));
+        if let Err(e) = fs::create_dir_all(&cache_dir) {
+            report.push_str(&format!(
+                "warn: recreate uv cache dir {} failed: {}\n",
+                cache_dir.display(),
+                e
+            ));
+        }
+        return;
+    }
+
+    let quarantine = runtime_root_dir()
+        .join("reports")
+        .join(format!("uv-cache-quarantine-{}", now_epoch_secs()));
+    match fs::rename(&cache_dir, &quarantine) {
+        Ok(()) => {
+            report.push_str(&format!(
+                "quarantined uv cache {} -> {}\n",
+                cache_dir.display(),
+                quarantine.display()
+            ));
+        }
+        Err(rename_err) => {
+            report.push_str(&format!(
+                "warn: quarantine uv cache {} failed: {}; deleting cache\n",
+                cache_dir.display(),
+                rename_err
+            ));
+            match fs::remove_dir_all(&cache_dir) {
+                Ok(()) => report.push_str(&format!("removed uv cache {}\n", cache_dir.display())),
+                Err(remove_err) => report.push_str(&format!(
+                    "warn: remove uv cache {} failed: {}\n",
+                    cache_dir.display(),
+                    remove_err
+                )),
+            }
+        }
+    }
+    if let Err(e) = fs::create_dir_all(&cache_dir) {
+        report.push_str(&format!(
+            "warn: recreate uv cache dir {} failed: {}\n",
+            cache_dir.display(),
+            e
+        ));
     }
 }
 
@@ -1684,11 +1738,30 @@ report = {{
     "sys_path": sys.path,
     "site_packages": [],
     "packages": {{}},
+    "package_errors": {{}},
     "native_extensions": [],
+    "nul_byte_files": [],
     "managed_roots": managed_roots,
 }}
 
+def scan_nul_bytes(root, limit=20):
+    try:
+        base = pathlib.Path(root)
+        for py_file in base.rglob("*.py"):
+            try:
+                data = py_file.read_bytes()
+            except Exception:
+                continue
+            if b"\x00" in data:
+                report["nul_byte_files"].append(str(py_file.resolve()))
+                if len(report["nul_byte_files"]) >= limit:
+                    break
+    except Exception as exc:
+        report["nul_scan_error"] = repr(exc)
+
 def fail(reason):
+    scan_nul_bytes(venv / "Lib" / "site-packages")
+    scan_nul_bytes(venv / "lib")
     report["health_status"] = "failed"
     report["health_reason"] = reason
     print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -1745,8 +1818,17 @@ for p in sys.path:
     if "site-packages" in low and any(marker in low for marker in bad_path_markers):
         fail("sys.path contains disallowed site-packages: " + str(p))
 
-for mod_name in ("openakita", "pydantic", "pydantic_core", "certifi"):
-    mod = importlib.import_module(mod_name)
+for mod_name in ("openakita", "yaml", "pydantic", "pydantic_core", "certifi"):
+    try:
+        mod = importlib.import_module(mod_name)
+    except Exception as exc:
+        report["package_errors"][mod_name] = {{
+            "type": type(exc).__name__,
+            "message": str(exc),
+            "filename": getattr(exc, "filename", ""),
+            "lineno": getattr(exc, "lineno", None),
+        }}
+        fail(f"{{mod_name}} import failed: {{type(exc).__name__}}: {{exc}}")
     mod_file = pathlib.Path(getattr(mod, "__file__", "") or "").resolve()
     report["packages"][mod_name] = str(mod_file)
     if not mod_file or not is_under(mod_file, venv):
@@ -1954,7 +2036,11 @@ fn ensure_app_venv(
                 app_venv_dir().display()
             ));
         }
-        Err("app venv health check failed after OpenAkita install".into())
+        Err(format!(
+            "app venv health check failed after OpenAkita install: python={}, log={}",
+            app_py.display(),
+            log_path.display()
+        ))
     }
 }
 
@@ -6441,6 +6527,7 @@ fn repair_runtime_env() -> Result<String, String> {
     if agent_venv_log.exists() {
         let _ = fs::remove_file(&agent_venv_log);
     }
+    quarantine_runtime_uv_cache(&mut report);
     match ensure_dual_runtime_env() {
         Ok(info) => {
             report.push_str(&format!(

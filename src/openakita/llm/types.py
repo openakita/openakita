@@ -523,8 +523,10 @@ def normalize_context_window(
     """Normalize endpoint context windows.
 
     Hosted providers keep the broad historical default. Local runtimes often
-    expose 4K/8K GGUF models; treating a missing value as 200K causes the
-    prompt/tool budgeter to overload them before it can recover.
+    expose 4K/8K GGUF models; treating a missing or invalid value as 200K
+    causes the prompt/tool budgeter to overload them before it can recover.
+    Preserve explicit local values, including the historical 200K default,
+    because they may come from user config or model capability probing.
     """
     is_local = is_local_endpoint_config(provider, base_url)
     try:
@@ -532,7 +534,7 @@ def normalize_context_window(
     except (TypeError, ValueError):
         ctx = 0
 
-    if is_local and (ctx <= 0 or ctx == DEFAULT_CONTEXT_WINDOW):
+    if is_local and ctx <= 0:
         return LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW
     if ctx <= 0:
         return DEFAULT_CONTEXT_WINDOW
@@ -552,7 +554,7 @@ class EndpointConfig:
     model: str = ""  # 模型名称
     priority: int = 1  # 优先级 (越小越优先)
     max_tokens: int = 0  # 最大输出 tokens (0=不限制，使用模型默认上限)
-    context_window: int = DEFAULT_CONTEXT_WINDOW  # 上下文窗口大小 (输入+输出总 token 上限)
+    context_window: int = 0  # 上下文窗口大小 (输入+输出总 token 上限，0=未知/使用默认)
     timeout: int = 180  # 超时时间 (秒)
     capabilities: list[str] | None = None  # 能力列表
     extra_params: dict | None = None  # 额外参数
