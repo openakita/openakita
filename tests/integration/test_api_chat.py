@@ -590,13 +590,6 @@ class TestChatControlEndpoints:
         )
         assert resp.status_code == 200
 
-    async def test_answer_endpoint(self, client):
-        resp = await client.post(
-            "/api/chat/answer",
-            json={"conversation_id": "test-conv-1", "answer": "Yes"},
-        )
-        assert resp.status_code == 200
-
     async def test_insert_endpoint(self, client, mock_agent):
         mock_agent.state.insert_user_message = AsyncMock()
         resp = await client.post(

@@ -21,13 +21,30 @@ from openakita.core.policy_v2 import (
 )
 from openakita.core.policy_v2.context import (
     PolicyContext,
-    ReplayAuthorization,
+    ToolPolicy,
     TrustedPathOverride,
 )
 from openakita.core.policy_v2.global_engine import (
     rebuild_engine_v2,
     reset_engine_v2,
 )
+
+_MEMORY_DELETE_POLICY = {
+    "memory_delete_by_query": ToolPolicy(
+        preview_param="dry_run",
+        preview_default=True,
+        preview_step_name="tool_preview",
+        preview_reason="tool call only previews candidates",
+        commit_requires_riskgate=True,
+        riskgate_operation="memory_delete",
+        riskgate_scope_params=("query", "source", "memory_type"),
+        riskgate_scope_required_any=("query", "source", "memory_type"),
+        riskgate_scope_exact_params=("source", "memory_type"),
+        riskgate_scope_text_params=("query",),
+        commit_step_name="tool_commit_requires_riskgate",
+        commit_reason="tool commit requires confirmed RiskGate tool authorization",
+    )
+}
 
 # ---------------------------------------------------------------------------
 # mode_to_session_role
@@ -112,13 +129,13 @@ class TestBuildPolicyContext:
         ctx = build_policy_context(session=None, user_message="please refactor")
         assert ctx.user_message == "please refactor"
 
-    def test_session_metadata_replay_auths_extracted(self):
-        """v1 risk_authorized_replay (dict) → ReplayAuthorization list。"""
+    def test_session_metadata_replay_auths_are_not_a_policy_source(self):
+        """RiskGate grants must be passed explicitly by the backend."""
         future = time.time() + 30.0
         session = MagicMock()
         session.get_metadata = MagicMock(
             side_effect=lambda key: {
-                "risk_authorized_replay": {
+                "untrusted_client_authorization": {
                     "expires_at": future,
                     "original_message": "delete logs",
                     "confirmation_id": "conf-1",
@@ -127,13 +144,171 @@ class TestBuildPolicyContext:
             }.get(key)
         )
         ctx = build_policy_context(session=session)
-        assert len(ctx.replay_authorizations) == 1
-        ra = ctx.replay_authorizations[0]
-        assert isinstance(ra, ReplayAuthorization)
-        assert ra.original_message == "delete logs"
-        assert ra.confirmation_id == "conf-1"
-        assert ra.operation == "delete"
-        assert ra.expires_at == future
+        assert ctx.replay_authorizations == []
+
+    def test_explicit_replay_auths_are_the_policy_source(self):
+        """Turn-scoped RiskGate grants are passed explicitly."""
+        turn_future = time.time() + 3600.0
+        session = MagicMock()
+        session.get_metadata = MagicMock(return_value=None)
+
+        ctx = build_policy_context(
+            session=session,
+            replay_authorizations=[
+                {
+                    "expires_at": turn_future,
+                    "original_message": "delete turn marker",
+                    "confirmation_id": "turn-conf",
+                    "operation": "delete",
+                }
+            ],
+        )
+
+        assert [ra.confirmation_id for ra in ctx.replay_authorizations] == ["turn-conf"]
+        assert ctx.replay_authorizations[0].expires_at == turn_future
+
+    def test_explicit_turn_replay_does_not_relax_riskgate_commit_policy(self):
+        """RiskGate-protected commits require scoped executor authorization."""
+        from openakita.core.policy_v2 import evaluate_via_v2
+
+        message = "请删除长期记忆中所有包含 OPENAKITA_RISKGATE_689_REPRO_TEST 的记忆。"
+        ctx = build_policy_context(
+            session=None,
+            mode="agent",
+            user_message=message,
+            tool_policies=_MEMORY_DELETE_POLICY,
+            replay_authorizations=[
+                {
+                    "turn_scoped": True,
+                    "original_message": message,
+                    "confirmation_id": "turn-conf",
+                    "operation": "delete",
+                }
+            ],
+        )
+        token = set_current_context(ctx)
+        try:
+            decision = evaluate_via_v2(
+                "memory_delete_by_query",
+                {"query": "OPENAKITA_RISKGATE_689_REPRO_TEST", "dry_run": False},
+            )
+        finally:
+            reset_current_context(token)
+
+        assert decision.action == DecisionAction.CONFIRM
+        assert any(step.name == "tool_commit_requires_riskgate" for step in decision.chain)
+        assert not any(step.name == "replay" for step in decision.chain)
+        assert decision.metadata["riskgate_required"] is True
+
+    def test_memory_delete_dry_run_preview_does_not_need_tool_confirmation(self):
+        """The non-mutating preview must not show a normal security confirm."""
+        from openakita.core.policy_v2 import evaluate_via_v2
+
+        ctx = build_policy_context(
+            session=None,
+            mode="agent",
+            user_message="请删除长期记忆中所有包含 OPENAKITA_RISKGATE_689_REPRO_TEST 的记忆。",
+            tool_policies=_MEMORY_DELETE_POLICY,
+        )
+        token = set_current_context(ctx)
+        try:
+            decision = evaluate_via_v2(
+                "memory_delete_by_query",
+                {"query": "OPENAKITA_RISKGATE_689_REPRO_TEST", "dry_run": True},
+            )
+        finally:
+            reset_current_context(token)
+
+        assert decision.action == DecisionAction.ALLOW
+        assert any(step.name == "tool_preview" for step in decision.chain)
+
+    def test_memory_delete_real_delete_without_riskgate_requests_tool_riskgate(self):
+        """A real commit asks for backend RiskGate from the structured tool call."""
+        from openakita.core.policy_v2 import evaluate_via_v2
+
+        ctx = build_policy_context(
+            session=None,
+            mode="agent",
+            user_message="retry",
+            tool_policies=_MEMORY_DELETE_POLICY,
+        )
+        token = set_current_context(ctx)
+        try:
+            decision = evaluate_via_v2(
+                "memory_delete_by_query",
+                {
+                    "query": "OPENAKITA_RISKGATE_689_REPRO_TEST",
+                    "dry_run": False,
+                    "confirm_token": "token",
+                },
+            )
+        finally:
+            reset_current_context(token)
+
+        assert decision.action == DecisionAction.CONFIRM
+        assert any(step.name == "tool_commit_requires_riskgate" for step in decision.chain)
+        assert decision.metadata["riskgate_required"] is True
+        assert decision.metadata["riskgate_operation"] == "memory_delete"
+        assert decision.metadata["riskgate_scope"]["query"] == "OPENAKITA_RISKGATE_689_REPRO_TEST"
+
+    def test_riskgate_metadata_without_replay_does_not_authorize_commit(self):
+        """The trace marker alone must not bypass a tool's replay requirement."""
+        from openakita.core.policy_v2 import evaluate_via_v2
+
+        ctx = build_policy_context(
+            session=None,
+            mode="agent",
+            user_message="请删除长期记忆中所有包含 OPENAKITA_RISKGATE_689_REPRO_TEST 的记忆。",
+            tool_policies=_MEMORY_DELETE_POLICY,
+            extra_metadata={"risk_gate_turn_authorized": True},
+        )
+        token = set_current_context(ctx)
+        try:
+            decision = evaluate_via_v2(
+                "memory_delete_by_query",
+                {
+                    "query": "OPENAKITA_RISKGATE_689_REPRO_TEST",
+                    "dry_run": False,
+                    "confirm_token": "token",
+                },
+            )
+        finally:
+            reset_current_context(token)
+
+        assert decision.action == DecisionAction.CONFIRM
+        assert any(step.name == "tool_commit_requires_riskgate" for step in decision.chain)
+
+    def test_explicit_turn_replay_does_not_relax_unlisted_tool(self):
+        """Turn-scoped replay grants should not relax broader destructive tools."""
+        from openakita.core.policy_v2 import evaluate_via_v2
+
+        message = "请删除长期记忆中所有包含 OPENAKITA_RISKGATE_689_REPRO_TEST 的记忆。"
+        ctx = build_policy_context(
+            session=None,
+            mode="agent",
+            user_message=message,
+            tool_policies=_MEMORY_DELETE_POLICY,
+            replay_authorizations=[
+                {
+                    "turn_scoped": True,
+                    "original_message": message,
+                    "confirmation_id": "turn-conf",
+                    "operation": "delete",
+                    "tool_names": ["memory_delete_by_query"],
+                }
+            ],
+        )
+        token = set_current_context(ctx)
+        try:
+            decision = evaluate_via_v2(
+                "delete_file",
+                {"path": "memory.json"},
+            )
+        finally:
+            reset_current_context(token)
+
+        assert decision.action == DecisionAction.CONFIRM
+        assert not any(step.name == "replay" for step in decision.chain)
 
     def test_session_metadata_trusted_paths_extracted(self):
         """v1 trusted_path_overrides {rules:[...]} → TrustedPathOverride list。"""
@@ -167,23 +342,21 @@ class TestBuildPolicyContext:
         assert ctx.replay_authorizations == []
         assert ctx.trusted_path_overrides == []
 
-    def test_malformed_replay_auth_skipped(self):
-        """malformed 条目跳过而非抛异常。"""
+    def test_malformed_explicit_replay_auth_skipped(self):
+        """malformed explicit replay entries are skipped instead of raising."""
         session = MagicMock()
-        session.get_metadata = MagicMock(
-            side_effect=lambda key: {
-                "risk_authorized_replay": [
-                    {"expires_at": "not-a-float"},  # malformed
-                    {  # valid
-                        "expires_at": time.time() + 30,
-                        "original_message": "ok",
-                        "confirmation_id": "x",
-                        "operation": "write",
-                    },
-                ]
-            }.get(key)
+        ctx = build_policy_context(
+            session=session,
+            replay_authorizations=[
+                {"expires_at": "not-a-float"},  # malformed
+                {  # valid
+                    "expires_at": time.time() + 30,
+                    "original_message": "ok",
+                    "confirmation_id": "x",
+                    "operation": "write",
+                },
+            ],
         )
-        ctx = build_policy_context(session=session)
         # 第一条 malformed 跳过，第二条保留
         assert len(ctx.replay_authorizations) == 1
         assert ctx.replay_authorizations[0].original_message == "ok"

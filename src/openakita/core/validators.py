@@ -14,11 +14,12 @@
 from __future__ import annotations
 
 import logging
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+
+from ..tools.tool_result import successful_tool_effects
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +268,37 @@ class ToolSuccessValidator(BaseValidator):
         )
 
 
+class MutationEffectValidator(BaseValidator):
+    """Verify mutation tools from structured successful effects."""
+
+    @property
+    def name(self) -> str:
+        return "MutationEffectValidator"
+
+    def validate(self, context: ValidationContext) -> ValidatorOutput:
+        for effect in successful_tool_effects(context.tool_results):
+            action = str(effect.get("action") or "")
+            if action in {"delete", "write", "create", "update", "move"}:
+                return ValidatorOutput(
+                    name=self.name,
+                    result=ValidationResult.PASS,
+                    reason=f"tool returned a successful {action} effect",
+                )
+
+        if not successful_tool_effects(context.tool_results):
+            return ValidatorOutput(
+                name=self.name,
+                result=ValidationResult.SKIP,
+                reason="No structured mutation effect",
+            )
+
+        return ValidatorOutput(
+            name=self.name,
+            result=ValidationResult.SKIP,
+            reason="No successful mutation effect",
+        )
+
+
 class CompletePlanValidator(BaseValidator):
     """验证 complete_todo 工具是否被调用"""
 
@@ -304,17 +336,11 @@ class CompletePlanValidator(BaseValidator):
 class FileValidator(BaseValidator):
     """文件操作结果验证（磁盘级确定性校验）
 
-    从 tool_results 文本中提取路径，校验文件在磁盘上的实际状态：
+    从 tool_results metadata.effects 中提取路径，校验文件在磁盘上的实际状态：
     - write_file / edit_file: 文件应存在且大小 > 0
     - move_file: 源路径应已不存在，目标路径应存在
     - delete_file: 文件应已不存在
     """
-
-    _WRITE_PATH_RE = re.compile(
-        r"文件已[写编][入辑][:：]\s*(.+?)(?:\s+\(\d+\s*bytes\)|（|$)", re.MULTILINE
-    )
-    _MOVE_PATH_RE = re.compile(r"(?:文件|目录)已移动[:：]\s*(.+?)\s*->\s*(.+?)\s*$", re.MULTILINE)
-    _DELETE_PATH_RE = re.compile(r"(?:文件|目录)已删除[:：]\s*(.+?)\s*$", re.MULTILINE)
 
     @property
     def name(self) -> str:
@@ -332,17 +358,15 @@ class FileValidator(BaseValidator):
         issues: list[str] = []
         checked = 0
 
-        for tr in context.tool_results:
-            if not isinstance(tr, dict):
+        for effect in successful_tool_effects(context.tool_results):
+            action = str(effect.get("action") or "")
+            target = str(effect.get("target") or "")
+            if target not in {"file", "directory"}:
                 continue
-            content = str(tr.get("content", ""))
-            if tr.get("is_error"):
-                continue
-
-            # write / edit: 文件应存在
-            m = self._WRITE_PATH_RE.search(content)
-            if m:
-                fpath = m.group(1).strip()
+            if action in {"write", "update"}:
+                fpath = str(effect.get("path") or "").strip()
+                if not fpath:
+                    continue
                 checked += 1
                 try:
                     p = Path(fpath)
@@ -354,11 +378,11 @@ class FileValidator(BaseValidator):
                     issues.append(f"无法检查 {fpath}: {e}")
                 continue
 
-            # move: 源应消失，目标应存在
-            m = self._MOVE_PATH_RE.search(content)
-            if m:
-                src = m.group(1).strip()
-                dst = m.group(2).strip()
+            if action == "move":
+                src = str(effect.get("source_path") or "").strip()
+                dst = str(effect.get("path") or "").strip()
+                if not src or not dst:
+                    continue
                 checked += 1
                 try:
                     if Path(src).exists():
@@ -369,10 +393,10 @@ class FileValidator(BaseValidator):
                     issues.append(f"无法检查 move 结果: {e}")
                 continue
 
-            # delete: 文件应已不存在
-            m = self._DELETE_PATH_RE.search(content)
-            if m:
-                fpath = m.group(1).strip()
+            if action == "delete":
+                fpath = str(effect.get("path") or "").strip()
+                if not fpath:
+                    continue
                 checked += 1
                 try:
                     if Path(fpath).exists():
@@ -385,7 +409,7 @@ class FileValidator(BaseValidator):
             return ValidatorOutput(
                 name=self.name,
                 result=ValidationResult.SKIP,
-                reason="No parseable file paths in tool results",
+                reason="No file operation metadata",
             )
 
         if issues:
@@ -458,6 +482,7 @@ _DEFAULT_VALIDATORS: list[BaseValidator] = [
     PlanValidator(),
     ArtifactValidator(),
     ToolSuccessValidator(),
+    MutationEffectValidator(),
     FileValidator(),
     CompletePlanValidator(),
     OrgDelegationValidator(),

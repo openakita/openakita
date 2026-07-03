@@ -8,7 +8,15 @@ export { AskUserBlock } from "./AskUser";
 export { SlashCommandPanel } from "./SlashCommandPanel";
 export { RenderIcon, SubAgentCards } from "./SubAgentCards";
 export { SecurityConfirmModal } from "./SecurityConfirmModal";
-export type { SecurityCloseInfo } from "./SecurityConfirmModal";
+export type {
+  SecurityCloseInfo,
+  SecurityConfirmDisplay,
+  SecurityConfirmModalData,
+  SecurityDecision,
+  SecurityDecisionChainStep,
+  SecurityDisplayToken,
+  SecurityTimeoutDefault,
+} from "./SecurityConfirmModal";
 export { ContextMenuInner } from "./ContextMenu";
 export { LightboxOverlay } from "./LightboxOverlay";
 export { MessageBubble } from "./MessageBubble";

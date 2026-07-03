@@ -39,6 +39,7 @@ from .confirmation_mode import (
 from .context import (
     PolicyContext,
     ReplayAuthorization,
+    ToolPolicy,
     TrustedPathOverride,
     get_current_context,
     primary_workspace_root,
@@ -223,6 +224,7 @@ __all__ = [
     # context
     "PolicyContext",
     "ReplayAuthorization",
+    "ToolPolicy",
     "TrustedPathOverride",
     "get_current_context",
     "primary_workspace_root",

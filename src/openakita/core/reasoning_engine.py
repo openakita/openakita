@@ -23,6 +23,7 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -32,6 +33,8 @@ from typing import Any
 from ..api.routes.websocket import broadcast_event
 from ..config import settings
 from ..llm.converters.tools import PARSE_ERROR_KEY
+from ..tools.tool_hints import ConfigHint
+from ..tools.tool_result import split_tool_result_payload, successful_tool_effect_actions
 from ..tracing.tracer import get_tracer
 from .abort_scope import current_abort_scope
 from .agent_state import (
@@ -64,7 +67,10 @@ from .response_handler import (
     strip_internal_trace_markers,
     strip_thinking_tags,
 )
+from .risk_gate_tools import execute_after_riskgate_tool_prompt, prepare_riskgate_tool_prompt
+from .security_confirm_channel import ALLOW_SECURITY_CONFIRM_DECISIONS, register_policy_confirm
 from .supervisor import TOKEN_ANOMALY_THRESHOLD, RuntimeSupervisor
+from .tool_execution_context import ToolExecutionContext
 
 # 不产出"最终交付物"的管理类工具集合 —— 用于：
 #   1) ``tools_executed_in_task`` 标记（仅这些工具被调用 → 视为本轮无实质执行）
@@ -96,6 +102,108 @@ def _tool_rate_limit_key(tool_name: str, tool_args: Any) -> str:
     return f"{tool_name}:{hashlib.md5(param_str.encode()).hexdigest()}"
 
 
+@dataclass(slots=True)
+class _OpenRiskGateToolConfirmation:
+    prompt_event: dict[str, Any]
+    confirmation_id: str
+    timeout_seconds: float
+    tool_name: str
+    tool_input: dict[str, Any]
+    session_id: str
+    tool_id: str
+
+
+@dataclass(slots=True)
+class _RiskGateToolConfirmationResult:
+    result_text: str
+    hint: ConfigHint | None
+    is_error: bool
+    result_summary: str
+    end_events: list[dict[str, Any]]
+    tool_result: dict[str, Any]
+
+
+def _open_riskgate_tool_confirmation(
+    *,
+    conversation_id: str | None,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    policy_result: Any,
+    tool_id: str,
+    timeout_seconds: float,
+    channel: str,
+    delegate_chain: list[str],
+    root_user_id: str | None,
+) -> _OpenRiskGateToolConfirmation:
+    session_id = conversation_id or ""
+    prompt = prepare_riskgate_tool_prompt(
+        conversation_id=session_id,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        policy_result=policy_result,
+        request_id=tool_id,
+        timeout_seconds=timeout_seconds,
+        channel=channel,
+        delegate_chain=delegate_chain,
+        root_user_id=root_user_id,
+    )
+    return _OpenRiskGateToolConfirmation(
+        prompt_event=prompt.event,
+        confirmation_id=prompt.pending.confirmation_id,
+        timeout_seconds=timeout_seconds,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        session_id=session_id,
+        tool_id=tool_id,
+    )
+
+
+async def _execute_riskgate_tool_confirmation(
+    executor: Any,
+    *,
+    confirmation: _OpenRiskGateToolConfirmation,
+    detect_result_errors: bool,
+    summarize_tool_result: Callable[[str, str], str | None],
+) -> _RiskGateToolConfirmationResult:
+    """Execute the tool after the opened RiskGate confirmation resolves."""
+    outcome = await execute_after_riskgate_tool_prompt(
+        executor,
+        confirmation_id=confirmation.confirmation_id,
+        timeout_seconds=confirmation.timeout_seconds,
+        tool_name=confirmation.tool_name,
+        tool_input=confirmation.tool_input,
+        session_id=confirmation.session_id,
+        detect_result_errors=detect_result_errors,
+        unpack_tool_result=_unpack_tool_result_payload,
+        tool_result_looks_error=_tool_result_looks_error,
+    )
+    result_summary = summarize_tool_result(confirmation.tool_name, outcome.result_text) or ""
+    end_events = _build_tool_end_events(
+        tool_name=confirmation.tool_name,
+        tool_id=confirmation.tool_id,
+        result_text=outcome.result_text,
+        hint=outcome.hint,
+        is_error=outcome.is_error,
+        result_summary=result_summary,
+    )
+    return _RiskGateToolConfirmationResult(
+        result_text=outcome.result_text,
+        hint=outcome.hint,
+        is_error=outcome.is_error,
+        result_summary=result_summary,
+        end_events=end_events,
+        tool_result={
+            **_make_tool_result_msg(
+                tool_use_id=confirmation.tool_id,
+                content=outcome.result_text,
+                is_error=outcome.is_error,
+                tool_name=confirmation.tool_name,
+                metadata=outcome.metadata,
+            ),
+        },
+    )
+
+
 # 同名工具在单轮任务内的硬上限（防止 LLM 把记忆/搜索工具用成循环）。
 # 这里只覆盖"写多了会污染或浪费 token"的工具；read-only 工具仍由
 # _MAX_SAME_TOOL_PER_TASK（同参数）+ readonly_stagnation_limit 控制。
@@ -104,33 +212,60 @@ def _tool_rate_limit_key(tool_name: str, tool_args: Any) -> str:
 _PER_TOOL_NAME_TASK_LIMITS: dict[str, int] = {
     "add_memory": 5,
     "consolidate_memories": 1,
-    "memory_delete_by_query": 2,
 }
 
 
-from ..tools.tool_hints import ConfigHint
 from .token_tracking import TokenTrackingContext, reset_tracking_context, set_tracking_context
 from .tool_executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
 
 _SSE_RESULT_PREVIEW_CHARS = 32000
+_TOOL_RESULT_ERROR_PREFIXES = (
+    "❌",
+    "⚠️ 工具执行错误",
+    "错误类型:",
+    "Tool error:",
+    "⚠️ 策略拒绝:",
+)
 
 
 def _unpack_tool_result(value: Any) -> tuple[str, ConfigHint | None]:
-    """Defensively unpack a value returned by ``execute_tool*``.
+    text, hint, _metadata = _unpack_tool_result_payload(value)
+    return text, hint
 
-    All ``ToolExecutor`` paths are supposed to return ``(text, hint)`` after
-    the type sweep. This helper accepts both the new tuple shape and the
-    legacy plain-string shape (in case any callsite outside this module
-    hasn't migrated yet) and normalizes to ``(str, ConfigHint | None)``.
-    Centralizing the unwrap keeps the 5+ tool-call sites in this file short
-    and consistent.
-    """
-    if isinstance(value, tuple) and len(value) == 2:
-        text, hint = value
-        return ("" if text is None else str(text)), hint
-    return ("" if value is None else str(value)), None
+
+def _unpack_tool_result_payload(value: Any) -> tuple[str, ConfigHint | None, dict[str, Any]]:
+    """Unpack the ``(result, hint)`` contract returned by ``ToolExecutor``."""
+    raw_payload, hint = value
+    content, metadata = split_tool_result_payload(raw_payload)
+    text = "" if content is None else str(content)
+    return text, hint, metadata
+
+
+def _make_tool_result_msg(
+    *,
+    tool_use_id: str,
+    content: str,
+    tool_name: str,
+    is_error: bool = False,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    msg: dict[str, Any] = {
+        "type": "tool_result",
+        "tool_use_id": tool_use_id,
+        "content": content,
+        "is_error": is_error,
+        "tool_name": tool_name,
+    }
+    if metadata:
+        msg["metadata"] = dict(metadata)
+    return msg
+
+
+def _tool_result_looks_error(result_text: Any) -> bool:
+    """Return True when a text tool result represents a failed execution."""
+    return str(result_text or "").lstrip().startswith(_TOOL_RESULT_ERROR_PREFIXES)
 
 
 def _build_tool_end_events(
@@ -208,17 +343,9 @@ def _is_im_conversation(conversation_id: str | None) -> bool:
 
 
 def _compute_confirm_dedup_key(tool_name: str, params: Any) -> str:
-    """C13 §15.5: compute a stable dedup fingerprint for CONFIRM coalescing.
+    """Compute a stable fingerprint for coalescing identical confirmations.
 
-    delegate_parallel siblings often issue identical (tool_name, params),
-    causing the UI to receive N redundant confirm cards. We hash
-    ``(tool_name, json(params, sort_keys=True))`` so the same operation
-    deterministically maps to one key — first sub-agent becomes the leader,
-    later siblings detect the leader via ``UIConfirmBus.find_dedup_leader``
-    and wait on the leader's event instead of emitting their own SSE.
-
-    Returns ``""`` (falsy → opts out of dedup) when params can't be hashed
-    safely; the caller falls back to the normal per-call confirm path.
+    Empty string means the caller should emit a separate confirmation.
     """
     if not tool_name:
         return ""
@@ -874,66 +1001,65 @@ def _check_tool_failure_acknowledgement(
     )
 
 
-_CLAIMED_TOOL_TO_FRAGMENTS: dict[str, tuple[str, ...]] = {
-    "write_file": ("write_file",),
-    "edit_file": ("edit_file",),
-    "read_file": ("read_file",),
-    "run_shell": ("run_shell",),
-    "run_powershell": ("run_powershell",),
-    "deliver_artifacts": ("deliver_artifacts",),
-    "schedule_task": ("schedule_task",),
-    "add_memory": ("add_memory",),
-    "move_file": ("move_file",),
-    "delete_file": ("delete_file",),
+# 动词 → 通用 effect action。工具名不是背书依据；mutation 工具必须通过
+# ``tool_result.metadata.effects`` 或 ``metadata.receipts`` 返回成功 action。
+_VERB_TO_EFFECT_ACTIONS: dict[str, tuple[str, ...]] = {
+    "删除": ("delete",),
+    "删掉": ("delete",),
+    "清空": ("delete",),
+    "编辑": ("update",),
+    "修改": ("update",),
+    "覆盖": ("write", "update"),
+    "写入": ("write",),
+    "保存": ("write", "create", "update"),
+    "保存到记忆": ("write", "create", "update"),
+    "记住": ("write", "create", "update"),
+    "记录": ("write", "create", "update"),
+    "存入": ("write", "create", "update"),
+    "创建": ("create", "write"),
+    "添加": ("create", "write", "update"),
+    "安排": ("schedule", "create"),
+    "移动": ("move",),
+    "移至": ("move",),
+    "重命名": ("move",),
+    "复制": ("copy", "write"),
+    "发送": ("send", "deliver"),
+    "调度": ("schedule",),
+    "提醒": ("schedule",),
+    "安装": ("install",),
+    "卸载": ("uninstall", "delete"),
+    "读取": ("read",),
 }
 
 
-# 动词 → 候选工具名片段（小写子串匹配）。
-# 当 LLM 文本里说"已删除/已发送..."时，必须有匹配片段的工具在本轮"成功"
-# 执行过；否则按幻觉降级处理。映射只覆盖最常被滥用的高风险动词，避免
-# 误拦低风险描述（如"已分析/已生成"等）。
-_VERB_TO_TOOL_FRAGMENTS: dict[str, tuple[str, ...]] = {
-    "删除": (
-        "delete_file",
-        "delete_memory",
-        "remove",
-        "cancel_scheduled_task",
-        "run_shell",
-        "run_powershell",
-    ),
-    "删掉": ("delete_file", "delete_memory", "remove", "run_shell", "run_powershell"),
-    "清空": ("delete_file", "run_shell", "run_powershell"),
-    "编辑": ("edit_file",),
-    "修改": ("edit_file", "update_user_profile", "update_scheduled_task"),
-    "覆盖": ("write_file", "edit_file"),
-    "写入": ("write_file", "edit_file"),
-    "保存": (
-        "write_file",
-        "edit_file",
-        "add_memory",
-        "update_user_profile",
-        "create_plan_file",
-        "create_todo",
-        "schedule_task",
-    ),
-    "保存到记忆": ("add_memory", "update_user_profile"),
-    "记住": ("add_memory", "update_user_profile"),
-    "记录": ("add_memory", "create_todo", "schedule_task", "create_plan_file"),
-    "存入": ("add_memory", "update_user_profile", "write_file"),
-    "创建": ("write_file", "create_todo", "schedule_task", "create_agent", "create_plan_file"),
-    "添加": ("add_memory", "create_todo", "schedule_task", "edit_file"),
-    "安排": ("schedule_task", "create_todo"),
-    "移动": ("move_file", "run_shell", "run_powershell", "write_file", "delete_file"),
-    "移至": ("move_file", "run_shell", "run_powershell", "write_file", "delete_file"),
-    "重命名": ("move_file", "run_shell", "run_powershell"),
-    "复制": ("write_file", "run_shell", "run_powershell"),
-    "发送": ("deliver_artifacts", "send_to_chat", "smtp_email_sender", "send_message"),
-    "调度": ("schedule_task",),
-    "提醒": ("schedule_task",),
-    "安装": ("install_skill",),
-    "卸载": ("uninstall_skill",),
-    "读取": ("read_file", "run_shell", "run_powershell"),
-}
+_TOOL_LIKE_IDENTIFIER = r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b"
+
+
+def _claimed_tool_names(text: str) -> list[str]:
+    """Extract tool-like names from visible claims that a tool ran."""
+    import re as _re
+
+    if not text:
+        return []
+    patterns = (
+        _re.compile(
+            rf"{_TOOL_LIKE_IDENTIFIER}.{{0,40}}"
+            r"(?:已调用|已执行|已验证|验证完成|实际调用|执行完成|✅)",
+            _re.IGNORECASE,
+        ),
+        _re.compile(
+            r"(?:已通过|通过|验证|读取|检查|调用|执行).{0,40}"
+            rf"{_TOOL_LIKE_IDENTIFIER}",
+            _re.IGNORECASE,
+        ),
+    )
+    names: list[str] = []
+    for pat in patterns:
+        for match in pat.finditer(text):
+            name = str(match.group(1) or "").lower()
+            if name and name not in names:
+                names.append(name)
+    return names
 
 
 def _successful_tool_names(
@@ -941,11 +1067,9 @@ def _successful_tool_names(
     tool_results: list[dict] | None,
 ) -> set[str]:
     """Filter executed tool names down to those whose latest result is not an error."""
-    if not executed_tool_names:
-        return set()
+    executed = set(executed_tool_names or [])
     if not tool_results:
-        return set(executed_tool_names)
-    executed = set(executed_tool_names)
+        return executed
     seen: set[str] = set()
     succeeded: set[str] = set()
     for tr in tool_results:
@@ -954,6 +1078,7 @@ def _successful_tool_names(
         tn = tr.get("tool_name") or tr.get("name") or ""
         if not tn:
             continue
+        executed.add(tn)
         seen.add(tn)
         if not tr.get("is_error"):
             succeeded.add(tn)
@@ -1003,29 +1128,20 @@ def _is_recap_context(text: str, verb_or_tool: str) -> bool:
 def _extract_unbacked_verbs(
     text: str,
     successful_tools: set[str],
+    successful_actions: set[str] | None = None,
+    tool_results: list[dict] | None = None,
 ) -> list[str]:
     """Return action verbs whose claim is not backed by any successful tool call."""
     import re as _re
 
     prefix_pat = _re.compile(r"(?:已[经]?|成功|顺利|我已经|我已)(?:帮你?|为你|给你)?")
+    effect_actions = set(successful_actions or successful_tool_effect_actions(tool_results))
     unbacked: list[str] = []
 
-    for tool_name, fragments in _CLAIMED_TOOL_TO_FRAGMENTS.items():
+    for tool_name in _claimed_tool_names(text):
         # Detect the issue #424 shape: the model writes a Markdown table saying
-        # "write_file/read_file 已调用" even though no matching tool receipt exists.
-        tool_claim_pat = _re.compile(
-            rf"{_re.escape(tool_name)}.{{0,40}}"
-            r"(?:已调用|已执行|已验证|验证完成|实际调用|执行完成|✅)",
-            _re.IGNORECASE,
-        )
-        reverse_claim_pat = _re.compile(
-            r"(?:已通过|通过|验证|读取|检查|调用|执行).{0,40}"
-            rf"{_re.escape(tool_name)}",
-            _re.IGNORECASE,
-        )
-        if not (tool_claim_pat.search(text) or reverse_claim_pat.search(text)):
-            continue
-        if any(any(frag in t for frag in fragments) for t in successful_tools):
+        # "write_file/read_file 已调用" even though no matching tool result exists.
+        if tool_name in {t.lower() for t in successful_tools}:
             continue
         # 历史回溯放行：模型在复述/汇总以前真正发生过的工具调用时
         # 不应被当成幻觉。
@@ -1033,13 +1149,13 @@ def _extract_unbacked_verbs(
             continue
         unbacked.append(f"{tool_name}调用")
 
-    for verb, fragments in _VERB_TO_TOOL_FRAGMENTS.items():
+    for verb, actions in _VERB_TO_EFFECT_ACTIONS.items():
         # Must appear right after an action-claim prefix to count as a real claim
         # (avoids matching plain narrative like "我会创建..." or "需要修改...").
         verb_pat = _re.compile(rf"{prefix_pat.pattern}{_re.escape(verb)}")
         if not verb_pat.search(text):
             continue
-        if any(any(frag in t for frag in fragments) for t in successful_tools):
+        if set(actions) & effect_actions:
             continue
         if _is_recap_context(text, verb):
             continue
@@ -1066,13 +1182,19 @@ def _guard_unbacked_action_claim(
         return text
 
     successful_tools = _successful_tool_names(executed_tool_names, tool_results)
+    successful_actions = successful_tool_effect_actions(tool_results)
 
-    if not executed_tool_names:
+    if not executed_tool_names and not successful_actions:
         # 整段回复是历史汇总（含时间戳/回溯副词且无新动作迹象）→ 守卫不应介入，
         # 否则用户问"复述一下你做了什么"会被替换成"没有凭证"。
         if _RECAP_NEAR_RE.search(text):
             return text
-        unbacked = _extract_unbacked_verbs(text, set())
+        unbacked = _extract_unbacked_verbs(
+            text,
+            set(),
+            successful_actions=set(),
+            tool_results=tool_results,
+        )
         verbs_str = "/".join(unbacked[:3]) if unbacked else "外部动作"
         memory_hint = (
             "当前没有检测到长期记忆写入凭证，所以请勿据此认定已写入长期记忆。"
@@ -1086,7 +1208,12 @@ def _guard_unbacked_action_claim(
             + memory_hint
         )
 
-    unbacked = _extract_unbacked_verbs(text, successful_tools)
+    unbacked = _extract_unbacked_verbs(
+        text,
+        successful_tools,
+        successful_actions=successful_actions,
+        tool_results=tool_results,
+    )
     if not unbacked:
         return text
 
@@ -1896,6 +2023,7 @@ class ReasoningEngine:
         is_sub_agent: bool = False,
         mode: str = "agent",
         agent_voice: str = "",
+        tool_execution_context: ToolExecutionContext | None = None,
     ) -> str:
         """Outer wrapper for :meth:`_run_impl` (v1.27.14, plan S1.5).
 
@@ -1955,6 +2083,7 @@ class ReasoningEngine:
                 is_sub_agent=is_sub_agent,
                 mode=mode,
                 agent_voice=agent_voice,
+                tool_execution_context=tool_execution_context,
                 _on_state_resolved=_on_state_resolved,
             )
         finally:
@@ -2006,6 +2135,7 @@ class ReasoningEngine:
         is_sub_agent: bool = False,
         mode: str = "agent",
         agent_voice: str = "",
+        tool_execution_context: ToolExecutionContext | None = None,
         _on_state_resolved: Any = None,
     ) -> str:
         """
@@ -2943,6 +3073,7 @@ class ReasoningEngine:
                             task_monitor=task_monitor,
                             allow_interrupt_checks=self._state.interrupt_enabled,
                             capture_delivery_receipts=True,
+                            execution_context=tool_execution_context,
                         )
                         if other_executed:
                             if any(t not in _ADMIN_TOOL_NAMES for t in other_executed):
@@ -3250,6 +3381,7 @@ class ReasoningEngine:
                     task_monitor=task_monitor,
                     allow_interrupt_checks=self._state.interrupt_enabled,
                     capture_delivery_receipts=True,
+                    execution_context=tool_execution_context,
                 )
                 # ``run()`` is non-streaming — no SSE channel to forward hints
                 # on. Drop the ``_hint`` field after popping so it never reaches
@@ -3886,6 +4018,7 @@ class ReasoningEngine:
         request_id: str = "",
         turn_id: str = "",
         agent_voice: str = "",
+        tool_execution_context: ToolExecutionContext | None = None,
     ):
         """Outer wrapper for :meth:`_reason_stream_impl` (v1.27.14, plan S1.5).
 
@@ -3953,6 +4086,7 @@ class ReasoningEngine:
                 request_id=request_id,
                 turn_id=turn_id,
                 agent_voice=agent_voice,
+                tool_execution_context=tool_execution_context,
                 _on_state_resolved=_on_state_resolved,
             ):
                 # v1.27.15 (S2 P0-3): record streamed text/thinking into
@@ -4032,6 +4166,7 @@ class ReasoningEngine:
         request_id: str = "",
         turn_id: str = "",
         agent_voice: str = "",
+        tool_execution_context: ToolExecutionContext | None = None,
         _on_state_resolved: Any = None,
     ):
         """
@@ -5249,6 +5384,7 @@ class ReasoningEngine:
                                         "tool_use_id": t_id,
                                         "content": _blocked_msg,
                                         "is_error": True,
+                                        "tool_name": t_name,
                                     }
                                 )
                                 continue
@@ -5269,13 +5405,7 @@ class ReasoningEngine:
                                 "pet-status-update",
                                 {"status": "tool_execution", "tool_name": t_name},
                             )
-                            # 决策走 v2（C6 起），UI 状态机 C9b 后走独立 ui_confirm_bus，
-                            # C8b-3 后 resolve 路径也完全脱离 v1（IM/web/CLI 都直接调
-                            # ``policy_v2.apply_resolution`` 写 SessionAllowlistManager
-                            # + UserAllowlistManager，bus 只负责唤醒 waiter）。
-                            # C8b-6a: 直接消费 v2 ``PolicyDecisionV2`` + ``DecisionAction``，
-                            # 不再过 v1 PolicyResult/PolicyDecision shim；config 读 v2
-                            # ``get_config_v2().confirmation``。
+                            # Policy evaluation and confirm waiting share one UI confirm bus.
                             from .policy_v2 import get_config_v2
                             from .policy_v2.adapter import evaluate_via_v2
                             from .policy_v2.enums import DecisionAction
@@ -5321,27 +5451,10 @@ class ReasoningEngine:
                                 _tool_is_error = True
                                 _security_confirm_interrupted_ask = True
                             elif _pr.action == DecisionAction.CONFIRM:
-                                # C8 §2.3 fix：取消 IM 渠道早退。reasoning_engine 永远 yield
-                                # ``security_confirm`` SSE，让 gateway._consume_stream 把事件
-                                # 路由到 ``_handle_im_security_confirm``：桌面端走 SecurityView
-                                # 弹窗，IM 端走卡片 / 文本回退。两条路径最终都会调
-                                # ``policy_v2.apply_resolution``，唤醒此处的 bus.wait_for_resolution。
-                                # 旧实现在 IM CONFIRM 时直接 abort（伪装成"请到桌面确认"），
-                                # 让 gateway 的 IM 卡片链路成为永远不会触发的死代码。
                                 _is_im = _is_im_conversation(conversation_id)
                                 _risk = _pr.metadata.get("risk_level") or "medium"
                                 _needs_sb = _pr.metadata.get("needs_sandbox", False)
-                                # C9a §1: v2 字段（approval_class / policy_version）随 SSE
-                                # 一起下发。SecurityConfirmModal / SecurityView 用 approval_class
-                                # 渲染语义 badge（DESTRUCTIVE/CONTROL_PLANE/...），policy_version=2
-                                # 让前端能区分 v1 兜底事件 vs v2 主决策事件。
-                                # 字段缺失时前端兜回旧路径（risk_level）—— 完全向后兼容。
-                                _approval_class = _pr.metadata.get("approval_class")
-                                # C13 §15.4: 多 agent confirm 冒泡链路 — payload
-                                # 携带 delegate_chain + root_user_id，让 UI 渲染
-                                # "specialist_a (via root) 请求执行 ..."。顶层
-                                # agent 时 chain 空、root_user_id=None，UI 兜回
-                                # 原有行为（无 chain badge）。
+                                _approval_class = getattr(_pr.approval_class, "value", None)
                                 from .policy_v2 import (
                                     get_current_context as _pv2_get_ctx_for_emit,
                                 )
@@ -5351,10 +5464,40 @@ class ReasoningEngine:
                                     list(_emit_ctx.delegate_chain) if _emit_ctx else []
                                 )
                                 _root_user_id = _emit_ctx.root_user_id if _emit_ctx else None
-                                # C13 §15.5: dedup — when delegate_parallel
-                                # siblings issue the same (tool, params), only
-                                # the first emits the SSE; siblings attach as
-                                # followers on the leader's confirm event.
+                                _confirm_timeout = float(_v2_conf.timeout_seconds)
+                                if _is_im:
+                                    _confirm_timeout = max(_confirm_timeout * 4, 180.0)
+                                if _pr.metadata.get("riskgate_required"):
+                                    _tool_args_dict = t_args if isinstance(t_args, dict) else {}
+                                    _risk_confirmation = _open_riskgate_tool_confirmation(
+                                        conversation_id=conversation_id,
+                                        tool_name=t_name,
+                                        tool_input=_tool_args_dict,
+                                        policy_result=_pr,
+                                        tool_id=t_id,
+                                        timeout_seconds=_confirm_timeout,
+                                        channel="im" if _is_im else "desktop",
+                                        delegate_chain=_delegate_chain,
+                                        root_user_id=_root_user_id,
+                                    )
+                                    yield _risk_confirmation.prompt_event
+                                    _risk_result = await _execute_riskgate_tool_confirmation(
+                                        self._tool_executor,
+                                        confirmation=_risk_confirmation,
+                                        detect_result_errors=False,
+                                        summarize_tool_result=self._summarize_tool_result,
+                                    )
+                                    for _evt in _risk_result.end_events:
+                                        yield _evt
+                                    if _risk_result.result_summary:
+                                        yield {
+                                            "type": "chain_text",
+                                            "content": _risk_result.result_summary,
+                                        }
+                                    tool_results_for_msg.append(_risk_result.tool_result)
+                                    _security_confirm_interrupted_ask = True
+                                    break
+                                # Share one pending confirm for identical parallel tool requests.
                                 _dedup_key = _compute_confirm_dedup_key(t_name, t_args)
                                 _leader_id = (
                                     _bus.find_dedup_leader(
@@ -5364,17 +5507,9 @@ class ReasoningEngine:
                                     if _dedup_key
                                     else None
                                 )
-                                _confirm_timeout = float(_v2_conf.timeout_seconds)
-                                if _is_im:
-                                    _confirm_timeout = max(_confirm_timeout * 4, 180.0)
                                 if _leader_id:
-                                    # Follower path: skip SSE emission, share
-                                    # the leader's event. cleanup() on the
-                                    # leader is deferred until all followers
-                                    # deregister, so we still read _decisions
-                                    # safely.
                                     logger.info(
-                                        "[C13 dedup] tool=%s session=%s join leader confirm_id=%s",
+                                        "[Confirm dedup] tool=%s session=%s join leader confirm_id=%s",
                                         t_name,
                                         (conversation_id or "")[:12],
                                         _leader_id[:8],
@@ -5386,45 +5521,27 @@ class ReasoningEngine:
                                         )
                                     finally:
                                         _bus.deregister_follower(_leader_id)
-                                    # Don't call cleanup on the leader from
-                                    # follower path — leader's caller owns it.
                                 else:
-                                    _bus.store_pending(
-                                        t_id,
-                                        t_name,
-                                        t_args if isinstance(t_args, dict) else {},
-                                        session_id=conversation_id or "",
-                                        needs_sandbox=_needs_sb,
+                                    _confirm_event = register_policy_confirm(
+                                        confirm_id=t_id,
+                                        conversation_id=conversation_id or "",
+                                        tool_name=t_name,
+                                        tool_args=t_args if isinstance(t_args, dict) else {},
+                                        reason=_pr.reason,
+                                        risk_level=str(_risk),
+                                        needs_sandbox=bool(_needs_sb),
+                                        timeout_seconds=_v2_conf.timeout_seconds,
+                                        default_on_timeout=_v2_conf.default_on_timeout,
+                                        channel="im" if _is_im else "desktop",
+                                        approval_class=_approval_class,
+                                        policy_version=2,
+                                        decision_chain=_pr.to_ui_chain(),
+                                        delegate_chain=_delegate_chain,
+                                        root_user_id=_root_user_id,
+                                        policy_metadata=dict(_pr.metadata or {}),
                                         dedup_key=_dedup_key or None,
                                     )
-                                    _bus.prepare(t_id)
-                                    yield {
-                                        "type": "security_confirm",
-                                        "tool": t_name,
-                                        "args": t_args if isinstance(t_args, dict) else {},
-                                        "id": t_id,
-                                        "reason": _pr.reason,
-                                        "risk_level": _risk,
-                                        "needs_sandbox": _needs_sb,
-                                        "timeout_seconds": _v2_conf.timeout_seconds,
-                                        "default_on_timeout": _v2_conf.default_on_timeout,
-                                        "channel": "im" if _is_im else "desktop",
-                                        "approval_class": _approval_class,
-                                        "policy_version": 2,
-                                        "delegate_chain": _delegate_chain,
-                                        "root_user_id": _root_user_id,
-                                        # C23 P2-2: ship decision_chain so the modal can
-                                        # render "决策依据" — plan C9 requirement that
-                                        # was deferred. Empty list when chain is empty.
-                                        "decision_chain": _pr.to_ui_chain(),
-                                        "options": [
-                                            "allow_once",
-                                            "allow_session",
-                                            "allow_always",
-                                            "deny",
-                                        ]
-                                        + (["sandbox"] if _needs_sb else []),
-                                    }
+                                    yield _confirm_event
                                     # IM 用户响应延迟更高：卡片走 IM 通道 + 用户切回看消息往往
                                     # >60s。给 IM 多 4 倍时长（最少 180s 兜底），桌面端沿用配置。
                                     _decision = await _bus.wait_for_resolution(
@@ -5433,17 +5550,9 @@ class ReasoningEngine:
                                     )
                                     _bus.cleanup(t_id)
                                 _hint: ConfigHint | None = None
-                                if _decision in (
-                                    "allow",
-                                    "allow_once",
-                                    "allow_session",
-                                    "allow_always",
-                                    "sandbox",
-                                ):
+                                _tool_metadata: dict[str, Any] = {}
+                                if _decision in ALLOW_SECURITY_CONFIRM_DECISIONS:
                                     try:
-                                        # C8b-6a: pass v2 PolicyDecisionV2 directly;
-                                        # ``execute_tool_with_policy`` only reads ``.metadata``
-                                        # via ``getattr``——duck-typed across v1/v2.
                                         from .policy_v2.models import PolicyDecisionV2 as _PD2
 
                                         _raw = await self._tool_executor.execute_tool_with_policy(
@@ -5460,32 +5569,37 @@ class ReasoningEngine:
                                             ),
                                             session_id=conversation_id,
                                         )
-                                        r, _hint = _unpack_tool_result(_raw)
+                                        r, _hint, _tool_metadata = _unpack_tool_result_payload(_raw)
                                         _tool_is_error = False
                                     except Exception as exc:
                                         r = f"Tool error after security confirmation: {exc}"
                                         _tool_is_error = True
+                                        _tool_metadata = {}
                                 else:
                                     r = (
                                         f"用户已拒绝安全确认: {_decision}。"
                                         "不要再执行该操作，请选择安全替代方案或说明无法继续。"
                                     )
                                     _tool_is_error = True
+                                    _tool_metadata = {}
                                 _security_confirm_interrupted_ask = True
                             else:
                                 _tool_is_error = False
                                 _hint = None
+                                _tool_metadata = {}
                                 try:
                                     _raw = await self._tool_executor.execute_tool_with_policy(
                                         tool_name=t_name,
                                         tool_input=t_args if isinstance(t_args, dict) else {},
                                         policy_result=_pr,
                                         session_id=conversation_id,
+                                        execution_context=tool_execution_context,
                                     )
-                                    r, _hint = _unpack_tool_result(_raw)
+                                    r, _hint, _tool_metadata = _unpack_tool_result_payload(_raw)
                                 except Exception as exc:
                                     r = f"Tool error: {exc}"
                                     _tool_is_error = True
+                                    _tool_metadata = {}
                             _ask_result_summary = self._summarize_tool_result(t_name, r)
                             for _evt in _build_tool_end_events(
                                 tool_name=t_name,
@@ -5499,12 +5613,13 @@ class ReasoningEngine:
                             # chain_text: 结果摘要
                             if _ask_result_summary:
                                 yield {"type": "chain_text", "content": _ask_result_summary}
-                            _tool_result_msg = {
-                                "type": "tool_result",
-                                "tool_use_id": t_id,
-                                "content": r,
-                                "is_error": _tool_is_error,
-                            }
+                            _tool_result_msg = _make_tool_result_msg(
+                                tool_use_id=t_id,
+                                content=r,
+                                is_error=_tool_is_error,
+                                tool_name=t_name,
+                                metadata=_tool_metadata,
+                            )
                             if _deferred_tool_result:
                                 _tool_result_msg.update(
                                     {
@@ -5552,6 +5667,52 @@ class ReasoningEngine:
                         ask_questions = ask_input.get("questions")
                         text_part = decision.text_content or ""
                         question_text = f"{text_part}\n\n{ask_q}".strip() if text_part else ask_q
+                        try:
+                            from .policy_v2 import get_current_context as _pv2_get_ctx
+
+                            _ctx = _pv2_get_ctx()
+                            _has_turn_replay = bool(
+                                _ctx
+                                and getattr(_ctx, "replay_authorizations", ())
+                            )
+                        except Exception:
+                            _has_turn_replay = False
+                        if _has_turn_replay:
+                            tool_results_for_msg.append(
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": ask_user_calls[0].get(
+                                        "id", str(uuid.uuid4())
+                                    ),
+                                    "content": (
+                                        "RiskGate has already confirmed this replayed request. "
+                                        "Do not ask the user again; continue with the authorized "
+                                        "operation and scope."
+                                    ),
+                                    "is_error": False,
+                                    "tool_name": "ask_user",
+                                }
+                            )
+                            all_tool_results.extend(tool_results_for_msg)
+                            working_messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": decision.assistant_content
+                                    or [{"type": "text", "text": ""}],
+                                }
+                            )
+                            working_messages.append(
+                                {
+                                    "role": "user",
+                                    "content": [tool_results_for_msg[-1]],
+                                }
+                            )
+                            react_trace.append(_iter_trace)
+                            yield {
+                                "type": "chain_text",
+                                "content": "RiskGate 已确认，跳过冗余用户确认。",
+                            }
+                            continue
                         event: dict = {
                             "type": "ask_user",
                             "question": question_text,
@@ -5705,6 +5866,7 @@ class ReasoningEngine:
                                     "tool_use_id": tool_id,
                                     "content": _blocked_msg,
                                     "is_error": True,
+                                    "tool_name": tool_name,
                                 }
                             )
                             continue
@@ -5757,11 +5919,7 @@ class ReasoningEngine:
                             {"status": "tool_execution", "tool_name": tool_name},
                         )
 
-                        # PolicyEngine 检查（与 execute_batch 一致）—— C6 起决策走 v2，
-                        # C9b 起 UI confirm 走独立 ui_confirm_bus；C8b-1 起 readonly
-                        # 由 ``DeathSwitchTracker`` 承载（process-wide singleton），与
-                        # v1 ``pe.readonly_mode`` 同源。
-                        # C8b-6a: 直接消费 v2 ``PolicyDecisionV2`` + ``DecisionAction``。
+                        # Policy evaluation and confirm waiting share one UI confirm bus.
                         from .policy_v2 import (
                             get_config_v2,
                             get_death_switch_tracker,
@@ -5805,6 +5963,7 @@ class ReasoningEngine:
                                     "tool_use_id": tool_id,
                                     "content": result_text,
                                     "is_error": True,
+                                    "tool_name": tool_name,
                                 }
                             )
                             continue
@@ -5864,15 +6023,10 @@ class ReasoningEngine:
 
                         if _pr.action == DecisionAction.CONFIRM:
                             _actual_tool_calls_for_budget.append(tc)
-                            # C8 §2.3 fix：取消 IM 渠道早退（同上方 hotspot），让 IM 走
-                            # gateway 卡片确认链路。timeout 对 IM 放宽 4×（最少 180s）。
                             _is_im = _is_im_conversation(conversation_id)
                             _risk = _pr.metadata.get("risk_level") or "medium"
                             _needs_sb = _pr.metadata.get("needs_sandbox", False)
-                            # C9a §1: 见上方 hotspot 同款注释（v2 字段向后兼容下发）
-                            _approval_class = _pr.metadata.get("approval_class")
-                            # C13 §15.4: 见上方 hotspot 同款注释 — 多 agent
-                            # confirm 冒泡 payload。
+                            _approval_class = getattr(_pr.approval_class, "value", None)
                             from .policy_v2 import (
                                 get_current_context as _pv2_get_ctx_for_emit,
                             )
@@ -5880,7 +6034,36 @@ class ReasoningEngine:
                             _emit_ctx = _pv2_get_ctx_for_emit()
                             _delegate_chain = list(_emit_ctx.delegate_chain) if _emit_ctx else []
                             _root_user_id = _emit_ctx.root_user_id if _emit_ctx else None
-                            # C13 §15.5: dedup — 见上方 hotspot 同款注释。
+                            _confirm_timeout = float(_v2_conf.timeout_seconds)
+                            if _is_im:
+                                _confirm_timeout = max(_confirm_timeout * 4, 180.0)
+                            if _pr.metadata.get("riskgate_required"):
+                                _risk_confirmation = _open_riskgate_tool_confirmation(
+                                    conversation_id=conversation_id,
+                                    tool_name=tool_name,
+                                    tool_input=_tool_args_dict,
+                                    policy_result=_pr,
+                                    tool_id=tool_id,
+                                    timeout_seconds=_confirm_timeout,
+                                    channel="im" if _is_im else "desktop",
+                                    delegate_chain=_delegate_chain,
+                                    root_user_id=_root_user_id,
+                                )
+                                yield _risk_confirmation.prompt_event
+                                _risk_result = await _execute_riskgate_tool_confirmation(
+                                    self._tool_executor,
+                                    confirmation=_risk_confirmation,
+                                    detect_result_errors=True,
+                                    summarize_tool_result=self._summarize_tool_result,
+                                )
+                                for _evt in _risk_result.end_events:
+                                    yield _evt
+                                tool_results_for_msg.append(_risk_result.tool_result)
+                                if not _risk_result.is_error:
+                                    _non_denied_tool_names.append(tool_name)
+                                    _actual_tool_calls_for_budget.append(tc)
+                                continue
+                            # Share one pending confirm for identical parallel tool requests.
                             _dedup_key = _compute_confirm_dedup_key(tool_name, _tool_args_dict)
                             _leader_id = (
                                 _bus.find_dedup_leader(
@@ -5890,12 +6073,9 @@ class ReasoningEngine:
                                 if _dedup_key
                                 else None
                             )
-                            _confirm_timeout = float(_v2_conf.timeout_seconds)
-                            if _is_im:
-                                _confirm_timeout = max(_confirm_timeout * 4, 180.0)
                             if _leader_id:
                                 logger.info(
-                                    "[C13 dedup] tool=%s session=%s join leader confirm_id=%s",
+                                    "[Confirm dedup] tool=%s session=%s join leader confirm_id=%s",
                                     tool_name,
                                     (conversation_id or "")[:12],
                                     _leader_id[:8],
@@ -5908,58 +6088,36 @@ class ReasoningEngine:
                                 finally:
                                     _bus.deregister_follower(_leader_id)
                             else:
-                                _bus.store_pending(
-                                    tool_id,
-                                    tool_name,
-                                    _tool_args_dict,
-                                    session_id=conversation_id or "",
-                                    needs_sandbox=_needs_sb,
+                                _confirm_event = register_policy_confirm(
+                                    confirm_id=tool_id,
+                                    conversation_id=conversation_id or "",
+                                    tool_name=tool_name,
+                                    tool_args=_tool_args_dict,
+                                    reason=_pr.reason,
+                                    risk_level=str(_risk),
+                                    needs_sandbox=bool(_needs_sb),
+                                    timeout_seconds=_v2_conf.timeout_seconds,
+                                    default_on_timeout=_v2_conf.default_on_timeout,
+                                    channel="im" if _is_im else "desktop",
+                                    approval_class=_approval_class,
+                                    policy_version=2,
+                                    decision_chain=_pr.to_ui_chain(),
+                                    delegate_chain=_delegate_chain,
+                                    root_user_id=_root_user_id,
+                                    policy_metadata=dict(_pr.metadata or {}),
                                     dedup_key=_dedup_key or None,
                                 )
-                                _bus.prepare(tool_id)
-                                yield {
-                                    "type": "security_confirm",
-                                    "tool": tool_name,
-                                    "args": _tool_args_dict,
-                                    "id": tool_id,
-                                    "reason": _pr.reason,
-                                    "risk_level": _risk,
-                                    "needs_sandbox": _needs_sb,
-                                    "timeout_seconds": _v2_conf.timeout_seconds,
-                                    "default_on_timeout": _v2_conf.default_on_timeout,
-                                    "channel": "im" if _is_im else "desktop",
-                                    "approval_class": _approval_class,
-                                    "policy_version": 2,
-                                    "delegate_chain": _delegate_chain,
-                                    "root_user_id": _root_user_id,
-                                    # C23 P2-2: ship decision_chain (see other call site
-                                    # above for rationale).
-                                    "decision_chain": _pr.to_ui_chain(),
-                                    "options": [
-                                        "allow_once",
-                                        "allow_session",
-                                        "allow_always",
-                                        "deny",
-                                    ]
-                                    + (["sandbox"] if _needs_sb else []),
-                                }
+                                yield _confirm_event
                                 _decision = await _bus.wait_for_resolution(
                                     tool_id,
                                     _confirm_timeout,
                                 )
                                 _bus.cleanup(tool_id)
-                            _confirmed_allowed = _decision in (
-                                "allow",
-                                "allow_once",
-                                "allow_session",
-                                "allow_always",
-                                "sandbox",
-                            )
+                            _confirmed_allowed = _decision in ALLOW_SECURITY_CONFIRM_DECISIONS
                             _confirm_hint: ConfigHint | None = None
+                            _confirm_metadata: dict[str, Any] = {}
                             if _confirmed_allowed:
                                 try:
-                                    # C8b-6a: pass v2 PolicyDecisionV2 directly (duck-typed
-                                    # with v1 PolicyResult on ``.metadata``).
                                     from .policy_v2.models import PolicyDecisionV2 as _PD2
 
                                     _raw = await self._tool_executor.execute_tool_with_policy(
@@ -5976,17 +6134,23 @@ class ReasoningEngine:
                                         ),
                                         session_id=conversation_id,
                                     )
-                                    result_text, _confirm_hint = _unpack_tool_result(_raw)
-                                    _confirm_is_error = False
+                                    (
+                                        result_text,
+                                        _confirm_hint,
+                                        _confirm_metadata,
+                                    ) = _unpack_tool_result_payload(_raw)
+                                    _confirm_is_error = _tool_result_looks_error(result_text)
                                 except Exception as exc:
                                     result_text = f"Tool error after security confirmation: {exc}"
                                     _confirm_is_error = True
+                                    _confirm_metadata = {}
                             else:
                                 result_text = (
                                     f"用户已拒绝安全确认: {_decision}。"
                                     "不要再执行该操作，请选择安全替代方案或说明无法继续。"
                                 )
                                 _confirm_is_error = True
+                                _confirm_metadata = {}
                             for _evt in _build_tool_end_events(
                                 tool_name=tool_name,
                                 tool_id=tool_id,
@@ -5998,13 +6162,17 @@ class ReasoningEngine:
                             ):
                                 yield _evt
                             tool_results_for_msg.append(
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": tool_id,
-                                    "content": result_text,
-                                    "is_error": _confirm_is_error,
-                                }
+                                _make_tool_result_msg(
+                                    tool_use_id=tool_id,
+                                    content=result_text,
+                                    is_error=_confirm_is_error,
+                                    tool_name=tool_name,
+                                    metadata=_confirm_metadata,
+                                )
                             )
+                            if not _confirm_is_error:
+                                _non_denied_tool_names.append(tool_name)
+                                _actual_tool_calls_for_budget.append(tc)
                             continue
 
                         _non_denied_tool_names.append(tool_name)
@@ -6017,6 +6185,7 @@ class ReasoningEngine:
                         # 显式置 None（policy: side-channel hint 只反映 handler
                         # 内部产生的可纠正配置问题，不污染 user-initiated 中断）。
                         _stream_hint: ConfigHint | None = None
+                        _stream_metadata: dict[str, Any] = {}
                         try:
                             tool_exec_task = asyncio.create_task(
                                 self._tool_executor.execute_tool_with_policy(
@@ -6024,6 +6193,7 @@ class ReasoningEngine:
                                     tool_input=tool_args if isinstance(tool_args, dict) else {},
                                     policy_result=_pr,
                                     session_id=conversation_id,
+                                    execution_context=tool_execution_context,
                                 )
                             )
                             cancel_waiter = asyncio.create_task(cancel_event.wait())
@@ -6050,20 +6220,24 @@ class ReasoningEngine:
                             if cancel_waiter in done_set and tool_exec_task not in done_set:
                                 result_text = f"[工具 {tool_name} 被用户中断]"
                                 _stream_cancelled = True
+                                _stream_metadata = {}
                             elif skip_waiter in done_set and tool_exec_task not in done_set:
                                 _skip_reason = state.skip_reason if state else "用户请求跳过"
                                 if state:
                                     state.clear_skip()
                                 result_text = f"[用户跳过了此步骤: {_skip_reason}]"
                                 _stream_skipped = True
+                                _stream_metadata = {}
                                 logger.info(
                                     f"[SkipStep-Stream] Tool {tool_name} skipped: {_skip_reason}"
                                 )
                             elif tool_exec_task in done_set:
                                 # task.result() 现在是 (text, hint) 元组
-                                result_text, _stream_hint = _unpack_tool_result(
-                                    tool_exec_task.result()
-                                )
+                                (
+                                    result_text,
+                                    _stream_hint,
+                                    _stream_metadata,
+                                ) = _unpack_tool_result_payload(tool_exec_task.result())
                                 self._remember_readonly_tool_result(
                                     tool_name,
                                     tool_args,
@@ -6073,10 +6247,12 @@ class ReasoningEngine:
                             else:
                                 result_text = f"[工具 {tool_name} 被用户中断]"
                                 _stream_cancelled = True
+                                _stream_metadata = {}
                         except Exception as exc:
                             result_text = f"Tool error: {exc}"
+                            _stream_metadata = {}
 
-                        _tool_is_error = result_text.startswith("Tool error:")
+                        _tool_is_error = _tool_result_looks_error(result_text)
                         # Emit agent_handoff events from session.context.handoff_events (set by orchestrator.delegate)
                         if (
                             session
@@ -6125,6 +6301,7 @@ class ReasoningEngine:
                                     "tool_use_id": tool_id,
                                     "content": result_text,
                                     "is_error": True,
+                                    "tool_name": tool_name,
                                 }
                             )
                             break
@@ -6135,6 +6312,7 @@ class ReasoningEngine:
                                     "type": "tool_result",
                                     "tool_use_id": tool_id,
                                     "content": result_text,
+                                    "tool_name": tool_name,
                                 }
                             )
                             _stream_skipped = False
@@ -6260,7 +6438,10 @@ class ReasoningEngine:
                             "type": "tool_result",
                             "tool_use_id": tool_id,
                             "content": result_text,
+                            "tool_name": tool_name,
                         }
+                        if _stream_metadata:
+                            _tr_entry["metadata"] = dict(_stream_metadata)
                         if _tool_is_error:
                             _tr_entry["is_error"] = True
                         tool_results_for_msg.append(_tr_entry)
@@ -6989,6 +7170,7 @@ class ReasoningEngine:
         force_tool_retries: int | None = None,
         is_sub_agent: bool = False,
         agent_voice: str = "",
+        tool_execution_context: ToolExecutionContext | None = None,
     ):
         """
         统一流式接口: 将 reason_stream 包装为标准化异步生成器。
@@ -7039,6 +7221,7 @@ class ReasoningEngine:
             force_tool_retries=force_tool_retries,
             is_sub_agent=is_sub_agent,
             agent_voice=agent_voice,
+            tool_execution_context=tool_execution_context,
         ):
             # Track token usage for budget
             if budget and event.get("type") == "usage":

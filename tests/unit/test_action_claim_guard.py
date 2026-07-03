@@ -6,6 +6,16 @@ from openakita.core.reasoning_engine import (
 )
 
 
+def _ok_effect(action: str, target: str = "file") -> dict:
+    effect = {
+        "kind": "tool_effect",
+        "action": action,
+        "target": target,
+        "status": "ok",
+    }
+    return {"metadata": {"effects": [effect], "receipts": [{**effect, "kind": "tool_receipt"}]}}
+
+
 def test_action_claim_regex_matches_memory_claims():
     assert _get_action_claim_re().search("我已经记住了这个偏好")
     assert _get_action_claim_re().search("已保存到记忆")
@@ -27,8 +37,9 @@ def test_unbacked_memory_claim_is_downgraded():
 
 def test_backed_action_claim_is_kept():
     text = "已帮你创建文件。"
+    tool_results = [{"tool_name": "write_file", "is_error": False, **_ok_effect("write")}]
 
-    assert _guard_unbacked_action_claim(text, ["write_file"]) == text
+    assert _guard_unbacked_action_claim(text, ["write_file"], tool_results) == text
 
 
 def test_unbacked_fake_tool_receipt_without_tools_is_downgraded():
@@ -84,9 +95,71 @@ def test_failed_delete_call_does_not_back_claim():
 def test_successful_delete_call_backs_claim():
     """delete_file 成功 → 不追加警告。"""
     text = "已删除 README.md。"
-    tool_results = [{"tool_name": "delete_file", "is_error": False}]
+    tool_results = [{"tool_name": "delete_file", "is_error": False, **_ok_effect("delete")}]
 
     assert _guard_unbacked_action_claim(text, ["delete_file"], tool_results) == text
+
+
+def test_successful_memory_delete_by_query_backs_delete_claim():
+    text = "已删除 2/2 条记忆。"
+    tool_results = [
+        {
+            "tool_name": "memory_delete_by_query",
+            "is_error": False,
+            "content": "删除完成。",
+            **_ok_effect("delete", "memory"),
+        }
+    ]
+
+    assert (
+        _guard_unbacked_action_claim(
+            text,
+            ["tool_search", "memory_delete_by_query"],
+            tool_results,
+        )
+        == text
+    )
+
+
+def test_memory_delete_by_query_preview_does_not_back_delete_claim():
+    text = "已删除 2/2 条记忆。"
+    tool_results = [
+        {
+            "tool_name": "memory_delete_by_query",
+            "is_error": False,
+            "content": "将删除 2 条记忆，预览前 5 条：\n（这只是预览，未执行删除。）",
+            "metadata": {
+                "receipts": [
+                    {
+                        "kind": "tool_receipt",
+                        "action": "preview",
+                        "target": "memory",
+                        "status": "ok",
+                        "matched_count": 2,
+                    }
+                ]
+            },
+        }
+    ]
+
+    guarded = _guard_unbacked_action_claim(text, ["memory_delete_by_query"], tool_results)
+
+    assert "一致性提示" in guarded
+    assert "删除" in guarded
+
+
+def test_tool_result_tool_name_can_back_claim_when_executed_list_missed_confirmed_tool():
+    text = "已删除 2/2 条记忆。"
+    tool_results = [
+        {
+            "tool_name": "memory_delete_by_query",
+            "is_error": False,
+            "content": "删除完成。",
+            **_ok_effect("delete", "memory"),
+        }
+    ]
+
+    assert _guard_unbacked_action_claim(text, ["tool_search"], tool_results) == text
 
 
 def test_failed_write_file_with_unrelated_success_does_not_back_save_claim():
@@ -131,6 +204,7 @@ def test_successful_retry_backs_save_claim_after_earlier_write_failure():
             "tool_name": "write_file",
             "is_error": False,
             "content": "文件已写入: D:/Akita/workspaces/default/report.md (1024 bytes)",
+            **_ok_effect("write"),
         },
     ]
 
@@ -162,15 +236,16 @@ def test_unbacked_move_claim_with_read_only_tool_is_warned():
 
 def test_successful_move_file_backs_move_claim():
     text = "文件已移动成功。"
+    tool_results = [{"tool_name": "move_file", "is_error": False, **_ok_effect("move")}]
 
-    assert _guard_unbacked_action_claim(text, ["move_file"]) == text
+    assert _guard_unbacked_action_claim(text, ["move_file"], tool_results) == text
 
 
-def test_successful_write_delete_pair_backs_move_claim():
-    """兼容旧执行方式：读写目标后删除源文件，也能构成移动凭证。"""
+def test_structured_move_effect_backs_move_claim():
     text = "文件已移动成功。"
+    tool_results = [{"tool_name": "custom_mover", "is_error": False, **_ok_effect("move")}]
 
-    assert _guard_unbacked_action_claim(text, ["write_file", "delete_file"]) == text
+    assert _guard_unbacked_action_claim(text, ["custom_mover"], tool_results) == text
 
 
 def test_action_claim_without_action_verb_is_passed_through():

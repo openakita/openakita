@@ -1,7 +1,7 @@
 """C8b-5 — _is_trust_mode external callers migrated to v2 helper。
 
 覆盖：
-1. ``agent.py:_check_trust_mode_skip`` 不再 import v1 ``policy.get_policy_engine``
+1. ``agent.py`` 不再有 pre-ReAct trust-mode risk skip helper
 2. ``gateway.py`` IM trust-mode bypass 用 v2 ``read_permission_mode_label``
 3. v1 ``_is_trust_mode`` method 仅剩 1 个内部 caller (``policy.py``)
 4. v1+v2 trust 判定语义等价（trust 与 non-trust 双向覆盖）
@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -61,23 +60,6 @@ class TestExternalCallersGone:
             assert "pe._is_trust_mode(" not in line, f"gateway.py:{ln}"
         # Must import v2 helper somewhere (this can be in a doc-string-stripped line too)
         assert "from ..core.policy_v2 import read_permission_mode_label" in gateway_text
-
-    def test_check_trust_mode_skip_is_pure_v2(self) -> None:
-        agent_text = (SRC_ROOT / "core" / "agent.py").read_text(encoding="utf-8")
-        # Locate function body
-        m = re.search(
-            r"def _check_trust_mode_skip\([^)]*\)[^:]*:\s*\n(.*?)\n(?=\n\S|\nclass |\ndef )",
-            agent_text,
-            re.DOTALL,
-        )
-        assert m is not None
-        body = m.group(1)
-        assert "from .policy import get_policy_engine" not in body
-        assert "v1_trust" not in body
-        # Must have v2 read
-        assert "from .policy_v2 import ConfirmationMode" in body
-        assert "get_config_v2()" in body
-
 
 # ---------------------------------------------------------------------------
 # Runtime equivalence — v1 method vs v2 helper return same boolean

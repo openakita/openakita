@@ -4,11 +4,36 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class AskUserReplyRequest(BaseModel):
+    """Structured reply to a normal ask_user prompt.
+
+    This marks the message as a continuation of an assistant question, not as a
+    standalone user intent. It must not create or imply RiskGate authorization.
+    """
+
+    message_id: str | None = Field(
+        None,
+        description="Frontend message id that contained the ask_user prompt, when available.",
+        max_length=128,
+    )
+    answer: str | None = Field(
+        None,
+        description="Optional explicit answer text. Defaults to ChatRequest.message.",
+        max_length=32_768,
+    )
+    kind: Literal["normal"] = Field(
+        "normal",
+        description="Only normal ask_user replies use this path; RiskGate uses security-confirm.",
+    )
 
 
 class ChatRequest(BaseModel):
     """Chat request body."""
+
+    model_config = ConfigDict(extra="forbid")
 
     # 32 KB 上限：覆盖正常对话/Markdown 长文，又能挡住意外/恶意大 payload。
     # 超长走 attachments（文件上传），不走 message 文本通道。
@@ -75,6 +100,14 @@ class ChatRequest(BaseModel):
         None,
         description="Unique client/tab identifier for multi-device busy-lock coordination.",
     )
+    ask_user_reply: AskUserReplyRequest | None = Field(
+        None,
+        description=(
+            "Structured continuation for a normal ask_user prompt. When set, "
+            "the backend treats message as the answer to a previous assistant "
+            "question and does not classify it as a new high-risk user request."
+        ),
+    )
     turn_id: str | None = Field(
         None,
         description=(
@@ -86,7 +119,6 @@ class ChatRequest(BaseModel):
         max_length=128,
         pattern=r"^[A-Za-z0-9_\-:.@]{0,128}$",
     )
-
 
 class AttachmentInfo(BaseModel):
     """Attachment metadata."""
@@ -102,21 +134,6 @@ class AttachmentInfo(BaseModel):
 
 # Fix forward reference
 ChatRequest.model_rebuild()
-
-
-class ChatAnswerRequest(BaseModel):
-    """Answer to an ask_user event."""
-
-    conversation_id: str | None = None
-    answer: str = ""
-    # Fix-11: 当用户在 ask_user 弹窗里勾选了"本次会话内同类操作不再询问"，
-    # 前端把该字段置为 True；后端会把这条授权写进 session metadata，
-    # 以便后续相同 operation_kind 的请求短路 risk gate。
-    remember_for_session: bool = Field(
-        False,
-        description="If true, persist the user's confirmation as an in-session trust grant "
-        "for the same operation kind (Fix-11).",
-    )
 
 
 class ChatControlRequest(BaseModel):

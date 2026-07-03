@@ -70,7 +70,7 @@ export function AskUserSummary({ ask }: { ask: ChatAskUser }) {
         border: "1px solid rgba(37,99,235,0.15)",
       }}
     >
-      <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.55, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, opacity: 0.72, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.4 }}>
         {t("chat.answered", "已回答")}
       </div>
       {isMulti && ask.question && (

@@ -206,26 +206,23 @@ class TestMessageGatewayBroadcast:
     @pytest.mark.asyncio
     async def test_trust_mode_im_security_confirm_resolves_without_waiting(self, monkeypatch):
         """C8b-6b: gateway IM trust-mode 检测自 C8b-5 起改读 v2
-        ``read_permission_mode_label`` （v1 ``_is_trust_mode`` 已删）。本测试改为
-        mock v2 helper 返回 "yolo" + spy v2 ``apply_resolution`` 来锁死 trust 模式
-        下 IM confirm 应立即 deny 不等待 UI。"""
+        ``read_permission_mode_label`` （v1 ``_is_trust_mode`` 已删）。本测试
+        mock v2 helper 返回 "yolo" + spy 后端统一确认 resolver 来锁死 trust
+        模式下 IM confirm 应立即 deny 不等待 UI。"""
         resolved: list[tuple[str, str]] = []
 
-        from openakita.core.policy_v2 import (
-            apply_resolution as _apply_resolution_real,  # noqa: F401
-        )
+        from openakita.core import security_confirmation
 
         def _spy_apply(confirm_id, decision):
             resolved.append((confirm_id, decision))
-            return True
+            return {"handled": True}
 
-        # gateway._handle_im_security_confirm 内部 `from ..core.policy_v2 import
-        # read_permission_mode_label` + `from ..core.policy_v2 import apply_resolution`
-        # 都是 module-level lazy import，patch policy_v2 模块即可拦截。
+        # gateway._handle_im_security_confirm 内部 lazy import v2 mode helper
+        # 与 core security-confirm resolver；patch 模块对象即可拦截。
         import openakita.core.policy_v2 as policy_v2_module
 
         monkeypatch.setattr(policy_v2_module, "read_permission_mode_label", lambda: "yolo")
-        monkeypatch.setattr(policy_v2_module, "apply_resolution", _spy_apply)
+        monkeypatch.setattr(security_confirmation, "resolve_security_confirmation", _spy_apply)
 
         gateway = MessageGateway(session_manager=MagicMock())
         session = create_test_session(channel="qqbot:test", chat_id="chat-1", user_id="user-1")
@@ -243,6 +240,53 @@ class TestMessageGatewayBroadcast:
         )
 
         assert resolved == [("confirm-1", "deny")]
+
+    @pytest.mark.asyncio
+    async def test_riskgate_im_security_confirm_uses_event_options(self, monkeypatch):
+        import openakita.core.policy_v2 as policy_v2_module
+
+        monkeypatch.setattr(policy_v2_module, "read_permission_mode_label", lambda: "default")
+
+        captured: dict = {}
+
+        class _Adapter:
+            def build_simple_card(self, *, title, content, buttons):
+                captured["title"] = title
+                captured["content"] = content
+                captured["buttons"] = buttons
+                return {"title": title, "content": content, "buttons": buttons}
+
+            async def send_card(self, chat_id, card, *, reply_to=None):
+                captured["chat_id"] = chat_id
+                captured["card"] = card
+                captured["reply_to"] = reply_to
+                return "sent"
+
+        gateway = MessageGateway(session_manager=MagicMock())
+        adapter = _Adapter()
+        gateway._adapters["qqbot:test"] = adapter
+        session = create_test_session(channel="qqbot:test", chat_id="chat-1", user_id="user-1")
+        message = create_channel_message(
+            channel="qqbot:test",
+            chat_id="chat-1",
+            user_id="user-1",
+        )
+
+        await gateway._handle_im_security_confirm(
+            session,
+            {
+                "source": "risk_gate",
+                "tool": "risk_gate:declared_delete_tool",
+                "id": "risk-confirm-1",
+                "reason": "tool commit requires RiskGate",
+                "options": ["allow_once", "deny"],
+            },
+            adapter=adapter,
+            message=message,
+        )
+
+        actions = [button["value"]["action"] for button in captured["buttons"]]
+        assert actions == ["security_allow", "security_deny"]
 
     @pytest.mark.asyncio
     async def test_broadcast_sends_normal_text(self):

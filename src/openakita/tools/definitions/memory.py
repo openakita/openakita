@@ -268,15 +268,15 @@ MEMORY_TOOLS = [
             "Delete memories matching a query (controlled). Always preview with "
             "dry_run=True first; the call returns a confirm_token you must echo "
             "back with dry_run=False to actually delete. Requires the user to have "
-            "confirmed the deletion via the RiskGate ask_user dialog."
+            "confirmed the deletion via the RiskGate security confirmation card."
         ),
         "detail": """受控的按查询条件批量删除记忆。
 
 **调用约定**（**禁止**用 grep/find 在用户主目录递归搜索来"找记忆"）：
 1. 先用 `dry_run=True` 调一次，预览将删除的内容并拿到 `confirm_token`
-2. 用户已经在 RiskGate ask_user 弹窗里同意删除（system prompt 里会有
-   `## 已授权高危操作` 段落标明）
-3. 拿 `confirm_token` + `dry_run=False` 调一次，真正执行删除
+2. 用户已经在 RiskGate 安全确认卡片里同意删除
+3. 拿 `confirm_token` + `dry_run=False` 调一次，真正执行删除；工具层会校验
+   后端传入的一次性 RiskGate 授权
 
 **参数**：
 - `query` 必填：按内容关键字过滤

@@ -647,21 +647,10 @@ def build_system_prompt(
     if session_meta:
         system_parts.append(session_meta)
 
-    # 6.55 已授权高危操作范围（PR-A2）：用户已确认 + 没有受控入口的高危请求，
-    # 在这里把"已授权范围"明确告诉 LLM，禁止扩大或全盘扫描。
-    try:
-        from ..core.feature_flags import is_enabled as _ff_enabled
-
-        if (
-            _ff_enabled("risk_authorized_intent_v2")
-            and isinstance(session_context, dict)
-            and session_context.get("authorized_intent")
-        ):
-            auth_section = _build_authorized_intent_section(session_context["authorized_intent"])
-            if auth_section:
-                system_parts.append(auth_section)
-    except Exception:
-        pass
+    if isinstance(session_context, dict) and session_context.get("ask_user_reply"):
+        ask_reply_section = _build_ask_user_reply_section(session_context["ask_user_reply"])
+        if ask_reply_section:
+            system_parts.append(ask_reply_section)
 
     # 6.58 P0-2 阶段 2：evidence_recommended 软提示
     # IntentAnalyzer 的规则启发式认为本轮"建议查工具"，但 LLM 自评没要求证据。
@@ -1475,54 +1464,26 @@ def _build_evidence_recommended_section() -> str:
 我预计会看到……"或"根据训练数据中的常识，应该是…… [来源:常识]"。"""
 
 
-def _build_authorized_intent_section(intent: dict) -> str:
-    """渲染"已授权高危操作范围"段落（PR-A2）。
-
-    用户已经在 ask_user 弹窗里确认了这次高危操作；为了避免 LLM 在
-    ReAct 自由发挥（如调 grep 全盘扫描，参见 2026-05-09 P0-1），
-    把已授权的精确意图结构化注入 system prompt。
-    """
-    if not isinstance(intent, dict):
+def _build_ask_user_reply_section(reply: dict) -> str:
+    """Render backend-owned context for a normal ask_user continuation."""
+    if not isinstance(reply, dict):
         return ""
-    op = str(intent.get("operation") or "").strip() or "unknown"
-    target = str(intent.get("target_kind") or "").strip() or "unknown"
-    scope = intent.get("scope") or {}
-    scope_str = ""
-    if isinstance(scope, dict) and scope:
-        try:
-            import json as _json
-
-            scope_str = _json.dumps(scope, ensure_ascii=False, sort_keys=True)
-        except Exception:
-            scope_str = str(scope)
-
-    op_hint_map = {
-        "memory_delete": (
-            "请优先使用 `memory_delete_by_query` 工具（dry_run=True 先预览，"
-            "确认无误后再执行）。**禁止**用 `grep` / `glob` 在用户主目录或 "
-            "`.openakita/runtime`、`.openakita/workspaces` 等运行时数据目录"
-            "递归搜索；那是程序内部存储，会让后端卡死。"
-        ),
-        "shell_execute": (
-            "请直接调用 `run_powershell` / `run_shell` 执行用户指定的命令，"
-            "不要再次询问用户。**禁止**扩大命令范围或递归扫描。"
-        ),
-        "skill_install": ("请调用 `install_skill` 工具，参数从 scope 中读取。"),
-    }
-    op_hint = op_hint_map.get(op, "请按 scope 指定的最小范围执行；不得扩大。")
-
+    answer = str(reply.get("answer") or "").strip()
+    if not answer:
+        return ""
+    message_id = str(reply.get("message_id") or "").strip()
     lines = [
-        "## 已授权高危操作（仅本轮有效，30s 内）",
-        f"- **operation**: `{op}`",
-        f"- **target_kind**: `{target}`",
+        "## 用户已回复 ask_user",
+        "",
+        "本轮用户消息是对上一轮 `ask_user` 提问的结构化回复，不是新的独立任务，也不是 RiskGate 授权。",
+        "请结合上一轮 assistant 的问题理解这个答案，并继续原本的任务流程。",
+        "",
+        f"- **answer**: `{answer}`",
     ]
-    if scope_str:
-        lines.append(f"- **scope**: `{scope_str}`")
+    if message_id:
+        lines.append(f"- **ask_user_message_id**: `{message_id}`")
     lines.append("")
-    lines.append("**执行约束**（违反将被工具层拦截）：")
-    lines.append(f"- {op_hint}")
-    lines.append("- 严禁把已授权范围扩大到其它目标、其它路径、其它会话。")
-    lines.append("- 完成本次受限操作后立即结束本轮，不要顺手做未授权的清理。")
+    lines.append("**约束**：不要把这个普通 ask_user 回复解释为高危操作授权；如涉及高危执行，仍必须走 RiskGate。")
     return "\n".join(lines)
 
 

@@ -1089,7 +1089,8 @@ class FeishuAdapter(ChannelAdapter):
            UIConfirmBus.resolve() reliably wakes the reasoning_engine waiter.
         2. Webhook mode (_handle_card_action_webhook): runs inside the main
            event loop thread (called from a sync FastAPI handler). We call
-           apply_resolution directly — already in the correct thread.
+           the backend security-confirm resolver directly — already in the
+           correct thread.
 
         Detecting which case we're in: asyncio.get_running_loop() succeeds
         when called from the event loop thread, raises RuntimeError otherwise.
@@ -1112,7 +1113,7 @@ class FeishuAdapter(ChannelAdapter):
             "allow_always": "✅ 始终允许",
         }
         try:
-            from openakita.core.policy_v2 import apply_resolution
+            from openakita.core.security_confirmation import resolve_security_confirmation
 
             try:
                 asyncio.get_running_loop()
@@ -1121,15 +1122,15 @@ class FeishuAdapter(ChannelAdapter):
                 in_event_loop = False
 
             if in_event_loop:
-                apply_resolution(confirm_id, decision)
+                resolve_security_confirmation(confirm_id, decision)
             elif self._main_loop is not None and self._main_loop.is_running():
                 future = asyncio.run_coroutine_threadsafe(
-                    self._apply_resolution_async(confirm_id, decision),
+                    self._resolve_security_confirmation_async(confirm_id, decision),
                     self._main_loop,
                 )
                 future.result(timeout=2.5)
             else:
-                apply_resolution(confirm_id, decision)
+                resolve_security_confirmation(confirm_id, decision)
             return {"toast": {"type": "success", "content": labels.get(decision, decision)}}
         except TimeoutError:
             logger.warning(
@@ -1143,11 +1144,11 @@ class FeishuAdapter(ChannelAdapter):
             return {"toast": {"type": "error", "content": "处理失败"}}
 
     @staticmethod
-    async def _apply_resolution_async(confirm_id: str, decision: str) -> bool:
-        """Thin async wrapper so apply_resolution runs inside the event loop."""
-        from openakita.core.policy_v2 import apply_resolution
+    async def _resolve_security_confirmation_async(confirm_id: str, decision: str) -> bool:
+        """Thin async wrapper so confirmation resolution runs inside the event loop."""
+        from openakita.core.security_confirmation import resolve_security_confirmation
 
-        return apply_resolution(confirm_id, decision)
+        return bool(resolve_security_confirmation(confirm_id, decision).get("handled"))
 
     def _handle_expand_folder(self, path: str) -> dict:
         """读取目录内容并返回包含文件树和展开按钮的更新卡片。"""

@@ -645,6 +645,7 @@ class ResponseHandler:
                     if output.result == ValidationResult.PASS and output.name in (
                         "ArtifactValidator",
                         "CompletePlanValidator",
+                        "MutationEffectValidator",
                         "OrgDelegationValidator",
                     ):
                         logger.info(

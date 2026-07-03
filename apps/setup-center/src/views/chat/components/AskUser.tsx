@@ -207,7 +207,28 @@ export function AskUserBlock({ ask, onAnswer }: { ask: ChatAskUser; onAnswer: (a
   });
 
   return (
-    <div style={{ margin: "8px 0", padding: "12px 14px", borderRadius: 12, background: "rgba(124,58,237,0.04)", border: "1px solid rgba(124,58,237,0.16)" }}>
+    <div
+      style={{
+        margin: "8px 0",
+        padding: "12px 14px",
+        borderRadius: 12,
+        background: "rgba(124,58,237,0.04)",
+        border: "1px solid rgba(124,58,237,0.16)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 800,
+            textTransform: "uppercase",
+            letterSpacing: 0.4,
+            color: "rgba(124,58,237,0.8)",
+          }}
+        >
+          {t("chat.userConfirmation", "用户确认")}
+        </span>
+      </div>
       {!isSingle && (
         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, color: "var(--fg, #333)" }}>{ask.question}</div>
       )}

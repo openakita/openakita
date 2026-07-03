@@ -730,7 +730,7 @@ export function patchMessagesWithBackendDetailed(
     // instead of re-rendering it as freshly clickable.
     if (backend.ask_user?.answered && !m.askUser?.answered) {
       patches.askUser = m.askUser
-        ? { ...m.askUser, answered: true, answer: backend.ask_user.answer }
+        ? { ...m.askUser, ...backend.ask_user, answered: true, answer: backend.ask_user.answer }
         : backend.ask_user;
     }
 

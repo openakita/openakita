@@ -30,6 +30,13 @@ from typing import TYPE_CHECKING, Any
 from ...config import settings
 from ...core.policy_v2 import ApprovalClass
 from ..path_safety import resolve_within_root
+from ..tool_result import (
+    ToolResultPayload,
+    mutation_effect,
+    tool_receipt,
+    tool_result_payload,
+    visible_tool_content,
+)
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -214,15 +221,24 @@ class FilesystemHandler:
         )
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
+        """Public handler API: return only the LLM-visible result text."""
+        result = await self.handle_structured(tool_name, params)
+        return visible_tool_content(result)
+
+    async def handle_structured(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+    ) -> str | ToolResultPayload[str]:
         """
-        处理工具调用
+        处理工具调用，保留仅供 ToolExecutor 消费的 backend metadata。
 
         Args:
             tool_name: 工具名称
             params: 参数字典
 
         Returns:
-            执行结果字符串
+            执行结果；成功的 mutation 工具可能携带 backend-only metadata。
         """
         if tool_name == "run_shell":
             return await self._run_shell(params)
@@ -577,6 +593,15 @@ class FilesystemHandler:
             )
         return None
 
+    @staticmethod
+    def _mutation_result(content: str, *, action: str, target: str, **details: Any):
+        effect = mutation_effect(action=action, target=target, **details)
+        receipt = tool_receipt(action=action, target=target, **details)
+        return tool_result_payload(
+            content,
+            metadata={"effects": [effect], "receipts": [receipt]},
+        )
+
     async def _write_file(self, params: dict) -> str:
         """写入文件"""
         # 规范 path 名是 "path"；但 LLM 经常写成 filename/filepath/file_path。
@@ -664,7 +689,17 @@ class FilesystemHandler:
                     "请将文件的关键内容直接包含在回复中（如方案大纲/checklist），"
                     "供用户审阅。本模式下不提供文件下载工具。"
                 )
-        return result
+        try:
+            resolved_path = str(self.agent.file_tool._resolve_path(path))
+        except Exception:
+            resolved_path = str(path)
+        return self._mutation_result(
+            result,
+            action="write",
+            target="file",
+            path=resolved_path,
+            requested_path=str(path),
+        )
 
     # read_file 默认最大行数。运行时可通过 READ_FILE_DEFAULT_LIMIT 调整。
     READ_FILE_DEFAULT_LIMIT = 2000
@@ -799,8 +834,17 @@ class FilesystemHandler:
             except OSError:
                 size_info = ""
             if replace_all and replaced > 1:
-                return f"文件已编辑: {path}（替换了 {replaced} 处匹配）{size_info}"
-            return f"文件已编辑: {path}{size_info}"
+                result_text = f"文件已编辑: {path}（替换了 {replaced} 处匹配）{size_info}"
+            else:
+                result_text = f"文件已编辑: {path}{size_info}"
+            return self._mutation_result(
+                result_text,
+                action="update",
+                target="file",
+                path=str(result.get("path") or path),
+                requested_path=str(path),
+                replaced_count=replaced,
+            )
         except FileNotFoundError:
             return f"❌ 文件不存在: {path}"
         except ValueError as e:
@@ -1151,7 +1195,16 @@ class FilesystemHandler:
             return f"⚠️ 移动操作返回成功但源路径仍存在: {src}"
         if not final_dst_path.exists():
             return f"⚠️ 移动操作返回成功但目标路径不存在: {final_dst_path}"
-        return f"{kind}已移动: {src} -> {final_dst_path}"
+        result_text = f"{kind}已移动: {src} -> {final_dst_path}"
+        return self._mutation_result(
+            result_text,
+            action="move",
+            target="file" if kind == "文件" else "directory",
+            path=str(final_dst_path),
+            requested_path=str(dst),
+            source_path=str(src_path),
+            requested_source_path=str(src),
+        )
 
     async def _delete_file(self, params: dict) -> str:
         """删除文件或空目录"""
@@ -1193,7 +1246,14 @@ class FilesystemHandler:
             if file_path.exists():
                 return f"⚠️ 删除操作返回成功但路径仍存在: {path}"
             kind = "目录" if is_dir else "文件"
-            return f"{kind}已删除: {path}"
+            result_text = f"{kind}已删除: {path}"
+            return self._mutation_result(
+                result_text,
+                action="delete",
+                target="directory" if is_dir else "file",
+                path=str(file_path),
+                requested_path=str(path),
+            )
         return f"❌ 删除失败: {path}"
 
 
@@ -1208,4 +1268,4 @@ def create_handler(agent: "Agent"):
         处理器的 handle 方法
     """
     handler = FilesystemHandler(agent)
-    return handler.handle
+    return handler.handle_structured

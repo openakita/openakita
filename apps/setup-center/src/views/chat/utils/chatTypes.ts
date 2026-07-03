@@ -78,6 +78,36 @@ export type QueuedMessage = {
   mode?: "agent" | "plan" | "ask";
 };
 
+type SecurityDecision = "allow_once" | "allow_session" | "allow_always" | "deny" | "sandbox";
+type SecurityTimeoutDefault = "allow_once" | "deny";
+type SecurityPresentationState = "active" | "queued" | "resolved";
+type SecurityDisplayToken = {
+  value: string;
+  label: string;
+  color?: string;
+  description?: string;
+};
+type SecurityConfirmDisplay = {
+  title: string;
+  reason: { text: string; raw?: string };
+  risk: SecurityDisplayToken & { color: string };
+  tool: SecurityDisplayToken;
+  channel?: SecurityDisplayToken;
+  approval_class?: SecurityDisplayToken;
+  arguments: { text: string; format?: string };
+};
+type SecurityDecisionChainStep = {
+  name: string;
+  action: string;
+  note: string;
+  metadata?: Record<string, unknown>;
+  display: {
+    label: string;
+    action: SecurityDisplayToken & { color: string };
+    note?: string;
+  };
+};
+
 /** SSE stream event union — synced with Python openakita.events / src/streamEvents.ts */
 export type StreamEvent =
   | { type: "heartbeat"; ts?: number }
@@ -134,13 +164,42 @@ export type StreamEvent =
   | { type: "todo_completed" }
   | { type: "todo_cancelled" }
   | { type: "plan_ready_for_approval"; data: { conversation_id: string; summary: string; plan_id: string; plan_file: string }; conversation_id?: string; plan_id?: string; plan_file?: string; protocol_version?: number }
-  | { type: "ask_user"; question: string; options?: { id: string; label: string }[]; allow_multiple?: boolean; questions?: { id: string; prompt: string; options?: { id: string; label: string }[]; allow_multiple?: boolean }[] }
+  | { type: "ask_user"; question: string; options?: { id: string; label: string }[]; allow_multiple?: boolean; questions?: { id: string; prompt: string; options?: { id: string; label: string }[]; allow_multiple?: boolean }[]; confirmation_id?: string; risk_intent?: Record<string, unknown> }
   | { type: "user_insert"; content: string }
   | { type: "agent_switch"; agentName: string; reason: string }
   | { type: "agent_handoff"; from_agent: string; to_agent: string; reason?: string }
   | { type: "sub_agent_state"; agent_id?: string; agentId?: string; session_id?: string; sessionId?: string; status?: string; reason?: string; protocol_version?: number }
   | { type: "artifact"; artifact_type: string; file_url: string; path: string; name: string; caption: string; size?: number }
-  | { type: "security_confirm"; tool: string; tool_name?: string; args: Record<string, unknown>; id?: string; call_id?: string; confirm_id?: string; reason: string; risk_level: string; needs_sandbox: boolean; protocol_version?: number; timeout_seconds?: number; default_on_timeout?: string; approval_class?: string | null; policy_version?: number; channel?: string; delegate_chain?: string[]; root_user_id?: string | null; decision_chain?: Array<{ name: string; action: string; note: string }> }
+  | {
+      type: "security_confirm";
+      source: "risk_gate" | "policy_v2";
+      kind?: "risk_gate";
+      tool: string;
+      args: Record<string, unknown>;
+      id: string;
+      confirm_id: string;
+      conversation_id: string;
+      reason: string;
+      risk_level: string;
+      needs_sandbox: boolean;
+      timeout_seconds: number;
+      default_on_timeout: SecurityTimeoutDefault;
+      approval_class: string | null;
+      policy_version: number;
+      channel: string;
+      delegate_chain: string[];
+      root_user_id: string | null;
+      decision_chain: SecurityDecisionChainStep[];
+      display: SecurityConfirmDisplay;
+      options: SecurityDecision[];
+      risk_intent: Record<string, unknown>;
+      original_message?: string;
+      presentation_state: SecurityPresentationState;
+      queue_position: number | null;
+      active_confirm_id: string | null;
+      queued_count: number;
+      pending_count: number;
+    }
   | { type: "death_switch"; active: boolean; reason?: string }
   | { type: "ui_preference"; theme?: string; language?: string }
   | { type: "endpoint_notice"; reason_code?: string; notice_type?: string; endpoint?: string }

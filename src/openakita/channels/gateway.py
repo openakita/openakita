@@ -5742,6 +5742,7 @@ class MessageGateway:
         risk_level: str = "HIGH",
         *,
         confirm_id: str = "",
+        options: list[str] | None = None,
     ) -> bool:
         """Send a security confirmation request to the IM channel.
 
@@ -5751,6 +5752,22 @@ class MessageGateway:
         adapter = self._adapters.get(session.channel)
         if adapter is None:
             return False
+        allowed_options = set(options or ["allow_once", "allow_session", "allow_always", "deny"])
+        if "allow" in allowed_options:
+            allowed_options.add("allow_once")
+
+        option_labels = {
+            "allow_once": f"**允许 {confirm_id[-4:] if confirm_id else '----'}**",
+            "allow_session": f"**会话允许 {confirm_id[-4:] if confirm_id else '----'}**",
+            "allow_always": f"**始终允许 {confirm_id[-4:] if confirm_id else '----'}**",
+            "deny": f"**拒绝 {confirm_id[-4:] if confirm_id else '----'}**",
+            "sandbox": f"**沙箱 {confirm_id[-4:] if confirm_id else '----'}**",
+        }
+        option_text = " / ".join(
+            option_labels[key]
+            for key in ("allow_once", "allow_session", "allow_always", "deny", "sandbox")
+            if key in allowed_options
+        )
 
         text = (
             f"⚠️ **安全确认**\n\n"
@@ -5758,11 +5775,7 @@ class MessageGateway:
             f"风险等级: **{risk_level}**\n"
             f"确认码: `{confirm_id[-4:] if confirm_id else '----'}`\n"
             f"原因: {reason}\n\n"
-            f"请回复 **允许 {confirm_id[-4:] if confirm_id else '----'}** / "
-            f"**会话允许 {confirm_id[-4:] if confirm_id else '----'}** / "
-            f"**始终允许 {confirm_id[-4:] if confirm_id else '----'}** / "
-            f"**拒绝 {confirm_id[-4:] if confirm_id else '----'}** / "
-            f"**沙箱 {confirm_id[-4:] if confirm_id else '----'}**"
+            f"请回复 {option_text}"
         )
 
         if hasattr(adapter, "build_simple_card") and hasattr(adapter, "send_card"):
@@ -5774,26 +5787,51 @@ class MessageGateway:
                     f"**原因**: {reason}"
                 ),
                 buttons=[
-                    {
-                        "text": "✅ 允许",
-                        "value": {"action": "security_allow", "confirm_id": confirm_id},
-                    },
-                    {
-                        "text": "❌ 拒绝",
-                        "value": {"action": "security_deny", "confirm_id": confirm_id},
-                    },
-                    {
-                        "text": "本次会话允许",
-                        "value": {"action": "security_allow_session", "confirm_id": confirm_id},
-                    },
-                    {
-                        "text": "始终允许",
-                        "value": {"action": "security_allow_always", "confirm_id": confirm_id},
-                    },
-                    {
-                        "text": "沙箱执行",
-                        "value": {"action": "security_sandbox", "confirm_id": confirm_id},
-                    },
+                    btn
+                    for key, btn in [
+                        (
+                            "allow_once",
+                            {
+                                "text": "✅ 允许",
+                                "value": {"action": "security_allow", "confirm_id": confirm_id},
+                            },
+                        ),
+                        (
+                            "deny",
+                            {
+                                "text": "❌ 拒绝",
+                                "value": {"action": "security_deny", "confirm_id": confirm_id},
+                            },
+                        ),
+                        (
+                            "allow_session",
+                            {
+                                "text": "本次会话允许",
+                                "value": {
+                                    "action": "security_allow_session",
+                                    "confirm_id": confirm_id,
+                                },
+                            },
+                        ),
+                        (
+                            "allow_always",
+                            {
+                                "text": "始终允许",
+                                "value": {
+                                    "action": "security_allow_always",
+                                    "confirm_id": confirm_id,
+                                },
+                            },
+                        ),
+                        (
+                            "sandbox",
+                            {
+                                "text": "沙箱执行",
+                                "value": {"action": "security_sandbox", "confirm_id": confirm_id},
+                            },
+                        ),
+                    ]
+                    if key in allowed_options
                 ],
             )
             try:
@@ -5822,7 +5860,7 @@ class MessageGateway:
         Send a confirmation card/text to the user. The reasoning_engine
         generator is the authoritative waiter for ``wait_for_ui_resolution``;
         this gateway hook only renders the card / waits-for-text and forwards
-        the user's choice back via ``pe.resolve_ui_confirm``.
+        the user's choice back via the backend security-confirm resolver.
 
         **C8 §2.3 fix**：旧实现这里也调 ``prepare_ui_confirm`` + ``wait_for_ui_resolution`` +
         ``cleanup_ui_confirm``，与 reasoning_engine 的 wait 形成"序列竞争"——
@@ -5847,9 +5885,9 @@ class MessageGateway:
         is_trust_mode = read_permission_mode_label() == "yolo"
         if is_trust_mode:
             if confirm_id:
-                from ..core.policy_v2 import apply_resolution
+                from ..core.security_confirmation import resolve_security_confirmation
 
-                apply_resolution(confirm_id, "deny")
+                resolve_security_confirmation(confirm_id, "deny")
             logger.info(
                 "[Security] Trust-mode IM confirmation resolved without prompting: "
                 "tool=%s confirm_id=%s",
@@ -5865,6 +5903,7 @@ class MessageGateway:
                 reason,
                 risk_level=risk,
                 confirm_id=confirm_id,
+                options=[str(option) for option in event.get("options") or []],
             )
         except Exception:
             # 渲染卡片失败：让 reasoning_engine 的 wait 走默认 deny（不在这里
@@ -5872,14 +5911,14 @@ class MessageGateway:
             raise
 
         if sent_interactive and confirm_id:
-            # 卡片已渲染。IM 适配器会在用户点卡时调 resolve_ui_confirm，
+            # 卡片已渲染。IM 适配器会在用户点卡时调后端统一确认 resolver，
             # 唤醒 reasoning_engine 当前的 wait。我们直接 return，让上层
             # ``__anext__`` 立即接力，由 reasoning_engine 拥有 wait 与 cleanup。
             return
 
         # ---------- text fallback：交互式发送失败时退回纯文本提示 + 等待回复 ----------
         # 此分支同样不调 prepare/cleanup —— reasoning_engine 已经 prepare，
-        # 我们只负责拿到用户文字、parse 出 decision、调 resolve_ui_confirm。
+        # 我们只负责拿到用户文字、parse 出 decision、调后端统一确认 resolver。
         try:
             reply_msg = await asyncio.wait_for(
                 self._wait_for_interrupt(session.session_key),
@@ -5905,6 +5944,9 @@ class MessageGateway:
         decision = "deny"
         tokens = text.split()
         action = tokens[0] if tokens else ""
+        allowed_options = {str(option) for option in event.get("options") or []}
+        if not allowed_options:
+            allowed_options = {"allow_once", "allow_session", "allow_always", "deny"}
         if action in ("允许", "allow", "yes", "y", "allow_once"):
             decision = "allow_once"
         elif action in ("始终允许", "allow_always", "always"):
@@ -5914,12 +5956,16 @@ class MessageGateway:
         # 兼容两种字形：交互卡片按钮文案是"沙箱执行"，历史上也出现过"沙盒"。
         elif action in ("沙箱", "沙箱执行", "沙盒", "沙盒执行", "sandbox"):
             decision = "sandbox"
+        if decision not in allowed_options and not (
+            decision == "allow_once" and "allow" in allowed_options
+        ):
+            decision = "deny"
 
         if confirm_id:
             try:
-                from ..core.policy_v2 import apply_resolution
+                from ..core.security_confirmation import resolve_security_confirmation
 
-                apply_resolution(confirm_id, decision)
+                resolve_security_confirmation(confirm_id, decision)
             except Exception as exc:
                 logger.warning(f"[Security] IM confirm resolve failed: {exc}")
 

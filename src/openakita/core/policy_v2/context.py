@@ -30,21 +30,23 @@ from .enums import LEGACY_MODE_ALIASES, ConfirmationMode, SessionRole
 
 @dataclass(slots=True, frozen=True)
 class ReplayAuthorization:
-    """30s TTL 内复读消息免 confirm 的授权记录（C5）。
+    """Turn-scoped replay authorization snapshot.
 
-    对齐 v1 ``risk_authorized_replay`` session metadata 形态：
-    {expires_at, original_message, confirmation_id, operation}。
+    The backend passes these explicitly into ``PolicyContext`` after resolving
+    a RiskGate confirmation.
 
     **不可变 dataclass**（``frozen=True``）—— 授权一经发出就不许 in-place 改字段
-    （有效期/绑定的消息）。要更新只能整条替换。
+    （生命周期/绑定的消息）。要更新只能整条替换。
 
-    **engine 只读不写**：engine.step 7 检查匹配后返回信号；实际"消费"
-    （从 session metadata 移除）由 tool_executor / chat handler 调用方做，避免
-    engine 持有 session 副作用。
+    **engine 只读不写**：engine.step 7 检查匹配后返回信号；实际消费由
+    API/Agent 持有的 turn object 完成，避免 engine 持有 session 副作用。
     """
 
-    expires_at: float
-    """epoch seconds。``time.time() < expires_at`` 才有效。"""
+    expires_at: float = 0.0
+    """TTL replay 的 epoch seconds；``turn_scoped=True`` 时不参与判定。"""
+
+    turn_scoped: bool = False
+    """True 表示生命周期由当前 ``PolicyContext``/server turn 限定，而不是时间。"""
 
     original_message: str = ""
     """原始 user message。匹配时按子串/相等判断，调用方可定制 matcher。"""
@@ -53,10 +55,66 @@ class ReplayAuthorization:
     """对应 ask_user 的 confirmation 记录 id（审计 + 单次消费定位）。"""
 
     operation: str = ""
-    """绑定的 OperationKind 值（write/delete/...），可空表示"任意写操作"。"""
+    """Bound coarse operation value (write/delete/...), empty means wildcard."""
+
+    tool_names: tuple[str, ...] = ()
+    """Optional tool allow-list for this turn authorization; empty means match by operation."""
 
     def is_active(self, *, now: float | None = None) -> bool:
+        if self.turn_scoped:
+            return True
         return (now or time.time()) < self.expires_at
+
+
+@dataclass(slots=True, frozen=True)
+class ToolPolicy:
+    """Tool-declared parameter-sensitive policy behavior.
+
+    The policy engine must not know concrete tool names. Handlers can declare
+    common behavior here, and the engine applies the generic contract.
+    """
+
+    preview_param: str = ""
+    """Boolean-ish parameter that marks a non-mutating preview call."""
+
+    preview_default: bool | None = None
+    """Default preview value when ``preview_param`` is absent. None disables defaulting."""
+
+    commit_requires_riskgate: bool = False
+    """Whether non-preview calls require turn-scoped RiskGate authorization."""
+
+    riskgate_operation: str = ""
+    """Structured RiskGate operation that may approve this tool's commit path."""
+
+    riskgate_scope_params: tuple[str, ...] = ()
+    """Tool params that define the authorized operation scope."""
+
+    riskgate_scope_required_any: tuple[str, ...] = ()
+    """At least one of these extracted scope params must be present for commit auth."""
+
+    riskgate_scope_exact_params: tuple[str, ...] = ()
+    """Scope params that narrow authorization by exact equality when present."""
+
+    riskgate_scope_text_params: tuple[str, ...] = ()
+    """Scope params that may match by equality or containment against authorized text."""
+
+    riskgate_scope_raw_params: tuple[str, ...] = ("raw",)
+    """Authorized scope fields that can back text-param containment checks."""
+
+    commit_step_name: str = "tool_commit_requires_riskgate"
+    """Decision step name for denied unapproved commit attempts."""
+
+    preview_step_name: str = "tool_preview"
+    """Decision step name for allowed preview attempts."""
+
+    preview_reason: str = "tool preview only"
+    commit_reason: str = "tool commit requires confirmed RiskGate tool authorization"
+
+    display_label: str = ""
+    """Human-readable label owned by the tool policy, used by security UI payloads."""
+
+    display_description: str = ""
+    """Optional human-readable description for security UI payloads."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -123,11 +181,10 @@ class PolicyContext:
     """["root", "specialist_a", ...]。append in derive_child()。"""
 
     replay_authorizations: list[ReplayAuthorization] = field(default_factory=list)
-    """30s 内复读消息免 confirm 的授权快照。
+    """Backend-owned RiskGate replay authorization snapshots.
 
-    一般来自 ``session.get_metadata("risk_authorized_replay")``。engine 只读不写。
-    异构输入（v1 dict 形态）由 ``from_session`` 内 ``_coerce_replay_auth``
-    统一转 dataclass。
+    These are passed explicitly by the Agent for the current turn. Engine reads
+    them but never writes or consumes session state.
     """
 
     trusted_path_overrides: list[TrustedPathOverride] = field(default_factory=list)
@@ -139,6 +196,9 @@ class PolicyContext:
 
     safety_immune_paths: tuple[str, ...] = ()
     """启动时 union from POLICIES.yaml + identity 默认 9 类（C5 起 engine 也合 config）。"""
+
+    tool_policies: dict[str, ToolPolicy] = field(default_factory=dict)
+    """Tool-declared policy metadata, keyed by tool name. Engine treats this as data."""
 
     metadata: dict[str, Any] = field(default_factory=dict)
     """IM 适配器存 group_id / sender 等自由字段。"""
@@ -256,6 +316,7 @@ class PolicyContext:
             replay_authorizations=_coerce_replay_auths(meta.get("replay_authorizations")),
             trusted_path_overrides=_coerce_trusted_paths(meta.get("trusted_path_overrides")),
             safety_immune_paths=tuple(meta.get("safety_immune_paths", ())),
+            tool_policies=_coerce_tool_policies(meta.get("tool_policies")),
             metadata=meta,
             user_message=str(meta.get("user_message", "")),
         )
@@ -288,6 +349,7 @@ class PolicyContext:
             replay_authorizations=list(self.replay_authorizations),
             trusted_path_overrides=list(self.trusted_path_overrides),
             safety_immune_paths=self.safety_immune_paths,
+            tool_policies=dict(self.tool_policies),
             metadata=dict(self.metadata),
             user_message=self.user_message,
             # C15 §17.1 — sub-agents derived during an Evolution self-fix
@@ -321,12 +383,21 @@ def _coerce_replay_auths(raw: Any) -> list[ReplayAuthorization]:
             continue
         if isinstance(item, dict):
             try:
+                raw_tool_names = item.get("tool_names") or item.get("allowed_tools") or ()
+                if isinstance(raw_tool_names, str):
+                    tool_names = (raw_tool_names,)
+                elif isinstance(raw_tool_names, list | tuple):
+                    tool_names = tuple(str(name) for name in raw_tool_names if str(name))
+                else:
+                    tool_names = ()
                 out.append(
                     ReplayAuthorization(
                         expires_at=float(item.get("expires_at", 0.0)),
+                        turn_scoped=bool(item.get("turn_scoped", False)),
                         original_message=str(item.get("original_message", "")),
                         confirmation_id=str(item.get("confirmation_id", "")),
                         operation=str(item.get("operation", "")),
+                        tool_names=tool_names,
                     )
                 )
             except (TypeError, ValueError):
@@ -374,6 +445,65 @@ def _coerce_trusted_paths(raw: Any) -> list[TrustedPathOverride]:
                 )
             )
     return out
+
+
+def _coerce_tool_policies(raw: Any) -> dict[str, ToolPolicy]:
+    """Normalize dict-like tool policy declarations."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, ToolPolicy] = {}
+    for name, policy in raw.items():
+        tool_name = str(name or "").strip()
+        if not tool_name:
+            continue
+        if isinstance(policy, ToolPolicy):
+            out[tool_name] = policy
+            continue
+        if not isinstance(policy, dict):
+            continue
+        out[tool_name] = ToolPolicy(
+            preview_param=str(policy.get("preview_param") or ""),
+            preview_default=(
+                bool(policy["preview_default"]) if "preview_default" in policy else None
+            ),
+            commit_requires_riskgate=bool(policy.get("commit_requires_riskgate", False)),
+            riskgate_operation=str(policy.get("riskgate_operation") or ""),
+            riskgate_scope_params=_coerce_string_tuple(policy.get("riskgate_scope_params")),
+            riskgate_scope_required_any=_coerce_string_tuple(
+                policy.get("riskgate_scope_required_any")
+            ),
+            riskgate_scope_exact_params=_coerce_string_tuple(
+                policy.get("riskgate_scope_exact_params")
+            ),
+            riskgate_scope_text_params=_coerce_string_tuple(
+                policy.get("riskgate_scope_text_params")
+            ),
+            riskgate_scope_raw_params=_coerce_string_tuple(
+                policy.get("riskgate_scope_raw_params"), default=("raw",)
+            ),
+            commit_step_name=str(
+                policy.get("commit_step_name") or "tool_commit_requires_riskgate"
+            ),
+            preview_step_name=str(policy.get("preview_step_name") or "tool_preview"),
+            preview_reason=str(policy.get("preview_reason") or "tool preview only"),
+            commit_reason=str(
+                policy.get("commit_reason")
+                or "tool commit requires confirmed RiskGate tool authorization"
+            ),
+            display_label=str(policy.get("display_label") or ""),
+            display_description=str(policy.get("display_description") or ""),
+        )
+    return out
+
+
+def _coerce_string_tuple(raw: Any, *, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    if raw is None:
+        return default
+    if isinstance(raw, str):
+        return (raw,) if raw else ()
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        return tuple(str(item) for item in raw if str(item))
+    return default
 
 
 def _coerce_workspace_roots(raw: Any) -> tuple[Path, ...]:

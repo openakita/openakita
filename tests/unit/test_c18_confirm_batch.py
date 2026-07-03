@@ -5,8 +5,9 @@ Coverage:
 2. ``UIConfirmBus.list_batch_candidates`` time-window filtering.
 3. ``UIConfirmBus.batch_resolve`` fan-out: every active confirm in
    session resolves; idempotent; preserves waiter wake-up.
-4. ``POST /api/chat/security-confirm/batch`` integration with
-   ``apply_resolution`` side effects.
+4. ``POST /api/chat/security-confirm/batch`` integration with the unified
+   security-confirm resolver, including ``apply_resolution`` side effects for
+   ordinary PolicyV2 confirmations.
 5. Server-side window clamp: if POLICIES.yaml has window=2 and request
    says within_seconds=300, server clamps to 2.
 """
@@ -204,6 +205,59 @@ class TestBatchEndpoint:
         assert body["resolved_count"] == 2
         assert sorted(body["resolved_ids"]) == ["c1", "c2"]
 
+    def test_endpoint_resolves_riskgate_tool_call_through_unified_resolver(
+        self, api_client: TestClient
+    ) -> None:
+        from openakita.core.confirmation_state import get_confirmation_store
+        from openakita.core.risk_gate_workflow import get_risk_gate_workflow
+
+        store = get_confirmation_store()
+        conv = "s-riskgate-batch"
+        store.clear(conv)
+        tool_input = {
+            "query": "OPENAKITA_RISKGATE_689_REPRO_TEST",
+            "dry_run": False,
+        }
+        classification = {
+            "kind": "tool_call",
+            "risk_level": "high",
+            "operation": "memory_delete",
+            "operation_kind": "memory_delete",
+            "target_kind": "tool",
+            "tool_name": "declared_delete_tool",
+            "tool_input": tool_input,
+            "riskgate_scope": {"query": "OPENAKITA_RISKGATE_689_REPRO_TEST"},
+        }
+        pending = get_risk_gate_workflow().open_tool_confirmation(
+            conversation_id=conv,
+            original_message="tool:declared_delete_tool",
+            classification=classification,
+            request_id="req-riskgate-batch",
+            tool_name="declared_delete_tool",
+            tool_args=tool_input,
+            reason="tool commit requires RiskGate",
+            timeout_seconds=60,
+            channel="desktop",
+            approval_class="destructive",
+            policy_version=2,
+            decision_chain=[],
+            delegate_chain=[],
+            root_user_id=None,
+        ).pending
+
+        r = api_client.post(
+            "/api/chat/security-confirm/batch",
+            json={"session_id": conv, "decision": "allow_once"},
+        )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "ok"
+        assert body["resolved_ids"] == [pending.confirmation_id]
+        record = store.get_record(pending.confirmation_id)
+        assert record is not None
+        assert record.state == "confirmed"
+
     def test_endpoint_clamps_to_config_window(self, api_client: TestClient) -> None:
         """Server config says window=2; even if client requests window=300,
         only confirms in the 2s window should resolve."""
@@ -230,19 +284,6 @@ class TestBatchEndpoint:
         assert body["resolved_count"] == 1
         assert body["resolved_ids"] == ["c_new"]
         assert body["window_seconds"] == 2  # confirms server clamped
-
-    def test_decision_aliases_normalize(self, api_client: TestClient) -> None:
-        from openakita.core.ui_confirm_bus import get_ui_confirm_bus
-
-        bus = get_ui_confirm_bus()
-        bus.store_pending("cz", "x", {}, session_id="sz")
-        bus.prepare("cz")
-
-        r = api_client.post(
-            "/api/chat/security-confirm/batch",
-            json={"session_id": "sz", "decision": "continue"},  # legacy alias
-        )
-        assert r.json()["decision"] == "allow_once"
 
     def test_no_candidates_returns_zero_not_error(self, api_client: TestClient) -> None:
         r = api_client.post(

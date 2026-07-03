@@ -282,7 +282,7 @@ def test_cli_main_callback_rejects_no_tty(monkeypatch):
 def test_stream_renderer_security_confirm_skips_on_no_tty(monkeypatch):
     """Even if a confirm event somehow reaches ``stream_renderer`` in a
     non-TTY context, ``_handle_security_confirm_interactive`` must return
-    silently without calling ``apply_resolution`` or attempting
+    silently without calling the security-confirm resolver or attempting
     ``Prompt.ask`` (which would hang)."""
     from rich.console import Console
 
@@ -290,15 +290,15 @@ def test_stream_renderer_security_confirm_skips_on_no_tty(monkeypatch):
 
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
 
-    apply_calls = []
+    resolve_calls = []
 
-    def _spy_apply_resolution(confirm_id, decision):
-        apply_calls.append((confirm_id, decision))
-        return True
+    def _spy_resolve_security_confirmation(confirm_id, decision):
+        resolve_calls.append((confirm_id, decision))
+        return {"handled": True}
 
     with patch(
-        "openakita.core.policy_v2.apply_resolution",
-        _spy_apply_resolution,
+        "openakita.core.security_confirmation.resolve_security_confirmation",
+        _spy_resolve_security_confirmation,
     ):
         sr._handle_security_confirm_interactive(
             {
@@ -310,8 +310,8 @@ def test_stream_renderer_security_confirm_skips_on_no_tty(monkeypatch):
             Console(file=__import__("io").StringIO()),
         )
 
-    assert apply_calls == [], (
-        "non-TTY confirm must NOT trigger apply_resolution — let unattended "
+    assert resolve_calls == [], (
+        "non-TTY confirm must NOT trigger confirmation resolution — let unattended "
         "path / setup-center handle it"
     )
 

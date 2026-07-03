@@ -13,7 +13,7 @@
    ``allow_always``             ``SessionAllowlistManager.add(...)`` +
                                 ``UserAllowlistManager.add_entry(...)`` +
                                 ``UserAllowlistManager.save_to_yaml()``
-   ``deny`` / 其他              无副作用（明确拒绝/未知值，下次仍然问）
+   ``deny`` / ``timeout``       无副作用（下次仍然问）
    ===========================  ============================================
 
 设计动机
@@ -55,8 +55,7 @@ def apply_resolution(confirm_id: str, decision: str) -> bool:
             保证此 id 之前通过 ``UIConfirmBus.store_pending`` 注册过；
             否则本函数仅唤醒 waiter 不写 allowlist（行为与 v1 一致）。
         decision: 用户选项之一（``allow_once`` / ``allow_session`` /
-            ``allow_always`` / ``sandbox`` / ``deny``）。``allow`` 自动归
-            一化为 ``allow_once``（v1 兼容）。
+            ``allow_always`` / ``sandbox`` / ``deny`` / ``timeout``）。
 
     Returns:
         True 当 pending sidecar 被找到并处理；False 当 sidecar 不存在
@@ -68,12 +67,14 @@ def apply_resolution(confirm_id: str, decision: str) -> bool:
         - decision == ``allow_session`` / ``sandbox`` → SessionAllowlistManager.add
         - decision == ``allow_always`` → 上面的 + UserAllowlistManager.add_entry
           + save_to_yaml（YAML 写失败仅 warn 不抛，与 v1 silent-fail 对齐）
-        - decision == ``allow_once`` / ``deny`` / 其他 → 仅唤醒，无 allowlist 写
+        - decision == ``allow_once`` / ``deny`` / ``timeout`` → 仅唤醒，无 allowlist 写
     """
+    from ..security_confirm_channel import require_security_confirm_decision
     from ..ui_confirm_bus import get_ui_confirm_bus
     from .global_engine import get_engine_v2
     from .session_allowlist import get_session_allowlist_manager
 
+    decision = require_security_confirm_decision(decision)
     resolved = get_ui_confirm_bus().resolve(confirm_id, decision)
     if resolved is None:
         return False

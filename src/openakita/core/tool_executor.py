@@ -28,9 +28,11 @@ from ..tools.errors import ToolError, classify_error
 from ..tools.handlers import SystemHandlerRegistry
 from ..tools.input_normalizer import normalize_tool_input
 from ..tools.tool_hints import ConfigHint, ToolConfigError
+from ..tools.tool_result import ToolResultPayload, split_tool_result_payload
 from ..tracing.tracer import get_tracer
 from .abort_scope import AbortScope, current_abort_scope
 from .agent_state import TaskState
+from .tool_execution_context import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -38,18 +40,15 @@ logger = logging.getLogger(__name__)
 # Public return type for the tool execution chain.
 #
 # All ``execute_tool*`` / ``_execute_tool_impl`` / ``_execute_with_cancel`` paths
-# return ``(text, hint)`` where:
-#   - ``text`` is the LLM-visible result string (always populated)
+# return ``(result, hint)`` where:
+#   - ``result`` is the LLM-visible handler output, or ``ToolResultPayload``
+#     when backend-only metadata must travel with that output
 #   - ``hint`` is an optional :class:`ConfigHint` for the chat UI side-channel,
 #     produced when a handler raises :class:`ToolConfigError` (missing API key,
 #     auth failure, rate limit, etc.). The hint NEVER enters LLM history —
 #     it's forwarded by ``ReasoningEngine`` as a separate ``config_hint`` SSE
 #     event and stripped before tool_result_msg is sent to the model.
-#
-# Why a tuple instead of a wrapper class? Concrete tuple return is easier to
-# reason about at every callsite (`r, hint = await ...`), avoids subclass
-# fragility (``str.__add__`` returning base ``str``), and keeps `mypy` honest.
-ToolResultWithHint = tuple[str, "ConfigHint | None"]
+ToolResultWithHint = tuple[Any, "ConfigHint | None"]
 
 
 class ToolSkipped(Exception):
@@ -473,6 +472,7 @@ class ToolExecutor:
         tool_input: dict,
         *,
         session_id: str | None = None,
+        execution_context: ToolExecutionContext | None = None,
     ) -> ToolResultWithHint:
         """
         执行单个工具调用。
@@ -544,7 +544,12 @@ class ToolExecutor:
             tool_scope = parent_scope.create_child(f"tool:{tool_name}")
             scope_token = current_abort_scope.set(tool_scope)
         try:
-            return await self._execute_tool_impl(tool_name, tool_input, session_id=session_id)
+            return await self._execute_tool_impl(
+                tool_name,
+                tool_input,
+                session_id=session_id,
+                execution_context=execution_context,
+            )
         finally:
             if scope_token is not None:
                 try:
@@ -732,12 +737,71 @@ class ToolExecutor:
             after=tool_input if outcome.allowed else before_snapshot,
         )
 
+    def _get_tool_policy(self, tool_name: str) -> Any | None:
+        getter = getattr(self._handler_registry, "get_tool_policy", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(tool_name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[RiskGate] failed to read ToolPolicy for %s: %s", tool_name, exc)
+            return None
+
+    def _bind_tool_execution_context(
+        self,
+        execution_context: ToolExecutionContext | None,
+        *,
+        tool_name: str,
+        tool_input: dict,
+        tool_policy: Any | None,
+    ) -> ToolExecutionContext | None:
+        if execution_context is None:
+            return None
+        return execution_context.for_tool(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            tool_policy=tool_policy,
+        )
+
+    def _riskgate_commit_denial(
+        self,
+        *,
+        tool_name: str,
+        tool_input: dict,
+        tool_policy: Any | None,
+        execution_context: ToolExecutionContext | None,
+    ) -> str | None:
+        from .risk_scope import tool_policy_requires_riskgate_commit
+
+        if not tool_policy_requires_riskgate_commit(tool_input, tool_policy):
+            return None
+        if execution_context is None:
+            logger.warning(
+                "[RiskGate] denied %s commit: missing executor-owned authorization",
+                tool_name,
+            )
+            return (
+                "❌ 拒绝执行：该工具提交需要 RiskGate 授权，但本次执行没有可验证的授权。"
+                "请重新发起操作并通过 RiskGate 确认。"
+            )
+        if execution_context.authorize_tool_commit(consume=True):
+            return None
+        logger.warning(
+            "[RiskGate] denied %s commit: authorization does not cover this call",
+            tool_name,
+        )
+        return (
+            "❌ 拒绝执行：RiskGate 授权范围不覆盖本次工具提交，或该授权已经被使用。"
+            "请重新发起操作并通过 RiskGate 确认。"
+        )
+
     async def _execute_tool_impl(
         self,
         tool_name: str,
         tool_input: dict,
         *,
         session_id: str | None = None,
+        execution_context: ToolExecutionContext | None = None,
     ) -> ToolResultWithHint:
         """Execute a tool after todo / permission gates have been handled.
 
@@ -766,6 +830,21 @@ class ToolExecutor:
             return err_msg, None
 
         await self._dispatch_hook("on_before_tool_use", tool_name=tool_name, tool_input=tool_input)
+        tool_policy = self._get_tool_policy(tool_name)
+        bound_execution_context = self._bind_tool_execution_context(
+            execution_context,
+            tool_name=tool_name,
+            tool_input=tool_input if isinstance(tool_input, dict) else {},
+            tool_policy=tool_policy,
+        )
+        riskgate_denial = self._riskgate_commit_denial(
+            tool_name=tool_name,
+            tool_input=tool_input if isinstance(tool_input, dict) else {},
+            tool_policy=tool_policy,
+            execution_context=bound_execution_context,
+        )
+        if riskgate_denial:
+            return riskgate_denial, None
 
         # 导入日志缓存
         from ..logging import get_session_log_buffer
@@ -801,38 +880,45 @@ class ToolExecutor:
                     if log["level"] in ("WARNING", "ERROR", "CRITICAL")
                 ]
 
+                result_content, result_metadata = split_tool_result_payload(result)
+
                 # 如果有警告/错误日志，附加到结果
                 if new_logs:
                     log_text = "\n\n[执行日志]:\n" + "".join(
                         f"[{log['level']}] {log['module']}: {log['message']}\n"
                         for log in new_logs[-10:]
                     )
-                    if isinstance(result, list):
-                        result.append({"type": "text", "text": log_text})
+                    if isinstance(result_content, list):
+                        result_content = [*result_content, {"type": "text", "text": log_text}]
                     else:
-                        result += log_text
+                        result_content = (
+                            f"{'' if result_content is None else str(result_content)}"
+                            f"{log_text}"
+                        )
 
                 # ★ 通用截断守卫：工具自身未做截断时的安全网
-                if isinstance(result, str):
-                    result = self._guard_truncate(tool_name, result)
-                self._observe_current_turn_tool_result(tool_name, tool_input, result)
+                if isinstance(result_content, str):
+                    result_content = self._guard_truncate(tool_name, result_content)
+                self._observe_current_turn_tool_result(tool_name, tool_input, result_content)
 
-                span.set_attribute("result_length", len(str(result)))
+                span.set_attribute("result_length", len(str(result_content)))
 
                 await self._dispatch_hook(
                     "on_after_tool_use",
                     tool_name=tool_name,
                     tool_input=tool_input,
-                    tool_result=result,
+                    tool_result=result_content,
                 )
                 self._record_experience(
                     tool_name,
                     tool_input,
-                    str(result),
+                    str(result_content),
                     success=True,
                     duration_ms=(time.monotonic() - started_at) * 1000,
                 )
-                return result, None
+                if result_metadata:
+                    return ToolResultPayload(result_content, metadata=result_metadata), None
+                return result_content, None
 
             except ToolConfigError as e:
                 # User-correctable config issue (missing API key, auth failed, …).
@@ -957,6 +1043,7 @@ class ToolExecutor:
         policy_result: Any,
         *,
         session_id: str | None = None,
+        execution_context: ToolExecutionContext | None = None,
     ) -> ToolResultWithHint:
         """Execute an already policy-checked tool, applying sandbox/checkpoint hooks.
 
@@ -996,7 +1083,11 @@ class ToolExecutor:
             scope_token = current_abort_scope.set(tool_scope)
         try:
             return await self._execute_tool_with_policy_inner(
-                tool_name, tool_input, policy_result, session_id=session_id
+                tool_name,
+                tool_input,
+                policy_result,
+                session_id=session_id,
+                execution_context=execution_context,
             )
         finally:
             if scope_token is not None:
@@ -1016,6 +1107,7 @@ class ToolExecutor:
         policy_result: Any,
         *,
         session_id: str | None = None,
+        execution_context: ToolExecutionContext | None = None,
     ) -> ToolResultWithHint:
         """Real body of :meth:`execute_tool_with_policy`; the public method
         is a thin in-flight-tracking wrapper around this inner."""
@@ -1081,7 +1173,12 @@ class ToolExecutor:
                 sandbox_output += f"stderr:\n{sb_result.stderr}\n"
             return self._guard_truncate(tool_name, sandbox_output), None
 
-        return await self._execute_tool_impl(tool_name, tool_input, session_id=session_id)
+        return await self._execute_tool_impl(
+            tool_name,
+            tool_input,
+            session_id=session_id,
+            execution_context=execution_context,
+        )
 
     async def execute_batch(
         self,
@@ -1091,6 +1188,7 @@ class ToolExecutor:
         task_monitor: Any = None,
         allow_interrupt_checks: bool = True,
         capture_delivery_receipts: bool = False,
+        execution_context: ToolExecutionContext | None = None,
     ) -> tuple[list[dict], list[str], list | None]:
         """
         执行一批工具调用，返回 tool_results。
@@ -1322,6 +1420,7 @@ class ToolExecutor:
             t0 = time.time()
             success = True
             result_str = ""
+            result_metadata: dict[str, Any] = {}
             receipts: list | None = None
             # Hint side-channel: when the underlying handler raises ToolConfigError,
             # ``_execute_tool_impl`` returns ``(text, hint)`` and the hint travels
@@ -1348,6 +1447,7 @@ class ToolExecutor:
                                     tool_input,
                                     policy_result,
                                     session_id=session_id,
+                                    execution_context=execution_context,
                                 ),
                                 state,
                                 tool_name,
@@ -1359,26 +1459,14 @@ class ToolExecutor:
                                 tool_input,
                                 policy_result,
                                 session_id=session_id,
+                                execution_context=execution_context,
                             ),
                             state,
                             tool_name,
                         )
 
-                # All paths now return ``(text, hint)``: pre-execution gate
-                # results, sandbox results, success results, ToolError results,
-                # ToolConfigError results, cancel/timeout results.
-                if isinstance(result, tuple) and len(result) == 2:
-                    result_content, hint = result
-                else:
-                    # Defensive: if any path forgot to wrap (shouldn't happen
-                    # after the type sweep), accept the raw value as text.
-                    logger.warning(
-                        "[ToolExecutor] %s returned non-tuple result: %r",
-                        tool_name,
-                        type(result).__name__,
-                    )
-                    result_content = result
-                    hint = None
+                result_content, hint = result
+                result_content, result_metadata = split_tool_result_payload(result_content)
                 if result_content is None:
                     result_content = "操作已完成"
                 result_str = str(result_content)
@@ -1474,6 +1562,7 @@ class ToolExecutor:
                 tool_error = classify_error(e, tool_name=tool_name)
                 result_str = tool_error.to_tool_result()
                 result_content = result_str
+                result_metadata = {}
                 logger.error(f"Tool batch execution error: {tool_name}: {e}")
                 logger.info(f"[Tool] {tool_name} ❌ 错误: {result_str}")
 
@@ -1500,6 +1589,8 @@ class ToolExecutor:
             }
             if not success:
                 tool_result["is_error"] = True
+            if result_metadata:
+                tool_result["metadata"] = result_metadata
             # Internal-only field. ``ReasoningEngine`` MUST ``pop("_hint", None)``
             # before forwarding tool_result to the LLM message stream — the
             # underscore prefix is a convention also used by ``_security_confirm``

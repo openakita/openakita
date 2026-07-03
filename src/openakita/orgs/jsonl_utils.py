@@ -89,4 +89,3 @@ def iter_jsonl_objects_reverse(
     for record in reversed(records):
         if isinstance(record, dict):
             yield record
-

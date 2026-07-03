@@ -82,18 +82,313 @@ import {
   SecurityConfirmModal, ContextMenuInner, LightboxOverlay,
   MessageList,
 } from "./chat/components";
-import type { SecurityCloseInfo } from "./chat/components";
+import type {
+  SecurityCloseInfo,
+  SecurityConfirmDisplay,
+  SecurityConfirmModalData,
+  SecurityDecision,
+  SecurityDecisionChainStep,
+  SecurityDisplayToken,
+  SecurityTimeoutDefault,
+} from "./chat/components";
 import type { MessageListHandle } from "./chat/components";
 
-/** Extract "cmd subcommand" prefix — mirrors backend `_command_to_pattern`. */
-function _cmdPrefix(cmd: string): string {
-  const parts = cmd.trim().split(/\s+/);
-  if (parts.length >= 2) return `${parts[0]} ${parts[1]}`;
-  return parts[0] || "";
+type SecurityPresentationState = "active" | "queued" | "resolved";
+type SecurityConfirmData = SecurityConfirmModalData & {
+  presentationState: SecurityPresentationState;
+  queuedCount: number;
+};
+
+function _asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function _asFiniteCount(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+const SECURITY_DECISION_VALUES: readonly SecurityDecision[] = [
+  "allow_once",
+  "allow_session",
+  "allow_always",
+  "deny",
+  "sandbox",
+];
+const SECURITY_DECISION_SET = new Set<string>(SECURITY_DECISION_VALUES);
+const SECURITY_TIMEOUT_DEFAULT_VALUES: readonly SecurityTimeoutDefault[] = ["allow_once", "deny"];
+const SECURITY_TIMEOUT_DEFAULT_SET = new Set<string>(SECURITY_TIMEOUT_DEFAULT_VALUES);
+
+function _isSecurityRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function _stringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function _nonEmptyStringOrNull(value: unknown): string | null {
+  const s = _stringOrNull(value);
+  return s && s.length > 0 ? s : null;
+}
+
+function _optionalString(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined | null {
+  if (!(key in record) || record[key] === undefined) return undefined;
+  return typeof record[key] === "string" ? record[key] as string : null;
+}
+
+function _invalidSecurityConfirm(
+  raw: Record<string, unknown>,
+  reason: string,
+): null {
+  logger.warn("Chat.SecurityConfirm", "Ignoring security_confirm with invalid backend display metadata", {
+    reason,
+    keys: Object.keys(raw),
+  });
+  return null;
+}
+
+function _parseDisplayToken(value: unknown): SecurityDisplayToken | null {
+  if (!_isSecurityRecord(value)) return null;
+  const tokenValue = _stringOrNull(value.value);
+  const label = _stringOrNull(value.label);
+  if (tokenValue === null || label === null) return null;
+  const color = _optionalString(value, "color");
+  if (color === null) return null;
+  const description = _optionalString(value, "description");
+  if (description === null) return null;
+  return {
+    value: tokenValue,
+    label,
+    ...(color !== undefined ? { color } : {}),
+    ...(description !== undefined ? { description } : {}),
+  };
+}
+
+function _parseDisplayTokenWithColor(value: unknown): (SecurityDisplayToken & { color: string }) | null {
+  const token = _parseDisplayToken(value);
+  if (!token || typeof token.color !== "string") return null;
+  return token as SecurityDisplayToken & { color: string };
+}
+
+function _parseSecurityConfirmDisplay(value: unknown): SecurityConfirmDisplay | null {
+  if (!_isSecurityRecord(value)) return null;
+  const title = _stringOrNull(value.title);
+  const reasonRaw = _isSecurityRecord(value.reason) ? value.reason : null;
+  const reasonText = reasonRaw ? _stringOrNull(reasonRaw.text) : null;
+  const reasonOriginal = reasonRaw ? _optionalString(reasonRaw, "raw") : null;
+  const risk = _parseDisplayTokenWithColor(value.risk);
+  const tool = _parseDisplayToken(value.tool);
+  const argsRaw = _isSecurityRecord(value.arguments) ? value.arguments : null;
+  const argsText = argsRaw ? _stringOrNull(argsRaw.text) : null;
+  const argsFormat = argsRaw ? _optionalString(argsRaw, "format") : null;
+  if (
+    title === null
+    || reasonRaw === null
+    || reasonText === null
+    || reasonOriginal === null
+    || risk === null
+    || tool === null
+    || argsRaw === null
+    || argsText === null
+    || argsFormat === null
+  ) {
+    return null;
+  }
+
+  const channel = value.channel === undefined ? undefined : _parseDisplayToken(value.channel);
+  if (channel === null) return null;
+  const approvalClass = value.approval_class === undefined
+    ? undefined
+    : _parseDisplayToken(value.approval_class);
+  if (approvalClass === null) return null;
+
+  return {
+    title,
+    reason: {
+      text: reasonText,
+      ...(reasonOriginal !== undefined ? { raw: reasonOriginal } : {}),
+    },
+    risk,
+    tool,
+    ...(channel !== undefined ? { channel } : {}),
+    ...(approvalClass !== undefined ? { approval_class: approvalClass } : {}),
+    arguments: {
+      text: argsText,
+      ...(argsFormat !== undefined ? { format: argsFormat } : {}),
+    },
+  };
+}
+
+function _parseSecurityDecisionOptions(value: unknown): SecurityDecision[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const options: SecurityDecision[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !SECURITY_DECISION_SET.has(item)) return null;
+    options.push(item as SecurityDecision);
+  }
+  return options;
+}
+
+function _parseSecurityTimeoutDefault(value: unknown): SecurityTimeoutDefault | null {
+  if (typeof value !== "string" || !SECURITY_TIMEOUT_DEFAULT_SET.has(value)) return null;
+  return value as SecurityTimeoutDefault;
+}
+
+function _parseSecurityDecisionChain(value: unknown): SecurityDecisionChainStep[] | null {
+  if (!Array.isArray(value)) return null;
+  const steps: SecurityDecisionChainStep[] = [];
+  for (const item of value) {
+    if (!_isSecurityRecord(item)) return null;
+    const name = _stringOrNull(item.name);
+    const action = _stringOrNull(item.action);
+    const note = _stringOrNull(item.note);
+    const metadata = item.metadata === undefined ? undefined : (
+      _isSecurityRecord(item.metadata) ? item.metadata : null
+    );
+    const displayRaw = _isSecurityRecord(item.display) ? item.display : null;
+    const label = displayRaw ? _stringOrNull(displayRaw.label) : null;
+    const displayAction = displayRaw ? _parseDisplayTokenWithColor(displayRaw.action) : null;
+    const displayNote = displayRaw ? _optionalString(displayRaw, "note") : null;
+    if (
+      name === null
+      || action === null
+      || note === null
+      || metadata === null
+      || displayRaw === null
+      || label === null
+      || displayAction === null
+      || displayNote === null
+    ) {
+      return null;
+    }
+    steps.push({
+      name,
+      action,
+      note,
+      ...(metadata !== undefined ? { metadata } : {}),
+      display: {
+        label,
+        action: displayAction,
+        ...(displayNote !== undefined ? { note: displayNote } : {}),
+      },
+    });
+  }
+  return steps;
+}
+
+function _parseSecuritySource(value: unknown): "risk_gate" | "policy_v2" | null {
+  return value === "risk_gate" || value === "policy_v2" ? value : null;
+}
+
+function _parseSecurityPresentationState(value: unknown): SecurityPresentationState | null {
+  return value === "active" || value === "queued" || value === "resolved" ? value : null;
+}
+
+function _securityConfirmFromBackend(raw: Record<string, unknown>): SecurityConfirmData | null {
+  const args = _isSecurityRecord(raw.args) ? raw.args : null;
+  const source = _parseSecuritySource(raw.source);
+  const tool = _nonEmptyStringOrNull(raw.tool);
+  const reason = _stringOrNull(raw.reason);
+  const riskLevel = _nonEmptyStringOrNull(raw.risk_level);
+  const needsSandbox = typeof raw.needs_sandbox === "boolean" ? raw.needs_sandbox : null;
+  const toolId = _nonEmptyStringOrNull(raw.confirm_id);
+  const countdown = Number(raw.timeout_seconds);
+  const defaultOnTimeout = _parseSecurityTimeoutDefault(raw.default_on_timeout);
+  const conversationId = _nonEmptyStringOrNull(raw.conversation_id);
+  const presentationState = _parseSecurityPresentationState(raw.presentation_state);
+  const queuedCount = Number(raw.queued_count);
+  const display = _parseSecurityConfirmDisplay(raw.display);
+  const decisionChain = _parseSecurityDecisionChain(raw.decision_chain);
+  const options = _parseSecurityDecisionOptions(raw.options);
+  const riskIntent = raw.risk_intent === undefined ? undefined : (
+    _isSecurityRecord(raw.risk_intent) ? raw.risk_intent : null
+  );
+  const originalMessage = raw.original_message === undefined
+    ? undefined
+    : _stringOrNull(raw.original_message);
+
+  if (args === null) return _invalidSecurityConfirm(raw, "args must be an object");
+  if (source === null) return _invalidSecurityConfirm(raw, "source must be risk_gate or policy_v2");
+  if (tool === null) return _invalidSecurityConfirm(raw, "tool is required");
+  if (reason === null) return _invalidSecurityConfirm(raw, "reason must be a string");
+  if (riskLevel === null) return _invalidSecurityConfirm(raw, "risk_level is required");
+  if (needsSandbox === null) return _invalidSecurityConfirm(raw, "needs_sandbox must be boolean");
+  if (toolId === null) return _invalidSecurityConfirm(raw, "confirm_id is required");
+  if (!Number.isFinite(countdown)) {
+    return _invalidSecurityConfirm(raw, "timeout_seconds must be finite");
+  }
+  if (defaultOnTimeout === null) {
+    return _invalidSecurityConfirm(raw, "default_on_timeout must be allow_once or deny");
+  }
+  if (conversationId === null) {
+    return _invalidSecurityConfirm(raw, "conversation_id is required");
+  }
+  if (presentationState === null) {
+    return _invalidSecurityConfirm(raw, "presentation_state is required");
+  }
+  if (!Number.isFinite(queuedCount) || queuedCount < 0) {
+    return _invalidSecurityConfirm(raw, "queued_count must be a non-negative number");
+  }
+  if (display === null) return _invalidSecurityConfirm(raw, "display is required");
+  if (decisionChain === null) {
+    return _invalidSecurityConfirm(raw, "decision_chain with step display metadata is required");
+  }
+  if (options === null) return _invalidSecurityConfirm(raw, "options are required");
+  if (riskIntent === null) return _invalidSecurityConfirm(raw, "risk_intent must be an object");
+  if (originalMessage === null) {
+    return _invalidSecurityConfirm(raw, "original_message must be a string when present");
+  }
+
+  return {
+    tool,
+    args,
+    reason,
+    riskLevel,
+    needsSandbox,
+    toolId,
+    countdown,
+    defaultOnTimeout,
+    source,
+    conversationId,
+    originalMessage,
+    riskIntent,
+    presentationState,
+    queuedCount: Math.floor(queuedCount),
+    decisionChain,
+    options,
+    display,
+  };
+}
+
+function _isActiveSecurityConfirm(confirm: SecurityConfirmData | null): confirm is SecurityConfirmData {
+  return confirm?.presentationState === "active";
 }
 
 const HISTORY_PAGE_LIMIT = 80;
 type EndpointPolicy = "prefer" | "require";
+type AskUserReplyBody = {
+  kind: "normal";
+  message_id: string;
+  answer: string;
+};
+
+type StreamTransport =
+  | {
+      kind: "resume";
+      url: string;
+    };
+
+type SendMessageOptions = {
+  appendUserMessage?: boolean;
+  initialStreamStatus?: string;
+  streamTransport?: StreamTransport;
+};
 
 type HistoryPageState = {
   total: number;
@@ -323,62 +618,58 @@ export function ChatView({
   const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [lightbox, setLightbox] = useState<{ url: string; downloadUrl: string; name: string } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
-  type SecurityConfirmData = {
-    tool: string; args: Record<string, unknown>; reason: string;
-    riskLevel: string; needsSandbox: boolean; toolId?: string;
-    countdown: number; defaultOnTimeout?: string;
-    // C9a §1: v2 字段（向后兼容，缺失时 modal 隐藏对应 UI 元素）
-    approvalClass?: string | null; policyVersion?: number; channel?: string;
-    // C23 P2-2: 决策链（plan C9 要求），缺失时 modal 隐藏对应折叠区
-    decisionChain?: Array<{ name: string; action: string; note: string }>;
-  };
   const [securityConfirm, setSecurityConfirm] = useState<SecurityConfirmData | null>(null);
-  const securityQueueRef = useRef<SecurityConfirmData[]>([]);
-  // C18 Phase B: surface queue length to JSX so the "Approve all queued"
-  // affordance can light up when ≥1 confirms are stacked behind the
-  // currently-shown modal. We can't read securityQueueRef.current
-  // directly in JSX (refs don't trigger re-render), so keep a state
-  // mirror updated alongside every queue mutation.
+  // Backend-owned queued count from UIConfirmBus presentation state. The
+  // frontend does not keep its own queue or decide RiskGate priority.
   const [securityQueueLen, setSecurityQueueLen] = useState(0);
+  const securityExecutionStarterRef = useRef<(info: SecurityCloseInfo) => boolean>(() => false);
   // C18 Phase B: POLICIES.yaml ``confirmation.aggregation_window_seconds``.
   // 0 = batch UI hidden; >0 = show "Approve all (N+1)" affordance and
   // pass as ``within_seconds`` to POST /api/chat/security-confirm/batch
   // (server clamps to its own config). Loaded once on mount.
   const [securityAggWindow, setSecurityAggWindow] = useState<number>(0);
-  const securityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const handleSecurityClose = useCallback((info?: SecurityCloseInfo) => {
-    if (securityTimerRef.current) clearInterval(securityTimerRef.current);
+  const appendBackendSystemMessage = useCallback((convId: string, content: string) => {
+    if (!convId || !content) return;
+    const systemMsg: ChatMessage = {
+      id: genId(),
+      role: "system",
+      content,
+      timestamp: Date.now(),
+    };
+    const baseMessages = convId === activeConvIdRef.current
+      ? latestMessagesRef.current
+      : loadMessagesFromStorage(STORAGE_KEY_MSGS_PREFIX + convId);
+    const nextMessages = [...baseMessages, systemMsg];
+    try { saveMessagesToStorage(STORAGE_KEY_MSGS_PREFIX + convId, nextMessages); } catch { /* quota */ }
+    if (shouldRenderConversationMessages(convId, activeConvIdRef.current)) {
+      displayedMessagesConvIdRef.current = convId;
+      setMessages(nextMessages);
+    }
+  }, [STORAGE_KEY_MSGS_PREFIX, setMessages]);
 
+  const applySecurityResolution = useCallback((info?: SecurityCloseInfo) => {
     if (info && (info.decision === "deny" || info.decision === "timeout")) {
       securityPolicy.recordDeny(info.tool);
     }
 
-    if (info?.decision === "allow_always" && securityQueueRef.current.length > 0) {
-      const decidedPrefix = _cmdPrefix(info.command);
-      const isShell = info.tool === "run_shell" || info.tool === "run_powershell";
-      const remaining: typeof securityQueueRef.current = [];
-      for (const item of securityQueueRef.current) {
-        const sameToolType = item.tool === info.tool;
-        const match = sameToolType && (
-          !isShell || (decidedPrefix !== "" && _cmdPrefix(String(item.args.command ?? "")) === decidedPrefix)
-        );
-        if (match) {
-          safeFetch(`${apiBaseUrl}/api/chat/security-confirm`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ confirm_id: item.toolId, decision: "allow_once" }),
-          }).catch(() => {});
-        } else {
-          remaining.push(item);
-        }
-      }
-      securityQueueRef.current = remaining;
-    }
+    const nextRaw = info?.nextConfirm ? _asRecord(info.nextConfirm) : {};
+    const next = Object.keys(nextRaw).length > 0
+      ? _securityConfirmFromBackend(nextRaw)
+      : null;
+    setSecurityConfirm(_isActiveSecurityConfirm(next) ? next : null);
+    setSecurityQueueLen(next ? next.queuedCount : _asFiniteCount(info?.queuedCount));
 
-    const next = securityQueueRef.current.shift();
-    setSecurityConfirm(next ?? null);
-    setSecurityQueueLen(securityQueueRef.current.length);
-  }, [apiBaseUrl, securityPolicy]);
+    if (!info) return;
+    const convId = info.conversationId || activeConvIdRef.current || "";
+    const started = securityExecutionStarterRef.current(info);
+    if (!started && info.uiMessage) {
+      appendBackendSystemMessage(convId, info.uiMessage);
+    }
+  }, [appendBackendSystemMessage, securityPolicy]);
+
+  const handleSecurityClose = useCallback((info?: SecurityCloseInfo) => {
+    applySecurityResolution(info);
+  }, [applySecurityResolution]);
 
   // C18 Phase B：批量 resolve 当前 session 内 confirm。banner 点击进入。
   const handleSecurityBatchResolve = useCallback(
@@ -410,9 +701,7 @@ export function ChatView({
         // Network error: leave queue alone so user can retry one-by-one.
         return;
       }
-      securityQueueRef.current = [];
       setSecurityQueueLen(0);
-      if (securityTimerRef.current) clearInterval(securityTimerRef.current);
       setSecurityConfirm(null);
     },
     [apiBaseUrl, securityAggWindow],
@@ -1719,6 +2008,36 @@ export function ChatView({
       .catch(() => {});
   }, [apiBaseUrl]);
 
+  // ── Backend-owned security-confirm presentation queue ──
+  useEffect(() => {
+    return onWsEvent((event, raw) => {
+      const data = _asRecord(raw);
+      if (event === "security_confirm_promoted") {
+        const confirmRaw = _asRecord(data.confirm);
+        if (Object.keys(confirmRaw).length === 0) return;
+        const next = _securityConfirmFromBackend(confirmRaw);
+        if (!next) return;
+        const convId = next.conversationId || "";
+        const activeConvId = activeConvIdRef.current || "";
+        if (convId && activeConvId && convId !== activeConvId) return;
+        if (!_isActiveSecurityConfirm(next)) return;
+        setSecurityConfirm(next);
+        setSecurityQueueLen(next.queuedCount);
+        return;
+      }
+
+      if (event !== "confirm_revoked") return;
+      const convId = String(data.session_id || "");
+      const activeConvId = activeConvIdRef.current || "";
+      if (convId && activeConvId && convId !== activeConvId) return;
+      const confirmId = String(data.confirm_id || "");
+      setSecurityConfirm((prev) => (
+        prev && prev.toolId === confirmId ? null : prev
+      ));
+      setSecurityQueueLen(_asFiniteCount(data.queued_count));
+    });
+  }, []);
+
   // ── Sub-agent real-time updates via WebSocket (reduces polling dependency) ──
   useEffect(() => {
     return onWsEvent((event, raw) => {
@@ -2312,13 +2631,24 @@ export function ChatView({
 
   // ── 发送消息（overrideText 用于 ask_user 回复等场景，绕过 inputText；targetConvId 用于自动出队等需要指定目标会话的场景） ──
   // displayContent: 当发送给 API 的原文（如 JSON）不适合直接展示时，可指定用户气泡中的显示文本
-  const sendMessage = useCallback(async (overrideText?: string, targetConvId?: string, displayContent?: string, modeOverride?: "agent" | "plan" | "ask", attachmentsOverride?: ChatAttachment[]) => {
+  const sendMessage = useCallback(async (
+    overrideText?: string,
+    targetConvId?: string,
+    displayContent?: string,
+    modeOverride?: "agent" | "plan" | "ask",
+    attachmentsOverride?: ChatAttachment[],
+    askUserReply?: AskUserReplyBody,
+    options?: SendMessageOptions,
+  ) => {
     const text = (overrideText ?? inputTextRef.current).trim();
+    const streamTransport = options?.streamTransport;
+    const isResumeTransport = streamTransport?.kind === "resume";
+    const appendUserMessage = options?.appendUserMessage !== false;
     // ``attachmentsOverride`` lets callers (e.g. the queue drain) replay a
     // previously-captured attachment set instead of the live composer state.
     // When omitted we fall back to the composer's pending attachments.
     const attachmentsToSend = attachmentsOverride ?? pendingAttachments;
-    if (!text && attachmentsToSend.length === 0) return;
+    if (!text && attachmentsToSend.length === 0 && !isResumeTransport) return;
     const pendingUploads = attachmentsToSend.filter((a) =>
       a.type !== "image" && a.type !== "video" && (!a.url || a.uploadStatus === "uploading")
     );
@@ -2340,7 +2670,7 @@ export function ChatView({
     if (resolvedConvId && isConvBusyOnOtherDevice(resolvedConvId)) return;
 
     // 斜杠命令处理
-    if (text.startsWith("/")) {
+    if (!isResumeTransport && text.startsWith("/")) {
       const parts = text.slice(1).split(/\s+/);
       const cmdId = parts[0].toLowerCase();
       const cmd = slashCommands.find((c) => c.id === cmdId);
@@ -2379,7 +2709,7 @@ export function ChatView({
     }
 
     const orgRouteActive = Boolean(orgRouteOverride || (orgMode && selectedOrgId));
-    if (endpoints.length === 0 && !orgRouteActive) {
+    if (!isResumeTransport && endpoints.length === 0 && !orgRouteActive) {
       notifyError(t("chat.noChatEndpointConfigured"));
       return;
     }
@@ -2399,6 +2729,7 @@ export function ChatView({
       role: "assistant",
       content: "",
       streaming: true,
+      streamStatus: options?.initialStreamStatus ?? null,
       timestamp: Date.now(),
     };
 
@@ -2459,7 +2790,7 @@ export function ChatView({
       reader: null,
       isStreaming: true,
       userStopped: false,
-      messages: [...fallbackMessages, userMsg, assistantMsg],
+      messages: [...fallbackMessages, ...(appendUserMessage ? [userMsg] : []), assistantMsg],
       activeSubAgents: [],
       subAgentTasks: [],
       isDelegating: false,
@@ -2675,6 +3006,7 @@ export function ChatView({
         org_id: effectiveOrgId,
         org_node_id: effectiveOrgNodeId,
         client_id: getClientId(),
+        ...(askUserReply ? { ask_user_reply: askUserReply } : {}),
       };
 
       // 附件信息
@@ -2728,12 +3060,17 @@ export function ChatView({
       // /api/chat/resume（用 since_seq，仅在**同一** turn 内 replay）。POST
       // /api/chat 永远是开新 turn，因此这里固定不带 Last-Event-ID。
       const _headers: Record<string, string> = { "Content-Type": "application/json" };
-      let response = await safeFetch(`${apiBase}/api/chat`, {
-        method: "POST",
-        headers: _headers,
-        body: JSON.stringify(body),
-        signal: abort.signal,
-      });
+      let response = isResumeTransport
+        ? await safeFetch(streamTransport!.url, {
+            method: "GET",
+            signal: abort.signal,
+          })
+        : await safeFetch(`${apiBase}/api/chat`, {
+            method: "POST",
+            headers: _headers,
+            body: JSON.stringify(body),
+            signal: abort.signal,
+          });
 
       // 方案3 STEER: desktop 默认策略是 steer。当前端以为会话空闲、但后端
       // 的上一轮 turn 其实还在跑时（典型场景：SSE 断连或页面重载后丢了流），
@@ -2742,7 +3079,7 @@ export function ChatView({
       //   - status=steered  → 消息已注入 → 改去 /api/chat/resume 挂载原始流，
       //                        让用户看到 Agent 读到新消息后的续写。
       //   - status=steer_failed → 旧任务恰好已结束、未注入 → 当作新消息重发一次。
-      if (response.status === 202) {
+      if (!isResumeTransport && response.status === 202) {
         let steerData: { status?: string } | null = null;
         try { steerData = await response.json(); } catch { /* 容错 */ }
         if (steerData?.status === "steered") {
@@ -2886,7 +3223,7 @@ export function ChatView({
       let currentMcpCalls: ChatMcpCall[] = [];
       let currentError: ChatErrorInfo | null = null;
       let gracefulDone = false; // SSE 正常发送了 "done" 事件
-      let currentStreamStatus: string | null = null;
+      let currentStreamStatus: string | null = options?.initialStreamStatus ?? null;
       const streamStartedAt = Date.now();
       let longWaitNoticeShown = false;
       const LONG_WAIT_NOTICE_MS = 15_000;
@@ -2899,6 +3236,24 @@ export function ChatView({
       let currentThinkingContent = "";
       let pendingCompressedInfo: { beforeTokens: number; afterTokens: number } | null = null;
       let sseParseFailures = 0;
+      let sawSecurityConfirm = false;
+      const hasAssistantMessagePayload = () =>
+        Boolean(
+          currentContent ||
+          currentThinking ||
+          currentToolCalls.length > 0 ||
+          currentPlan ||
+          currentProgressEvents.length > 0 ||
+          currentAsk ||
+          currentArtifacts.length > 0 ||
+          currentAttachments.length > 0 ||
+          currentOrgTimeline.length > 0 ||
+          currentSources.length > 0 ||
+          currentMcpCalls.length > 0 ||
+          currentError ||
+          chainGroups.length > 0,
+        );
+      const hasRenderableStreamPayload = () => hasAssistantMessagePayload() || sawSecurityConfirm;
 
       // ── 断流后 live resume（复用现成 /api/chat/resume，不动后端）──
       // 一条 turn 的 SSE 中途断开（网络抖动 / 切后台 / 代理 idle 超时）时，后端
@@ -3583,48 +3938,46 @@ export function ChatView({
                 pendingApprovalRef.current = event.data as PlanApprovalEvent;
                 break;
               case "security_confirm": {
-                const scEvt = {
-                  tool: (event.tool_name || event.tool) as string,
-                  args: event.args as Record<string, unknown>,
-                  reason: event.reason as string,
-                  risk_level: event.risk_level as string,
-                  needs_sandbox: event.needs_sandbox as boolean,
-                  id: ((event.confirm_id || event.call_id || event.id) ?? "") as string,
-                };
-                if (securityPolicy.checkAutoAllow(scEvt)) {
-                  securityPolicy.recordAllow(scEvt.tool);
+                sawSecurityConfirm = true;
+                const rawConfirm = event as unknown as Record<string, unknown>;
+                const newConfirm = _securityConfirmFromBackend(rawConfirm);
+                if (!newConfirm) break;
+                const isRiskGateConfirm = newConfirm.source === "risk_gate";
+                const isActiveConfirm = _isActiveSecurityConfirm(newConfirm);
+                if (!isRiskGateConfirm && isActiveConfirm && securityPolicy.checkAutoAllow({
+                  tool: newConfirm.tool,
+                  args: newConfirm.args,
+                  reason: newConfirm.reason,
+                  risk_level: newConfirm.riskLevel,
+                  needs_sandbox: newConfirm.needsSandbox,
+                  id: newConfirm.toolId || "",
+                })) {
+                  securityPolicy.recordAllow(newConfirm.tool);
                   safeFetch(`${apiBaseUrl}/api/chat/security-confirm`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ confirm_id: scEvt.id, decision: "allow_once" }),
-                  }).catch(() => {});
+                    body: JSON.stringify({ confirm_id: newConfirm.toolId, decision: "allow_once" }),
+                  })
+                    .then((res) => res.json().catch(() => null))
+                    .then((payload) => {
+                      const nextRaw = _asRecord(_asRecord(payload).next_confirm);
+                      if (Object.keys(nextRaw).length === 0) {
+                        setSecurityQueueLen(_asFiniteCount(_asRecord(payload).queued_count));
+                        return;
+                      }
+                      const next = _securityConfirmFromBackend(nextRaw);
+                      if (!next) {
+                        setSecurityQueueLen(_asFiniteCount(_asRecord(payload).queued_count));
+                        return;
+                      }
+                      setSecurityQueueLen(next.queuedCount);
+                      if (_isActiveSecurityConfirm(next)) setSecurityConfirm(next);
+                    })
+                    .catch(() => {});
                   break;
                 }
-                const newConfirm: SecurityConfirmData = {
-                  tool: scEvt.tool,
-                  args: scEvt.args,
-                  reason: scEvt.reason,
-                  riskLevel: scEvt.risk_level,
-                  needsSandbox: scEvt.needs_sandbox,
-                  toolId: scEvt.id,
-                  countdown: (event.timeout_seconds as number) || 120,
-                  defaultOnTimeout: (event.default_on_timeout as string) || "deny",
-                  approvalClass: (event.approval_class as string | null | undefined) ?? null,
-                  policyVersion: (event.policy_version as number | undefined) ?? undefined,
-                  channel: (event.channel as string | undefined) ?? undefined,
-                  // C23 P2-2: 决策链透传，由 SecurityConfirmModal 折叠渲染
-                  decisionChain: Array.isArray(event.decision_chain)
-                    ? (event.decision_chain as Array<{ name: string; action: string; note: string }>)
-                    : undefined,
-                };
-                setSecurityConfirm((prev) => {
-                  if (prev) {
-                    securityQueueRef.current.push(newConfirm);
-                    setSecurityQueueLen(securityQueueRef.current.length);
-                    return prev;
-                  }
-                  return newConfirm;
-                });
+                setSecurityQueueLen(newConfirm.queuedCount);
+                if (_isActiveSecurityConfirm(newConfirm)) setSecurityConfirm(newConfirm);
                 break;
               }
               case "death_switch": {
@@ -3656,6 +4009,7 @@ export function ChatView({
                   currentAsk = {
                     question: event.question,
                     options: event.options,
+                    kind: "normal",
                     questions: [{
                       id: "__single__",
                       prompt: event.question,
@@ -3667,6 +4021,7 @@ export function ChatView({
                   currentAsk = {
                     question: event.question,
                     options: event.options,
+                    kind: "normal",
                     questions: askQuestions,
                   };
                 }
@@ -3896,6 +4251,7 @@ export function ChatView({
                   mcp: currentMcpCalls.length,
                   contentLen: currentContent.length,
                   thinkingLen: currentThinking.length,
+                  hasAskUser: currentAsk !== null,
                   hasError: currentError !== null,
                 });
                 void logger.flush();
@@ -4010,18 +4366,25 @@ export function ChatView({
           attemptRecovery(4000);
         }
       } else {
-        const emptyStream = !currentContent && !assistantMsg.askUser;
+        const emptyStream = !hasRenderableStreamPayload();
         const canRecover = emptyStream && !!convId;
-        updateMessages((prev) => prev.map((m) =>
-          m.id === assistantMsg.id
-            ? {
-                ...m,
-                content: canRecover ? "" : (m.content || (m.askUser ? "" : "未收到有效回复，请重试。")),
-                streaming: canRecover,
-                streamStatus: canRecover ? t("chat.recovering", "正在恢复回复...") : null,
-              }
-            : m
-        ));
+        const securityConfirmOnly = sawSecurityConfirm && !hasAssistantMessagePayload();
+        if (securityConfirmOnly) {
+          updateMessages((prev) => prev.filter((m) => m.id !== assistantMsg.id));
+        } else {
+          updateMessages((prev) => prev.map((m) =>
+            m.id === assistantMsg.id
+              ? {
+                  ...m,
+                  content: canRecover
+                    ? ""
+                    : (m.content || (m.askUser || !emptyStream ? "" : "未收到有效回复，请重试。")),
+                  streaming: canRecover,
+                  streamStatus: canRecover ? t("chat.recovering", "正在恢复回复...") : null,
+                }
+              : m
+          ));
+        }
 
         logger.info("Chat", "task_completed", {
           convId,
@@ -4031,10 +4394,17 @@ export function ChatView({
           tools: currentToolCalls.length,
           iters: chainGroups.length,
           artifacts: currentArtifacts.length,
+          hasAskUser: currentAsk !== null,
+          sawSecurityConfirm,
+          securityConfirmOnly,
         });
         void logger.flush();
 
-        if (canRecover) {
+        if (securityConfirmOnly) {
+          // A RiskGate confirmation is rendered as the global security modal, not
+          // as chat content. The empty assistant placeholder must not recover or
+          // turn into the generic "no valid response" fallback.
+        } else if (canRecover) {
           attemptRecovery(2000);
           const _fallbackMsgId = assistantMsg.id;
           setTimeout(() => {
@@ -4175,11 +4545,17 @@ export function ChatView({
       setConversations((prev) => {
         const updated = prev.map((c) =>
           c.id === thisConvId
-            ? { ...c, lastMessage: text.slice(0, 60), timestamp: Date.now(), messageCount: (c.messageCount || 0) + 2, status: finalStatus as ConversationStatus }
+            ? {
+                ...c,
+                lastMessage: appendUserMessage ? text.slice(0, 60) : (c.lastMessage || text.slice(0, 60)),
+                timestamp: Date.now(),
+                messageCount: (c.messageCount || 0) + (appendUserMessage ? 2 : 1),
+                status: finalStatus as ConversationStatus,
+              }
             : c
         );
         const conv = updated.find((c) => c.id === thisConvId);
-        if (conv && !conv.titleGenerated && (conv.messageCount || 0) <= 2) {
+        if (appendUserMessage && conv && !conv.titleGenerated && (conv.messageCount || 0) <= 2) {
           (async () => {
             try {
               const res = await safeFetch(`${apiBase}/api/sessions/generate-title`, {
@@ -4202,6 +4578,51 @@ export function ChatView({
     }
   }, [pendingAttachments, isCurrentConvStreaming, activeConvId, chatMode, selectedEndpoint, selectedEndpointPolicy, apiBase, slashCommands, endpoints.length, thinkingMode, thinkingDepth, t, setInputValue]);
 
+  useEffect(() => {
+    const toAbsoluteApiUrl = (rawUrl: string) => {
+      try {
+        return new URL(rawUrl, apiBase).toString();
+      } catch {
+        return rawUrl.startsWith("/") ? `${apiBase}${rawUrl}` : `${apiBase}/${rawUrl}`;
+      }
+    };
+
+    securityExecutionStarterRef.current = (info: SecurityCloseInfo) => {
+      if (info.execution?.client_action !== "connect_resume") return false;
+      const convId = info.conversationId || activeConvIdRef.current || "";
+      if (!convId) return false;
+      const resumeUrl = info.execution?.resume_url;
+      if (!resumeUrl) {
+        if (info.uiMessage) appendBackendSystemMessage(convId, info.uiMessage);
+        return true;
+      }
+      setConversations((prev) =>
+        prev.map((c) => c.id === convId ? { ...c, status: "running", timestamp: Date.now() } : c),
+      );
+      void sendMessage(
+        info.originalMessage || t("chat.riskGateAuthorizedReplay", "RiskGate 已授权的高风险操作"),
+        convId,
+        undefined,
+        "agent",
+        [],
+        undefined,
+        {
+          appendUserMessage: false,
+          initialStreamStatus: info.uiMessage || t("chat.riskGateContinuing", "RiskGate 确认已通过，正在继续执行..."),
+          streamTransport: {
+            kind: "resume",
+            url: toAbsoluteApiUrl(resumeUrl),
+          },
+        },
+      );
+      return true;
+    };
+
+    return () => {
+      securityExecutionStarterRef.current = () => false;
+    };
+  }, [apiBase, appendBackendSystemMessage, sendMessage, setConversations, t]);
+
   // ── 处理用户回答 (ask_user) ──
   const handleAskAnswer = useCallback((msgId: string, answer: string) => {
     const target = latestMessagesRef.current.find((m) => m.id === msgId);
@@ -4219,8 +4640,16 @@ export function ChatView({
         ? { ...m, askUser: { ...m.askUser, answered: true, answer } }
         : m
     ));
-    // reason_stream 在 ask_user 后中断流，用户回复通过新 /api/chat 请求继续处理
-    sendMessage(answer, undefined, displayText !== answer ? displayText : undefined, isPlanSwitch ? "plan" : undefined);
+    // reason_stream 在 ask_user 后中断流，用户回复通过新 /api/chat 请求继续处理。
+    // 标记为结构化 ask_user 回复，避免按钮 id 被后端当作新的用户意图或 RiskGate 授权。
+    sendMessage(
+      answer,
+      undefined,
+      displayText !== answer ? displayText : undefined,
+      isPlanSwitch ? "plan" : undefined,
+      undefined,
+      { kind: "normal", message_id: msgId, answer },
+    );
   }, [sendMessage, renderConversationMessages]);
 
   // ── Plan 审批回调 ──
@@ -6395,11 +6824,10 @@ export function ChatView({
 
       {securityConfirm && createPortal(
         <SecurityConfirmModal
+          key={securityConfirm.toolId || `${securityConfirm.source || "policy_v2"}:${securityConfirm.tool}`}
           data={securityConfirm}
           apiBase={apiBaseUrl}
           onClose={handleSecurityClose}
-          timerRef={securityTimerRef}
-          setData={setSecurityConfirm}
         />,
         document.body,
       )}

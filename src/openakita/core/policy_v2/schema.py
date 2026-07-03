@@ -186,7 +186,7 @@ class ConfirmationConfig(_Strict):
 
     mode: ConfirmationMode = Field(default_factory=factory_default_confirmation_mode)
     timeout_seconds: int = Field(default=60, ge=1, le=86400)
-    default_on_timeout: Literal["allow", "deny"] = "deny"
+    default_on_timeout: Literal["allow_once", "deny"] = "deny"
     confirm_ttl: float = Field(default=120.0, ge=0.0, le=86400.0)
 
     # C18 Phase B：批量确认聚合窗口（秒）。

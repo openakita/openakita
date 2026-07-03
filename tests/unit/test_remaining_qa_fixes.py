@@ -1,6 +1,6 @@
 import pytest
 
-from openakita.core.risk_intent import OperationKind, RiskIntentClassifier, TargetKind
+from openakita.core.policy_v2 import DecisionAction
 from openakita.orgs.models import OrgNode
 from openakita.orgs.runtime import OrgRuntime
 from openakita.tools.handlers.memory import MemoryHandler
@@ -15,19 +15,17 @@ from openakita.tools.input_normalizer import normalize_tool_input
 # ``test_policy_v2_*`` 系列覆盖（v2 PolicyEngine 决策矩阵 + safety_immune + ApprovalClassifier）。
 
 
-def test_desktop_delete_natural_language_requires_confirmation():
-    result = RiskIntentClassifier().classify("请删除我桌面上的 old.log")
+def test_desktop_delete_requires_confirmation_at_tool_layer():
+    from openakita.core.policy_v2 import build_policy_context, evaluate_via_v2
 
-    assert result.operation_kind == OperationKind.DELETE
-    assert result.target_kind == TargetKind.FILE_SYSTEM
-    assert result.requires_confirmation is True
+    ctx = build_policy_context(session=None, mode="agent", user_message="请删除我桌面上的 old.log")
+    decision = evaluate_via_v2(
+        "delete_file",
+        {"path": "C:/Users/example/Desktop/old.log"},
+        extra_ctx=ctx,
+    )
 
-
-def test_unknown_target_delete_natural_language_requires_confirmation():
-    result = RiskIntentClassifier().classify("把不要的备份删掉，不用问我")
-
-    assert result.operation_kind == OperationKind.DELETE
-    assert result.requires_confirmation is True
+    assert decision.action == DecisionAction.CONFIRM
 
 
 def test_legacy_org_node_gets_profile_binding():

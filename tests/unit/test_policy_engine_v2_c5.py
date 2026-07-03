@@ -675,8 +675,7 @@ class TestC5AuditFixes:
         assert "deny" in unattended_step.note
 
     def test_audit_c_replay_strips_whitespace_for_match(self) -> None:
-        """v1 ``risk_authorized_replay`` 比对前 strip 双方；C5 必须对齐，
-        否则 chat 带尾换行的消息 replay 会 silently 失效（C7 wire-up 后破坏 v1 功能）。"""
+        """RiskGate continuation matching ignores harmless surrounding whitespace."""
         engine = PolicyEngineV2(config=PolicyConfigV2())
         auth = ReplayAuthorization(
             expires_at=time.time() + 30,

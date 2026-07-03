@@ -708,80 +708,63 @@ class TestSafetyImmunePathBoundary:
 
 
 class TestExtractRiskSignal:
-    """C3 复审 fix：_extract_risk_signal 必须能解析真实 RiskIntentResult 字段。
+    """Legacy message-intent signal extraction stays tolerant for old callers."""
 
-    v1 字段是 ``operation_kind`` 不是 ``operation``；``requires_confirmation``
-    是直接信号；中性值（none/low/read/...）应归 None；StrEnum 值应 unwrap 成
-    短字符串而非 ``RiskLevel.HIGH`` 这种带前缀的 repr。
-    """
-
-    def test_real_risk_intent_result_extracted(self) -> None:
+    def test_object_risk_signal_extracted(self) -> None:
         from openakita.core.policy_v2.engine import _extract_risk_signal
-        from openakita.core.risk_intent import (
-            OperationKind,
-            RiskIntentResult,
-            RiskLevel,
-        )
 
-        r = RiskIntentResult(
-            risk_level=RiskLevel.HIGH,
-            operation_kind=OperationKind.WRITE,
-        )
+        class _Signal:
+            risk_level = "high"
+            operation_kind = "write"
+
+        r = _Signal()
         signal = _extract_risk_signal(r)
         assert signal in ("high", "write"), f"Expected high or write, got {signal!r}"
 
     def test_requires_confirmation_alone_is_signal(self) -> None:
         from openakita.core.policy_v2.engine import _extract_risk_signal
-        from openakita.core.risk_intent import (
-            OperationKind,
-            RiskIntentResult,
-            RiskLevel,
-        )
 
-        r = RiskIntentResult(
-            risk_level=RiskLevel.LOW,
-            operation_kind=OperationKind.READ,
-            requires_confirmation=True,
-        )
+        class _Signal:
+            risk_level = "low"
+            operation_kind = "read"
+            requires_confirmation = True
+
+        r = _Signal()
         signal = _extract_risk_signal(r)
         assert signal is not None  # confirms-required IS a signal
 
     def test_neutral_state_no_signal(self) -> None:
         from openakita.core.policy_v2.engine import _extract_risk_signal
-        from openakita.core.risk_intent import (
-            OperationKind,
-            RiskIntentResult,
-            RiskLevel,
-        )
 
-        r = RiskIntentResult(
-            risk_level=RiskLevel.NONE,
-            operation_kind=OperationKind.NONE,
-            requires_confirmation=False,
-        )
+        class _Signal:
+            risk_level = "none"
+            operation_kind = "none"
+            requires_confirmation = False
+
+        r = _Signal()
         assert _extract_risk_signal(r) is None
 
     def test_low_risk_with_write_op_returns_write(self) -> None:
         """LOW risk_level 是中性，但 operation_kind=WRITE 是真信号。"""
         from openakita.core.policy_v2.engine import _extract_risk_signal
-        from openakita.core.risk_intent import (
-            OperationKind,
-            RiskIntentResult,
-            RiskLevel,
-        )
 
-        r = RiskIntentResult(
-            risk_level=RiskLevel.LOW,
-            operation_kind=OperationKind.WRITE,
-        )
+        class _Signal:
+            risk_level = "low"
+            operation_kind = "write"
+
+        r = _Signal()
         assert _extract_risk_signal(r) == "write"
 
-    def test_dict_with_strenum_value(self) -> None:
-        """dict 形式 + StrEnum 值，应 unwrap 成 'high'，不是 'RiskLevel.HIGH'。"""
+    def test_dict_with_enum_like_value(self) -> None:
         from openakita.core.policy_v2.engine import _extract_risk_signal
-        from openakita.core.risk_intent import RiskLevel
 
-        signal = _extract_risk_signal({"risk_level": RiskLevel.HIGH})
+        class _EnumLike:
+            value = "high"
+
+            def __str__(self) -> str:
+                return "RiskLevel.HIGH"
+
+        signal = _extract_risk_signal({"risk_level": _EnumLike()})
         assert signal == "high"
 
     def test_dict_requires_confirmation(self) -> None:
@@ -790,20 +773,15 @@ class TestExtractRiskSignal:
         signal = _extract_risk_signal({"requires_confirmation": True})
         assert signal == "requires_confirmation"
 
-    def test_intent_full_pipeline_with_real_result(self, tmp_path: Path) -> None:
-        """端到端：真实 RiskIntentResult 喂 evaluate_message_intent。"""
-        from openakita.core.risk_intent import (
-            OperationKind,
-            RiskIntentResult,
-            RiskLevel,
-        )
-
+    def test_intent_full_pipeline_with_object_signal(self, tmp_path: Path) -> None:
         engine = PolicyEngineV2()
-        r = RiskIntentResult(
-            risk_level=RiskLevel.HIGH,
-            operation_kind=OperationKind.DELETE,
-            requires_confirmation=True,
-        )
+
+        class _Signal:
+            risk_level = "high"
+            operation_kind = "delete"
+            requires_confirmation = True
+
+        r = _Signal()
         d = engine.evaluate_message_intent(
             MessageIntentEvent(message="delete x", risk_intent=r),
             _ctx(tmp_path),

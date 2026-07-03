@@ -366,6 +366,10 @@ class TestUIConfirmBusBroadcast:
         for c in a:
             assert "params" not in c
             assert c["tool_name"] in ("shell", "write_file")
+        by_id = {c["confirm_id"]: c for c in a}
+        assert by_id["tu_1"]["presentation_state"] == "active"
+        assert by_id["tu_2"]["presentation_state"] == "queued"
+        assert by_id["tu_1"]["queued_count"] == 1
 
     def test_no_hook_is_silent_no_op(self) -> None:
         bus = UIConfirmBus(ttl_seconds=300)
@@ -374,3 +378,71 @@ class TestUIConfirmBusBroadcast:
         bus.resolve("tu_x", "deny")
         # The whole flow must succeed even without a broadcast hook wired.
         assert bus.list_pending() == []
+
+    def test_store_pending_assigns_backend_presentation_state(self) -> None:
+        bus = UIConfirmBus(ttl_seconds=300)
+
+        first = bus.store_pending(
+            "tu_1",
+            "shell",
+            {"command": "ls"},
+            session_id="conv_q",
+            confirm_event={"type": "security_confirm", "tool": "shell", "args": {}, "id": "tu_1"},
+        )
+        second = bus.store_pending(
+            "tu_2",
+            "write_file",
+            {"path": "/tmp/x"},
+            session_id="conv_q",
+            confirm_event={
+                "type": "security_confirm",
+                "tool": "write_file",
+                "args": {},
+                "id": "tu_2",
+            },
+        )
+
+        assert first["presentation_state"] == "active"
+        assert first["queue_position"] == 0
+        assert second["presentation_state"] == "queued"
+        assert second["queue_position"] == 1
+        assert second["active_confirm_id"] == "tu_1"
+
+    def test_resolve_active_promotes_next_confirm(self) -> None:
+        bus = UIConfirmBus(ttl_seconds=300)
+        events: list[tuple[str, dict[str, Any]]] = []
+        bus.set_broadcast_hook(lambda et, p: events.append((et, p)))
+        bus.store_pending(
+            "tu_1",
+            "shell",
+            {"command": "ls"},
+            session_id="conv_p",
+            confirm_event={"type": "security_confirm", "tool": "shell", "args": {}, "id": "tu_1"},
+        )
+        bus.store_pending(
+            "tu_2",
+            "write_file",
+            {"path": "/tmp/x"},
+            session_id="conv_p",
+            confirm_event={
+                "type": "security_confirm",
+                "tool": "write_file",
+                "args": {"path": "/tmp/x"},
+                "id": "tu_2",
+            },
+        )
+        events.clear()
+
+        resolved = bus.resolve("tu_1", "deny")
+        ui_update = bus.consume_resolution_ui_update("tu_1")
+
+        assert resolved is not None
+        assert ui_update is not None
+        assert ui_update["active_confirm_id"] == "tu_2"
+        assert ui_update["queued_count"] == 0
+        assert ui_update["next_confirm"]["confirm_id"] == "tu_2"
+        assert ui_update["next_confirm"]["presentation_state"] == "active"
+        promoted = [e for e in events if e[0] == "security_confirm_promoted"]
+        assert len(promoted) == 1
+        assert promoted[0][1]["confirm_id"] == "tu_2"
+        assert promoted[0][1]["confirm"]["presentation_state"] == "active"

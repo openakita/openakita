@@ -2,10 +2,10 @@
 
 设计目标（详见 docs §3）：
 - **唯一入口**：替换 v1 的多入口（policy.assert_tool_allowed +
-  permission.check_permission + risk_intent.classify_risk_intent 各自决策）。
+  permission.check_permission and tool execution policy checks diverging).
 - **双方法**：
   - ``evaluate_tool_call`` — 工具执行前的 ALLOW/CONFIRM/DENY 决策
-  - ``evaluate_message_intent`` — pre-LLM RiskGate 决策
+  - ``evaluate_message_intent`` — legacy explicit message-signal compatibility
 - **12 步决策链**：每步产出 ``DecisionStep`` 加入 chain，最终回传给 SSE / 审计。
 - **fail-safe**：任何步骤抛异常 → 顶层 catch → DENY + 记录原因（R5-15）。
 - **thread-safety**：共享状态全部走 ``threading.RLock``（async 调用方进 to_thread）；
@@ -243,14 +243,12 @@ class PolicyEngineV2:
         event: MessageIntentEvent,
         ctx: PolicyContext,
     ) -> PolicyDecisionV2:
-        """pre-LLM RiskGate 决策。
+        """Legacy explicit message-signal decision.
 
-        v1 的 ``RiskGate.assess()`` 把 ``risk_intent.classify_risk_intent()``
-        结果塞到这里。v2 阶段 risk_intent 仍是独立模块，engine 只负责"风险
-        信号 → 决策"映射，不做意图识别本身。
-
-        C3 阶段：基础映射（risk_intent.has_signal → CONFIRM；trust 模式 → ALLOW）。
-        完整 v1 RiskGate 等价行为留 C7（替换 agent.py 调用点）时落地。
+        Runtime RiskGate enforcement happens at the structured tool-call
+        layer. This method remains for compatibility with callers that pass an
+        explicit risk signal object; it does not perform natural-language
+        intent recognition.
         """
         with self._lock:
             self._stats["evaluate_message_intent"] += 1
@@ -307,6 +305,7 @@ class PolicyEngineV2:
                 name="preflight",
                 action=DecisionAction.ALLOW,
                 note=f"tool={tool}",
+                metadata={"tool": tool},
             )
         )
 
@@ -333,6 +332,10 @@ class PolicyEngineV2:
                 name="classify",
                 action=DecisionAction.ALLOW,
                 note=f"class={clf_result.approval_class.value} source={clf_result.source.value}",
+                metadata={
+                    "approval_class": clf_result.approval_class.value,
+                    "source": clf_result.source.value,
+                },
             )
         )
 
@@ -384,8 +387,25 @@ class PolicyEngineV2:
                 name="matrix",
                 action=base_action,
                 note=f"role={ctx.session_role.value} mode={ctx.confirmation_mode.value}",
+                metadata={
+                    "session_role": ctx.session_role.value,
+                    "confirmation_mode": ctx.confirmation_mode.value,
+                },
             )
         )
+
+        declared_action = self._check_declared_tool_policy(tool, event.params, ctx)
+        if declared_action is not None:
+            action, step_name, reason, metadata = declared_action
+            return self._finalize(
+                chain=chain,
+                step_name=step_name,
+                action=action,
+                reason=reason,
+                clf=clf_result,
+                is_unattended_path=action == DecisionAction.DEFER,
+                metadata=metadata,
+            )
 
         # 短路：matrix 直接 DENY → 跳到 finalize（不再 relax）
         if base_action == DecisionAction.DENY:
@@ -484,6 +504,7 @@ class PolicyEngineV2:
                     # 显示**生效**的 strategy（ctx 可能空 → 用 config default），
                     # 让审计 / SSE 看到真实判定来源；audit fix B
                     note=f"strategy={effective_strategy}",
+                    metadata={"strategy": effective_strategy},
                 )
             )
             return self._finalize(
@@ -518,6 +539,10 @@ class PolicyEngineV2:
                 name="intent_preflight",
                 action=DecisionAction.ALLOW,
                 note=f"role={ctx.session_role.value} mode={ctx.confirmation_mode.value}",
+                metadata={
+                    "session_role": ctx.session_role.value,
+                    "confirmation_mode": ctx.confirmation_mode.value,
+                },
             )
         ]
 
@@ -542,7 +567,7 @@ class PolicyEngineV2:
         if ctx.confirmation_mode == ConfirmationMode.TRUST:
             return PolicyDecisionV2(
                 action=DecisionAction.ALLOW,
-                reason="trust mode bypasses message-intent gate",
+                reason="trust mode bypasses legacy message-intent signal",
                 chain=chain
                 + [
                     DecisionStep(
@@ -625,6 +650,10 @@ class PolicyEngineV2:
                         f"user override {override.value} weaker than "
                         f"classifier {clf_result.approval_class.value}; ignored"
                     ),
+                    metadata={
+                        "approval_class": clf_result.approval_class.value,
+                        "override": override.value,
+                    },
                 )
             )
             return clf_result
@@ -637,6 +666,10 @@ class PolicyEngineV2:
                     f"user override {override.value} stricter than "
                     f"classifier {clf_result.approval_class.value}; applied"
                 ),
+                metadata={
+                    "approval_class": merged_class.value,
+                    "override": override.value,
+                },
             )
         )
         # ClassificationResult 是 frozen dataclass —— 用 model_copy 等价的手工复制
@@ -673,6 +706,60 @@ class PolicyEngineV2:
             shell_risk_level=clf.shell_risk_level,
             needs_sandbox=needs_sandbox,
             needs_checkpoint=needs_checkpoint,
+        )
+
+    def _check_declared_tool_policy(
+        self,
+        tool: str,
+        params: dict[str, Any] | None,
+        ctx: PolicyContext,
+    ) -> tuple[DecisionAction, str, str, dict[str, Any] | None] | None:
+        """Apply handler-declared parameter-sensitive tool policy metadata."""
+        policy = (ctx.tool_policies or {}).get(tool)
+        if policy is None or not policy.preview_param:
+            return None
+
+        safe_params = params or {}
+        from openakita.core.risk_scope import tool_policy_is_preview_call
+
+        if tool_policy_is_preview_call(safe_params, policy):
+            return (
+                DecisionAction.ALLOW,
+                policy.preview_step_name or "tool_preview",
+                policy.preview_reason or "tool preview only",
+                None,
+            )
+
+        if not policy.commit_requires_riskgate:
+            return None
+
+        action = DecisionAction.DEFER if ctx.is_unattended else DecisionAction.CONFIRM
+        reason = (
+            policy.commit_reason or "tool commit requires confirmed RiskGate tool authorization"
+        )
+        from openakita.core.risk_scope import extract_tool_scope
+
+        metadata = {
+            "riskgate_required": True,
+            "riskgate_operation": str(policy.riskgate_operation or "").strip(),
+            "riskgate_tool_name": tool,
+            "riskgate_scope": extract_tool_scope(safe_params, policy),
+        }
+        tool_display = {
+            k: v
+            for k, v in {
+                "label": policy.display_label,
+                "description": policy.display_description,
+            }.items()
+            if v
+        }
+        if tool_display:
+            metadata["tool_display"] = tool_display
+        return (
+            action,
+            policy.commit_step_name or "tool_commit_requires_riskgate",
+            reason,
+            metadata,
         )
 
     def _check_safety_immune(
@@ -761,9 +848,9 @@ class PolicyEngineV2:
         2. ``operation`` 非空且 == 当前 tool/event 的 operation 推断（保守起见
            暂时只支持工具名前缀）
 
-        engine 只读（read-only signal）：返回非 None 表示放行；实际"消费"
-        （从 session metadata 移除该条 authorization）由 ``tool_executor`` /
-        ``chat handler`` 在收到 ALLOW 后自行处理。
+        engine 只读（read-only signal）：返回非 None 只放行普通 matrix
+        CONFIRM。声明了 ``commit_requires_riskgate`` 的工具提交不会走到
+        本步骤；它们必须由 ToolExecutor 消费 scoped RiskGate 授权。
 
         engine 严守纯读取的好处：
         - 决策可重放（多次调用相同决策一致）
@@ -774,9 +861,8 @@ class PolicyEngineV2:
         if not auths:
             return None
         now = time.time()
-        # ``.strip()`` 对齐 v1 ``risk_authorized_replay`` 行为（agent.py:782 对
-        # original_message 与 message 都 strip 后比较）；不 strip 会让带尾换行
-        # 的 chat 消息无法 replay-match，导致 v1 已工作的功能在 C7 wire-up 后失效。
+        # ``.strip()`` keeps harmless surrounding whitespace from breaking an
+        # otherwise exact RiskGate continuation match.
         user_msg_stripped = (ctx.user_message or "").strip()
         # 推断 operation：write_/edit_/delete_/move_/run_ 等前缀对应 OperationKind
         op_inferred = _infer_operation_from_tool(event.tool)
@@ -785,6 +871,8 @@ class PolicyEngineV2:
                 # 异构输入不应该到这（from_session 已 coerce），保险起见跳过
                 continue
             if not auth.is_active(now=now):
+                continue
+            if auth.tool_names and event.tool not in auth.tool_names:
                 continue
             auth_msg_stripped = auth.original_message.strip()
             if auth_msg_stripped and user_msg_stripped and auth_msg_stripped == user_msg_stripped:
@@ -983,12 +1071,14 @@ class PolicyEngineV2:
         safety_immune_match: str | None = None,
         is_owner_required: bool = False,
         is_unattended_path: bool = False,
+        metadata: dict[str, Any] | None = None,
     ) -> PolicyDecisionV2:
         chain.append(
             DecisionStep(
                 name=step_name,
                 action=action,
                 note=reason,
+                metadata={"reason": reason},
             )
         )
         return PolicyDecisionV2(
@@ -1005,6 +1095,7 @@ class PolicyEngineV2:
             needs_sandbox=clf.needs_sandbox,
             needs_checkpoint=clf.needs_checkpoint,
             decided_at=time.time(),
+            metadata=dict(metadata or {}),
         )
 
     def _maybe_audit(
@@ -1093,8 +1184,8 @@ def _is_readonly_class(klass: ApprovalClass) -> bool:
     return klass in _READONLY_CLASSES
 
 
-# 工具名前缀 → v1 OperationKind 字符串值（与 ``risk_intent.OperationKind`` 对齐）。
-# 用于 step 7/8 的 operation 维度匹配（精度有限，但兼容 v1 替代 risk_intent 推断）。
+# 工具名前缀 → coarse operation 字符串值。
+# 用于 step 7/8 的 operation 维度匹配（精度有限，只作为 replay fallback）。
 _OP_PREFIX_MAP: tuple[tuple[str, str], ...] = (
     ("delete_", "delete"),
     ("remove_", "delete"),
@@ -1122,9 +1213,8 @@ def _infer_operation_from_tool(tool: str) -> str | None:
     """根据工具名前缀推断 OperationKind 字符串。无匹配 → None。
 
     与 ``classifier._heuristic_classify`` 用同一份前缀表的精神（按"严格度
-    高者优先"排），但映射到操作类别而非 ApprovalClass。这是一个**保守
-    回退**：如果有更精确的 ``risk_intent.classify_risk_intent`` 结果，
-    应优先使用（C7 RiskGate 接入时通过 ``ToolCallEvent.metadata`` 透传）。
+    高者优先"排），但映射到操作类别而非 ApprovalClass。这只是 replay
+    matching 的保守 fallback；tool-scoped replay should prefer ``tool_names``.
     """
     if not tool:
         return None
@@ -1207,12 +1297,12 @@ _INTENT_NEUTRAL_VALUES: frozenset[str] = frozenset(
 
 
 def _extract_risk_signal(risk_intent: Any) -> str | None:
-    """从 v1 ``RiskIntentResult`` 结果里抽出风险信号字符串。
+    """Extract a risk signal from an explicit legacy message-intent object.
 
-    实际字段（v1 ``risk_intent.RiskIntentResult``）：
-    - ``risk_level: RiskLevel`` （StrEnum: none/low/medium/high）
-    - ``operation_kind: OperationKind`` （StrEnum: write/delete/overwrite/...）
-    - ``requires_confirmation: bool`` （直接信号）
+    Recognized fields:
+    - ``risk_level`` (none/low/medium/high)
+    - ``operation_kind`` / ``operation`` / ``intent``
+    - ``requires_confirmation: bool`` (direct signal)
 
     优先级：
     1. ``requires_confirmation=True`` → 返回 'requires_confirmation'（最直接信号）

@@ -4,7 +4,7 @@
 1. ``apply_resolution`` 5 个 decision 类型的副作用矩阵
 2. allow_session/sandbox/allow_always 都写 SessionAllowlistManager
 3. allow_always 走 UserAllowlistManager.add_entry+save_to_yaml
-4. deny / allow_once 不写任何 manager
+4. deny / allow_once / timeout 不写任何 manager
 5. 不存在 confirm_id 时返回 False，不抛异常
 6. waiter 唤醒：apply_resolution 后 wait_for_resolution 立即返回
 7. 静态扫描 7 个 callsite 都迁完（不再调 ``pe.resolve_ui_confirm`` /
@@ -125,24 +125,15 @@ class TestApplyResolutionMatrix:
             get_session_allowlist_manager().is_allowed("run_shell", {"command": "rm -rf /"}) is None
         )
 
-    def test_unknown_decision_writes_nothing(self) -> None:
-        bus = get_ui_confirm_bus()
-        bus.store_pending("c6", "run_shell", {"command": "echo"}, session_id="s1")
-        bus.prepare("c6")
-        ok = apply_resolution("c6", "weird_value")
-        assert ok is True
-        assert get_session_allowlist_manager().is_allowed("run_shell", {"command": "echo"}) is None
-
     def test_missing_confirm_id_returns_false(self) -> None:
         ok = apply_resolution("nonexistent-id", "allow_once")
         assert ok is False
 
-    def test_legacy_allow_normalized_to_allow_once(self) -> None:
-        """v1 ``allow`` decision string should map to ``allow_once`` (no allowlist write)."""
+    def test_timeout_writes_nothing(self) -> None:
         bus = get_ui_confirm_bus()
         bus.store_pending("c7", "run_shell", {"command": "ls"}, session_id="s1")
         bus.prepare("c7")
-        ok = apply_resolution("c7", "allow")
+        ok = apply_resolution("c7", "timeout")
         assert ok is True
         assert get_session_allowlist_manager().is_allowed("run_shell", {"command": "ls"}) is None
 
@@ -182,12 +173,12 @@ class TestCallsiteMigrationStatic:
     def test_stream_renderer_migrated(self) -> None:
         text = self._read("cli/stream_renderer.py")
         assert "engine.resolve_ui_confirm" not in text
-        assert "apply_resolution" in text
+        assert "resolve_security_confirmation" in text
 
     def test_config_route_migrated(self) -> None:
         text = self._read("api/routes/config.py")
         assert "engine.resolve_ui_confirm" not in text
-        assert "apply_resolution" in text
+        assert "resolve_security_confirmation" in text
 
     def test_chat_route_migrated(self) -> None:
         text = self._read("api/routes/chat.py")
@@ -201,17 +192,17 @@ class TestCallsiteMigrationStatic:
         # The two pe.resolve_ui_confirm CALLS (with `(`) were the only production
         # uses; doc comments still reference the old name as historical context.
         assert "pe.resolve_ui_confirm(" not in text
-        assert "apply_resolution" in text
+        assert "resolve_security_confirmation" in text
 
     def test_telegram_migrated(self) -> None:
         text = self._read("channels/adapters/telegram.py")
         assert "get_policy_engine().resolve_ui_confirm" not in text
-        assert "apply_resolution" in text
+        assert "resolve_security_confirmation" in text
 
     def test_feishu_migrated(self) -> None:
         text = self._read("channels/adapters/feishu.py")
         assert "get_policy_engine().resolve_ui_confirm" not in text
-        assert "apply_resolution" in text
+        assert "resolve_security_confirmation" in text
 
     def test_agent_cleanup_migrated(self) -> None:
         text = self._read("core/agent.py")

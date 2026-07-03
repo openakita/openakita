@@ -93,7 +93,7 @@ function errorMessage(err: unknown, fallback: string) {
 type ConfirmConfig = {
   mode: string;
   timeout_seconds: number;
-  default_on_timeout: string;
+  default_on_timeout: "allow_once" | "deny";
   confirm_ttl: number;
 };
 
@@ -216,7 +216,15 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       }
       if (cRes && Array.isArray(cRes.blocked_commands)) setCommands(cRes);
       if (sRes && typeof sRes.enabled === "boolean") setSandbox(sRes);
-      if (cfRes && cfRes.mode) setConfirmConfig(cfRes);
+      if (cfRes && cfRes.mode) {
+        setConfirmConfig({
+          mode: String(cfRes.mode),
+          timeout_seconds: Number(cfRes.timeout_seconds) || 60,
+          default_on_timeout:
+            cfRes.default_on_timeout === "allow_once" ? "allow_once" : "deny",
+          confirm_ttl: Number(cfRes.confirm_ttl) || 120,
+        });
+      }
       if (spRes && spRes.enabled !== undefined) setSelfProtect(spRes);
       if (alRes && (alRes.commands || alRes.tools)) setAllowlist(alRes);
       if (showResult) toast.success(t("security.refreshAllDone", "安全配置已刷新"));
@@ -779,11 +787,19 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
               {/* Default on timeout */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium">{t("security.defaultOnTimeout", "超时默认行为")}</Label>
-                <Select value={confirmConfig.default_on_timeout} onValueChange={(v) => setConfirmConfig((p) => ({ ...p, default_on_timeout: v }))}>
+                <Select
+                  value={confirmConfig.default_on_timeout}
+                  onValueChange={(v) =>
+                    setConfirmConfig((p) => ({
+                      ...p,
+                      default_on_timeout: v as ConfirmConfig["default_on_timeout"],
+                    }))
+                  }
+                >
                   <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="deny">{t("security.deny", "拒绝")}</SelectItem>
-                    <SelectItem value="allow">{t("security.allow", "允许")}</SelectItem>
+                    <SelectItem value="allow_once">{t("chat.securityAllowOnce", "允许一次")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1736,4 +1752,3 @@ function TagEditor({ label, items, onChange, placeholder }: {
     </div>
   );
 }
-

@@ -25,6 +25,7 @@ class DecisionStep:
     action: DecisionAction
     note: str = ""
     duration_ms: float = 0.0
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -107,11 +108,15 @@ class PolicyDecisionV2:
         ``api/routes/pending_approvals._serialize``), so frontend code
         that handles deferred approvals can reuse the same renderer.
         """
+        from .display import decision_step_display
+
         return [
             {
                 "name": step.name,
                 "action": step.action.value,
                 "note": step.note,
+                "metadata": dict(step.metadata or {}),
+                "display": decision_step_display(step),
             }
             for step in self.chain
         ]
@@ -137,10 +142,11 @@ class ToolCallEvent:
 
 @dataclass(slots=True)
 class MessageIntentEvent:
-    """evaluate_message_intent 输入（pre-LLM RiskGate 入口）。
+    """Legacy message-intent input.
 
-    risk_intent 是 risk_intent.py:classify_risk_intent 的输出（保留独立模块，
-    见 docs §5.5），engine 把它转化为 ApprovalClass + 决策。
+    Runtime RiskGate decisions are enforced at the structured tool-call layer.
+    This model is retained for old tests and callers that already pass an
+    explicit risk signal object.
     """
 
     message: str

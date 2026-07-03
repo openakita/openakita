@@ -226,6 +226,48 @@ class TestVerifyTaskCompletionPrefixBypass:
         assert is_completed is True
 
     @pytest.mark.asyncio
+    async def test_successful_memory_delete_bypasses_llm_verify(self):
+        handler = ResponseHandler(brain=None, memory_manager=None)
+
+        is_completed = await handler.verify_task_completion(
+            user_request="请删除长期记忆中所有包含 OPENAKITA_RISKGATE_689_REPRO_TEST 的记忆。",
+            assistant_response="已删除 2/2 条记忆。",
+            executed_tools=["tool_search", "memory_delete_by_query"],
+            delivery_receipts=[],
+            tool_results=[
+                {
+                    "tool_name": "memory_delete_by_query",
+                    "is_error": False,
+                    "content": "删除完成。",
+                    "metadata": {
+                        "effects": [
+                            {
+                                "kind": "tool_effect",
+                                "action": "delete",
+                                "target": "memory",
+                                "status": "ok",
+                                "deleted_count": 2,
+                            }
+                        ],
+                        "receipts": [
+                            {
+                                "kind": "tool_receipt",
+                                "action": "delete",
+                                "target": "memory",
+                                "status": "ok",
+                                "deleted_count": 2,
+                            }
+                        ],
+                    },
+                }
+            ],
+            conversation_id=None,
+            bypass=False,
+        )
+
+        assert is_completed is True
+
+    @pytest.mark.asyncio
     async def test_active_task_assignment_does_not_bypass_verify(self):
         """[收到任务] 是子节点真正接到的工作派单，**不应**走前缀 bypass。
         这里只断言「不会因前缀短路返回 True」——后续的真正 verify 流程

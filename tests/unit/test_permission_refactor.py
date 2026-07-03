@@ -221,6 +221,153 @@ async def test_execute_tool_with_policy_normalizes_tool_aliases():
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_with_policy_keeps_execution_context_inside_executor_for_plain_tools():
+    from openakita.core.risk_intent import TurnRiskAuthorization
+    from openakita.core.tool_execution_context import ToolExecutionContext
+
+    class _ContextRegistry(_DummyRegistry):
+        async def execute_by_tool(self, tool_name: str, tool_input: dict) -> str:
+            assert tool_name == "read_file"
+            return "ctx-ok"
+
+    registry = _ContextRegistry()
+    executor = ToolExecutor(registry)
+    ctx = ToolExecutionContext(
+        risk_authorization=TurnRiskAuthorization(
+            original_message="original",
+            confirmation_id="ctx-confirm",
+            authorized_intent={"operation": "memory_delete"},
+        )
+    )
+
+    result, hint = await executor.execute_tool_with_policy(
+        "read_file",
+        {"expected_context": ctx},
+        PolicyDecisionV2(action=DecisionAction.ALLOW),
+        execution_context=ctx,
+    )
+
+    assert result == "ctx-ok"
+    assert hint is None
+
+
+class _RiskGateCommitRegistry:
+    def __init__(self) -> None:
+        from openakita.core.policy_v2 import ToolPolicy
+
+        self.executed: list[tuple[str, dict]] = []
+        self.policy = ToolPolicy(
+            preview_param="dry_run",
+            preview_default=True,
+            commit_requires_riskgate=True,
+            riskgate_operation="memory_delete",
+            riskgate_scope_params=("query",),
+            riskgate_scope_required_any=("query",),
+            riskgate_scope_text_params=("query",),
+        )
+
+    def has_tool(self, tool_name: str) -> bool:
+        return tool_name == "memory_delete_by_query"
+
+    async def execute_by_tool(self, tool_name: str, tool_input: dict) -> str:
+        self.executed.append((tool_name, dict(tool_input)))
+        return "deleted"
+
+    def get_tool_policy(self, tool_name: str):
+        if tool_name == "memory_delete_by_query":
+            return self.policy
+        return None
+
+    def get_handler_name_for_tool(self, tool_name: str) -> str:
+        return "riskgate"
+
+    def get_permission_check(self, tool_name: str):
+        return None
+
+    def list_tools(self) -> list[str]:
+        return ["memory_delete_by_query"]
+
+
+@pytest.mark.asyncio
+async def test_riskgate_commit_policy_is_enforced_before_handler_execution():
+    registry = _RiskGateCommitRegistry()
+    executor = ToolExecutor(registry)
+
+    result, hint = await executor.execute_tool_with_policy(
+        "memory_delete_by_query",
+        {"query": "OPENAKITA_RISKGATE_689_REPRO_TEST", "dry_run": False},
+        PolicyDecisionV2(action=DecisionAction.ALLOW),
+    )
+
+    assert hint is None
+    assert "需要 RiskGate 授权" in str(result)
+    assert registry.executed == []
+
+
+@pytest.mark.asyncio
+async def test_riskgate_commit_authorization_is_consumed_by_executor():
+    from openakita.core.risk_intent import TurnRiskAuthorization
+    from openakita.core.tool_execution_context import ToolExecutionContext
+
+    registry = _RiskGateCommitRegistry()
+    executor = ToolExecutor(registry)
+    ctx = ToolExecutionContext(
+        risk_authorization=TurnRiskAuthorization(
+            original_message="delete marker",
+            confirmation_id="risk-commit",
+            authorized_intent={
+                "operation": "memory_delete",
+                "scope": {"query": "OPENAKITA_RISKGATE_689_REPRO_TEST"},
+                "tool_names": ["memory_delete_by_query"],
+            },
+        )
+    )
+
+    result, hint = await executor.execute_tool_with_policy(
+        "memory_delete_by_query",
+        {"query": "OPENAKITA_RISKGATE_689_REPRO_TEST", "dry_run": False},
+        PolicyDecisionV2(action=DecisionAction.ALLOW),
+        execution_context=ctx,
+    )
+
+    assert result == "deleted"
+    assert hint is None
+    assert registry.executed == [
+        (
+            "memory_delete_by_query",
+            {"query": "OPENAKITA_RISKGATE_689_REPRO_TEST", "dry_run": False},
+        )
+    ]
+    assert ctx.risk_authorization_consumed is True
+
+    second_result, _ = await executor.execute_tool_with_policy(
+        "memory_delete_by_query",
+        {"query": "OPENAKITA_RISKGATE_689_REPRO_TEST", "dry_run": False},
+        PolicyDecisionV2(action=DecisionAction.ALLOW),
+        execution_context=ctx,
+    )
+
+    assert "授权范围不覆盖" in str(second_result)
+    assert len(registry.executed) == 1
+
+
+@pytest.mark.asyncio
+async def test_riskgate_preview_does_not_require_commit_authorization():
+    registry = _RiskGateCommitRegistry()
+    executor = ToolExecutor(registry)
+
+    result, hint = await executor.execute_tool_with_policy(
+        "memory_delete_by_query",
+        {"query": "OPENAKITA_RISKGATE_689_REPRO_TEST", "dry_run": True},
+        PolicyDecisionV2(action=DecisionAction.ALLOW),
+    )
+
+    assert result == "deleted"
+    assert hint is None
+    assert len(registry.executed) == 1
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_with_policy_refuses_defer_decision():
     registry = _DummyRegistry()
     executor = ToolExecutor(registry)

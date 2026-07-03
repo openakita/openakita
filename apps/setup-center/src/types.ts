@@ -457,6 +457,7 @@ export type ChatAskUser = {
   options?: { id: string; label: string }[];
   /** Structured multi-question support */
   questions?: ChatAskQuestion[];
+  kind?: "normal";
   answered?: boolean;
   answer?: string;
 };

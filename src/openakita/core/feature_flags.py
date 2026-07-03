@@ -23,8 +23,6 @@ logger = logging.getLogger(__name__)
 _DEFAULTS: dict[str, bool] = {
     # PR-A1
     "grep_safety_v1": True,
-    # PR-A2
-    "risk_authorized_intent_v2": True,
     # PR-A3
     "memory_delete_by_query_v1": True,
     # PR-B1

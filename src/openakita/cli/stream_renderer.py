@@ -319,9 +319,10 @@ def _handle_security_confirm_interactive(event: dict, console: Console) -> None:
     decision = decision_map.get(decision_str, "deny")
 
     try:
-        from ..core.policy_v2 import apply_resolution
+        from ..core.security_confirmation import resolve_security_confirmation
 
-        found = apply_resolution(confirm_id, decision)
+        response = resolve_security_confirmation(confirm_id, decision)
+        found = bool(response.get("handled"))
         if found:
             labels = {
                 "allow_once": "✅ 已允许（一次）",

@@ -84,8 +84,20 @@ def test_file_validator_verifies_move_result(tmp_path):
             tool_results=[
                 {
                     "tool_name": "move_file",
-                    "content": f"文件已移动: {source} -> {target}",
+                    "content": f"文件已移动: source.md -> {target}",
                     "is_error": False,
+                    "metadata": {
+                        "effects": [
+                            {
+                                "kind": "tool_effect",
+                                "action": "move",
+                                "target": "file",
+                                "status": "ok",
+                                "source_path": str(source),
+                                "path": str(target),
+                            }
+                        ]
+                    },
                 }
             ],
         )

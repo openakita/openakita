@@ -24,6 +24,7 @@ from openakita.core.policy_v2 import (
     DecisionSource,
     PolicyContext,
     SessionRole,
+    ToolPolicy,
     most_strict,
     strictness,
 )
@@ -32,6 +33,7 @@ from openakita.core.policy_v2.classifier import (
     _is_inside_workspace,
 )
 from openakita.tools.handlers import SystemHandlerRegistry
+from openakita.tools.tool_guidance import ToolGuidance
 
 # ---- strictness ordering invariants ----
 
@@ -428,6 +430,32 @@ class _StubHandlerWithAttr:
         return "ok"
 
 
+class _StubHandlerWithPolicies:
+    TOOLS = ["declared_preview_tool", "plain_tool"]
+    TOOL_POLICIES = {
+        "declared_preview_tool": ToolPolicy(
+            preview_param="dry_run",
+            preview_default=True,
+            commit_requires_riskgate=True,
+            riskgate_operation="test_delete",
+        ),
+        "typo_policy_tool": ToolPolicy(commit_requires_riskgate=True),
+    }
+    TOOL_GUIDANCE = {
+        "declared_preview_tool": ToolGuidance(
+            riskgate_operation="test_delete",
+            riskgate_execution_hint="Use declared_preview_tool for test_delete.",
+        ),
+        "typo_guidance_tool": ToolGuidance(
+            riskgate_operation="test_delete",
+            riskgate_execution_hint="Should be dropped.",
+        ),
+    }
+
+    def __call__(self, tool_name: str, params: dict) -> str:
+        return "ok"
+
+
 class TestRegistryIntegration:
     def test_register_without_tool_classes_is_backward_compatible(self) -> None:
         """v1 调用 register(handler) 不传 tool_classes → 仍工作，_tool_classes 为空。"""
@@ -524,6 +552,62 @@ class TestRegistryIntegration:
         klass, src = clf.classify_with_source("from_attr_b")
         assert klass == ApprovalClass.DESTRUCTIVE
         assert src == DecisionSource.EXPLICIT_HANDLER_ATTR
+
+    def test_handler_attr_tool_policies_are_collected(self) -> None:
+        registry = SystemHandlerRegistry()
+        handler = _StubHandlerWithPolicies()
+        registry.register("stub", handler.__call__)
+
+        policy = registry.get_tool_policy("declared_preview_tool")
+
+        assert policy is not None
+        assert policy.preview_param == "dry_run"
+        assert policy.riskgate_operation == "test_delete"
+        assert "declared_preview_tool" in registry.get_tool_policies()
+
+    def test_handler_attr_tool_guidance_is_collected(self) -> None:
+        registry = SystemHandlerRegistry()
+        handler = _StubHandlerWithPolicies()
+        registry.register("stub", handler.__call__)
+
+        guidance = registry.get_tool_guidance_for_tool("declared_preview_tool")
+
+        assert guidance is not None
+        assert guidance.riskgate_operation == "test_delete"
+        assert guidance.riskgate_execution_hint == "Use declared_preview_tool for test_delete."
+        assert "declared_preview_tool" in registry.get_tool_guidance()
+
+    def test_handler_attr_tool_policies_drop_typo_tools(self, caplog) -> None:
+        registry = SystemHandlerRegistry()
+        handler = _StubHandlerWithPolicies()
+
+        with caplog.at_level("WARNING"):
+            registry.register("stub", handler.__call__)
+
+        assert any("typo_policy_tool" in rec.message for rec in caplog.records)
+        assert any("typo_guidance_tool" in rec.message for rec in caplog.records)
+        assert registry.get_tool_policy("typo_policy_tool") is None
+        assert registry.get_tool_guidance_for_tool("typo_guidance_tool") is None
+
+    def test_unregister_clears_tool_policies_and_guidance(self) -> None:
+        registry = SystemHandlerRegistry()
+        handler = _StubHandlerWithPolicies()
+        registry.register("stub", handler.__call__)
+        assert registry.get_tool_policy("declared_preview_tool") is not None
+        assert registry.get_tool_guidance_for_tool("declared_preview_tool") is not None
+
+        registry.unregister("stub")
+
+        assert registry.get_tool_policy("declared_preview_tool") is None
+        assert registry.get_tool_guidance_for_tool("declared_preview_tool") is None
+
+    def test_unmap_tool_clears_policy_and_guidance(self) -> None:
+        registry = SystemHandlerRegistry()
+        handler = _StubHandlerWithPolicies()
+        registry.register("stub", handler.__call__)
+        registry.unmap_tool("declared_preview_tool")
+        assert registry.get_tool_policy("declared_preview_tool") is None
+        assert registry.get_tool_guidance_for_tool("declared_preview_tool") is None
 
     def test_repeated_register_takes_strict(self) -> None:
         """同一 handler 名重复 register（罕见但可能：plugin 重载等）→ most_strict 叠加。

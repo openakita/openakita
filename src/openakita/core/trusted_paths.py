@@ -1,14 +1,15 @@
-"""Session/workspace trusted-path policy (Fix-11).
+"""Session/workspace trusted-path metadata helpers (Fix-11).
 
-Reduces risk-gate friction for two common, low-risk situations without
-loosening the high-risk path itself:
+These helpers maintain session-scoped trust metadata consumed by PolicyV2.
+They do not classify natural-language user messages and must not bypass
+tool-declared RiskGate requirements.
 
 1. **Built-in trusted patterns** — the user explicitly created a scratch
    directory inside the current workspace (e.g. ``qa_test_2026_05_02``,
    ``workspaces/<ws>/scratch/...``, ``/tmp/...``). Edits/deletes inside these
-   paths surface every time as MEDIUM-risk confirmations even though the
-   user is the one who told us to create them. We treat such single-message
-   intents as already authorised.
+   paths historically surfaced as repeated confirmations even though the user
+   created the scratch area. This helper detects such path mentions for
+   callers that still need a low-friction path signal.
 
 2. **Session-scoped manual grant** — the ``ask_user`` confirmation popup
    exposes a "本次会话内 workspace 内的同类操作不再询问" checkbox. The
@@ -17,8 +18,8 @@ loosening the high-risk path itself:
 
 Design constraints (intentionally conservative):
 
-- NEVER demote ``RiskLevel.HIGH`` (sensitive targets like death-switch /
-  security policy / shell hard verbs still require confirmation).
+- NEVER demote shell commands, protected files, control-plane operations, or
+  tool-declared RiskGate commit requirements.
 - NEVER grant cross-session authority — every grant is scoped to the
   session metadata and to either an operation kind or a path pattern.
 - NEVER auto-extend the grant; expiry is opt-in by the caller.
@@ -84,9 +85,8 @@ def grant_session_trust(
 ) -> None:
     """Persist the user's "本次会话内同类操作不再询问" choice.
 
-    The caller can scope the grant by ``operation`` (matched against
-    :class:`OperationKind`'s value, e.g. ``"delete"``, ``"write"``) and/or
-    a regex string ``path_pattern`` (matched against the message body).
+    The caller can scope the grant by ``operation`` (e.g. ``"delete"``,
+    ``"write"``) and/or a regex string ``path_pattern``.
 
     ``expires_at`` is an absolute epoch-second timestamp. ``None`` means
     "valid for the lifetime of the session" (still scoped — when the
@@ -117,9 +117,9 @@ def consume_session_trust(
     """Check whether the user's prior in-session grant covers this request.
 
     Returns ``True`` when at least one *non-expired* matching grant exists.
-    Unlike ``risk_authorized_replay`` (single-use replay sentinel) the
-    matching trust grant itself is **not** consumed — that is the whole
-    point of the "本次会话内不再询问" checkbox. We do, however, garbage-
+    Unlike turn-scoped RiskGate continuations, the matching trust grant itself
+    is **not** consumed — that is the whole point of the "本次会话内不再询问"
+    checkbox. We do, however, garbage-
     collect grants that have already expired or whose ``expires_at`` is
     malformed so the session metadata cannot grow without bound (C8 §2.4
     fix; previously we just ``continue``-d past expired rules and they

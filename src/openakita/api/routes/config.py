@@ -222,23 +222,25 @@ class SecuritySandboxUpdate(BaseModel):
 
 
 class SecurityConfirmRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    confirm_id: str = Field(validation_alias=AliasChoices("confirm_id", "confirmation_id"))
+    confirm_id: str
     decision: str = Field(
-        validation_alias=AliasChoices("decision", "choice"),
-        description="allow_once | allow_session | allow_always | deny | sandbox (legacy: allow/cancel/confirm_continue)",
+        description="allow_once | allow_session | allow_always | deny | sandbox | timeout",
     )
 
     def normalized_decision(self) -> str:
-        value = (self.decision or "").strip()
-        return {
-            "cancel": "deny",
-            "confirm_cancel": "deny",
-            "confirm_continue": "allow_once",
-            "continue": "allow_once",
-            "inspect_only": "deny",
-        }.get(value, value)
+        from openakita.core.security_confirm_channel import require_security_confirm_decision
+
+        return require_security_confirm_decision(self.decision)
+
+
+def _riskgate_ui_message(state: str) -> str:
+    if state == "confirmed":
+        return "RiskGate 确认已通过，系统将继续执行已授权的高风险操作。"
+    if state == "cancelled":
+        return "RiskGate 确认已拒绝，本次高风险操作已取消，未继续执行。"
+    if state == "timeout":
+        return "RiskGate 确认已超时，系统已按默认策略取消本次高风险操作，未继续执行。"
+    return "RiskGate 确认状态已更新。"
 
 
 class SecurityConfirmBatchRequest(BaseModel):
@@ -265,14 +267,9 @@ class SecurityConfirmBatchRequest(BaseModel):
     )
 
     def normalized_decision(self) -> str:
-        value = (self.decision or "").strip()
-        return {
-            "cancel": "deny",
-            "confirm_cancel": "deny",
-            "confirm_continue": "allow_once",
-            "continue": "allow_once",
-            "inspect_only": "deny",
-        }.get(value, value)
+        from openakita.core.security_confirm_channel import require_security_confirm_decision
+
+        return require_security_confirm_decision(self.decision, allow_timeout=False)
 
 
 def _normalize_permission_mode(mode: str) -> str:
@@ -2307,25 +2304,50 @@ async def rewind_checkpoint(body: dict):
 
 
 @router.post("/api/chat/security-confirm")
-async def security_confirm(body: SecurityConfirmRequest):
+async def security_confirm(body: SecurityConfirmRequest, request: Request):
     """Handle security confirmation from UI.
 
-    C8b-3：调 ``policy_v2.apply_resolution``——它统一负责（1）唤醒
-    reasoning_engine 上的 ``wait_for_resolution`` waiter；（2）按 decision
-    类型写 SessionAllowlistManager / UserAllowlistManager（替代 v1
-    ``mark_confirmed``）。
+    RiskGate confirmations are resolved by the backend-owned RiskGate store.
+    Ordinary PolicyV2 tool confirmations are delegated through the core
+    security-confirm resolver, which applies the normal allowlist side effects.
     """
-    decision = body.normalized_decision()
-    logger.info(f"[Security] Confirmation received: {body.confirm_id} -> {decision}")
     try:
-        from openakita.core.policy_v2 import apply_resolution
+        decision = body.normalized_decision()
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_security_confirmation_decision",
+                "confirm_id": body.confirm_id,
+                "decision": body.decision,
+                "message": str(e),
+            },
+        ) from e
+    logger.info(f"[Security] Confirmation received: {body.confirm_id} -> {decision}")
 
-        found = apply_resolution(body.confirm_id, decision)
-        if not found:
+    try:
+        from openakita.core.security_confirmation import resolve_security_confirmation
+
+        response = resolve_security_confirmation(body.confirm_id, decision)
+        if not response.get("handled"):
             logger.warning(f"[Security] No pending confirm found for id={body.confirm_id}")
+        if response.get("kind") == "risk_gate":
+            state = str(response.get("riskgate_state") or "")
+            if state:
+                response["ui_message"] = _riskgate_ui_message(state)
+        response.pop("handled", None)
+        return response
     except Exception as e:
-        logger.warning(f"[Security] Failed to resolve confirmation: {e}")
-    return {"status": "ok", "confirm_id": body.confirm_id, "decision": decision}
+        logger.exception("[Security] Failed to resolve confirmation")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "security_confirmation_failed",
+                "confirm_id": body.confirm_id,
+                "decision": decision,
+                "message": str(e) or type(e).__name__,
+            },
+        ) from e
 
 
 @router.post("/api/chat/security-confirm/batch")
@@ -2333,14 +2355,25 @@ async def security_confirm_batch(body: SecurityConfirmBatchRequest):
     """C18 Phase B：批量 resolve 同一 session 内 ≥2 个待 confirm。
 
     服务端先用 ``UIConfirmBus.list_batch_candidates`` 算出窗内 confirm_id
-    列表，再对每个 id 走 ``apply_resolution``——所有 allowlist 副作用与
-    单条 ``/api/chat/security-confirm`` 完全一致（决不绕过 SessionAllowlist/
-    UserAllowlist 写入）。
+    列表，再对每个 id 走统一的 security-confirm resolver。这样普通
+    PolicyV2 确认仍保留 allowlist 副作用，RiskGate 确认也不会绕过
+    后端状态机。
     """
-    decision = body.normalized_decision()
     try:
-        from openakita.core.policy_v2 import apply_resolution
+        decision = body.normalized_decision()
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_security_confirmation_decision",
+                "session_id": body.session_id,
+                "decision": body.decision,
+                "message": str(e),
+            },
+        ) from e
+    try:
         from openakita.core.policy_v2.global_engine import get_config_v2
+        from openakita.core.security_confirmation import resolve_security_confirmation
         from openakita.core.ui_confirm_bus import get_ui_confirm_bus
 
         bus = get_ui_confirm_bus()
@@ -2378,8 +2411,8 @@ async def security_confirm_batch(body: SecurityConfirmBatchRequest):
         missing_ids: list[str] = []
         for cid in candidates:
             try:
-                found = apply_resolution(cid, decision)
-                if found:
+                response = resolve_security_confirmation(cid, decision)
+                if response.get("handled"):
                     resolved_ids.append(cid)
                 else:
                     missing_ids.append(cid)
@@ -2485,7 +2518,16 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
     if body.timeout_seconds is not None:
         conf["timeout_seconds"] = body.timeout_seconds
     if body.default_on_timeout is not None:
-        conf["default_on_timeout"] = body.default_on_timeout
+        try:
+            from openakita.core.security_confirm_channel import (
+                require_security_confirm_timeout_default,
+            )
+
+            conf["default_on_timeout"] = require_security_confirm_timeout_default(
+                body.default_on_timeout
+            )
+        except ValueError as e:
+            return {"status": "error", "message": str(e)}
     if body.confirm_ttl is not None:
         conf["confirm_ttl"] = body.confirm_ttl
     if body.aggregation_window_seconds is not None:

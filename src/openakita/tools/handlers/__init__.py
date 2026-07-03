@@ -12,13 +12,15 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from openakita.core.policy_v2 import ApprovalClass, DecisionSource
+    from openakita.core.policy_v2 import ApprovalClass, DecisionSource, ToolPolicy
+    from openakita.tools.tool_guidance import ToolGuidance
 
 logger = logging.getLogger(__name__)
 
 
-# 处理器类型：同步或异步函数
-HandlerFunc = Callable[[str, dict], str | Awaitable[str]]
+# 处理器类型：同步或异步函数。返回值由 ToolExecutor 解释为可见输出；
+# 需要携带后台 metadata 时返回 ToolResultPayload。
+HandlerFunc = Callable[..., Any | Awaitable[Any]]
 
 # Per-tool permission callback: (tool_name, tool_input) → PermissionDecision | None
 # Returning None means "no opinion" (defer to other layers).
@@ -58,6 +60,8 @@ class SystemHandlerRegistry:
         # explicit register(tool_classes=) param and handler.TOOL_CLASSES attr.
         # Used by policy_v2.ApprovalClassifier via .get_tool_class() lookup.
         self._tool_classes: dict[str, tuple[Any, Any]] = {}
+        self._tool_policies: dict[str, Any] = {}
+        self._tool_guidance: dict[str, Any] = {}
 
     def register(
         self,
@@ -72,7 +76,7 @@ class SystemHandlerRegistry:
 
         Args:
             handler_name: 处理器名称（如 'browser', 'filesystem'）
-            handler: 处理器函数，签名为 (tool_name, params) -> str
+            handler: 处理器函数，签名为 (tool_name, params) -> result
             tool_names: 该处理器处理的工具名称列表。
                 如果为 None，自动从 handler 所属实例的 TOOLS 属性读取
                 （handler 是 bound method 时通过 __self__.TOOLS 获取）。
@@ -115,6 +119,8 @@ class SystemHandlerRegistry:
         # passes tool_classes= or handler defines TOOL_CLASSES. Importing
         # policy_v2 lazily to avoid bootstrap cycle from handlers/__init__.py.
         self._collect_tool_classes(handler, tool_names or [], tool_classes)
+        self._collect_tool_policies(handler, tool_names or [])
+        self._collect_tool_guidance(handler, tool_names or [])
 
         # C19-D2: WARN for tools without an explicit ApprovalClass declaration.
         # Falls back to ApprovalClassifier heuristics at decision time, which
@@ -196,6 +202,81 @@ class SystemHandlerRegistry:
         """ApprovalClassifier explicit_lookup callback."""
         return self._tool_classes.get(tool_name)
 
+    def _collect_tool_policies(self, handler: HandlerFunc, tool_names: list[str]) -> None:
+        """Collect handler.TOOL_POLICIES declarations for PolicyEngineV2."""
+        owner = getattr(handler, "__self__", None)
+        handler_attr = getattr(owner, "TOOL_POLICIES", None) if owner is not None else None
+        if not isinstance(handler_attr, dict):
+            return
+
+        from openakita.core.policy_v2 import ToolPolicy
+        from openakita.core.policy_v2.context import _coerce_tool_policies
+
+        tool_names_set = set(tool_names or [])
+        for tool_name, policy in handler_attr.items():
+            tool = str(tool_name or "").strip()
+            if not tool:
+                continue
+            if tool_names_set and tool not in tool_names_set:
+                logger.warning(
+                    "[Registry] tool_policies lists %r which is not in this "
+                    "handler's TOOLS list — dropping (possible typo)",
+                    tool,
+                )
+                continue
+            if isinstance(policy, ToolPolicy):
+                self._tool_policies[tool] = policy
+            elif isinstance(policy, dict):
+                coerced = _coerce_tool_policies({tool: policy})
+                if tool in coerced:
+                    self._tool_policies[tool] = coerced[tool]
+            else:
+                logger.warning(
+                    "[Registry] tool_policies for %r has unsupported type %s — dropping",
+                    tool,
+                    type(policy).__name__,
+                )
+
+    def get_tool_policies(self) -> dict[str, ToolPolicy]:
+        """Return a copy of tool-declared policy metadata."""
+        return dict(self._tool_policies)
+
+    def get_tool_policy(self, tool_name: str) -> ToolPolicy | None:
+        """Return one tool's declared policy metadata, if any."""
+        return self._tool_policies.get(tool_name)
+
+    def _collect_tool_guidance(self, handler: HandlerFunc, tool_names: list[str]) -> None:
+        """Collect handler.TOOL_GUIDANCE declarations for prompt construction."""
+        owner = getattr(handler, "__self__", None)
+        handler_attr = getattr(owner, "TOOL_GUIDANCE", None) if owner is not None else None
+        if not isinstance(handler_attr, dict):
+            return
+
+        from openakita.tools.tool_guidance import ToolGuidance, coerce_tool_guidance
+
+        tool_names_set = set(tool_names or [])
+        for tool_name, guidance in coerce_tool_guidance(handler_attr).items():
+            tool = str(tool_name or "").strip()
+            if not tool:
+                continue
+            if tool_names_set and tool not in tool_names_set:
+                logger.warning(
+                    "[Registry] tool_guidance lists %r which is not in this "
+                    "handler's TOOLS list — dropping (possible typo)",
+                    tool,
+                )
+                continue
+            if isinstance(guidance, ToolGuidance):
+                self._tool_guidance[tool] = guidance
+
+    def get_tool_guidance(self) -> dict[str, ToolGuidance]:
+        """Return prompt-facing guidance metadata keyed by tool name."""
+        return dict(self._tool_guidance)
+
+    def get_tool_guidance_for_tool(self, tool_name: str) -> ToolGuidance | None:
+        """Return one tool's prompt-facing guidance metadata, if any."""
+        return self._tool_guidance.get(tool_name)
+
     def unregister(self, handler_name: str) -> bool:
         """
         注销处理器
@@ -216,6 +297,8 @@ class SystemHandlerRegistry:
             }
             for tool in removed_tools:
                 self._tool_classes.pop(tool, None)
+                self._tool_policies.pop(tool, None)
+                self._tool_guidance.pop(tool, None)
             logger.info(f"Unregistered system handler: {handler_name}")
             return True
         return False
@@ -250,7 +333,7 @@ class SystemHandlerRegistry:
         handler_name: str,
         tool_name: str,
         params: dict[str, Any],
-    ) -> str:
+    ) -> Any:
         """
         执行处理器
 
@@ -260,7 +343,7 @@ class SystemHandlerRegistry:
             params: 参数字典
 
         Returns:
-            执行结果字符串
+            handler 返回的工具结果
 
         Raises:
             ValueError: 处理器不存在
@@ -285,7 +368,7 @@ class SystemHandlerRegistry:
         self,
         tool_name: str,
         params: dict[str, Any],
-    ) -> str:
+    ) -> Any:
         """
         根据工具名执行
 
@@ -294,7 +377,7 @@ class SystemHandlerRegistry:
             params: 参数字典
 
         Returns:
-            执行结果字符串
+            handler 返回的工具结果
 
         Raises:
             ValueError: 工具未映射到处理器
@@ -303,7 +386,11 @@ class SystemHandlerRegistry:
         if not handler_name:
             raise ValueError(f"No handler mapped for tool: {tool_name}")
 
-        return await self.execute(handler_name, tool_name, params)
+        return await self.execute(
+            handler_name,
+            tool_name,
+            params,
+        )
 
     def has_handler(self, handler_name: str) -> bool:
         """检查处理器是否存在"""
@@ -318,6 +405,8 @@ class SystemHandlerRegistry:
         if tool_name in self._tool_to_handler:
             del self._tool_to_handler[tool_name]
             self._tool_classes.pop(tool_name, None)
+            self._tool_policies.pop(tool_name, None)
+            self._tool_guidance.pop(tool_name, None)
             return True
         return False
 
@@ -403,6 +492,6 @@ def get_handler(handler_name: str) -> HandlerFunc | None:
     return default_handler_registry.get_handler(handler_name)
 
 
-async def execute_tool(tool_name: str, params: dict[str, Any]) -> str:
+async def execute_tool(tool_name: str, params: dict[str, Any]) -> Any:
     """通过默认注册表执行工具"""
     return await default_handler_registry.execute_by_tool(tool_name, params)

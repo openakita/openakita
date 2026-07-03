@@ -13,8 +13,9 @@
 # 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
 # 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
 #    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
-# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
-# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 3. 行为依赖参数 → 在 handler 类内声明 TOOL_POLICIES
+# 4. LLM 工具使用提示 → 在 handler 类内声明 TOOL_GUIDANCE
+# 5. 跑 pytest tests/unit/test_classifier_completeness.py 验证
 # 详见 docs/policy_v2_research.md §4.21
 """
 
@@ -26,8 +27,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ...core.policy_v2 import ApprovalClass
+from ...core.policy_v2 import ApprovalClass, ToolPolicy
 from ...memory.json_utils import coerce_text, coerce_tool_names
+from ..tool_guidance import ToolGuidance
+from ..tool_result import (
+    ToolResultPayload,
+    mutation_effect,
+    tool_receipt,
+    tool_result_payload,
+    visible_tool_content,
+)
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -69,6 +78,38 @@ class MemoryHandler:
         "memory_delete_by_query": ApprovalClass.DESTRUCTIVE,
     }
 
+    TOOL_POLICIES = {
+        "memory_delete_by_query": ToolPolicy(
+            preview_param="dry_run",
+            preview_default=True,
+            preview_step_name="tool_preview",
+            preview_reason="tool call only previews candidates",
+            commit_requires_riskgate=True,
+            riskgate_operation="memory_delete",
+            riskgate_scope_params=("query", "source", "memory_type"),
+            riskgate_scope_required_any=("query", "source", "memory_type"),
+            riskgate_scope_exact_params=("source", "memory_type"),
+            riskgate_scope_text_params=("query",),
+            commit_step_name="tool_commit_requires_riskgate",
+            commit_reason="tool commit requires confirmed RiskGate tool authorization",
+            display_label="按条件删除记忆",
+            display_description="删除匹配查询条件的长期记忆",
+        )
+    }
+
+    TOOL_GUIDANCE = {
+        "memory_delete_by_query": ToolGuidance(
+            riskgate_operation="memory_delete",
+            riskgate_execution_hint=(
+                "请优先使用 `memory_delete_by_query` 工具（dry_run=True 先预览，"
+                "再用预览返回的 confirm_token 执行删除；不需要再次调用 ask_user）。"
+                "**禁止**用 `grep` / `glob` 在用户主目录或 `.openakita/runtime`、"
+                "`.openakita/workspaces` 等运行时数据目录递归搜索；那是程序内部存储，"
+                "会让后端卡死。"
+            ),
+        )
+    }
+
     _SEARCH_TOOLS = frozenset(
         {
             "search_memory",
@@ -108,6 +149,33 @@ class MemoryHandler:
     )
 
     @staticmethod
+    def _structured_memory_result(
+        content: str,
+        *,
+        action: str,
+        status: str = "ok",
+        effect: bool = True,
+        **details: Any,
+    ):
+        receipt = tool_receipt(
+            action=action,
+            target="memory",
+            status=status,
+            **details,
+        )
+        metadata: dict[str, Any] = {"receipts": [receipt]}
+        if effect:
+            metadata["effects"] = [
+                mutation_effect(
+                    action=action,
+                    target="memory",
+                    status=status,
+                    **details,
+                )
+            ]
+        return tool_result_payload(content, metadata=metadata)
+
+    @staticmethod
     def _context_text(value: Any, limit: int | None = None) -> str:
         """Format persisted session values safely for human-readable output."""
         if value is None:
@@ -127,6 +195,10 @@ class MemoryHandler:
         return text
 
     @staticmethod
+    def _visible_text(value: str | ToolResultPayload[str]) -> str:
+        return visible_tool_content(value)
+
+    @staticmethod
     def _importance_value(value: Any, default: float = 0.5) -> float:
         """Coerce model-provided importance into the supported 0.0-1.0 range."""
         if isinstance(value, bool):
@@ -138,6 +210,19 @@ class MemoryHandler:
         if not math.isfinite(importance):
             importance = default
         return max(0.0, min(1.0, importance))
+
+    def _active_session(self) -> Any:
+        """Return the active Agent session across current and legacy names."""
+        session = getattr(self.agent, "_current_session", None)
+        if session is not None:
+            return session
+
+        session = getattr(self.agent, "current_session", None)
+        if session is not None:
+            return session
+
+        agent_state = getattr(self.agent, "agent_state", None)
+        return getattr(agent_state, "current_session", None)
 
     _ONE_OFF_TASK_RE = re.compile(
         r"用户(?:当前|这次|希望|想要|需要|要求|让我|要).{0,24}"
@@ -396,12 +481,24 @@ class MemoryHandler:
         if self._guide_marker_path is not None and self._guide_marker_path.exists():
             self._guide_injected = True
 
-    async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
-        """处理工具调用"""
+    async def handle(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+    ) -> str:
+        """Public handler API: return only the LLM-visible result text."""
+        return self._visible_text(await self.handle_structured(tool_name, params))
+
+    async def handle_structured(
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+    ) -> str | ToolResultPayload[str]:
+        """处理工具调用，保留仅供 ToolExecutor 消费的 backend metadata。"""
         if tool_name == "consolidate_memories":
             return await self._consolidate_memories(params)
         elif tool_name == "add_memory":
-            return self._add_memory(params)
+            return self._add_memory_structured(params)
         elif tool_name == "search_memory":
             result = self._search_memory(params)
         elif tool_name == "get_memory_stats":
@@ -417,14 +514,14 @@ class MemoryHandler:
         elif tool_name == "get_session_context":
             return self._get_session_context(params)
         elif tool_name == "memory_delete_by_query":
-            return self._delete_by_query(params)
+            return self._delete_by_query_structured(params)
         else:
             return f"❌ Unknown memory tool: {tool_name}"
 
         if tool_name in self._SEARCH_TOOLS and not self._guide_injected:
             self._guide_injected = True
             self._persist_guide_marker()
-            return self._NAVIGATION_GUIDE + result
+            return self._NAVIGATION_GUIDE + self._visible_text(result)
         return result
 
     async def _consolidate_memories(self, params: dict) -> str:
@@ -473,6 +570,9 @@ class MemoryHandler:
             return f"❌ 记忆整理失败: {e}"
 
     def _add_memory(self, params: dict) -> str:
+        return self._visible_text(self._add_memory_structured(params))
+
+    def _add_memory_structured(self, params: dict) -> str | ToolResultPayload[str]:
         """添加记忆（含内容去重保护）"""
         from ...memory.types import Memory, MemoryPriority, MemoryType
 
@@ -607,7 +707,15 @@ class MemoryHandler:
                 lines.append(f"已替代旧记忆: {superseded} 条")
             if scope_note:
                 lines.append(scope_note)
-            return "\n".join(lines)
+            return self._structured_memory_result(
+                "\n".join(lines),
+                action="write",
+                memory_id=str(memory_id),
+                memory_type=str(mem_type_str),
+                scope=str(scope),
+                scope_owner=str(scope_owner),
+                superseded_count=int(superseded or 0),
+            )
         else:
             return "记忆已存在（语义相似），无需重复记录。"
 
@@ -1589,11 +1697,10 @@ class MemoryHandler:
         return "\n".join(parts) if parts else "无可用会话信息"
 
     def _delete_by_query(self, params: dict) -> str:
-        """受控的按查询条件批量删除记忆 (PR-A3)。
+        return self._visible_text(self._delete_by_query_structured(params))
 
-        前置条件（任一）：
-        - 用户已通过 RiskGate 授权（session.metadata 含 risk_authorized_intent_active）
-        - 调用方显式 dry_run=True 仅预览
+    def _delete_by_query_structured(self, params: dict) -> str | ToolResultPayload[str]:
+        """受控的按查询条件批量删除记忆。
 
         参数：
         - query: 必填，按内容关键字过滤
@@ -1689,7 +1796,13 @@ class MemoryHandler:
                 "（这只是预览，未执行删除。如确认无误，请用相同参数 + "
                 f'`dry_run=False` 且 `confirm_token="{expected_token}"` 再调一次。）'
             )
-            return "\n".join(preview_lines)
+            return self._structured_memory_result(
+                "\n".join(preview_lines),
+                action="preview",
+                effect=False,
+                matched_count=len(candidates),
+                confirm_token=expected_token,
+            )
 
         if expected_token and confirm_token != expected_token:
             preview_lines.append("")
@@ -1699,46 +1812,28 @@ class MemoryHandler:
             )
             return "\n".join(preview_lines)
 
-        # 同时检查 RiskGate 已授权，二次保险
-        try:
-            session = getattr(self.agent, "current_session", None)
-            authorized = False
-            if session is not None:
-                intent = session.get_metadata("risk_authorized_intent_active")
-                if isinstance(intent, dict) and intent.get("operation") == "memory_delete":
-                    authorized = True
-            if not authorized:
-                preview_lines.append("")
-                preview_lines.append(
-                    "❌ 拒绝执行：未检测到用户在 RiskGate 中确认的授权范围。"
-                    "请引导用户重新发起删除请求并通过弹窗确认。"
-                )
-                return "\n".join(preview_lines)
-        except Exception:
-            pass
-
         deleted = 0
+        deleted_ids: list[str] = []
         for mem in candidates:
             try:
                 mem_id = str(getattr(mem, "id", ""))
                 if mem_id and mm.delete_memory(mem_id):
                     deleted += 1
+                    deleted_ids.append(mem_id)
             except Exception as exc:
                 logger.warning("[memory_delete_by_query] delete %s failed: %s", mem_id, exc)
 
-        # 消费授权
-        try:
-            session = getattr(self.agent, "current_session", None)
-            if session is not None:
-                session.set_metadata("risk_authorized_intent_active", None)
-        except Exception:
-            pass
-
-        return f"✅ 已删除 {deleted}/{len(candidates)} 条记忆。\n前 5 条预览见上一步 dry_run 输出。"
+        return self._structured_memory_result(
+            f"✅ 已删除 {deleted}/{len(candidates)} 条记忆。\n前 5 条预览见上一步 dry_run 输出。",
+            action="delete",
+            deleted_count=deleted,
+            matched_count=len(candidates),
+            deleted_ids=deleted_ids,
+        )
 
 
 def create_handler(agent: "Agent"):
     """创建记忆处理器"""
     handler = MemoryHandler(agent)
     agent._memory_handler = handler
-    return handler.handle
+    return handler.handle_structured
