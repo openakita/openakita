@@ -9,6 +9,7 @@ an ``execution_id`` for an execution that never actually ran.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -49,6 +50,15 @@ def _make_cron_task(name: str = "manual-task") -> ScheduledTask:
     )
 
 
+async def _wait_until(
+    predicate: Callable[[], bool], *, attempts: int = 100, delay: float = 0.02
+) -> None:
+    for _ in range(attempts):
+        if predicate():
+            return
+        await asyncio.sleep(delay)
+
+
 @pytest.mark.asyncio
 async def test_trigger_in_background_actually_runs_executor(tmp_path):
     """The backported trigger_in_background used to leave the executor
@@ -74,12 +84,10 @@ async def test_trigger_in_background_actually_runs_executor(tmp_path):
         "(otherwise /executions/{id} polls always 404)."
     )
 
-    # Wait for the background runner to complete. The executor itself
-    # is trivial; a short poll is enough.
-    for _ in range(50):
-        if calls:
-            break
-        await asyncio.sleep(0.02)
+    await _wait_until(
+        lambda: execution_id in [e.id for e in scheduler._executions]
+        and task_id not in scheduler._running_tasks
+    )
 
     assert calls == [task_id], (
         "Executor should have been invoked exactly once. If this fails "
@@ -130,11 +138,7 @@ async def test_trigger_in_background_rejects_rapid_retry(tmp_path):
     )
 
     gate.set()
-    # Wait until the first execution finishes and releases the marker.
-    for _ in range(100):
-        if task_id not in scheduler._running_tasks:
-            break
-        await asyncio.sleep(0.02)
+    await _wait_until(lambda: task_id not in scheduler._running_tasks)
     assert task_id not in scheduler._running_tasks
 
 
