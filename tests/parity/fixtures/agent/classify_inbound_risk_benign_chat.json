@@ -1,0 +1,13 @@
+{
+  "name": "classify_inbound_risk_benign_chat",
+  "probe": "classify_inbound_risk_end_to_end",
+  "message": "hello, what is the weather today?",
+  "expected": {
+    "risk_level": "none",
+    "target_kind": "unknown",
+    "requires_confirmation": false,
+    "skip_gate_label": "skip",
+    "skip_gate_reason": "trust_mode"
+  },
+  "description": "Benign chat: classifier produces NONE/unknown/no-confirm. With trust mode active (identity/POLICIES.yaml default), should_skip_risk_gate short-circuits via check_trust_mode_skip and returns label='skip', reason='trust_mode'. Pinning this outcome end-to-end catches drift in either the classifier defaults or the trust-mode skip logic."
+}

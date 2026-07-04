@@ -1,0 +1,42 @@
+{
+  "id": "case-tool-call",
+  "label": "Brain surfaces tool_use blocks as tool_calls list",
+  "system": "be helpful",
+  "messages": [
+    {
+      "role": "user",
+      "content": "search README"
+    }
+  ],
+  "mock_response": {
+    "content_blocks": [
+      {
+        "type": "text",
+        "text": "calling tool"
+      },
+      {
+        "type": "tool_use",
+        "id": "tu-1",
+        "name": "grep",
+        "input": {
+          "pattern": "Brain"
+        }
+      }
+    ],
+    "stop_reason": "tool_use",
+    "input_tokens": 12,
+    "output_tokens": 8
+  },
+  "expected": {
+    "final_text": "calling tool",
+    "tool_sequence": [
+      [
+        "grep",
+        {
+          "pattern": "Brain"
+        }
+      ]
+    ],
+    "stop_reason": "tool_use"
+  }
+}

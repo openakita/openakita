@@ -243,7 +243,7 @@ class TestTaskAgentProfiles:
 
 class TestSystemTaskRegistration:
     async def test_memory_task_keeps_user_custom_trigger(self, monkeypatch):
-        from openakita.core.agent import Agent
+        from openakita.agent.core import Agent
 
         task = ScheduledTask(
             id="system_daily_memory",

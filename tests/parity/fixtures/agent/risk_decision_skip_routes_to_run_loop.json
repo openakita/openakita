@@ -1,0 +1,7 @@
+{
+  "name": "risk_decision_skip_routes_to_run_loop",
+  "probe": "risk_decision_next_node",
+  "label": "skip",
+  "expected": "run_loop",
+  "description": "RiskGateDecision('skip') routes to run_loop"
+}

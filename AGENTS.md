@@ -89,7 +89,8 @@ tests/                  # Test suite
 
 - **Identity system**: `identity/SOUL.md` (values), `AGENT.md` (behavior), `USER.md` (preferences), `MEMORY.md` (persistent memory). Compiled to `identity/runtime/` for prompt injection.
 - **Prompt pipeline**: `prompt/compiler.py` compiles identity files → `prompt/builder.py` assembles system prompt in layers: Identity → Persona → Runtime → Session Rules → AGENTS.md → Catalogs → Memory → User.
-- **Multi-agent**: `agents/orchestrator.py` routes messages, `agents/factory.py` creates instances from `AgentProfile`. Sub-agents share the same `PromptAssembler` and session. Max delegation depth = 5.
+- **Multi-agent**: `agents/orchestrator.py` routes messages, `agents/factory.py` creates instances from `AgentProfile`. Sub-agents share the same `PromptAssembler` and session.
+- **Delegation model**: The main agent can spawn sub-agents via `delegate_to_agent` / `delegate_parallel` / `delegate_to_pool` / `delegate_to_role`. Sub-agents do NOT receive these delegation tools (single-hop delegation), so grandchildren are not possible. The "max_delegation_depth = 5" mentioned in older docs is an architectural target tracked by RCA v11 §4.4; the current implementation is single-hop. See `core/_agent_legacy.py` `_agent_tool_names` for the sub-agent tool blacklist.
 - **Ralph Loop**: The core execution loop in `core/ralph.py` — never gives up, retries with analysis on failure.
 - **Tool system**: Each tool has a handler in `tools/handlers/` and a definition in `tools/definitions/`. Skills are SKILL.md-based (declarative), loaded by `skills/loader.py`.
 - **AGENTS.md injection**: `prompt/builder.py` auto-reads `AGENTS.md` from CWD into the system prompt (developer section). All agents (including sub-agents) get project context automatically.
@@ -185,3 +186,17 @@ Examples:
 - Skill loading order: `__builtin__` → workspace → `.cursor/skills` → `.claude/skills` → `skills/` → global home dirs.
 - `multi_agent_enabled` defaults to `True` and is always on; the toggle has been removed.
 - Temporary files (diffs, crash dumps, scripts, downloads) go in `tools-tmp/` — never the repo root. The directory is git-ignored. Never use `git add -A`; always stage files by explicit path.
+
+## Project evolution / open follow-ups
+
+Some work items uncovered by exploratory testing v10 / v11 are
+intentionally deferred. The single source of truth for their status,
+trigger conditions, and exit criteria is
+`docs/follow-ups/skipped-items-roadmap.md`. Cursor rules
+`plugin-tool-classes.mdc` and `skipped-items-guidance.mdc` route AI
+agents to the relevant section when they touch glob-matched code
+(plugin manifests, the legacy 308 shim, template endpoints, LLM tool
+budgets). Read the roadmap section AND the linked RCA section
+(`_skip_items_rca_v11.md`) BEFORE changing those code paths — many
+items carry an explicit "DO NOT do yet" note that explains the
+deferral.

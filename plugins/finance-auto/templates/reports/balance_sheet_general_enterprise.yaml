@@ -1,0 +1,101 @@
+# templates/reports/balance_sheet_general_enterprise.yaml
+# 资产负债表 · 企业会计准则
+#
+# Source: _finance_plugin_design_v0.3_part_biz.md §3.5 (full YAML example)
+# combined with §3.2 (12 new lines vs small-enterprise) and the small-enterprise
+# baseline.  We use the v0.3 ``extends`` mechanism so this file only declares
+# the *differences*; the loader will overlay these rules on top of the
+# small-enterprise baseline (overwrite-by-reference_code).
+#
+# TBD lines (use_right_assets / contract_liabilities / lease_liabilities):
+# the business team has not yet locked the account codes (CAS does not hard-
+# code them).  The yaml_loader detects code="TBD" and emits a runtime warning
+# but does not block report generation -- the cell will be rendered as 0 with
+# a "TBD" provenance flag.
+template_id: bs_ge_v1
+name: 资产负债表
+sheet_kind: balance_sheet
+accounting_standard: general_enterprise
+industry: general
+xltpl_file: templates/excel/资产负债表_企业会计准则.xlsx
+version: 1
+extends: balance_sheet_small_enterprise.yaml
+
+# Only differences vs small-enterprise are listed.  Add new lines, override
+# existing rules, or null-out small-enterprise lines that no longer apply.
+rules:
+  # § v0.3 Part Biz §3.2 - 12 new BS lines for general-enterprise standard
+  - { reference_code: BS_GE_1131_FIN_RCV, target_line_no: 4,
+      target_label: 应收款项融资,
+      indent_level: 1, data_source: account, code: "1131",
+      account_filter: "^1131", balance_kind: closing_debit, sign: 1,
+      notes: "CAS 22 修订（2017）" }
+
+  - { reference_code: BS_GE_1232_CA, target_line_no: 7,
+      target_label: 合同资产,
+      indent_level: 1, data_source: account, code: "1232",
+      account_filter: "^1232",
+      balance_kind: subaccount_debit_positive, sign: 1,
+      is_reclassification: true, notes: "CAS 14 收入准则（2017）" }
+
+  - { reference_code: BS_GE_1241_HFS, target_line_no: 11,
+      target_label: 持有待售资产,
+      indent_level: 1, data_source: formula, code: "1241",
+      formula: "{{ ACCOUNT('1241','closing_debit') - ACCOUNT('1242','closing_credit') }}",
+      sign: 1, notes: "CAS 42 持有待售（2017）" }
+
+  - { reference_code: BS_GE_1511_AS, target_line_no: 20,
+      target_label: 长期股权投资（联营/合营）,
+      indent_level: 1, data_source: formula, code: "1511.联营|1511.合营",
+      formula: "{{ ACCOUNT_GROUP(['1511.联营','1511.合营'],'closing_net') - ACCOUNT('1512','closing_net') }}",
+      sign: 1, notes: "与 BS_1511 一般长投分行" }
+
+  - { reference_code: BS_GE_1606_ROU, target_line_no: 22,
+      target_label: 使用权资产,
+      indent_level: 1, data_source: account, code: "TBD",
+      account_filter: "^1606", balance_kind: closing_debit, sign: 1,
+      notes: "CAS 21 租赁（2018）；✱ 业务方未确认编码，留 TBD 警告" }
+
+  - { reference_code: BS_GE_1711, target_line_no: 23,
+      target_label: 商誉,
+      indent_level: 1, data_source: formula, code: "1711",
+      formula: "{{ ACCOUNT('1711','closing_debit') - ACCOUNT('1712','closing_credit') }}",
+      sign: 1, notes: "非同一控制企业合并；与无形资产分行" }
+
+  - { reference_code: BS_GE_1801_EXT, target_line_no: 26,
+      target_label: 长期待摊费用（企业准则附注更细）,
+      indent_level: 1, data_source: account, code: "1801",
+      account_filter: "^1801", balance_kind: closing_debit, sign: 1,
+      notes: "覆盖小企业 BS_1801；附注 M1 W3 引入" }
+
+  - { reference_code: BS_GE_1811_DTA, target_line_no: 27,
+      target_label: 递延所得税资产,
+      indent_level: 1, data_source: account, code: "1811",
+      account_filter: "^1811", balance_kind: closing_debit, sign: 1,
+      notes: "CAS 18 所得税" }
+
+  - { reference_code: BS_GE_5301_CAP, target_line_no: 28,
+      target_label: 开发支出（资本化）,
+      indent_level: 1, data_source: account, code: "5301.资本化",
+      account_filter: "^5301\\.资本化",
+      balance_kind: closing_debit, sign: 1,
+      notes: "已结转 1701 不重复" }
+
+  - { reference_code: BS_GE_2241_CL, target_line_no: 38,
+      target_label: 合同负债,
+      indent_level: 1, data_source: account, code: "TBD",
+      account_filter: "^2241",
+      balance_kind: subaccount_credit_positive, sign: 1,
+      notes: "CAS 14 替代「预收账款」；✱ 业务方未确认编码，留 TBD" }
+
+  - { reference_code: BS_GE_2811_LL, target_line_no: 47,
+      target_label: 租赁负债,
+      indent_level: 1, data_source: account, code: "TBD",
+      account_filter: "^2811", balance_kind: closing_credit, sign: 1,
+      notes: "CAS 21 租赁（2018）；✱ 业务方未确认编码，留 TBD" }
+
+  - { reference_code: BS_GE_2901_DTL, target_line_no: 48,
+      target_label: 递延所得税负债,
+      indent_level: 1, data_source: account, code: "2901",
+      account_filter: "^2901", balance_kind: closing_credit, sign: 1,
+      notes: "CAS 18 所得税" }

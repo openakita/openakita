@@ -408,7 +408,7 @@ duration 参考:
         if not user_turns:
             return [], []
 
-        from openakita.core.tool_executor import smart_truncate as _st
+        from openakita.agent.tools import smart_truncate as _st
 
         conv_lines = []
         for t in turns[-30:]:
@@ -491,7 +491,7 @@ duration 参考:
         if len(assistant_turns) < 2:
             return []
 
-        from openakita.core.tool_executor import smart_truncate as _st
+        from openakita.agent.tools import smart_truncate as _st
 
         conv_lines = []
         for t in turns[-30:]:
@@ -578,7 +578,7 @@ duration 参考:
             return ""
 
         lines = ["\n工具调用:"]
-        from openakita.core.tool_executor import smart_truncate as _st
+        from openakita.agent.tools import smart_truncate as _st
 
         for tc in (tool_calls or [])[:5]:
             name = tc.get("name", "unknown")
@@ -623,7 +623,7 @@ duration 参考:
 
         action_nodes = self._extract_action_nodes(turns)
 
-        from openakita.core.tool_executor import smart_truncate as _st
+        from openakita.agent.tools import smart_truncate as _st
 
         def _episode_line(t):
             c, _ = _st(coerce_text(t.content), 600, save_full=False, label="mem_episode")
@@ -758,7 +758,7 @@ duration 参考:
                 resp = await self._call_brain(prompt)
                 text = coerce_text(getattr(resp, "content", resp)).strip()
 
-                from openakita.core.tool_executor import smart_truncate as _st
+                from openakita.agent.tools import smart_truncate as _st
 
                 sp_content, _ = _st(text, 2000, save_full=False, label="mem_scratchpad")
                 return Scratchpad(
@@ -947,7 +947,7 @@ duration 参考:
 
         memories: list[Memory] = []
 
-        from openakita.core.tool_executor import smart_truncate as _st
+        from openakita.agent.tools import smart_truncate as _st
 
         if any(k in text for k in ("我喜欢", "我更喜欢", "我习惯", "我偏好", "请以后", "以后请")):
             pref_content, _ = _st(text, 400, save_full=False, label="mem_pref")

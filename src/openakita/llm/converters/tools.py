@@ -158,10 +158,11 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
                         recovered_keys = sorted(input_dict.keys())
                         err_msg = (
                             f"❌ 工具 '{tool_name}' 的参数 JSON 被 API 截断后自动修复，"
-                            f"但内容可能不完整（恢复的键: {recovered_keys}）。\n"
+                            f"但内容可能不完整（恢复的键: {recovered_keys}）。文件未写入。\n"
                             f"原始参数长度: {arg_len} 字符。\n"
                             "请缩短参数后重试：\n"
-                            "- write_file / edit_file：将大文件拆分为多次小写入\n"
+                            "- 大文档：先 write_file 写开头，再用 append_file 逐段追加"
+                            "（每次 content < 6000 字符），不要一次塞入全文\n"
                             "- 其他工具：精简参数，避免嵌入超长文本"
                         )
                         input_dict = {PARSE_ERROR_KEY: err_msg}
@@ -184,10 +185,11 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
                             input_dict = {
                                 PARSE_ERROR_KEY: (
                                     f"⚠️ 你的 write_file 调用因内容过长（{content_len} 字符）被 API 截断，"
-                                    f"'path' 参数丢失。请用以下方法解决：\n"
-                                    "1. 将大文件内容拆分为多次小写入（每次 < 8000 字符）\n"
-                                    "2. 或使用 run_shell + Python 脚本生成大文件\n"
-                                    "3. 先写骨架文件，再用多次追加写入填充内容"
+                                    f"'path' 参数丢失。文件未写入（避免半截文件）。请改用分段方式：\n"
+                                    "1. 先用 write_file 写入开头部分（每次 content < 6000 字符）\n"
+                                    "2. 再用 append_file 逐段追加后续内容（每次 content < 6000 字符），"
+                                    "直到全文写完——这样每次工具参数都很小，不会被截断\n"
+                                    "3. 或使用 run_shell/run_powershell + 脚本生成大文件"
                                 )
                             }
                     else:

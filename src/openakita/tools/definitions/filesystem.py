@@ -131,6 +131,13 @@ FILESYSTEM_TOOLS = [
             "- Do not write content copied from a truncated tool preview or paginated "
             "read_file page (for example text containing [OUTPUT_TRUNCATED], "
             "[PAGE_HAS_MORE], or [已截断]); read the missing pages or use edit_file first\n"
+            "- LARGE content (a long article / 上万~数万字 deliverable): do NOT cram it "
+            "all into one write_file call — passing very large content as a single JSON "
+            "argument risks being truncated in transit (content arrives incomplete or "
+            "'path' is lost). Instead write the file in sections: first write_file with "
+            "the opening section, then APPEND each subsequent section with append_file "
+            "(every call's content < ~6000 chars). This keeps every tool argument small "
+            "and guarantees the final file is complete.\n"
             "- Uses UTF-8 encoding\n\n"
             "When to use write_file vs edit_file:\n"
             "- write_file: Creating entirely new files, or replacing entire file content\n"
@@ -261,6 +268,54 @@ FILESYSTEM_TOOLS = [
                 },
             },
             "required": ["path", "old_string", "new_string"],
+        },
+    },
+    {
+        "name": "append_file",
+        "category": "File System",
+        "description": (
+            "Append content to the END of a file (creating it + parent dirs if "
+            "missing). This is the RELIABLE way to build a LARGE document "
+            "(a long article / 上万~数万字 deliverable) without truncation:\n"
+            "- Passing a whole large document as ONE write_file `content` "
+            "argument risks the JSON tool-call being truncated in transit "
+            "(the content arrives incomplete or 'path' is lost).\n"
+            "- Instead: call write_file once with the opening section, then call "
+            "append_file repeatedly to add each subsequent section. Keep every "
+            "single call's `content` modest (roughly < 6000 characters) so no "
+            "individual tool argument is large enough to be truncated. The file "
+            "on disk ends up complete.\n"
+            "- append_file NEVER overwrites existing content; it only adds to the "
+            "end. Uses UTF-8.\n"
+            "- Prefer edit_file for surgical changes to existing text; use "
+            "append_file specifically for incremental large-document assembly."
+        ),
+        "detail": """向文件末尾追加内容（文件或父目录不存在会自动创建）。
+
+**用途**: 可靠地分段写出超长文档（上万~数万字），避免单次 write_file 因
+内容过长导致 JSON 工具参数被截断。
+
+**推荐流程**:
+1. 先用 write_file 写入开头部分
+2. 再用 append_file 逐段追加后续内容（每次内容建议 < 6000 字符）
+3. 最终磁盘上的文件是完整的
+
+**注意事项**:
+- 只追加、绝不覆盖已有内容
+- 使用 UTF-8 编码""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "文件路径。参数名必须是 `path`（实现层对常见别名做兜底）。",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "要追加到文件末尾的内容（建议单次 < 6000 字符）",
+                },
+            },
+            "required": ["path", "content"],
         },
     },
     {

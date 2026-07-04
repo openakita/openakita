@@ -1,0 +1,17 @@
+{
+  "id": "case-empty",
+  "label": "empty content gets an empty text block",
+  "system": "",
+  "messages": [],
+  "mock_response": {
+    "content_blocks": [],
+    "stop_reason": "end_turn",
+    "input_tokens": 0,
+    "output_tokens": 0
+  },
+  "expected": {
+    "final_text": "",
+    "tool_sequence": [],
+    "stop_reason": "end_turn"
+  }
+}

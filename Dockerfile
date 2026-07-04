@@ -29,7 +29,18 @@ COPY openakita-plugin-sdk/ openakita-plugin-sdk/
 COPY --from=frontend /app/apps/setup-center/dist-web/ apps/setup-center/dist-web/
 RUN mkdir -p docs-site/.vitepress/dist
 
-RUN pip install --no-cache-dir . \
+# Build arg: opt in to the finance-auto plugin extra (openpyxl, xlrd,
+# xltpl, keyring, cryptography — see pyproject.toml). Off by default
+# so plain OpenAkita installs stay slim. Build with:
+#     docker build --build-arg INSTALL_FINANCE_AUTO=1 -t openakita:fa .
+# Docs: plugins/finance-auto/docs/DEPLOY_DOCKER.md §3.
+ARG INSTALL_FINANCE_AUTO=0
+
+RUN if [ "$INSTALL_FINANCE_AUTO" = "1" ]; then \
+        pip install --no-cache-dir ".[finance-auto]"; \
+    else \
+        pip install --no-cache-dir .; \
+    fi \
     && pip install --no-cache-dir ./openakita-plugin-sdk
 
 # ── Stage 3: Final runtime image ──

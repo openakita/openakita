@@ -47,7 +47,7 @@ def captured_events(monkeypatch):
 async def test_tool_intent_preview_emits_per_call_with_redacted_secrets(
     captured_events,
 ):
-    from openakita.core.tool_executor import ToolExecutor
+    from openakita.agent.tools import ToolExecutor
 
     te = object.__new__(ToolExecutor)
     te._canonicalize_tool_name = lambda n: n
@@ -99,7 +99,7 @@ async def test_tool_intent_preview_emits_per_call_with_redacted_secrets(
 async def test_tool_intent_preview_no_loop_drops_silently(monkeypatch):
     """When called outside any running event loop, must NOT raise and
     must NOT emit a 'coroutine was never awaited' warning."""
-    from openakita.core.tool_executor import ToolExecutor
+    from openakita.agent.tools import ToolExecutor
 
     te = object.__new__(ToolExecutor)
     te._canonicalize_tool_name = lambda n: n

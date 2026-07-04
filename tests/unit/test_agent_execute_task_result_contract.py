@@ -2,11 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from openakita.core.agent import (
-    Agent,
-    _looks_like_progress_only_task_text,
-    _prefer_task_final_response,
-)
+from openakita.agent.core import Agent
+from openakita.core._agent_legacy import _looks_like_progress_only_task_text, _prefer_task_final_response
 from openakita.core.ralph import TaskResult
 from openakita.llm.types import AllEndpointsFailedError
 

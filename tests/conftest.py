@@ -19,8 +19,8 @@ if sys.platform == "win32":
     _orig_wmi = getattr(platform, "_wmi_query", None)
     if _orig_wmi is not None:
         platform._wmi_query = lambda *a, **k: ("10.0.26200", 1, "Multiprocessor Free", 0, 0)
-        platform.system()  # populate cache
-        platform._wmi_query = _orig_wmi  # restore
+        platform.system()          # populate cache
+        platform._wmi_query = _orig_wmi   # restore
 
 import pytest
 
@@ -47,7 +47,6 @@ def mock_brain(mock_llm_client: MockLLMClient) -> MockBrain:
 def test_session():
     """A clean test Session with no messages."""
     from tests.fixtures.factories import create_test_session
-
     return create_test_session()
 
 
@@ -68,7 +67,6 @@ def test_settings(tmp_workspace: Path):
     os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-placeholder")
 
     from openakita.config import Settings
-
     settings = Settings(
         project_root=tmp_workspace,
         database_path=str(tmp_workspace / "data" / "agent.db"),
@@ -84,7 +82,6 @@ def test_settings(tmp_workspace: Path):
 @pytest.fixture
 def mock_response_factory():
     """Factory fixture for creating MockResponse instances."""
-
     def _create(
         content: str = "",
         tool_calls: list[dict] | None = None,
@@ -95,7 +92,6 @@ def mock_response_factory():
             tool_calls=tool_calls,
             reasoning_content=reasoning_content,
         )
-
     return _create
 
 
@@ -150,11 +146,29 @@ def call_tool_text_helper():
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def _disable_desktop_notifications(monkeypatch):
-    """禁止测试过程中弹出真实的桌面通知。"""
+    """禁止测试过程中弹出真实的桌面通知。
+
+    Phase 2 commit 11 把 ``desktop_notify`` 模块从 ``openakita.core``
+    搬到了 ``openakita.agent``，旧路径仅保留 re-export shim。要让
+    no-op 保护无论调用方走哪条 import 路径都生效，需要同时
+    monkeypatch 两个模块的 send/notify 函数名字。
+    """
     # fail-soft：模块未导入时静默跳过（pytest collection 阶段可能还没 import）
+    modules: list = []
     try:
-        from openakita.core import desktop_notify as _dn
+        from openakita.core import desktop_notify as _dn_core
+
+        modules.append(_dn_core)
     except Exception:
+        pass
+    try:
+        from openakita.agent import desktop_notify as _dn_agent
+
+        modules.append(_dn_agent)
+    except Exception:
+        pass
+
+    if not modules:
         return
 
     async def _noop_async(*_args, **_kwargs):
@@ -163,10 +177,15 @@ def _disable_desktop_notifications(monkeypatch):
     def _noop_sync(*_args, **_kwargs):
         return False
 
-    monkeypatch.setattr(_dn, "send_desktop_notification", _noop_sync, raising=False)
-    monkeypatch.setattr(_dn, "send_desktop_notification_async", _noop_async, raising=False)
-    monkeypatch.setattr(_dn, "notify_task_completed", _noop_sync, raising=False)
-    monkeypatch.setattr(_dn, "notify_task_completed_async", _noop_async, raising=False)
+    for _dn in modules:
+        monkeypatch.setattr(_dn, "send_desktop_notification", _noop_sync, raising=False)
+        monkeypatch.setattr(
+            _dn, "send_desktop_notification_async", _noop_async, raising=False
+        )
+        monkeypatch.setattr(_dn, "notify_task_completed", _noop_sync, raising=False)
+        monkeypatch.setattr(
+            _dn, "notify_task_completed_async", _noop_async, raising=False
+        )
 
     # 双保险：把 settings.desktop_notify_enabled 也置为 False，覆盖任何动态导入
     try:
@@ -189,6 +208,24 @@ def _disable_desktop_notifications(monkeypatch):
 # 一管理 C8b-1 新加的两个 singleton，避免污染其他 test 既有的 UIConfirmBus
 # 显式 setup/teardown。
 # ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _default_org_review_off(monkeypatch):
+    """核心1/核心2: keep the new parent-executed review + rework loop OFF by
+    default in tests.
+
+    The review adds an extra LLM call per dispatched child and the rework loop
+    can re-run a child, which would corrupt the deterministic canned-reply
+    sequences (and call-count assertions) that the legacy orgs_v2 dispatch
+    tests rely on. Production defaults the review ON (env unset). Tests that
+    specifically exercise the review/rework behaviour opt in explicitly via
+    ``monkeypatch.setenv("OPENAKITA_ORG_REVIEW_ENABLED", "1")``.
+
+    The knobs are read dynamically (see ``_runtime_agent_pipeline_executor``)
+    so a plain ``setenv`` here is honoured without import-time freezing.
+    """
+    monkeypatch.setenv("OPENAKITA_ORG_REVIEW_ENABLED", "0")
+
+
 @pytest.fixture(autouse=True)
 def _isolate_policy_v2_singletons():
     """每个 test 前后清空 DeathSwitch + SkillAllowlist singleton 状态。
@@ -224,3 +261,4 @@ def _isolate_policy_v2_singletons():
         reset_death_switch_tracker()
         reset_skill_allowlist_manager()
         reset_session_allowlist_manager()
+

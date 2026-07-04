@@ -125,6 +125,7 @@ _INTERRUPT_BEHAVIOR_MAP: dict[str, InterruptBehavior] = {
     # Reads are cancel; any write/mutate is block (half-written file
     # is worse than the user re-running the operation).
     "delete_file": "block",
+    "append_file": "block",
     "edit_file": "block",
     "glob": "cancel",
     "grep": "cancel",

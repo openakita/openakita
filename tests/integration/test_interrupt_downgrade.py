@@ -44,6 +44,11 @@ from openakita.core.tool_interrupt_behavior import (
     warn_unclassified_tools,
 )
 
+# The agent-layer preempt orchestration (``Agent._preempt_or_queue_prev_task``
+# + INTERRUPT→QUEUE downgrade + QUEUE block-tool timeout extension + the
+# tool-executor begin/end source wiring) is ported into ``core/_agent_legacy``
+# after the ADR-0003 split (Batch C). All tests below are active.
+
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 

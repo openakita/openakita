@@ -7,12 +7,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from openakita.core.agent_state import AgentState
-from openakita.core.reasoning_engine import (
-    Decision,
-    DecisionType,
-    ReasoningEngine,
-    _looks_like_waiting_for_user_response,
-)
+from openakita.agent.reasoning import Decision, DecisionType, ReasoningEngine
+from openakita.core._reasoning_engine_legacy import _looks_like_waiting_for_user_response
 
 
 def test_detects_user_handoff_blocker_text():

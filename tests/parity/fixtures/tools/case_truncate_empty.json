@@ -1,0 +1,11 @@
+{
+  "description": "smart_truncate of empty string is no-op",
+  "input": {
+    "content": "",
+    "limit": 100
+  },
+  "expected": {
+    "out": "",
+    "was_truncated": false
+  }
+}

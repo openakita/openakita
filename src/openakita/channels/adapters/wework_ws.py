@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..base import ChannelAdapter
+from ..base import ChannelAdapter, force_close_ws
 from ..types import (
     MediaFile,
     MediaStatus,
@@ -657,21 +657,72 @@ class WeWorkWsAdapter(ChannelAdapter):
         self._connection_task = asyncio.create_task(self._connection_loop())
         logger.info(f"WeWork WS adapter starting, will connect to {self.config.ws_url}")
 
-    async def stop(self) -> None:
+    async def stop(self, *, force_close_after_s: float | None = None) -> None:
+        """优雅停止 WeWork WS adapter，带 force-close 兜底。
+
+        Sprint 17 P1-A 治根（forensics: ``_v34_biz/_p1a_ws_force_close.md``）：
+
+        Pre-fix 实测 v33 backend_run1.log 每个 wework_ws bot 在 stop() 阶段
+        耗 ~4s，根因是 ``await self._connection_task`` / ``await self._ws.close()``
+        都是无 timeout 的 cooperative cancel；websockets 库 close() 默认等
+        close_timeout=5s（connect 时配的）才返回，三个 bot 串在 gateway.stop
+        gather 内被最慢的拖到整 ~4s。
+
+        本次治根：每个 graceful await 都包 wait_for(force_close_after_s)，
+        超时后 fallback 到 ``transport.close()`` 强关 socket。不动持久化层、
+        不丢消息（pending_replies 已在 _reject_all_pending 中处理）。
+
+        Args:
+            force_close_after_s: 每个 cooperative await 的硬超时秒数。
+                取不到 settings 时默认 2.0s。这是相对 single-adapter
+                gateway 兜底（channels_gateway_stop_timeout_s=8s）的内层
+                短超时；让单 adapter 自己尽快放手，不靠外层 gather 抢救。
+        """
         self._running = False
+
+        if force_close_after_s is None:
+            try:
+                from openakita.config import settings as _settings
+
+                force_close_after_s = float(
+                    getattr(_settings, "channels_ws_force_close_after_s", 2.0) or 2.0
+                )
+            except Exception:
+                force_close_after_s = 2.0
+
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._heartbeat_task
+            try:
+                await asyncio.wait_for(self._heartbeat_task, timeout=force_close_after_s)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+            except Exception as exc:  # noqa: BLE001 -- never block shutdown
+                logger.debug("[WeWork WS] heartbeat_task await error: %s", exc)
         if self._connection_task:
             self._connection_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._connection_task
-        if self._ws:
-            await self._ws.close()
+            try:
+                await asyncio.wait_for(self._connection_task, timeout=force_close_after_s)
+            except (asyncio.CancelledError, TimeoutError):
+                logger.warning(
+                    "[WeWork WS] _connection_task did not finish within %.1fs, "
+                    "abandoning (was likely stuck in ws.close handshake)",
+                    force_close_after_s,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[WeWork WS] connection_task await error: %s", exc)
+        if self._ws is not None:
+            await force_close_ws(self._ws, timeout=force_close_after_s, logger_=logger)
             self._ws = None
         if self._webhook:
-            await self._webhook.close()
+            try:
+                await asyncio.wait_for(self._webhook.close(), timeout=force_close_after_s)
+            except TimeoutError:
+                logger.warning(
+                    "[WeWork WS] webhook.close exceeded %.1fs, abandoning",
+                    force_close_after_s,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[WeWork WS] webhook.close error: %s", exc)
         for task in list(self._bg_tasks):
             if not task.done():
                 task.cancel()

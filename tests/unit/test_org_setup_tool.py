@@ -19,7 +19,7 @@ import pytest
 
 
 def test_organization_watchdog_disabled_by_default():
-    from openakita.orgs.models import Organization
+    from openakita.orgs.org_models import Organization
 
     org = Organization(name="default watchdog")
     assert org.watchdog_enabled is True

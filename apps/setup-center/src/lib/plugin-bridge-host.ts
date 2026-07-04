@@ -41,6 +41,11 @@ const HOST_CAPABILITIES = [
   "api-proxy",
   "websocket-events",
   "config",
+  // M3 Infra fix: advertise the finance-auto native command surface so
+  // the plugin iframe can dispatch the 4 Tauri commands registered in
+  // `apps/setup-center/src-tauri/src/finance.rs`. Plugins probe this
+  // list during handshake to decide whether to enable native buttons.
+  "finance-native",
 ] as const;
 
 function isBridgeMessage(data: unknown): data is BridgeMessage {
@@ -175,6 +180,10 @@ export class PluginBridgeHost {
         this.handleClipboard(data);
         break;
 
+      case "bridge:finance-native-invoke":
+        this.handleFinanceNativeInvoke(data);
+        break;
+
       default:
         this.post({
           type: "bridge:unsupported",
@@ -286,6 +295,43 @@ export class PluginBridgeHost {
     if (!text) return;
     navigator.clipboard.writeText(text).catch(() => {});
     this.post({ type: "bridge:clipboard-ack", requestId: msg.requestId, payload: { ok: true } });
+  }
+
+  /**
+   * Dispatch a finance-auto native command request from the plugin
+   * iframe. Routes through the allow-listed wrappers in
+   * `lib/native/finance-native.ts` so arbitrary `invoke()` cannot be
+   * issued by plugin code. The ack envelope mirrors the wrapper's
+   * `NativeResult<T>` shape so callers can branch on `kind`.
+   */
+  private async handleFinanceNativeInvoke(msg: BridgeMessage) {
+    const { command, args } = (msg.payload || {}) as {
+      command?: string;
+      args?: Record<string, unknown>;
+    };
+    if (!command) {
+      this.post({
+        type: "bridge:finance-native-ack",
+        requestId: msg.requestId,
+        payload: { kind: "error", error: "missing command" },
+      });
+      return;
+    }
+    try {
+      const native = await import("./native/finance-native");
+      const result = await native.dispatchFinanceNative(command, args);
+      this.post({
+        type: "bridge:finance-native-ack",
+        requestId: msg.requestId,
+        payload: result,
+      });
+    } catch (e) {
+      this.post({
+        type: "bridge:finance-native-ack",
+        requestId: msg.requestId,
+        payload: { kind: "error", error: String(e) },
+      });
+    }
   }
 
   private async handleApiRequest(msg: BridgeMessage) {

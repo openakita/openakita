@@ -1,6 +1,6 @@
 import pytest
 
-from openakita.core.reasoning_engine import ReasoningEngine
+from openakita.agent.reasoning import ReasoningEngine
 from openakita.tools.handlers.web_search import WebSearchHandler
 from openakita.tools.tool_hints import ToolConfigError
 from openakita.tools.web_search import runtime as web_search_runtime

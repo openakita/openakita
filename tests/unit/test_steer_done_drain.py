@@ -227,9 +227,13 @@ class TestReasonStreamWiringContract:
     """Pin the wiring into the real streaming loop without running it."""
 
     def test_impl_calls_drain_steer_before_finish(self) -> None:
-        src = inspect.getsource(ReasoningEngine._reason_stream_impl)
+        # Local keeps the canonical monolithic ``reason_stream`` (ADR-0003 split
+        # lives in ``openakita.agent``; upstream's extra ``_reason_stream_impl``
+        # extraction was not adopted), so the done-drain is wired into
+        # ``reason_stream`` itself.
+        src = inspect.getsource(ReasoningEngine.reason_stream)
         assert "_drain_steer_before_finish(" in src, (
-            "the done-drain helper must be invoked from _reason_stream_impl's "
+            "the done-drain helper must be invoked from reason_stream's "
             "final-answer termination block, otherwise steered messages that "
             "land during final-answer generation are silently dropped."
         )
@@ -237,7 +241,7 @@ class TestReasonStreamWiringContract:
     def test_done_drain_runs_before_terminal_completion(self) -> None:
         """The drain check must happen BEFORE the turn is finalised — calling
         it after the COMPLETED transition / done event would be pointless."""
-        src = inspect.getsource(ReasoningEngine._reason_stream_impl)
+        src = inspect.getsource(ReasoningEngine.reason_stream)
         drain_at = src.find("_drain_steer_before_finish(")
         # unique anchor for the terminal finalisation of the final-answer block
         finalize_at = src.find("is_verify_incomplete = final_exit_reason")
@@ -250,7 +254,7 @@ class TestReasonStreamWiringContract:
     def test_continue_path_resets_force_retry_budget(self) -> None:
         """When continuing for a steered follow-up, the per-answer retry
         counters reset so the new user ask gets a clean budget."""
-        src = inspect.getsource(ReasoningEngine._reason_stream_impl)
+        src = inspect.getsource(ReasoningEngine.reason_stream)
         # within the _steered continue block, all three counters reset to 0
         block = src[src.find("if _steered:") : src.find("if _steered:") + 2200]
         assert "no_tool_call_count = 0" in block

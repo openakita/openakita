@@ -205,7 +205,7 @@ class TestCallsiteMigrationStatic:
         assert "resolve_security_confirmation" in text
 
     def test_agent_cleanup_migrated(self) -> None:
-        text = self._read("core/agent.py")
+        text = self._read("core/_agent_legacy.py")
         # _pe.cleanup_session no longer used
         assert "_pe.cleanup_session" not in text
         # New chain visible

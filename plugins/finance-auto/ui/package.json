@@ -1,0 +1,17 @@
+{
+  "name": "@openakita/finance-auto-ui-tools",
+  "version": "1.0.0-rc1",
+  "private": true,
+  "description": "Dev-only tooling for the finance-auto plugin UI bundle (gen-types.mjs OpenAPI -> TS generator). The shipped iframe bundle is plain JS in dist/index.html and does NOT depend on this package.",
+  "type": "module",
+  "scripts": {
+    "gen-types": "node ./scripts/gen-types.mjs"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.4.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -39,7 +39,7 @@ from ..tool_result import (
 )
 
 if TYPE_CHECKING:
-    from ...core.agent import Agent
+    from ...agent.core import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,7 @@ class FilesystemHandler:
         "write_file",
         "read_file",
         "edit_file",
+        "append_file",
         "list_directory",
         "grep",
         "glob",
@@ -110,6 +111,7 @@ class FilesystemHandler:
         "write_file": ApprovalClass.MUTATING_SCOPED,
         "read_file": ApprovalClass.READONLY_SCOPED,
         "edit_file": ApprovalClass.MUTATING_SCOPED,
+        "append_file": ApprovalClass.MUTATING_SCOPED,
         "list_directory": ApprovalClass.READONLY_GLOBAL,
         "grep": ApprovalClass.READONLY_SEARCH,
         "glob": ApprovalClass.READONLY_SEARCH,
@@ -248,6 +250,8 @@ class FilesystemHandler:
             return await self._read_file(params)
         elif tool_name == "edit_file":
             return await self._edit_file(params)
+        elif tool_name == "append_file":
+            return await self._append_file(params)
         elif tool_name == "list_directory":
             return await self._list_directory(params)
         elif tool_name == "grep":
@@ -569,7 +573,7 @@ class FilesystemHandler:
             return text
 
         total_lines = len(lines)
-        from ...core.tool_executor import save_overflow
+        from ...agent.tools import save_overflow
 
         overflow_path = save_overflow("run_shell", text)
         truncated = "\n".join(lines[: self.SHELL_MAX_LINES])
@@ -624,9 +628,10 @@ class FilesystemHandler:
             if content_len > 5000:
                 return (
                     f"❌ write_file 缺少必要参数 'path'（content 长度 {content_len} 字符，"
-                    "疑似因内容过长导致 JSON 参数被截断）。\n"
-                    "请缩短内容后重试：\n"
-                    "1. 将大文件拆分为多次写入（每次 < 8000 字符）\n"
+                    "疑似因内容过长导致 JSON 参数被截断）。文件未写入。\n"
+                    "请改用分段方式：\n"
+                    "1. 先 write_file 写开头部分，再用 append_file 逐段追加"
+                    "（每次 content < 6000 字符），直到全文写完\n"
                     "2. 或用平台命令工具执行 Python 脚本生成大文件"
                     "（Windows 用 run_powershell，其他环境用 run_shell）"
                 )
@@ -700,6 +705,58 @@ class FilesystemHandler:
             path=resolved_path,
             requested_path=str(path),
         )
+
+    async def _append_file(self, params: dict) -> str:
+        """追加内容到文件末尾（用于可靠地分段写出超长文档）。
+
+        与 write_file 共享同一套 path 别名兜底 / 边界护栏 / 截断预览拒绝逻辑，
+        但使用 append 模式：永不覆盖已有内容，只在末尾追加。模型用
+        write_file 写开头 + 多次 append_file 续写，即可让每次工具参数都很小、
+        不被 API 截断，最终磁盘文件完整。
+        """
+        path = (
+            params.get("path")
+            or params.get("filepath")
+            or params.get("file_path")
+            or params.get("filename")
+        )
+        unc_err = self._check_unc(path)
+        if unc_err:
+            return f"❌ {unc_err}"
+        content = params.get("content")
+        if not path:
+            return "❌ append_file 缺少必要参数 'path'。请提供文件路径和内容后重试。"
+        if content is None:
+            return "❌ append_file 缺少必要参数 'content'。请提供要追加的内容后重试。"
+        guard = self._guard_path_boundary(path, op="write")
+        if guard:
+            return guard
+        if self._looks_like_truncated_tool_preview(content):
+            return (
+                "❌ append_file 检测到内容里包含工具分页/截断预览标记，已拒绝追加，"
+                "避免把不完整的预览内容写入真实文件。\n"
+                "请先用 read_file 的 offset/limit 取得完整内容后再追加。"
+            )
+        policy = self._get_fix_policy()
+        if policy:
+            target = self._resolve_to_abs(path)
+            write_roots = policy.get("write_roots") or []
+            if not self._is_under_any_root(target, write_roots):
+                msg = (
+                    "❌ 自检自动修复护栏：禁止写入该路径（仅允许修复 "
+                    "tools/skills/mcps/channels 相关目录）。"
+                    f"\n目标: {target}"
+                )
+                logger.warning(msg)
+                return msg
+        await self.agent.file_tool.append(path, content)
+        try:
+            file_path = self.agent.file_tool._resolve_path(path)
+            size = file_path.stat().st_size
+            result = f"内容已追加: {path}（追加 {len(content)} 字符，当前文件 {size} bytes）"
+        except OSError:
+            result = f"内容已追加: {path}（追加 {len(content)} 字符）"
+        return result
 
     # read_file 默认最大行数。运行时可通过 READ_FILE_DEFAULT_LIMIT 调整。
     READ_FILE_DEFAULT_LIMIT = 2000
@@ -1010,7 +1067,7 @@ class FilesystemHandler:
         output = header + "\n".join(lines)
 
         if len(output.split("\n")) > self.SHELL_MAX_LINES:
-            from ...core.tool_executor import save_overflow
+            from ...agent.tools import save_overflow
 
             overflow_path = save_overflow("grep", output)
             truncated = "\n".join(output.split("\n")[: self.SHELL_MAX_LINES])

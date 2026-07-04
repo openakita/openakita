@@ -852,6 +852,298 @@ class MemoryManager:
             self._save_memories()
         return saved_id
 
+    # ==================== Owner Bucket Merge ====================
+
+    @staticmethod
+    def _merge_recency_key(memory: SemanticMemory) -> tuple[str, str]:
+        """Recency ordering key for owner-merge conflict resolution.
+
+        Newer memories sort *higher*. Missing timestamps degrade to empty
+        strings so a memory without ``updated_at`` never crashes the merge.
+        """
+        updated = getattr(memory, "updated_at", None) or getattr(memory, "created_at", None)
+        created = getattr(memory, "created_at", None)
+
+        def _iso(value: Any) -> str:
+            return value.isoformat() if hasattr(value, "isoformat") else str(value or "")
+
+        return (_iso(updated), _iso(created))
+
+    def _merge_move_memory(
+        self, memory: SemanticMemory, *, to_user_id: str, to_workspace_id: str
+    ) -> str:
+        """Move a source memory into the target owner bucket via ``save_user_memory``.
+
+        ``save_semantic`` / ``_save_identity_slot_memory`` upsert **by id**, so
+        passing the source object (which keeps its id) rewrites the same row's
+        owner columns in place — a true move, not a copy. This reuses the
+        existing content-dedup and identity-slot supersede logic: when
+        ``save_semantic``'s dedup finds a near-duplicate already in the target
+        bucket it returns *that* id without touching the source row (the caller
+        then retires the leftover source copy); for identity facts the older
+        target slot value is superseded automatically.
+
+        Returns the surviving memory id (``memory.id`` when the row was moved,
+        or the pre-existing duplicate's id when dedup short-circuited).
+        """
+        return self.save_user_memory(
+            memory,
+            scope="user",
+            scope_owner="",
+            user_id=to_user_id,
+            workspace_id=to_workspace_id,
+        )
+
+    def _merge_deactivate_source(self, memory: SemanticMemory, *, superseded_by: str) -> None:
+        """Retire a source memory that lost to an existing target entry.
+
+        Marks it ``superseded_by`` the surviving target id so it drops out of
+        active reads (panel + recall) without a destructive delete — the same
+        retirement mechanism ``_save_identity_slot_memory`` uses for older slot
+        values.
+        """
+        if not superseded_by:
+            return
+        self.store.update_semantic(memory.id, {"superseded_by": superseded_by})
+
+    def merge_owner_memories(
+        self,
+        *,
+        from_user_id: str,
+        to_user_id: str,
+        from_workspace_id: str = "default",
+        to_workspace_id: str = "default",
+        scope: str = "user",
+        dry_run: bool = True,
+        sample_limit: int = 8,
+    ) -> dict[str, Any]:
+        """Safely merge one owner bucket's active memories into another.
+
+        Reuses ``save_user_memory`` (content dedup + identity-slot supersede)
+        so the merge cannot introduce duplicate facts or leave two active
+        values for the same identity slot (e.g. ``user.name``). Identity-slot
+        conflicts are resolved by *recency* (keep the newer value) rather than
+        letting the historical source blindly win; losing source rows are
+        retired via ``superseded_by`` instead of deleted.
+
+        Idempotent: moved rows leave the source bucket (their ``user_id`` now
+        points at the target) and retired rows become inactive, so a repeat
+        call finds nothing to do and returns all-zero counts.
+
+        With ``dry_run=True`` nothing is written; the same classification runs
+        against read-only probes and an in-memory projection of the target
+        bucket, so the returned counts / samples faithfully predict a real run.
+
+        The ``merged`` / ``superseded`` / ``skipped`` counts partition every
+        source item (plus ``errors``); ``conflicts`` is a diagnostic overlay
+        counting identity-slot collisions (a subset of superseded + skipped).
+        """
+        report: dict[str, Any] = {
+            "dry_run": bool(dry_run),
+            "scope": scope,
+            "from_owner": {"user_id": from_user_id, "workspace_id": from_workspace_id},
+            "to_owner": {"user_id": to_user_id, "workspace_id": to_workspace_id},
+            "source_total": 0,
+            "merged": 0,
+            "superseded": 0,
+            "skipped": 0,
+            "conflicts": 0,
+            "errors": 0,
+            "samples": {"merged": [], "superseded": [], "skipped": [], "conflicts": []},
+        }
+
+        if not to_user_id:
+            report["reason"] = "target user_id is required"
+            return report
+        if from_user_id == to_user_id and from_workspace_id == to_workspace_id:
+            report["reason"] = "source and target owner are identical"
+            return report
+
+        source = self.store.load_all_memories(
+            scope=scope,
+            scope_owner="",
+            user_id=from_user_id,
+            workspace_id=from_workspace_id,
+            include_inactive=False,
+        )
+        report["source_total"] = len(source)
+        if not source:
+            return report
+
+        target_active = self.store.load_all_memories(
+            scope=scope,
+            scope_owner="",
+            user_id=to_user_id,
+            workspace_id=to_workspace_id,
+            include_inactive=False,
+        )
+
+        # In-memory projection of the target bucket, mutated as we go so dry_run
+        # and real runs classify each source item identically (and so two source
+        # items that collapse into one another are counted once).
+        target_slots: dict[str, SemanticMemory] = {}
+        target_contents: set[str] = set()
+        for mem in target_active:
+            slot = self._identity_slot_for(mem)
+            if slot:
+                prev = target_slots.get(slot)
+                if prev is None or self._merge_recency_key(mem) > self._merge_recency_key(prev):
+                    target_slots[slot] = mem
+            else:
+                fp = (mem.content or "").strip().lower()[:120]
+                if fp:
+                    target_contents.add(fp)
+
+        def _sample(bucket: str, mem: SemanticMemory, **extra: Any) -> None:
+            samples = report["samples"][bucket]
+            if len(samples) < sample_limit:
+                entry: dict[str, Any] = {
+                    "id": mem.id,
+                    "content": (mem.content or "")[:120],
+                    "subject": getattr(mem, "subject", "") or "",
+                    "predicate": getattr(mem, "predicate", "") or "",
+                }
+                entry.update(extra)
+                samples.append(entry)
+
+        # Newest first: within an identity slot the freshest source value is
+        # considered first, so older duplicates deterministically lose.
+        source.sort(key=self._merge_recency_key, reverse=True)
+
+        for mem in source:
+            try:
+                slot = self._identity_slot_for(mem)
+                if slot:
+                    self._merge_identity_item(
+                        mem,
+                        slot=slot,
+                        target_slots=target_slots,
+                        to_user_id=to_user_id,
+                        to_workspace_id=to_workspace_id,
+                        dry_run=dry_run,
+                        report=report,
+                        sample=_sample,
+                    )
+                    continue
+
+                self._merge_content_item(
+                    mem,
+                    scope=scope,
+                    target_contents=target_contents,
+                    to_user_id=to_user_id,
+                    to_workspace_id=to_workspace_id,
+                    dry_run=dry_run,
+                    report=report,
+                    sample=_sample,
+                )
+            except Exception as exc:  # noqa: BLE001
+                report["errors"] += 1
+                logger.warning(
+                    "[Manager] merge_owner_memories: failed on %s: %s", mem.id[:8], exc
+                )
+
+        if not dry_run and report["merged"] + report["superseded"] + report["skipped"] > 0:
+            # Observer keeps _memories coherent per-write; a single defensive
+            # resync guarantees the cache reflects the bulk move immediately.
+            with contextlib.suppress(Exception):
+                self._reload_from_sqlite()
+        return report
+
+    def _merge_identity_item(
+        self,
+        mem: SemanticMemory,
+        *,
+        slot: str,
+        target_slots: dict[str, SemanticMemory],
+        to_user_id: str,
+        to_workspace_id: str,
+        dry_run: bool,
+        report: dict[str, Any],
+        sample,
+    ) -> None:
+        existing = target_slots.get(slot)
+        if existing is None:
+            if not dry_run:
+                self._merge_move_memory(
+                    mem, to_user_id=to_user_id, to_workspace_id=to_workspace_id
+                )
+            target_slots[slot] = mem
+            report["merged"] += 1
+            sample("merged", mem, slot=slot)
+            return
+
+        report["conflicts"] += 1
+        if self._merge_recency_key(mem) > self._merge_recency_key(existing):
+            # Source is newer → it wins; save_user_memory supersedes the older
+            # target slot value automatically.
+            if not dry_run:
+                self._merge_move_memory(
+                    mem, to_user_id=to_user_id, to_workspace_id=to_workspace_id
+                )
+            target_slots[slot] = mem
+            report["superseded"] += 1
+            sample("superseded", mem, slot=slot, superseded_target=existing.id)
+        else:
+            # Target already holds a newer value → keep it, retire the source.
+            if not dry_run:
+                self._merge_deactivate_source(mem, superseded_by=existing.id)
+            report["skipped"] += 1
+            sample("conflicts", mem, slot=slot, kept_target=existing.id)
+
+    def _merge_content_item(
+        self,
+        mem: SemanticMemory,
+        *,
+        scope: str,
+        target_contents: set[str],
+        to_user_id: str,
+        to_workspace_id: str,
+        dry_run: bool,
+        report: dict[str, Any],
+        sample,
+    ) -> None:
+        content = (mem.content or "").strip()
+        fp = content.lower()[:120]
+        dedup_eligible = bool(content) and len(content) > 10
+
+        if dry_run:
+            is_dup = False
+            if dedup_eligible:
+                if fp and fp in target_contents:
+                    is_dup = True
+                else:
+                    with contextlib.suppress(Exception):
+                        is_dup = bool(
+                            self.store._check_semantic_duplicate(
+                                content, scope, "", to_user_id, to_workspace_id
+                            )
+                        )
+            if is_dup:
+                report["skipped"] += 1
+                sample("skipped", mem)
+            else:
+                if fp:
+                    target_contents.add(fp)
+                report["merged"] += 1
+                sample("merged", mem)
+            return
+
+        # Real run: trust save_user_memory's actual dedup decision.
+        saved_id = self._merge_move_memory(
+            mem, to_user_id=to_user_id, to_workspace_id=to_workspace_id
+        )
+        if saved_id == mem.id:
+            if fp:
+                target_contents.add(fp)
+            report["merged"] += 1
+            sample("merged", mem)
+        else:
+            # Dedup short-circuited: a duplicate already lives in the target
+            # bucket. Retire the untouched source row so it stops lingering.
+            self._merge_deactivate_source(mem, superseded_by=saved_id)
+            report["skipped"] += 1
+            sample("skipped", mem, duplicate_of=saved_id)
+
     # 任务流水账识别：包含这些动词或客观操作描述的提取项几乎一定是
     # 一次性任务记录（删除 / 创建 / 上传 / 编辑 / 调用工具 / 帮我做 ...），
     # 不应被自动升级为 PERMANENT，否则 USER.md 会被任务日志污染（P1-7）。

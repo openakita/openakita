@@ -1,4 +1,4 @@
-from openakita.core.context_manager import ContextManager
+from openakita.agent.context import ContextManager
 from openakita.memory.manager import MemoryManager
 from openakita.sessions.session import Session
 

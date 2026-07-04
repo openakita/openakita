@@ -51,13 +51,28 @@ def adapter():
 
 @pytest.fixture
 def connected_adapter(adapter):
-    """Create adapter with a mocked WebSocket."""
+    """Create adapter with a mocked WebSocket.
+
+    ``reply_ack_timeout`` is squeezed to a fraction of a second here. In
+    production it is 15s (a real WeCom server ACKs each reply frame), but the
+    mocked ``ws.send`` never produces an ACK, so any test that drives a code
+    path through ``_send_reply_with_ack`` (e.g. the pre-send thinking indicator
+    fired by ``_handle_msg_callback``) would otherwise block the FULL 15s per
+    send. Across this file's ~15 message-handling tests — some looping several
+    frames (``test_lru_eviction`` sends 7) — that summed to 200s+, which made
+    the whole ``tests/unit`` run appear to "hang" near the end. Tests that
+    assert the happy path still install their own ``auto_ack`` task, which
+    resolves the future well within this window, so behaviour is unchanged;
+    tests that don't care just fail-fast instead of stalling.
+    The production default (15.0) is still pinned by ``TestConfig.test_defaults``.
+    """
     ws = AsyncMock()
     ws.send = AsyncMock()
     ws.close = AsyncMock()
     adapter._ws = ws
     adapter._running = True
     adapter._authenticated.set()
+    adapter.config.reply_ack_timeout = 0.2
     return adapter
 
 

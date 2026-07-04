@@ -98,7 +98,11 @@ const DB_TYPE_META: Record<string, { icon: string; label: string; cls: string }>
   task_timeout:    { icon: "⏱", label: "org.dashboard.feedTimeout",  cls: "db-ev-timeout" },
   task_completed:  { icon: "✓", label: "org.dashboard.feedComplete", cls: "db-ev-completed" },
   node_activated:  { icon: "▶", label: "org.dashboard.feedExecute",  cls: "db-ev-activated" },
-  _default:        { icon: "•", label: "",                           cls: "" },
+  task_cancelled:  { icon: "⏹", label: "org.dashboard.feedCancel",   cls: "db-ev-rejected" },
+  task_failed:     { icon: "✗", label: "org.dashboard.feedFailed",   cls: "db-ev-rejected" },
+  tool_called:     { icon: "🛠", label: "org.dashboard.feedToolCall", cls: "db-ev-activated" },
+  tool_completed:  { icon: "✓", label: "org.dashboard.feedToolDone", cls: "db-ev-completed" },
+  _default:        { icon: "•", label: "org.dashboard.feedEvent",    cls: "" },
 };
 
 function stripMd(s: string): string {
@@ -173,7 +177,7 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
 
   const fetchStats = useCallback(async () => {
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/stats`);
+      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/stats`);
       if (res.ok) setStats(await res.json());
     } catch { /* ignore */ }
     setLoading(false);

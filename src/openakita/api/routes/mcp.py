@@ -14,7 +14,7 @@ import logging
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from openakita.tools.mcp_catalog import MCPConfigField
@@ -229,6 +229,12 @@ async def connect_mcp_server(request: Request, body: MCPConnectRequest):
             "tools": [{"name": t.name, "description": t.description} for t in tools],
         }
 
+    # Distinguish "unknown / unconfigured server" (a not-found resource) from a
+    # genuine connection failure. Only the latter keeps the legacy
+    # 200 + ``status=failed`` contract below; an unknown server is a 404.
+    if body.server_name not in client.list_servers():
+        raise HTTPException(404, f"MCP server '{body.server_name}' not found")
+
     catalog = _get_mcp_catalog(request)
     if catalog:
         server_info = catalog.get_server(body.server_name)
@@ -373,7 +379,7 @@ async def toggle_mcp_server(request: Request, server_name: str, body: MCPToggleR
 
     server_info = catalog.get_server(server_name)
     if not server_info:
-        return {"status": "error", "message": f"MCP server '{server_name}' not found"}
+        raise HTTPException(404, f"MCP server '{server_name}' not found")
 
     server_info.enabled = body.enabled
     catalog.invalidate_cache()

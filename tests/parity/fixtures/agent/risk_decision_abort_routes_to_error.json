@@ -1,0 +1,7 @@
+{
+  "name": "risk_decision_abort_routes_to_error",
+  "probe": "risk_decision_next_node",
+  "label": "abort",
+  "expected": "error",
+  "description": "RiskGateDecision('abort') routes to error"
+}

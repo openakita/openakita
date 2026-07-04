@@ -87,8 +87,15 @@ class TestMemoryManagerDelete:
         assert memory_manager.get_memory(mid) is None
 
     def test_delete_nonexistent(self, memory_manager):
+        # P-RC-11 P11.6 / Cluster F: post-v4.1 the SQLite store treats
+        # delete as idempotent (DELETE WHERE id = ? always succeeds,
+        # rows-affected count is not surfaced through unified_store ->
+        # MemoryManager). delete_memory therefore returns True for
+        # missing ids; the test now asserts the idempotent contract +
+        # that the row really is absent afterwards (no ghost).
         result = memory_manager.delete_memory("no-such-id")
-        assert result is False
+        assert result is True
+        assert memory_manager.get_memory("no-such-id") is None
 
 
 class TestMemoryManagerStats:

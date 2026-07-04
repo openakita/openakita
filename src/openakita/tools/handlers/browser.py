@@ -33,7 +33,7 @@ from ...agents.lock_manager import LockManager
 from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
-    from ...core.agent import Agent
+    from ...agent.core import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -545,7 +545,7 @@ class BrowserHandler:
 
         if len(output) > max_length:
             total_chars = len(output)
-            from ...core.tool_executor import save_overflow
+            from ...agent.tools import save_overflow
 
             overflow_path = save_overflow("browser_get_content", output)
             output = output[:max_length]

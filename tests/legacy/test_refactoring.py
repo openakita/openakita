@@ -28,7 +28,6 @@ errors = []
 
 def test(name):
     """测试装饰器"""
-
     def decorator(fn):
         global passed, failed
         try:
@@ -39,13 +38,11 @@ def test(name):
             print(f"  ❌ {name}: {e}")
             failed += 1
             errors.append((name, str(e)))
-
     return decorator
 
 
 def async_test(name):
     """异步测试装饰器"""
-
     def decorator(fn):
         global passed, failed
         try:
@@ -66,7 +63,6 @@ def async_test(name):
             print(f"  ❌ {name}: {e}")
             failed += 1
             errors.append((name, str(e)))
-
     return decorator
 
 
@@ -146,7 +142,6 @@ def _():
 @test("Tracing Exporter")
 def _():
     from openakita.tracing.exporter import FileExporter, ConsoleExporter, TraceExporter
-
     assert issubclass(FileExporter, TraceExporter)
     assert issubclass(ConsoleExporter, TraceExporter)
 
@@ -184,14 +179,13 @@ print("\n🔧 Phase 2: Agent 子模块拆分")
 
 @test("ToolExecutor 导入")
 def _():
-    from openakita.core.tool_executor import ToolExecutor
-
+    from openakita.agent.tools import ToolExecutor
     assert ToolExecutor is not None
 
 
 @test("ContextManager 基本功能")
 def _():
-    from openakita.core.context_manager import ContextManager
+    from openakita.agent.context import ContextManager
 
     cm = ContextManager(brain=None)
     # 测试 token 估算
@@ -214,12 +208,9 @@ def _():
 @test("ResponseHandler 导入")
 def _():
     from openakita.core.response_handler import (
-        ResponseHandler,
-        clean_llm_response,
-        strip_thinking_tags,
-        strip_tool_simulation_text,
+        ResponseHandler, clean_llm_response,
+        strip_thinking_tags, strip_tool_simulation_text,
     )
-
     # 测试 clean_llm_response
     text = "<thinking>内部思考</thinking>最终答案"
     cleaned = strip_thinking_tags(text)
@@ -230,26 +221,18 @@ def _():
 @test("SkillManager 导入")
 def _():
     from openakita.core.skill_manager import SkillManager
-
     assert SkillManager is not None
 
 
 @test("PromptAssembler 导入")
 def _():
     from openakita.core.prompt_assembler import PromptAssembler
-
     assert PromptAssembler is not None
 
 
 @test("ReasoningEngine 和 Checkpoint")
 def _():
-    from openakita.core.reasoning_engine import (
-        ReasoningEngine,
-        Decision,
-        DecisionType,
-        Checkpoint,
-    )
-
+    from openakita.agent.reasoning import ReasoningEngine, Decision, DecisionType, Checkpoint
     assert ReasoningEngine is not None
     assert Checkpoint is not None
 
@@ -325,7 +308,6 @@ def _():
         storage.close()
     finally:
         import shutil
-
         try:
             shutil.rmtree(tmpdir, ignore_errors=True)
         except Exception:
@@ -335,7 +317,6 @@ def _():
 @test("高频工具直接注入 (catalog)")
 def _():
     from openakita.tools.catalog import HIGH_FREQ_TOOLS, ToolCatalog
-
     assert len(HIGH_FREQ_TOOLS) == 4
     assert "run_shell" in HIGH_FREQ_TOOLS
     assert "read_file" in HIGH_FREQ_TOOLS
@@ -408,7 +389,7 @@ def _():
     from openakita.evaluation.judge import Judge, JudgeResult
 
     # 测试 JudgeResult 解析
-    raw = """```json
+    raw = '''```json
     {
         "scores": {"task_understanding": 0.9, "tool_usage": 0.8},
         "overall_score": 0.85,
@@ -416,7 +397,7 @@ def _():
         "suggestions": ["可以优化工具选择"],
         "failure_patterns": []
     }
-    ```"""
+    ```'''
     result = JudgeResult.from_llm_response("test", raw)
     assert result.overall_score == 0.85
     assert "表现不错" in result.reasoning
@@ -426,9 +407,7 @@ def _():
 @test("评估框架 - Optimizer")
 def _():
     from openakita.evaluation.optimizer import (
-        FeedbackAnalyzer,
-        FeedbackOptimizer,
-        OptimizationAction,
+        FeedbackAnalyzer, FeedbackOptimizer, OptimizationAction,
     )
     from openakita.evaluation.metrics import EvalMetrics, EvalResult, TraceMetrics
 
@@ -453,9 +432,7 @@ def _():
 
     # 低完成率应触发 memory 反馈
     memory_actions = [a for a in actions if a.action_type == "memory"]
-    assert len(memory_actions) > 0, (
-        f"Expected memory action for low completion rate ({metrics.task_completion_rate})"
-    )
+    assert len(memory_actions) > 0, f"Expected memory action for low completion rate ({metrics.task_completion_rate})"
 
 
 # ==================== 集成测试 ====================
@@ -479,7 +456,6 @@ def _():
 @test("main.py 追踪初始化")
 def _():
     from openakita.tracing.tracer import get_tracer
-
     tracer = get_tracer()
     # main.py 的 _init_tracing 在 import 时已执行
     # tracing_enabled 默认 True（Agent Harness 轻量追踪模式）
@@ -489,11 +465,10 @@ def _():
 @test("Agent 子模块初始化检查")
 def _():
     """验证 Agent 类有初始化所有子模块的代码"""
-    from openakita.core.agent import Agent
+    from openakita.agent.core import Agent
 
     # 通过检查 __init__ 源码来验证
     import inspect
-
     source = inspect.getsource(Agent.__init__)
     assert "AgentState" in source, "agent_state 未在 __init__ 中初始化"
     assert "ToolExecutor" in source, "tool_executor 未在 __init__ 中初始化"
@@ -507,13 +482,11 @@ def _():
 @test("Agent._chat_with_tools_and_context 委托给 ReasoningEngine")
 def _():
     """验证核心方法已委托"""
-    from openakita.core.agent import Agent
+    from openakita.agent.core import Agent
     import inspect
-
     source = inspect.getsource(Agent._chat_with_tools_and_context)
-    assert "self.reasoning_engine.run" in source, (
+    assert "self.reasoning_engine.run" in source, \
         "_chat_with_tools_and_context 未委托给 reasoning_engine.run()"
-    )
 
 
 @test("全模块导入链完整性")
@@ -521,25 +494,17 @@ def _():
     """验证所有新模块的完整导入链"""
     # Phase 1
     from openakita.core.agent_state import AgentState, TaskState, TaskStatus
-    from openakita.tracing import (
-        AgentTracer,
-        Span,
-        SpanType,
-        SpanStatus,
-        Trace,
-        get_tracer,
-        set_tracer,
-    )
+    from openakita.tracing import AgentTracer, Span, SpanType, SpanStatus, Trace, get_tracer, set_tracer
     from openakita.tracing.exporter import FileExporter, ConsoleExporter
     from openakita.tools.errors import ToolError, ErrorType, classify_error
 
     # Phase 2
-    from openakita.core.tool_executor import ToolExecutor
-    from openakita.core.context_manager import ContextManager
+    from openakita.agent.tools import ToolExecutor
+    from openakita.agent.context import ContextManager
     from openakita.core.response_handler import ResponseHandler
     from openakita.core.skill_manager import SkillManager
     from openakita.core.prompt_assembler import PromptAssembler
-    from openakita.core.reasoning_engine import ReasoningEngine, Checkpoint, Decision
+    from openakita.agent.reasoning import ReasoningEngine, Checkpoint, Decision
 
     # Phase 3
     from openakita.memory.storage import MemoryStorage
@@ -564,3 +529,4 @@ if errors:
 
 if __name__ == "__main__":
     sys.exit(1 if failed > 0 else 0)
+

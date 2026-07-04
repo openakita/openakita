@@ -3,9 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from openakita.core.agent import Agent
+from openakita.agent.core import Agent
 from openakita.core.agent_state import AgentState
-from openakita.core.context_manager import _CancelledError as _CtxCancelledError
+from openakita.core._context_manager_legacy import _CancelledError as _CtxCancelledError
 from openakita.core.errors import UserCancelledError
 
 

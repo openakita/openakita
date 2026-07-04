@@ -1,0 +1,57 @@
+# OpenAkita Finance-Auto Plugin · Runtime Dependencies (v1.0 RC)
+#
+# This file declares the 6 third-party packages the finance-auto
+# plugin imports at runtime that are NOT already pulled in by the
+# core OpenAkita install. Install with:
+#
+#     pip install -r plugins/finance-auto/requirements.txt
+#
+# Or (future, once the root pyproject extra lands):
+#
+#     pip install openakita[finance-auto]
+#
+# Closes audit EX-P1-5 from _finance_plugin_audit_extended_report.md.
+#
+# NOTE: This file is intentionally pure ASCII -- pip's `auto_decode`
+# falls back to the locale codec (GBK on cn-Windows) when no BOM is
+# present, so any non-ASCII byte here would break
+# `pip install --dry-run -r` on Chinese-locale workstations.
+
+# -- Excel parsing (Tier 1: .xlsx) --------------------------------
+# 3.1.5 was the last 3.x line; 4.x dropped Python 3.8 but kept the
+# `load_workbook(read_only=True, data_only=True)` streaming API the
+# plugin's xls_parser relies on.
+openpyxl>=3.1.5,<4.0
+
+# -- Excel parsing (Tier 2: .xls) ---------------------------------
+# DELIBERATELY PINNED to 1.2.0. xlrd 2.0+ removed .xls support
+# (see https://github.com/python-excel/xlrd/issues/305). The plugin
+# falls back to pywin32+COM (Tier 3) on Windows when this tier is
+# unavailable.
+xlrd==1.2.0
+
+# -- Excel template rendering (audit deliverables) ----------------
+# Used by services/audit_templates to expand {{placeholder}} tags
+# in user-provided audit-template .xlsx files. 0.21 is the current
+# upstream HEAD (PyPI Aug 2024); the lower bound matches the smoke-
+# tested version, the upper bound leaves room for the next minor.
+xltpl>=0.20,<1.0
+
+# -- OS keyring backend (encryption seed storage) -----------------
+# Windows Credential Manager, macOS Keychain, Linux Secret Service.
+# When the host has no keyring backend (headless / Docker), the
+# plugin falls back to OPENAKITA_FINANCE_AUTO_PASSPHRASE env var.
+keyring>=24.0,<26.0
+
+# -- Windows-only .xls Tier 3 COM fallback ------------------------
+# Only needed when both openpyxl and xlrd 1.2.0 fail on a corrupt or
+# password-protected .xls. The marker keeps this off non-Windows
+# installs so `pip install` does not fail on macOS / Linux.
+pywin32>=306; sys_platform == "win32"
+
+# -- Crypto primitives (AES-256-GCM + PBKDF2-HMAC-SHA256) ---------
+# Already declared transitively via OpenAkita core (>=46.0.7 there)
+# but pinned again here in case a downstream consumer pip-installs
+# the plugin standalone. Lower bound is the latest LTS line that
+# carries the GCM hardware-accelerated cipher.
+cryptography>=42.0,<46.0

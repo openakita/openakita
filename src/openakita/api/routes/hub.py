@@ -137,7 +137,7 @@ def _reload_skills(request) -> None:
     Best-effort: failures are logged but never break the install flow.
     """
     try:
-        from openakita.core.agent import Agent
+        from openakita.agent.core import Agent
 
         agent = getattr(request.app.state, "agent", None)
         actual_agent = agent
@@ -537,21 +537,29 @@ async def hub_search_agents(
     page: int = 1,
     limit: int = 20,
 ):
-    """Proxy search to platform Agent Store."""
+    """Proxy search to platform Agent Store.
+
+    When the remote store is unreachable (private deployment, network
+    outage, OSS fork without a hub backend) we return ``200`` with an
+    empty list plus an ``available: False`` flag so the frontend can
+    degrade gracefully. Returning ``502`` for the expected "no remote
+    configured" case (exploratory v10 issue #17) was masking real
+    failures and surfacing scary error toasts in normal operation.
+    """
     client = _get_hub_client()
     try:
         result = await client.search(query=q, category=category, sort=sort, page=page, limit=limit)
         return result
     except Exception as e:
         logger.warning(f"Hub search agents unavailable (remote platform may be offline): {e}")
-        raise HTTPException(
-            status_code=502,
-            detail=_hub_unavailable_detail(
-                "agent_store",
-                "远程 Agent Store 暂不可用。",
-                "本地 Agent 导入导出功能不受影响，可稍后重试或使用本地 .akita-agent 文件导入。",
-            ),
-        )
+        return {
+            "items": [],
+            "total_count": 0,
+            "page": page,
+            "has_next": False,
+            "available": False,
+            "reason": "store_not_configured",
+        }
     finally:
         await client.close()
 
@@ -647,14 +655,17 @@ async def hub_search_skills(
         return result
     except Exception as e:
         logger.warning(f"Hub search skills unavailable (remote platform may be offline): {e}")
-        raise HTTPException(
-            status_code=502,
-            detail=_hub_unavailable_detail(
-                "skill_store",
-                "远程 Skill Store 暂不可用。",
-                "本地技能管理和 skills.sh 市场不受影响，可稍后重试。",
-            ),
-        )
+        # See exploratory v10 issue #17 / Fix-10: degrade to an empty
+        # list rather than 502 for listing endpoints, since the OSS
+        # build legitimately ships without a configured store.
+        return {
+            "items": [],
+            "total_count": 0,
+            "page": page,
+            "has_next": False,
+            "available": False,
+            "reason": "store_not_configured",
+        }
     finally:
         await client.close()
 

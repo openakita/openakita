@@ -1,0 +1,7 @@
+{
+  "name": "risk_decision_run_routes_to_run_loop",
+  "probe": "risk_decision_next_node",
+  "label": "run",
+  "expected": "run_loop",
+  "description": "RiskGateDecision('run') routes to run_loop (default)"
+}

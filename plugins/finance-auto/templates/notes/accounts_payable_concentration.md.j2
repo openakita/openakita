@@ -1,0 +1,19 @@
+### 四(五) 应付账款集中度 (单位：元)
+
+**数据部分** (data-driven half)
+
+| 供应商类别 | 期末余额 | 占比 |
+|---|---:|---:|
+{% for sup in suppliers %}| {{ sup.label }} | {{ sup.end }} | {{ sup.pct }}% |
+{% endfor %}| **合计** | **{{ total_end }}** | **100.00%** |
+
+前 {{ top_n }} 大供应商应付账款余额合计 {{ top_n_amount }} 元，占应付账款总额 {{ top_n_pct }}%。
+
+**描述部分** (narrative — Sibling B / S11 草拟)
+
+> [此段由 NotesGenerator 标记为 `narrative_pending_ai`；S11 工作流将基于以上集中度
+> 数据起草关于供应商依赖程度、付款条件、议价能力的说明文字，留待审计师签字前补充。]
+{% if narrative_seed %}
+
+预填提示：{{ narrative_seed }}。
+{% endif %}

@@ -8,17 +8,125 @@
 - 事件回调
 """
 
+from __future__ import annotations
+
+import asyncio
+import contextlib
 import logging
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ..core.log_health import record_health_event
 from .types import MediaFile, OutgoingMessage, UnifiedMessage
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 17 P1-A — cooperative shutdown helpers for long-link IM adapters
+# ---------------------------------------------------------------------------
+# Background (``_v34_biz/_im_shutdown_chain_inventory.md``): Pre-fix,
+# wework_ws / qqbot ``stop()`` had a ``await self._connection_task`` and
+# ``await self._ws.close()`` with no timeout. websockets ``close()``
+# returns only after the close frame is acked (or after the library's
+# ``close_timeout`` which can be 5~10s). With 3 wework_ws bots gather'd
+# inside ``MessageGateway.stop()``, the slowest pinned IM drain to ~4s.
+#
+# These helpers give adapters a single, well-tested code path for "try
+# graceful, fall back to forced socket close" with bounded latency.
+# ---------------------------------------------------------------------------
+
+
+async def cooperative_shutdown(
+    coro: Awaitable[Any],
+    *,
+    deadline_s: float,
+    label: str,
+    logger_: logging.Logger | None = None,
+) -> bool:
+    """Await ``coro`` with a hard ``deadline_s`` deadline.
+
+    Returns ``True`` if ``coro`` completed within the deadline, ``False``
+    if it was cancelled / timed out. Never re-raises ``CancelledError``
+    or ``TimeoutError`` so callers can chain multiple cooperative
+    shutdowns without try/except boilerplate.
+    """
+    log = logger_ or logger
+    try:
+        await asyncio.wait_for(coro, timeout=deadline_s)
+        return True
+    except TimeoutError:
+        log.warning("[cooperative_shutdown] %s exceeded %.1fs, abandoning", label, deadline_s)
+        return False
+    except asyncio.CancelledError:
+        return False
+    except Exception as exc:  # noqa: BLE001 -- never block shutdown
+        log.debug("[cooperative_shutdown] %s error: %s", label, exc)
+        return False
+
+
+def _abort_ws_transport(ws: Any, logger_: logging.Logger | None = None) -> bool:
+    """Best-effort: forcibly close the underlying transport of a websocket.
+
+    websockets library exposes either ``ws.transport`` (current) or
+    ``ws._transport`` (older). Both are ``asyncio.WriteTransport`` and
+    have ``close()``. Returns ``True`` if a transport close was issued.
+    """
+    log = logger_ or logger
+    transport = getattr(ws, "transport", None) or getattr(ws, "_transport", None)
+    if transport is None:
+        return False
+    try:
+        is_closing = getattr(transport, "is_closing", None)
+        if callable(is_closing) and transport.is_closing():
+            return True
+        transport.close()
+        return True
+    except Exception as exc:  # noqa: BLE001 -- best-effort
+        log.debug("[force_close_ws] transport.close() raised: %s", exc)
+        return False
+
+
+async def force_close_ws(
+    ws: Any,
+    *,
+    timeout: float,
+    logger_: logging.Logger | None = None,
+) -> None:
+    """Close a websocket connection within ``timeout`` seconds, or abort the transport.
+
+    Try graceful ``ws.close()`` first; if it does not finish within the
+    timeout, fall back to ``transport.close()`` so the asyncio loop can
+    really release the socket. Never raises.
+
+    This is the "single-adapter cooperative shutdown" entry point used by
+    long-link adapters (wework_ws, qqbot/ws). Helpers above are exposed
+    for adapters that need finer-grained control.
+    """
+    log = logger_ or logger
+    if ws is None:
+        return
+    try:
+        await asyncio.wait_for(ws.close(), timeout=timeout)
+    except TimeoutError:
+        log.warning(
+            "[force_close_ws] ws.close() exceeded %.1fs, aborting transport",
+            timeout,
+        )
+        _abort_ws_transport(ws, logger_=log)
+    except (asyncio.CancelledError, Exception) as exc:  # noqa: BLE001
+        # CancelledError propagates only if we ourselves got cancelled;
+        # for normal close errors (connection reset etc) just suppress.
+        if isinstance(exc, asyncio.CancelledError):
+            with contextlib.suppress(Exception):
+                _abort_ws_transport(ws, logger_=log)
+            raise
+        log.debug("[force_close_ws] ws.close() raised: %s", exc)
+        with contextlib.suppress(Exception):
+            _abort_ws_transport(ws, logger_=log)
 
 # Windows 文件名非法字符 (: * ? " < > |)
 _UNSAFE_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')

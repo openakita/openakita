@@ -1,0 +1,287 @@
+# templates/reports/balance_sheet_small_enterprise.yaml
+# 资产负债表 · 小企业会计准则
+# Source: _finance_plugin_design.md §16.1.1 (53 rules, full table).
+#
+# Field reference (consumed by yaml_loader + Stage 4 generator):
+#   reference_code      Internal stable id (used as ReportCell.reference_code).
+#   target_line_no      1-based row in the printed report.
+#   target_label        Display label.
+#   indent_level        0=section header, 1=line item, 2=sub-line.
+#   data_source         "section" | "account" | "formula".
+#   account_filter      Regex over normalized account codes (^ anchor required).
+#   balance_kind        closing_net | closing_debit | closing_credit |
+#                       subaccount_debit_positive | subaccount_credit_positive.
+#   sign                +1 / -1 (multiplier applied at aggregation).
+#   formula             Jinja-like expression evaluated by the formula engine
+#                       (M1 W3 deliverable; W2 falls back to data_source=account).
+#   is_total            True for subtotal/grand-total rows.
+#   is_reclassification True if W2 reclassification rules apply.
+#   notes               Free-form Chinese description (rendered in audit trail).
+#   code                Account code -- the "TBD" sentinel marks rows where the
+#                       business team has not yet confirmed the mapping; the
+#                       generator emits a warning rather than failing.
+template_id: bs_se_v1
+name: 资产负债表
+sheet_kind: balance_sheet
+accounting_standard: small_enterprise
+industry: general
+xltpl_file: templates/excel/资产负债表_小企业会计准则.xlsx
+version: 1
+
+rules:
+  # === 资产部分 ===
+  - reference_code: BS_SECTION_CURRENT_ASSETS
+    target_line_no: 0
+    target_label: 流动资产
+    indent_level: 0
+    data_source: section
+
+  - { reference_code: BS_1001, target_line_no: 1, target_label: 货币资金,
+      indent_level: 1, data_source: account, code: "1001|1002|1012",
+      account_filter: "^(1001|1002|1012)", balance_kind: closing_net, sign: 1,
+      notes: "1001 库存现金 + 1002 银行存款 + 1012 其他货币资金" }
+
+  - { reference_code: BS_1101, target_line_no: 2, target_label: 短期投资,
+      indent_level: 1, data_source: formula, code: "1101",
+      formula: "{{ ACCOUNT('1101','closing_net') - ACCOUNT('1102','closing_net') }}",
+      sign: 1, notes: "含交易性金融资产" }
+
+  - { reference_code: BS_1121, target_line_no: 3, target_label: 应收票据,
+      indent_level: 1, data_source: account, code: "1121",
+      account_filter: "^1121", balance_kind: closing_net, sign: 1 }
+
+  - { reference_code: BS_1122, target_line_no: 4, target_label: 应收账款,
+      indent_level: 1, data_source: account, code: "1122",
+      account_filter: "^1122", balance_kind: subaccount_debit_positive, sign: 1,
+      is_reclassification: true,
+      notes: "重分类：客户级贷方 → BS_2203 预收账款" }
+
+  - { reference_code: BS_1123, target_line_no: 5, target_label: 预付账款,
+      indent_level: 1, data_source: account, code: "1123",
+      account_filter: "^1123", balance_kind: subaccount_debit_positive, sign: 1,
+      is_reclassification: true,
+      notes: "重分类：供应商级贷方 → BS_2202 应付账款" }
+
+  - { reference_code: BS_1131, target_line_no: 6, target_label: 应收股利,
+      indent_level: 1, data_source: account, code: "1131",
+      account_filter: "^1131", balance_kind: closing_debit, sign: 1 }
+
+  - { reference_code: BS_1132, target_line_no: 7, target_label: 应收利息,
+      indent_level: 1, data_source: account, code: "1132",
+      account_filter: "^1132", balance_kind: closing_debit, sign: 1 }
+
+  - { reference_code: BS_1221, target_line_no: 8, target_label: 其他应收款,
+      indent_level: 1, data_source: account, code: "1221",
+      account_filter: "^1221", balance_kind: subaccount_debit_positive, sign: 1,
+      is_reclassification: true,
+      notes: "重分类：往来贷方 → BS_2241 其他应付款" }
+
+  - { reference_code: BS_1401, target_line_no: 9, target_label: 存货,
+      indent_level: 1, data_source: formula,
+      code: "1401|1402|1403|1404|1405|1406|1407|1408|1411|1421|1471",
+      formula: "{{ ACCOUNT_GROUP(['1401','1402','1403','1404','1405','1406','1407','1408','1411','1421'],'closing_net') - ACCOUNT('1471','closing_net') }}",
+      sign: 1, notes: "原材料+在途+委托+周转材料-存货跌价准备" }
+
+  - { reference_code: BS_OTHER_CA, target_line_no: 14, target_label: 其他流动资产,
+      indent_level: 1, data_source: formula, code: "OTHER_CA",
+      formula: "{{ 0 }}", sign: 1, notes: "其他短期资产兜底；M1 W3 引入显式枚举" }
+
+  - { reference_code: BS_TOTAL_CA, target_line_no: 15, target_label: 流动资产合计,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "TOTAL_CA", formula: "{{ SUM_LINES(1, 14) }}", sign: 1 }
+
+  # === 非流动资产 ===
+  - reference_code: BS_SECTION_NCA
+    target_line_no: 16
+    target_label: 非流动资产
+    indent_level: 0
+    data_source: section
+
+  - { reference_code: BS_1501, target_line_no: 17, target_label: 长期债券投资,
+      indent_level: 1, data_source: formula, code: "1501",
+      formula: "{{ ACCOUNT('1501','closing_net') - ACCOUNT('1502','closing_net') }}",
+      sign: 1 }
+
+  - { reference_code: BS_1511, target_line_no: 18, target_label: 长期股权投资,
+      indent_level: 1, data_source: formula, code: "1511",
+      formula: "{{ ACCOUNT('1511','closing_net') - ACCOUNT('1512','closing_net') }}",
+      sign: 1 }
+
+  - { reference_code: BS_1601, target_line_no: 19, target_label: 固定资产原价,
+      indent_level: 1, data_source: account, code: "1601",
+      account_filter: "^1601", balance_kind: closing_debit, sign: 1 }
+
+  - { reference_code: BS_1602, target_line_no: 20, target_label: 减：累计折旧,
+      indent_level: 1, data_source: account, code: "1602",
+      account_filter: "^1602", balance_kind: closing_credit, sign: 1,
+      notes: "备抵项；按 sign=1 但作为减项参与公式 BS_1601_NET" }
+
+  - { reference_code: BS_1601_NET, target_line_no: 21, target_label: 固定资产账面价值,
+      indent_level: 1, data_source: formula, code: "1601_NET",
+      formula: "{{ LINE('BS_1601') - LINE('BS_1602') - ACCOUNT('1603','closing_credit') }}",
+      sign: 1 }
+
+  - { reference_code: BS_1604, target_line_no: 22, target_label: 在建工程,
+      indent_level: 1, data_source: formula, code: "1604",
+      formula: "{{ ACCOUNT('1604','closing_debit') - ACCOUNT('1605','closing_credit') }}",
+      sign: 1 }
+
+  - { reference_code: BS_1606, target_line_no: 23, target_label: 固定资产清理,
+      indent_level: 1, data_source: account, code: "1606",
+      account_filter: "^1606", balance_kind: closing_debit, sign: 1 }
+
+  - { reference_code: BS_1621, target_line_no: 24, target_label: 生产性生物资产,
+      indent_level: 1, data_source: formula, code: "1621",
+      formula: "{{ ACCOUNT('1621','closing_debit') - ACCOUNT('1622','closing_credit') }}",
+      sign: 1 }
+
+  - { reference_code: BS_1701, target_line_no: 25, target_label: 无形资产,
+      indent_level: 1, data_source: formula, code: "1701",
+      formula: "{{ ACCOUNT('1701','closing_debit') - ACCOUNT('1702','closing_credit') - ACCOUNT('1703','closing_credit') }}",
+      sign: 1 }
+
+  - { reference_code: BS_5301, target_line_no: 26, target_label: 开发支出,
+      indent_level: 1, data_source: account, code: "5301",
+      account_filter: "^5301", balance_kind: closing_debit, sign: 1 }
+
+  - { reference_code: BS_1801, target_line_no: 27, target_label: 长期待摊费用,
+      indent_level: 1, data_source: account, code: "1801",
+      account_filter: "^1801", balance_kind: closing_debit, sign: 1 }
+
+  - { reference_code: BS_OTHER_NCA, target_line_no: 28, target_label: 其他非流动资产,
+      indent_level: 1, data_source: formula, code: "OTHER_NCA",
+      formula: "{{ 0 }}", sign: 1 }
+
+  - { reference_code: BS_TOTAL_NCA, target_line_no: 29, target_label: 非流动资产合计,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "TOTAL_NCA", formula: "{{ SUM_LINES(17, 28) }}", sign: 1 }
+
+  - { reference_code: BS_TOTAL_ASSETS, target_line_no: 30, target_label: 资产总计,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "TOTAL_ASSETS",
+      formula: "{{ LINE('BS_TOTAL_CA') + LINE('BS_TOTAL_NCA') }}", sign: 1 }
+
+  # === 流动负债 ===
+  - reference_code: BS_SECTION_CL
+    target_line_no: 31
+    target_label: 流动负债
+    indent_level: 0
+    data_source: section
+
+  - { reference_code: BS_2001, target_line_no: 32, target_label: 短期借款,
+      indent_level: 1, data_source: account, code: "2001",
+      account_filter: "^2001", balance_kind: closing_credit, sign: 1 }
+
+  - { reference_code: BS_2201, target_line_no: 33, target_label: 应付票据,
+      indent_level: 1, data_source: account, code: "2201",
+      account_filter: "^2201", balance_kind: closing_credit, sign: 1 }
+
+  - reference_code: BS_2202
+    target_line_no: 34
+    target_label: 应付账款
+    indent_level: 1
+    data_source: account
+    code: "2202"
+    account_filter: "^2202"
+    balance_kind: subaccount_credit_positive
+    sign: 1
+    notes: "+ 重分类自 BS_1123 预付账款"
+    simplify:
+      enabled: false                # 默认关闭；UI 可 PATCH 翻开
+      strategy: top_n
+      top_n: 10
+      sort_by: amount_desc
+      merge_label: 其他供应商
+      keep_negative_separate: true
+      footnote_template: "其他 {count} 家供应商合计 {amount} 元"
+
+  - { reference_code: BS_2203, target_line_no: 35, target_label: 预收账款,
+      indent_level: 1, data_source: account, code: "2203",
+      account_filter: "^2203", balance_kind: subaccount_credit_positive, sign: 1,
+      notes: "+ 重分类自 BS_1122 应收账款" }
+
+  - { reference_code: BS_2211, target_line_no: 36, target_label: 应付职工薪酬,
+      indent_level: 1, data_source: account, code: "2211",
+      account_filter: "^2211", balance_kind: closing_credit, sign: 1 }
+
+  - { reference_code: BS_2221, target_line_no: 37, target_label: 应交税费,
+      indent_level: 1, data_source: formula, code: "2221",
+      formula: "{{ ACCOUNT('2221','closing_credit') - ACCOUNT('2221','closing_debit') }}",
+      sign: 1, notes: "贷-借（可负数）" }
+
+  - { reference_code: BS_2231, target_line_no: 38, target_label: 应付利息,
+      indent_level: 1, data_source: account, code: "2231",
+      account_filter: "^2231", balance_kind: closing_credit, sign: 1 }
+
+  - { reference_code: BS_2232, target_line_no: 39, target_label: 应付利润,
+      indent_level: 1, data_source: account, code: "2232",
+      account_filter: "^2232", balance_kind: closing_credit, sign: 1 }
+
+  - { reference_code: BS_2241, target_line_no: 40, target_label: 其他应付款,
+      indent_level: 1, data_source: account, code: "2241",
+      account_filter: "^2241", balance_kind: subaccount_credit_positive, sign: 1,
+      notes: "+ 重分类自 BS_1221 其他应收款" }
+
+  - { reference_code: BS_OTHER_CL, target_line_no: 41, target_label: 其他流动负债,
+      indent_level: 1, data_source: formula, code: "OTHER_CL",
+      formula: "{{ 0 }}", sign: 1 }
+
+  - { reference_code: BS_TOTAL_CL, target_line_no: 42, target_label: 流动负债合计,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "TOTAL_CL", formula: "{{ SUM_LINES(32, 41) }}", sign: 1 }
+
+  # === 非流动负债 ===
+  - { reference_code: BS_2501, target_line_no: 43, target_label: 长期借款,
+      indent_level: 1, data_source: account, code: "2501",
+      account_filter: "^2501", balance_kind: closing_credit, sign: 1 }
+
+  - { reference_code: BS_2701, target_line_no: 44, target_label: 长期应付款,
+      indent_level: 1, data_source: account, code: "2701",
+      account_filter: "^2701", balance_kind: closing_credit, sign: 1 }
+
+  - { reference_code: BS_2401, target_line_no: 45, target_label: 递延收益,
+      indent_level: 1, data_source: account, code: "2401",
+      account_filter: "^2401", balance_kind: closing_credit, sign: 1 }
+
+  - { reference_code: BS_OTHER_NCL, target_line_no: 46, target_label: 其他非流动负债,
+      indent_level: 1, data_source: formula, code: "OTHER_NCL",
+      formula: "{{ ACCOUNT('2801','closing_credit') + ACCOUNT('2901','closing_credit') }}",
+      sign: 1 }
+
+  - { reference_code: BS_TOTAL_NCL, target_line_no: 47, target_label: 非流动负债合计,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "TOTAL_NCL", formula: "{{ SUM_LINES(43, 46) }}", sign: 1 }
+
+  - { reference_code: BS_TOTAL_LIAB, target_line_no: 48, target_label: 负债合计,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "TOTAL_LIAB",
+      formula: "{{ LINE('BS_TOTAL_CL') + LINE('BS_TOTAL_NCL') }}", sign: 1 }
+
+  # === 所有者权益 ===
+  - { reference_code: BS_4001, target_line_no: 49, target_label: 实收资本,
+      indent_level: 1, data_source: account, code: "4001",
+      account_filter: "^4001", balance_kind: closing_credit, sign: 1 }
+
+  - { reference_code: BS_4002, target_line_no: 50, target_label: 资本公积,
+      indent_level: 1, data_source: account, code: "4002",
+      account_filter: "^4002", balance_kind: closing_credit, sign: 1 }
+
+  - { reference_code: BS_4101, target_line_no: 51, target_label: 盈余公积,
+      indent_level: 1, data_source: account, code: "4101",
+      account_filter: "^4101", balance_kind: closing_credit, sign: 1 }
+
+  - { reference_code: BS_4104, target_line_no: 52, target_label: 未分配利润,
+      indent_level: 1, data_source: account, code: "4103|4104",
+      account_filter: "^(4103|4104)", balance_kind: closing_credit, sign: 1,
+      notes: "期末 4103 已转入 4104" }
+
+  - { reference_code: BS_TOTAL_EQUITY, target_line_no: 53, target_label: 所有者权益合计,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "TOTAL_EQUITY", formula: "{{ SUM_LINES(49, 52) }}", sign: 1 }
+
+  - { reference_code: BS_TOTAL_LE, target_line_no: 54,
+      target_label: 负债及所有者权益总计,
+      indent_level: 0, is_total: true, data_source: formula,
+      code: "TOTAL_LE",
+      formula: "{{ LINE('BS_TOTAL_LIAB') + LINE('BS_TOTAL_EQUITY') }}", sign: 1,
+      notes: "必须 = BS_TOTAL_ASSETS（差异 ≤ 0.01）" }

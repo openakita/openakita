@@ -2,9 +2,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from openakita.api.routes import upload
-from openakita.api.routes.chat import _enrich_org_content_with_attachments
-from openakita.api.schemas import AttachmentInfo
-from openakita.core.agent import _format_desktop_attachment_reference
+from openakita.core._agent_legacy import _format_desktop_attachment_reference
 
 
 def _client(tmp_path, monkeypatch) -> TestClient:
@@ -60,24 +58,3 @@ def test_desktop_uploaded_audio_reference_includes_local_path(tmp_path, monkeypa
     assert "[音频: meeting.wav (audio/wav)" in text
     assert str(saved) in text
     assert "请直接使用文件/音频处理工具打开该本地路径" in text
-
-
-def test_org_attachment_enrichment_resolves_uploaded_url(tmp_path, monkeypatch):
-    monkeypatch.setattr(upload, "UPLOAD_DIR", tmp_path)
-    uploaded = tmp_path / "123_notes.txt"
-    uploaded.write_text("hello from upload", encoding="utf-8")
-
-    text = _enrich_org_content_with_attachments(
-        "请总结附件",
-        [
-            AttachmentInfo(
-                type="file",
-                name="notes.txt",
-                url="/api/uploads/123_notes.txt",
-                mime_type="text/plain",
-            )
-        ],
-    )
-
-    assert "--- 文件: notes.txt ---" in text
-    assert "hello from upload" in text

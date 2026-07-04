@@ -9,7 +9,7 @@ otherwise.
 
 from __future__ import annotations
 
-from openakita.core.reasoning_engine import _check_tool_failure_acknowledgement
+from openakita.core._reasoning_engine_legacy import _check_tool_failure_acknowledgement
 
 
 def _tr(name: str, *, is_error: bool) -> dict:

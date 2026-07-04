@@ -5,20 +5,18 @@ filesystem tools introduced to match Cursor-like capabilities.
 """
 
 import json
-import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import aiofiles
 import pytest
 
-from openakita.tools.file import DEFAULT_IGNORE_DIRS, FileTool, GlobScanResult
+from openakita.tools.file import DEFAULT_IGNORE_DIRS, FileTool
 from openakita.tools.handlers.filesystem import FilesystemHandler
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture
 def file_tool(tmp_path):
@@ -29,7 +27,6 @@ def file_tool(tmp_path):
 @pytest.fixture
 def handler(tmp_path, monkeypatch):
     """FilesystemHandler backed by a minimal mock Agent."""
-
     class _Workspace:
         paths = [str(tmp_path)]
 
@@ -57,7 +54,6 @@ def handler(tmp_path, monkeypatch):
 # Helper
 # ---------------------------------------------------------------------------
 
-
 async def _write_raw(path: str, content: str):
     """Write content preserving exact bytes (newline='')."""
     async with aiofiles.open(path, "w", encoding="utf-8", newline="") as f:
@@ -67,7 +63,6 @@ async def _write_raw(path: str, content: str):
 # ===========================================================================
 # edit_file
 # ===========================================================================
-
 
 class TestEditFile:
     """Tests for FileTool.edit() and handler._edit_file()."""
@@ -120,52 +115,32 @@ class TestEditFile:
     async def test_handler_edit_success(self, handler, tmp_path):
         target = str(tmp_path / "h.py")
         await handler.agent.file_tool.write(target, "a = 1\nb = 2\n")
-        result = await handler.handle(
-            "edit_file",
-            {
-                "path": target,
-                "old_string": "a = 1",
-                "new_string": "a = 99",
-            },
-        )
+        result = await handler.handle("edit_file", {
+            "path": target, "old_string": "a = 1", "new_string": "a = 99",
+        })
         assert "文件已编辑" in result
 
     async def test_handler_edit_missing_path(self, handler):
-        result = await handler.handle(
-            "edit_file",
-            {
-                "path": "",
-                "old_string": "a",
-                "new_string": "b",
-            },
-        )
+        result = await handler.handle("edit_file", {
+            "path": "", "old_string": "a", "new_string": "b",
+        })
         assert "❌" in result
 
     async def test_handler_edit_same_string(self, handler, tmp_path):
         target = str(tmp_path / "same.txt")
         await handler.agent.file_tool.write(target, "x")
-        result = await handler.handle(
-            "edit_file",
-            {
-                "path": target,
-                "old_string": "x",
-                "new_string": "x",
-            },
-        )
+        result = await handler.handle("edit_file", {
+            "path": target, "old_string": "x", "new_string": "x",
+        })
         assert "相同" in result
 
     async def test_handler_edit_replace_all_message(self, handler, tmp_path):
         target = str(tmp_path / "ra.txt")
         await handler.agent.file_tool.write(target, "aa aa aa")
-        result = await handler.handle(
-            "edit_file",
-            {
-                "path": target,
-                "old_string": "aa",
-                "new_string": "bb",
-                "replace_all": True,
-            },
-        )
+        result = await handler.handle("edit_file", {
+            "path": target, "old_string": "aa", "new_string": "bb",
+            "replace_all": True,
+        })
         assert "3 处" in result
 
 
@@ -173,14 +148,12 @@ class TestEditFile:
 # grep
 # ===========================================================================
 
-
 class TestGrep:
     """Tests for FileTool.grep() and handler._grep()."""
 
     async def test_basic_search(self, file_tool, tmp_path):
         (tmp_path / "code.py").write_text(
-            "class Foo:\n    def bar(self):\n        pass\n",
-            encoding="utf-8",
+            "class Foo:\n    def bar(self):\n        pass\n", encoding="utf-8",
         )
         results = await file_tool.grep("def bar", path=str(tmp_path))
         assert len(results) == 1
@@ -207,9 +180,7 @@ class TestGrep:
         assert all(r["file"].endswith(".py") for r in results)
 
     async def test_max_results(self, file_tool, tmp_path):
-        (tmp_path / "many.txt").write_text(
-            "\n".join(f"line{i}" for i in range(100)), encoding="utf-8"
-        )
+        (tmp_path / "many.txt").write_text("\n".join(f"line{i}" for i in range(100)), encoding="utf-8")
         results = await file_tool.grep("line", path=str(tmp_path), max_results=5)
         assert len(results) == 5
 
@@ -273,7 +244,6 @@ class TestGrep:
 # glob
 # ===========================================================================
 
-
 class TestGlob:
     """Tests for handler._glob()."""
 
@@ -306,49 +276,6 @@ class TestGlob:
         result = await handler.handle("glob", {"pattern": "*.js", "path": str(tmp_path)})
         assert "app.js" in result
         assert "node_modules" not in result
-
-    def test_glob_scan_skips_heavy_runtime_dirs(self, file_tool, tmp_path):
-        blocked = tmp_path / ".openakita" / "runtime" / "sessions"
-        blocked.mkdir(parents=True)
-        (blocked / "hidden.py").write_text("x", encoding="utf-8")
-        workspace = tmp_path / ".openakita" / "workspaces" / "default"
-        workspace.mkdir(parents=True)
-        (workspace / "also_hidden.py").write_text("x", encoding="utf-8")
-        site_packages = tmp_path / "venv" / "Lib" / "site-packages" / "pkg"
-        site_packages.mkdir(parents=True)
-        (site_packages / "pkg.py").write_text("x", encoding="utf-8")
-        logs = tmp_path / "logs"
-        logs.mkdir()
-        (logs / "app.py").write_text("x", encoding="utf-8")
-        (tmp_path / "visible.py").write_text("x", encoding="utf-8")
-
-        scan = file_tool.glob_scan("*.py", path=str(tmp_path))
-
-        assert [path for path, _mtime in scan.matches] == ["visible.py"]
-        assert scan.skipped >= 3
-
-    def test_glob_scan_caps_directories_files_and_results(self, file_tool, tmp_path):
-        (tmp_path / "root.py").write_text("x", encoding="utf-8")
-        sub = tmp_path / "sub"
-        sub.mkdir()
-        (sub / "nested.py").write_text("x", encoding="utf-8")
-        scan = file_tool.glob_scan("*.py", path=str(tmp_path), max_dirs=1)
-        assert [path for path, _mtime in scan.matches] == ["root.py"]
-        assert scan.capped_reason == "reached directory cap (1)"
-
-        for i in range(5):
-            (tmp_path / f"file_{i}.txt").write_text("x", encoding="utf-8")
-        scan = file_tool.glob_scan("*.txt", path=str(tmp_path), max_files=2)
-        assert scan.files_scanned == 2
-        assert scan.capped_reason == "reached file cap (2)"
-
-        for i in range(5):
-            time.sleep(0.01)
-            (tmp_path / f"match_{i}.md").write_text("x", encoding="utf-8")
-        scan = file_tool.glob_scan("*.md", path=str(tmp_path), max_results=2)
-        assert scan.total_matches == 5
-        assert len(scan.matches) == 2
-        assert [path for path, _mtime in scan.matches] == ["match_4.md", "match_3.md"]
 
     async def test_glob_skips_directories_that_disappear_mid_scan(
         self,
@@ -383,7 +310,6 @@ class TestGlob:
     async def test_sorted_by_mtime(self, handler, tmp_path):
         """Results should be sorted newest first."""
         import time
-
         (tmp_path / "old.py").write_text("x", encoding="utf-8")
         time.sleep(0.05)
         (tmp_path / "new.py").write_text("y", encoding="utf-8")
@@ -392,47 +318,10 @@ class TestGlob:
         file_lines = [line for line in lines if line.endswith(".py")]
         assert file_lines[0] == "new.py"
 
-    async def test_handler_glob_timeout_sets_cancel_flag(self, handler, tmp_path, monkeypatch):
-        import asyncio
-
-        seen_cancel_flags = []
-        real_wait_for = asyncio.wait_for
-
-        async def fast_wait_for(awaitable, timeout=None):
-            return await real_wait_for(awaitable, timeout=0.05)
-
-        def slow_scan(*_args, **kwargs):
-            cancel_event = kwargs["cancel_event"]
-            seen_cancel_flags.append(cancel_event)
-            while not cancel_event.is_set():
-                time.sleep(0.01)
-            return GlobScanResult(
-                matches=[],
-                total_matches=0,
-                dirs_scanned=0,
-                files_scanned=0,
-                skipped=0,
-                capped_reason="cancelled by caller",
-            )
-
-        monkeypatch.setattr(asyncio, "wait_for", fast_wait_for)
-        monkeypatch.setattr(handler.agent.file_tool, "glob_scan", slow_scan)
-        monkeypatch.setattr(
-            "openakita.tools.handlers.filesystem.settings.glob_timeout_sec",
-            5,
-            raising=False,
-        )
-        result = await handler.handle("glob", {"pattern": "*.py", "path": str(tmp_path)})
-
-        assert "glob 超时" in result
-        assert seen_cancel_flags
-        assert seen_cancel_flags[0].is_set()
-
 
 # ===========================================================================
 # delete_file
 # ===========================================================================
-
 
 class TestDeleteFile:
     """Tests for handler._delete_file()."""
@@ -473,7 +362,6 @@ class TestDeleteFile:
 # list_directory enhancements
 # ===========================================================================
 
-
 class TestListDirectoryEnhanced:
     """Tests for the new pattern/recursive params on list_directory."""
 
@@ -487,13 +375,9 @@ class TestListDirectoryEnhanced:
     async def test_pattern_filter(self, handler, tmp_path):
         (tmp_path / "a.txt").write_text("x", encoding="utf-8")
         (tmp_path / "b.py").write_text("y", encoding="utf-8")
-        result = await handler.handle(
-            "list_directory",
-            {
-                "path": str(tmp_path),
-                "pattern": "*.py",
-            },
-        )
+        result = await handler.handle("list_directory", {
+            "path": str(tmp_path), "pattern": "*.py",
+        })
         assert "b.py" in result
         assert "a.txt" not in result
 
@@ -501,14 +385,9 @@ class TestListDirectoryEnhanced:
         sub = tmp_path / "sub"
         sub.mkdir()
         (sub / "deep.py").write_text("z", encoding="utf-8")
-        result = await handler.handle(
-            "list_directory",
-            {
-                "path": str(tmp_path),
-                "recursive": True,
-                "pattern": "*.py",
-            },
-        )
+        result = await handler.handle("list_directory", {
+            "path": str(tmp_path), "recursive": True, "pattern": "*.py",
+        })
         assert "deep.py" in result
 
     async def test_recursive_list_directory_skips_unstable_subdirs(
@@ -531,14 +410,9 @@ class TestListDirectoryEnhanced:
 
         monkeypatch.setattr(Path, "iterdir", flaky_iterdir)
 
-        result = await handler.handle(
-            "list_directory",
-            {
-                "path": str(tmp_path),
-                "recursive": True,
-                "pattern": "*.py",
-            },
-        )
+        result = await handler.handle("list_directory", {
+            "path": str(tmp_path), "recursive": True, "pattern": "*.py",
+        })
 
         assert "top.py" in result
         assert "lost.py" not in result
@@ -549,13 +423,9 @@ class TestListDirectoryEnhanced:
         sub.mkdir()
         (sub / "deep.py").write_text("z", encoding="utf-8")
         (tmp_path / "top.py").write_text("x", encoding="utf-8")
-        result = await handler.handle(
-            "list_directory",
-            {
-                "path": str(tmp_path),
-                "pattern": "*.py",
-            },
-        )
+        result = await handler.handle("list_directory", {
+            "path": str(tmp_path), "pattern": "*.py",
+        })
         assert "top.py" in result
         assert "deep.py" not in result
 
@@ -563,7 +433,6 @@ class TestListDirectoryEnhanced:
 # ===========================================================================
 # read_file / write_file safety
 # ===========================================================================
-
 
 class TestFileReadWriteSafety:
     """Regression tests for paginated reads and truncated-preview write guards."""
@@ -576,13 +445,10 @@ class TestFileReadWriteSafety:
         target = tmp_path / "large.txt"
         target.write_text("\n".join(f"line-{i}" for i in range(1, 6)), encoding="utf-8")
 
-        result = await handler.handle(
-            "read_file",
-            {
-                "path": str(target),
-                "limit": 2,
-            },
-        )
+        result = await handler.handle("read_file", {
+            "path": str(target),
+            "limit": 2,
+        })
 
         assert "[PAGE_HAS_MORE]" in result
         assert "原文件未截断" in result
@@ -608,13 +474,10 @@ class TestFileReadWriteSafety:
             "文件共 5 行，当前仅显示第 1-2 行，剩余 3 行。"
         )
 
-        result = await handler.handle(
-            "write_file",
-            {
-                "path": str(target),
-                "content": preview,
-            },
-        )
+        result = await handler.handle("write_file", {
+            "path": str(target),
+            "content": preview,
+        })
 
         assert "已拒绝写入" in result
         assert target.read_text(encoding="utf-8") == "original"
@@ -623,13 +486,10 @@ class TestFileReadWriteSafety:
         target = tmp_path / "normal.txt"
         content = "\n".join(f"line-{i}" for i in range(500))
 
-        result = await handler.handle(
-            "write_file",
-            {
-                "path": str(target),
-                "content": content,
-            },
-        )
+        result = await handler.handle("write_file", {
+            "path": str(target),
+            "content": content,
+        })
 
         assert "文件已写入" in result
         assert target.read_text(encoding="utf-8") == content
@@ -639,18 +499,17 @@ class TestFileReadWriteSafety:
 # Tool definition integrity
 # ===========================================================================
 
-
 class TestToolDefinitions:
     """Verify tool definitions, catalog, and registration constants."""
 
     def test_filesystem_tools_count(self):
         from openakita.tools.definitions.filesystem import FILESYSTEM_TOOLS
-
         assert {tool["name"] for tool in FILESYSTEM_TOOLS} == {
             "run_shell",
             "write_file",
             "read_file",
             "edit_file",
+            "append_file",
             "list_directory",
             "grep",
             "glob",
@@ -660,32 +519,27 @@ class TestToolDefinitions:
 
     def test_all_in_base_tools(self):
         from openakita.tools.definitions import BASE_TOOLS
-
         base_names = {t["name"] for t in BASE_TOOLS}
         for name in ["edit_file", "grep", "glob", "delete_file"]:
             assert name in base_names
 
     def test_high_freq_tools(self):
         from openakita.tools.catalog import HIGH_FREQ_TOOLS
-
         assert "edit_file" in HIGH_FREQ_TOOLS
         assert "grep" not in HIGH_FREQ_TOOLS
 
     def test_small_ctx_core_tools(self):
-        from openakita.core.agent import SMALL_CTX_CORE_TOOLS
-
+        from openakita.core._agent_legacy import SMALL_CTX_CORE_TOOLS
         assert "edit_file" in SMALL_CTX_CORE_TOOLS
         assert "grep" in SMALL_CTX_CORE_TOOLS
 
     def test_medium_ctx_extra_tools(self):
-        from openakita.core.agent import MEDIUM_CTX_EXTRA_TOOLS
-
+        from openakita.core._agent_legacy import MEDIUM_CTX_EXTRA_TOOLS
         assert "glob" in MEDIUM_CTX_EXTRA_TOOLS
         assert "delete_file" in MEDIUM_CTX_EXTRA_TOOLS
 
     def test_handler_tools_match_definitions(self):
         from openakita.tools.definitions.filesystem import FILESYSTEM_TOOLS
-
         def_names = [t["name"] for t in FILESYSTEM_TOOLS]
         assert def_names == FilesystemHandler.TOOLS
 
@@ -714,8 +568,8 @@ class TestToolDefinitions:
 # DEFAULT_IGNORE_DIRS sanity
 # ===========================================================================
 
-
 class TestIgnoreDirs:
     def test_common_dirs_present(self):
         for d in [".git", "node_modules", "__pycache__", ".venv"]:
             assert d in DEFAULT_IGNORE_DIRS
+

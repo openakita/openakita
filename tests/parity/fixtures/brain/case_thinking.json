@@ -1,0 +1,31 @@
+{
+  "id": "case-thinking",
+  "label": "ThinkingBlock is prepended into first text",
+  "system": "be helpful",
+  "messages": [
+    {
+      "role": "user",
+      "content": "explain"
+    }
+  ],
+  "mock_response": {
+    "content_blocks": [
+      {
+        "type": "thinking",
+        "thinking": "user wants a concise answer"
+      },
+      {
+        "type": "text",
+        "text": "Short answer"
+      }
+    ],
+    "stop_reason": "end_turn",
+    "input_tokens": 7,
+    "output_tokens": 12
+  },
+  "expected": {
+    "final_text_contains": "<thinking>user wants a concise answer</thinking>",
+    "tool_sequence": [],
+    "stop_reason": "end_turn"
+  }
+}

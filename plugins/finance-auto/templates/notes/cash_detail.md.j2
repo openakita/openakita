@@ -1,0 +1,10 @@
+### 四(一) 货币资金 (单位：元)
+
+| 项目 | 期末余额 | 期初余额 |
+|---|---:|---:|
+{% for item in cash_items %}| {{ item.label }} | {{ item.end }} | {{ item.begin }} |
+{% endfor %}| **合计** | **{{ total_end }}** | **{{ total_begin }}** |
+{% if other_currency_notes %}
+
+其他货币资金中，{{ other_currency_notes }}。
+{% endif %}

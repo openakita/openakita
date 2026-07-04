@@ -1,0 +1,95 @@
+# templates/reports/cash_flow_small_enterprise.yaml
+# 现金流量表 · 小企业会计准则 — M1 W3 Stage 4 MINIMAL skeleton.
+#
+# This template is intentionally tiny.  It exists so the W3 Stage 4
+# acceptance test can prove that:
+#   1. data_source=manual_input lines successfully pick up values from
+#      the manual_inputs table populated by the Stage 4 PUT endpoint.
+#   2. data_source=account lines still aggregate trial-balance rows.
+#   3. data_source=formula lines can mix and match the above.
+#
+# A full small-enterprise cash-flow template (60+ rows; v0.1 design §7.3)
+# is deferred to M2 along with the indirect-method generator that
+# back-derives values from BS + PL.
+
+template_id: cf_se_v1
+name: 现金流量表（精简版）
+sheet_kind: cash_flow
+accounting_standard: small_enterprise
+industry: general
+xltpl_file: templates/excel/现金流量表_小企业会计准则.xlsx
+version: 1
+
+rules:
+  - reference_code: CF_SECTION_OPERATING
+    target_line_no: 1
+    target_label: 一、经营活动产生的现金流量
+    indent_level: 0
+    data_source: section
+
+  - reference_code: CF_SALES_CASH
+    target_line_no: 2
+    target_label: "销售商品、提供劳务收到的现金（销项税额）"
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: vat_output
+    sign: 1
+    notes: 来源：增值税申报表附表一（W2 解析器已填）
+
+  - reference_code: CF_PURCHASE_CASH
+    target_line_no: 3
+    target_label: "购买商品、接受劳务支付的现金（进项税额）"
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: vat_input
+    sign: -1
+    notes: 来源：增值税申报表附表二
+
+  - reference_code: CF_EMPLOYEE_CASH_OUT
+    target_line_no: 4
+    target_label: 支付给职工以及为职工支付的现金（含社保）
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: social_security_paid
+    sign: -1
+
+  - reference_code: CF_INTEREST_PAID
+    target_line_no: 5
+    target_label: 支付的利息
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: interest_paid
+    sign: -1
+
+  - reference_code: CF_INTEREST_RECEIVED
+    target_line_no: 6
+    target_label: 收到的利息
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: interest_income
+    sign: 1
+
+  - reference_code: CF_BILL_DISCOUNT
+    target_line_no: 7
+    target_label: 收到的票据贴现款
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: bill_discount_received
+    sign: 1
+
+  - reference_code: CF_OTHER_OPERATING_CASH_OUT
+    target_line_no: 8
+    target_label: 银行手续费 + 汇兑损益
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: bank_fee_paid
+    sign: -1
+
+  - reference_code: CF_OPERATING_NET
+    target_line_no: 9
+    target_label: 经营活动产生的现金流量净额
+    indent_level: 0
+    data_source: formula
+    formula: SUM_LINES(2, 8)
+    is_total: true
+    notes: 上述 7 个手填字段（来源 manual_inputs）汇总

@@ -1,0 +1,14 @@
+{
+  "description": "payload_size_bytes is UTF-8 byte length",
+  "input": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "ni hao"
+      }
+    ]
+  },
+  "expected": {
+    "min_bytes": 20
+  }
+}

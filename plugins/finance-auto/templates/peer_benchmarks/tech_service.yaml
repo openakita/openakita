@@ -1,0 +1,28 @@
+# templates/peer_benchmarks/tech_service.yaml
+# M3 Biz Stage 4 — 科技服务业 同业基准数据
+#
+# Documentation-only mirror of the canonical SQL rows seeded by the v10
+# migration (see _PEER_BENCHMARKS in v10_notes_peer.py).  Tech services
+# (SaaS, consulting, system integrators) carry the widest gross-margin
+# spread of the three industries we ship out-of-the-box; their asset
+# bases are leaner so asset_turnover medians sit below manufacturing.
+
+industry_code: tech_service
+label: 科技服务业
+sample_size: 140
+period_label: "2024"
+source: seed
+accounting_standard: small_enterprise
+metrics:
+  - metric_code: gross_margin
+    metric_name: 毛利率
+    quartiles: { p25: 0.35, p50: 0.50, p75: 0.68 }
+  - metric_code: current_ratio
+    metric_name: 流动比率
+    quartiles: { p25: 1.40, p50: 2.00, p75: 3.00 }
+  - metric_code: asset_turnover
+    metric_name: 总资产周转率
+    quartiles: { p25: 0.50, p50: 0.90, p75: 1.40 }
+  - metric_code: debt_ratio
+    metric_name: 资产负债率
+    quartiles: { p25: 0.20, p50: 0.32, p75: 0.50 }

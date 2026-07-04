@@ -308,7 +308,7 @@ def test_trace_scrubber_flush_drops_held_section_content():
 
 def test_post_process_strips_trace_from_text_thinking_and_assistant_content():
     """最终清理同时作用于 text_content / thinking_content / assistant_content blocks。"""
-    from openakita.core.reasoning_engine import Decision, DecisionType
+    from openakita.agent.reasoning import Decision, DecisionType
 
     decision = Decision(
         type=DecisionType.FINAL_ANSWER,

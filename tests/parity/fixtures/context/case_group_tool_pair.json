@@ -1,0 +1,36 @@
+{
+  "description": "assistant tool_use + user tool_result form one group",
+  "input": {
+    "messages": [
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "t1",
+            "name": "x",
+            "input": {}
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "t1",
+            "content": "ok"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": "follow"
+      }
+    ]
+  },
+  "expected": {
+    "groups_count": 2,
+    "first_group_size": 2
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "error_is_terminal_loop_terminated",
+  "decision_kind": "error",
+  "expected_exit_reason": "loop_terminated",
+  "is_terminal": true,
+  "text": "An error happened.",
+  "last_user_text": "Continue please.",
+  "tool_results": null,
+  "recent_messages": null,
+  "expected_guard_passed": {
+    "source_tag": true,
+    "tool_failure_ack": true,
+    "unbacked_action": true,
+    "recap_context": true,
+    "waiting_for_user": true,
+    "recoverable_tool_issue": true
+  }
+}

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from openakita.core.agent import Agent
+from openakita.agent.core import Agent
 
 
 class _StubCtxMgr:

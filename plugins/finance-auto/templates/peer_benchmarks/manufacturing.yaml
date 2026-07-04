@@ -1,0 +1,29 @@
+# templates/peer_benchmarks/manufacturing.yaml
+# M3 Biz Stage 4 — 制造业 同业基准数据
+#
+# Documentation-only mirror of the canonical SQL rows seeded by the
+# schema v10 migration (see plugins/finance-auto/finance_auto_backend/
+# db/migrations/v10_notes_peer.py:_PEER_BENCHMARKS).  The YAML is
+# convenient for reviewers + provincial CPA partners who want to inspect
+# the quartile values without opening the DB.  Do NOT edit independently
+# of the migration — both must be updated together.
+
+industry_code: manufacturing
+label: 制造业
+sample_size: 180
+period_label: "2024"
+source: seed
+accounting_standard: small_enterprise
+metrics:
+  - metric_code: gross_margin
+    metric_name: 毛利率
+    quartiles: { p25: 0.18, p50: 0.27, p75: 0.38 }
+  - metric_code: current_ratio
+    metric_name: 流动比率
+    quartiles: { p25: 0.90, p50: 1.40, p75: 2.10 }
+  - metric_code: asset_turnover
+    metric_name: 总资产周转率
+    quartiles: { p25: 0.60, p50: 1.00, p75: 1.60 }
+  - metric_code: debt_ratio
+    metric_name: 资产负债率
+    quartiles: { p25: 0.30, p50: 0.48, p75: 0.65 }

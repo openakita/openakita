@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from openakita.core.context_manager import ContextManager
+from openakita.agent.context import ContextManager
 
 
 @pytest.fixture

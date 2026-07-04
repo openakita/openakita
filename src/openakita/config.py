@@ -8,8 +8,10 @@ from pathlib import Path
 
 os.environ.setdefault("OPENAKITA", "1")
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings
+from typing import Annotated, Literal
+
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,97 @@ class Settings(BaseSettings):
             "API 共享访问令牌（可选）。设置后非本机请求必须在 Authorization: Bearer <token> "
             "或 X-OpenAkita-Token 头里携带它，作为 web_access 密码之外的二次校验。"
             "首次开启 lan_mode 时若未填写会自动生成一个 32 字符 token 并写入 .env。"
+        ),
+    )
+
+    # === Sprint 14 / v31 Phase A 治根：graceful shutdown bounded timeouts ===
+    # 详见 _v31_biz/_phase_a_shutdown_chain.md。
+    # v23/v24/v26/v28/v29/v30 共 6 次稳定复现 13~20s 不退；
+    # 主因是 MessageGateway.stop() 串行 await 各 IM adapter，wework_ws 等
+    # 长链 websocket 没有 timeout 兜底。
+    channels_gateway_stop_timeout_s: int = Field(
+        default=8,
+        ge=1,
+        le=60,
+        description=(
+            "MessageGateway.stop() 单 adapter stop() 的硬超时秒数。"
+            "超时即放弃该 adapter 的清理，logger.warning 后继续。"
+            "默认 8s（足够 wework_ws/qqbot 走完正常 cancel；超过即视为已 hang）。"
+        ),
+    )
+    channels_ws_force_close_after_s: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=10.0,
+        description=(
+            "Sprint 17 / v34 P1-A：长链 WS adapter（wework_ws / qqbot）stop() 内部"
+            "单个 cooperative await（connection_task / ws.close / webhook.close）的硬超时秒数。"
+            "超时后强制走 transport.close() 强关 socket，不再等待 close-frame ack。"
+            "默认 2.0s（v33 实测 wework_ws ws.close() ~4s 是当前 IM drain p50 2.71s 头号瓶颈；"
+            "改 2s 后预期单 adapter 砍 ~2s）。"
+        ),
+    )
+    shutdown_force_exit_grace_s: int = Field(
+        default=15,
+        ge=0,
+        le=120,
+        description=(
+            "POST /api/shutdown 收到后，等待 graceful 路径自退的最长秒数。"
+            "超时即 os._exit(0) 兜底，避免 Phase A 13~20s 不退导致 Stop-Process 软杀。"
+            "0 表示禁用兜底（仅用于诊断；生产不建议）。默认 15s。"
+        ),
+    )
+    shutdown_force_exit_use_threading: bool = Field(
+        default=True,
+        description=(
+            "Sprint 15 / v32 Phase B 修法：True 用 threading.Timer 实现 force-exit watchdog"
+            "（不受 uvicorn lifespan teardown 取消影响）；False 回退到 v31 的 asyncio.Task"
+            "实现（已知会被 lifespan 提前取消，4/4 PHASEA 轮 armed 但 0/4 fired）。"
+            "仅当 threading 路径在生产环境出现回归时再切到 False，详见"
+            "_v32_biz/_phase_b_watchdog_redesign.md。"
+        ),
+    )
+    shutdown_diagnostics_enabled: bool = Field(
+        default=True,
+        description=(
+            "Sprint 15 / v32 Phase B Task C：lifespan 退出后启动后台 daemon "
+            "thread，每 shutdown_diagnostics_interval_s 秒 dump 一次 "
+            "threading.enumerate() 到 data/logs/shutdown_diagnostics_*.log，"
+            "外加 atexit 钩子做最终 dump。用于定位 lifespan 完成→process exit "
+            "之间 ~13s hang 的根因（哪个 non-daemon thread / atexit / uvicorn "
+            "keep-alive 在阻塞）。详见 _v32_biz/_phase_b_hang_rca.md。"
+            "生产可关；默认 True 以便首批 v32 e2e 回归立刻产出数据。"
+        ),
+    )
+    shutdown_diagnostics_interval_s: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=30.0,
+        description=(
+            "shutdown_diagnostics 后台 daemon thread 两次 dump 之间的间隔秒数，"
+            "默认 1.0s（足够分辨 lifespan→exit 13s hang 的逐秒变化）。"
+        ),
+    )
+    uvicorn_graceful_shutdown_timeout_s: float = Field(
+        default=3.0,
+        ge=0.0,
+        le=60.0,
+        description=(
+            "uvicorn Server.shutdown() 等 keep-alive HTTP/WebSocket 连接 "
+            "graceful close 的最长秒数（uvicorn 默认 None=无限等）。"
+            "Sprint 15 / v32 Phase B Task C 假设根因之一即 uvicorn 默认无限 "
+            "等代理 / 浏览器 / openakita stop CLI 自身的 keep-alive 连接 "
+            "导致 lifespan 完成后 process 仍不退；3.0s 给浏览器 / SSE 客户端 "
+            "一个干净窗口，超时即强 close。0 表示禁用此 cap（恢复 uvicorn 默认）。"
+        ),
+    )
+    lifespan_stage_timeout_s: int = Field(
+        default=8,
+        ge=1,
+        le=60,
+        description=(
+            "FastAPI lifespan shutdown 单阶段（gateway/runtime/reconcile_loop 等）的"
+            "硬超时秒数。超时不阻塞下一阶段，仅 logger.warning。默认 8s。"
         ),
     )
 
@@ -351,6 +444,18 @@ class Settings(BaseSettings):
     always_load_categories: list = Field(
         default_factory=list,
         description="用户指定的常驻工具分类（如 Browser, MCP），该分类下所有工具不 defer",
+    )
+    effective_tools_main_chat_stable: bool = Field(
+        default=True,
+        description=(
+            "When True, the main-chat tool set is fixed to ALWAYS_LOAD_TOOLS + "
+            "all categories with intent_hints disabled, so turn-to-turn tool "
+            "lists are stable. Sub-agents still apply the explicit delegate "
+            "blacklist. Setting this to False restores the legacy intent-driven "
+            "promote/defer churn observed in exploratory testing v10/v11 "
+            "(per-sample swings between 62/70/74 tools). "
+            "See RCA v11 §1.5 (Fix-G4)."
+        ),
     )
 
     # Thinking 模式配置
@@ -668,6 +773,18 @@ class Settings(BaseSettings):
         description="每隔多少轮对话触发一次记忆回顾（0 表示禁用）",
     )
 
+    # === Plugin reseed drift detection ===
+    # When True (default), PluginManager logs WARN at startup if any
+    # ``plugins/<id>/<file>.py`` (git-tracked seed) is NEWER than its
+    # ``data/plugins/<id>/<file>.py`` (runtime copy) counterpart -- a
+    # signal that the runtime is executing stale plugin code.  Operators
+    # who intentionally ship without the seed tree (e.g. pip-installed
+    # distributions) can set this to False to silence the warning.
+    plugins_drift_warn_enabled: bool = Field(
+        default=True,
+        description="启动时是否检测 plugins/ vs data/plugins/ 漂移并发出 WARN 日志",
+    )
+
     # === Smart Approval 配置 ===
     smart_approval_enabled: bool = Field(
         default=False,
@@ -892,6 +1009,259 @@ class Settings(BaseSettings):
         ge=0,
         description="只读探索连续无新信息的硬终止轮数，0=禁用（默认）。建议值 10~15",
     )
+
+    # === Runtime v2 (fork-style rewrite runtime) flag ===
+    # Controls whether the v2 runtime under src/openakita/runtime/
+    # (dual-ledger Supervisor, NodeProtocol, TemplateRegistry, etc.)
+    # exposes its public API surface (the /api/v2/orgs/* routes) and
+    # its frontend facade.
+    #
+    # Phase 7 cutover (commit c2884076 on revamp/v2) flipped this
+    # default to True: the v2 facade is now on by default. The local
+    # v2.0.0-rc1 tag is built on this assumption.
+    #
+    # WHAT IS ACTUALLY ON WHEN True:
+    #   - GET /api/v2/orgs/templates and the orgs CRUD routes are
+    #     served from runtime/templates/ + runtime/orgs/store.py.
+    #   - settings.runtime_v2_enabled is the master kill switch for
+    #     the entire v2 surface.
+    #
+    # WHAT IS NOT YET ON EVEN WHEN True (per docs/revamp/PLAN_AUDIT.md
+    # and the post-RC continuation plan, P-RC-1):
+    #   - IM traffic (Telegram / Feishu / DingTalk / WeCom / QQ / OneBot)
+    #     still flows through the legacy OrgRuntime in channels/gateway.py.
+    #     The v2 dispatch path is canary-gated by a forthcoming
+    #     ``runtime_v2_canary_orgs`` allow-list (added in P-RC-1); orgs
+    #     not on that list keep running on legacy regardless of this flag.
+    #
+    # ROLLBACK: see docs/revamp/rollback.md. The short version is
+    # ``RUNTIME_V2_ENABLED=false`` in .env plus restoring data/orgs.db
+    # from the legacy backup written by scripts/migrate_orgs_to_v2.py.
+    runtime_v2_enabled: bool = Field(
+        default=True,
+        description=(
+            "Master gate for the v2 runtime facade (src/openakita/runtime/) "
+            "and its /api/v2/orgs routes. Phase 7 cutover defaulted this "
+            "to True; IM channels still take the legacy path unless their "
+            "org id is added to the (P-RC-1) runtime_v2_canary_orgs "
+            "allow-list. To roll back to legacy-only, set "
+            "RUNTIME_V2_ENABLED=false in .env and follow "
+            "docs/revamp/rollback.md."
+        ),
+    )
+    runtime_v2_canary_orgs: Annotated[set[str], NoDecode] = Field(
+        default_factory=set,
+        description=(
+            "Comma-separated list of org ids whose inbound IM messages "
+            "are dispatched through runtime.supervisor instead of the "
+            "legacy OrgRuntime. Default empty preserves Phase-7 behaviour. "
+            "Set RUNTIME_V2_CANARY_ORGS=org_abc,org_xyz in .env to opt in. "
+            "The list is consumed by channels.gateway.MessageGateway."
+            "_try_dispatch_v2 (P-RC-1)."
+        ),
+    )
+    orgs_v2_backend: Literal["json", "sqlite"] = Field(
+        default="json",
+        description=(
+            "Persistence backend for the v2 OrgV2 store. "
+            "'json' (default) uses runtime.orgs.JsonOrgStore -- a "
+            "single ``data/orgs_v2.json`` file rewritten on every "
+            "mutation; suitable for single-process operators. "
+            "'sqlite' uses runtime.orgs.SqliteOrgStore -- the "
+            "multi-process-safe option (BEGIN IMMEDIATE + WAL). "
+            "Set ORGS_V2_BACKEND=sqlite in .env to opt in (P-RC-3)."
+        ),
+    )
+    orgs_supervisor_brain_mode: Literal["passthrough", "llm"] = Field(
+        default="llm",
+        description=(
+            "RC-5 路线 B 灰度开关：决定 supervisor_factory 给 Supervisor "
+            "注入哪种 SupervisorBrain。"
+            "'passthrough'（默认，零生产影响）使用 "
+            "PassThroughSupervisorBrain —— turn-2 必 DONE 的最小脚手架，"
+            "维持 Sprint-9 既有行为。"
+            "'llm' 使用 runtime.llm_supervisor_brain.LLMSupervisorBrain —— "
+            "真·Magentic-One 式三段编排大脑（facts/plan/逐 turn "
+            "progress_ledger），但仅在 factory 同时拿到可注入的 "
+            "SupervisorLLMClient 时才生效；拿不到 client 时安全回退到 "
+            "PassThrough。RC-5 探路阶段默认关，待 live 验证后再灰度。"
+        ),
+    )
+    orgs_supervisor_llm_org_allowlist: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "RC-5 S3 按 org 灰度名单：列出的 org_id 在 HTTP submit 路径上会被"
+            "注入真 LLMSupervisorBrain（编排大脑），不在名单内的 org 一律走"
+            "PassThrough 老路，确保灰度隔离。这是 per-org 的显式 opt-in 开关，"
+            "与全局 orgs_supervisor_brain_mode 取**或**关系：org 命中名单 或"
+            "全局 flag=='llm' 时才启用 llm 路径。默认空名单 → 默认 org 不受影响。"
+            "在 .env 设 ORGS_SUPERVISOR_LLM_ORG_ALLOWLIST='org_a,org_b' 灰度开启；"
+            "移出名单即刻回退 passthrough（factory 安全兜底再加一层保险）。"
+        ),
+    )
+    orgs_supervisor_llm_endpoint: str = Field(
+        default="dashscope-qwen3.5-plus-nothinking",
+        description=(
+            "RC-5 S3 编排大脑专用 LLM 端点名。灰度路径构造 "
+            "GatewaySupervisorLLMClient 时锁定该端点（no-thinking 档，降噪降本 + "
+            "提升 progress_ledger JSON 首解析率）。该端点不存在时安全回退默认路由 "
+            "+ enable_thinking=False，绝不阻断 submit。复用 DASHSCOPE_API_KEY，"
+            "不引入新 key。"
+        ),
+    )
+    # v22 P1: Supervisor hard ceiling + OrgCommandService reconcile loop.
+    #
+    # Exploratory v10 (audit `_v21_biz/_orgs_business_capability_audit_v10.md`)
+    # caught command `cmd_1779887674678_00000035_f092f4` sitting in
+    # ``OrgCommandService._running_by_root`` for 14m49s after the
+    # supervisor task ought to have unwound. Subsequent G/H/I commands
+    # for the same org all 409'd because the root-key slot stayed
+    # pinned. Root cause: a Supervisor.run() can hang inside an LLM
+    # provider call (no cooperative cancel point), so the surrounding
+    # ``_schedule_run.run`` finally block that releases the slot never
+    # executes.
+    #
+    # Two-layer defence:
+    #
+    # 1. ``supervisor_hard_ceiling_s`` -- the outer
+    #    ``asyncio.wait_for`` budget around ``supervisor.run()``. When
+    #    breached we fire ``supervisor.cancel_token.cancel("hard_ceiling")``
+    #    + raise, so the ``finally`` slot release runs even if the
+    #    cooperative cancel itself races a frozen await.
+    # 2. ``orgs_reconcile_interval_s`` -- the
+    #    :meth:`OrgCommandService._reconcile_tick` cadence. Reconciles
+    #    ``_running_by_root`` against ``_commands`` / ``_active_supervisors``
+    #    so a stale slot is dropped even if the hard ceiling never
+    #    fires (e.g. process restart, raw KeyError in the finally).
+    #    The reconciler is bookkeeping-only -- it never cancels live
+    #    tasks; that responsibility stays with the hard ceiling so the
+    #    two layers do not race.
+    supervisor_hard_ceiling_s: int = Field(
+        default=900,
+        description=(
+            "Supervisor.run() 单次最大墙钟（秒）。超过后会先调用 "
+            "cancel_token.cancel('hard_ceiling') 给协作式取消一次机会，"
+            "再让外层 asyncio.wait_for 抛 TimeoutError 让 finally 释放 "
+            "_running_by_root 槽位；防止 LLM provider hang 导致同 org 后续 "
+            "G/H/I 命令永久 409。0 表示禁用，回退到 Sprint-9 默认无外层硬上限的行为。"
+            "v22 RCA RC-6：默认 900s (15min) 覆盖绝大多数健康长任务，"
+            "同时避免原 1800s (30min) 在异常态下过度宽松。"
+        ),
+    )
+    orgs_reconcile_interval_s: int = Field(
+        default=10,
+        description=(
+            "OrgCommandService 后台 _reconcile_tick 周期（秒）。每轮扫描 "
+            "_running_by_root：若对应 command 已 done/error/cancelled 或 "
+            "_active_supervisors 已不存在 → pop 该槽位，专治 hard_ceiling 兜底失败 "
+            "时的孤儿表项。reconcile 只对账不杀人；真正的杀手是 "
+            "supervisor_hard_ceiling_s。0 表示关闭后台循环。"
+            "v22 RCA RC-6：默认 10s（原 30s）让异常态下槽位释放对 UI 更可见，"
+            "也仍保持 reconcile < hard_ceiling/2 的安全比例。"
+        ),
+    )
+    orgs_cancel_drain_budget_s: int = Field(
+        default=8,
+        description=(
+            "OrgCommandService._cooperative_cancel 的协作取消窗口（秒）：发出 "
+            "cancel_token.cancel() 后等待 supervisor 自然写出 final checkpoint 的预算，"
+            "超时则 task.cancel() 强杀。v22 RCA RC-6：原硬编码 5.0s 在 LLM 慢路径下"
+            "几乎必然 force-cancel，提高到 8s 给 cancel_token → LLM httpx 桥接（RC-4）"
+            "充足窗口。0 表示禁用 graceful 窗口直接强杀。"
+        ),
+    )
+    # RC-conv (组织编排收敛预算 + 软着陆)：真编排 LLMSupervisorBrain 路径下的
+    # 收敛预算。原先 _build_supervisor 不传这些值 → 走 factory 默认 max_turns=30，
+    # 而真编排每 turn ~30-50s，900s 硬上限会在 ~18 turn 时先于 turn 上限触发，
+    # 导致 OUT_OF_TURNS / REPLAN_BUDGET_EXHAUSTED 这两条“优雅终止”路径在真实
+    # 运行中根本不可达，唯一可达终止是 hard ceiling → status=error 且无产出。
+    # 这里把预算压到能在硬上限内优雅收尾的量级（仅作用于 LLM 编排脑路径；
+    # passthrough 单发路径不受影响）。
+    orgs_supervisor_max_turns: int = Field(
+        default=12,
+        description=(
+            "LLM 编排脑路径下 Supervisor 内层循环的硬 turn 上限。真编排每 turn 含"
+            "一次编排脑 LLM + 一次节点运行，约 30-50s；设 12 让最坏情形 ~600s 内"
+            "经 OUT_OF_TURNS 优雅收尾（带产出），远小于 900s 硬上限。会被 S0 clamp "
+            "抬升到 max_stalls*(max_replans+2) 以保证 replan 预算可达。"
+        ),
+    )
+    orgs_supervisor_max_replans: int = Field(
+        default=2,
+        description=(
+            "LLM 编排脑路径下外层循环 replan 预算。配合 max_turns=12 / max_stalls=3，"
+            "min_turns = max_stalls*(max_replans+2)=12，正好不被 clamp 抬高。"
+        ),
+    )
+    orgs_supervisor_max_stalls: int = Field(
+        default=3,
+        description=(
+            "LLM 编排脑路径下 StallDetector 触发 REPLAN 的累计 stall 阈值。"
+        ),
+    )
+    orgs_supervisor_soft_ceiling_ratio: float = Field(
+        default=0.8,
+        description=(
+            "软着陆比例：Supervisor 自管墙钟软预算 = supervisor_hard_ceiling_s * 该比例。"
+            "超过软预算时 Supervisor 在下一 turn 前主动以 OUT_OF_TURNS 优雅收尾并带出"
+            "当前最佳产出，避免被外层 hard ceiling 强杀成无产出的 status=error。"
+            "0 表示禁用软着陆（回退到仅靠 turn 上限 + 硬上限）。仅作用于 LLM 编排脑路径。"
+        ),
+    )
+
+    @field_validator("runtime_v2_canary_orgs", mode="before")
+    @classmethod
+    def _split_canary_orgs_csv(cls, value: object) -> object:
+        """Accept ``"org_a,org_b"`` from env and produce ``{"org_a", "org_b"}``.
+
+        Pydantic-settings reads env vars as strings; this validator
+        splits a CSV-formatted ``RUNTIME_V2_CANARY_ORGS`` value into a
+        :class:`set` of org ids. Whitespace and empty fragments are
+        dropped. Sequence and set inputs pass through untouched so
+        programmatic construction (tests, ``Settings(...)`` overrides)
+        keeps working.
+        """
+        if value is None or value == "":
+            return set()
+        if isinstance(value, str):
+            return {part.strip() for part in value.split(",") if part.strip()}
+        if isinstance(value, (set, frozenset)):
+            return {str(item).strip() for item in value if str(item).strip()}
+        if isinstance(value, (list, tuple)):
+            return {str(item).strip() for item in value if str(item).strip()}
+        return value
+
+    @field_validator("orgs_supervisor_llm_org_allowlist", mode="before")
+    @classmethod
+    def _split_supervisor_llm_allowlist_csv(cls, value: object) -> object:
+        """Accept ``"org_a,org_b"`` from env and produce ``["org_a", "org_b"]``.
+
+        RC-5 S3 per-org gray-launch allowlist. Pydantic-settings reads env as
+        strings; this splits a CSV ``ORGS_SUPERVISOR_LLM_ORG_ALLOWLIST`` into a
+        de-duplicated, order-preserving list. Programmatic list/tuple/set
+        inputs (tests, ``Settings(...)`` overrides) pass through normalised.
+        """
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            seen: set[str] = set()
+            out: list[str] = []
+            for part in value.split(","):
+                p = part.strip()
+                if p and p not in seen:
+                    seen.add(p)
+                    out.append(p)
+            return out
+        if isinstance(value, (list, tuple, set, frozenset)):
+            seen2: set[str] = set()
+            out2: list[str] = []
+            for item in value:
+                s = str(item).strip()
+                if s and s not in seen2:
+                    seen2.add(s)
+                    out2.append(s)
+            return out2
+        return value
 
     # === Harness 配置 ===
     # 默认全部关闭/不限，对齐 Claude Code 风格（CLI 真人场景不强加业务护栏）。

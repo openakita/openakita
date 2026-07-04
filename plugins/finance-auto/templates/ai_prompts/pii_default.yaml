@@ -1,0 +1,33 @@
+# PII field configuration — bundled defaults.
+# Loaded by `finance_auto_backend.ai.pii_config.load_pii_config()`.
+# Users can override at `data/plugin_data/finance-auto/pii_config.yaml`
+# (additive — extend lists, don't replace).
+#
+# v0.2 Part 2 §3.2.
+
+company_name_fields:
+  - customer_name
+  - supplier_name
+  - counterparty
+  - org_name
+  - parent_company
+  - subsidiary_name
+
+person_name_fields:
+  - legal_rep
+  - contact_person
+  - auditor_name
+  - signed_by
+  - submitter
+
+account_no_fields:
+  - bank_account
+  - credit_code
+  - tax_id
+  - id_card_no
+
+contract_no_fields:
+  - contract_no
+  - invoice_no
+  - po_number
+  - voucher_no

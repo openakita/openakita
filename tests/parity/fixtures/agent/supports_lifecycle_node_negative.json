@@ -1,0 +1,7 @@
+{
+  "name": "supports_lifecycle_node_negative",
+  "probe": "supports_lifecycle_node",
+  "node": "made_up_node",
+  "expected": false,
+  "description": "Unknown node ids return False"
+}

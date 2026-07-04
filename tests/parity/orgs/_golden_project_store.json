@@ -1,0 +1,345 @@
+{
+  "project_create_empty": {
+    "extras": {
+      "list_summary": [
+        {
+          "description": "d",
+          "name": "Empty",
+          "org_id": "o",
+          "owner_node_id": null,
+          "project_type": "temporary",
+          "status": "planning",
+          "tasks": []
+        }
+      ]
+    },
+    "final_message": "empty",
+    "success": true,
+    "tool_sequence": []
+  },
+  "project_create_nested_tree": {
+    "extras": {
+      "list_summary": [
+        {
+          "description": "",
+          "name": "Tree",
+          "org_id": "o",
+          "owner_node_id": null,
+          "project_type": "temporary",
+          "status": "planning",
+          "tasks": [
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": null,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "todo",
+              "title": "depth-0"
+            },
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": 0,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "todo",
+              "title": "depth-1"
+            },
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": 1,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "todo",
+              "title": "depth-2"
+            },
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": 2,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "todo",
+              "title": "depth-3"
+            },
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": 3,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "todo",
+              "title": "depth-4"
+            }
+          ]
+        }
+      ],
+      "tree_depth": 5
+    },
+    "final_message": "nested",
+    "success": true,
+    "tool_sequence": []
+  },
+  "project_create_single_task": {
+    "extras": {
+      "all_tasks_count": 1,
+      "list_summary": [
+        {
+          "description": "",
+          "name": "Single",
+          "org_id": "o",
+          "owner_node_id": null,
+          "project_type": "temporary",
+          "status": "planning",
+          "tasks": [
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "task one",
+              "execution_log": [],
+              "parent_idx": null,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "todo",
+              "title": "T1"
+            }
+          ]
+        }
+      ]
+    },
+    "final_message": "single",
+    "success": true,
+    "tool_sequence": []
+  },
+  "project_delete_subtree": {
+    "extras": {
+      "list_summary": [
+        {
+          "description": "",
+          "name": "Sub",
+          "org_id": "o",
+          "owner_node_id": null,
+          "project_type": "temporary",
+          "status": "planning",
+          "tasks": [
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": null,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "todo",
+              "title": "root"
+            }
+          ]
+        }
+      ],
+      "remaining_root_count": 1,
+      "removed_count": 3
+    },
+    "final_message": "delsub",
+    "success": true,
+    "tool_sequence": []
+  },
+  "project_recalc_progress_complete": {
+    "extras": {
+      "list_summary": [
+        {
+          "description": "",
+          "name": "Complete",
+          "org_id": "o",
+          "owner_node_id": null,
+          "project_type": "temporary",
+          "status": "planning",
+          "tasks": [
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": null,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 100,
+              "status": "todo",
+              "title": "root"
+            },
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": 0,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "accepted",
+              "title": "L0"
+            },
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": 0,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "accepted",
+              "title": "L1"
+            },
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": 0,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "accepted",
+              "title": "L2"
+            }
+          ]
+        }
+      ],
+      "recalc_value": 100
+    },
+    "final_message": "complete",
+    "success": true,
+    "tool_sequence": []
+  },
+  "project_recalc_progress_partial": {
+    "extras": {
+      "list_summary": [
+        {
+          "description": "",
+          "name": "Partial",
+          "org_id": "o",
+          "owner_node_id": null,
+          "project_type": "temporary",
+          "status": "planning",
+          "tasks": [
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": null,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 25,
+              "status": "todo",
+              "title": "root"
+            },
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": 0,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "accepted",
+              "title": "L0"
+            },
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": 0,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "todo",
+              "title": "L1"
+            },
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": 0,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "todo",
+              "title": "L2"
+            },
+            {
+              "assignee_node_id": null,
+              "deliverable_content": "",
+              "delivery_summary": "",
+              "depth": 0,
+              "description": "",
+              "execution_log": [],
+              "parent_idx": 0,
+              "plan_steps": [],
+              "priority": 0,
+              "progress_pct": 0,
+              "status": "todo",
+              "title": "L3"
+            }
+          ]
+        }
+      ],
+      "recalc_value": 25
+    },
+    "final_message": "partial",
+    "success": true,
+    "tool_sequence": []
+  }
+}

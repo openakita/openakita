@@ -128,7 +128,8 @@ def _extract_tools_and_classes(
             value_repr = ""
             if isinstance(v, ast.Attribute):
                 value_repr = (
-                    f"{ast.unparse(v.value) if hasattr(ast, 'unparse') else '<obj>'}.{v.attr}"
+                    f"{ast.unparse(v.value) if hasattr(ast, 'unparse') else '<obj>'}."
+                    f"{v.attr}"
                 )
             elif isinstance(v, ast.Constant) and isinstance(v.value, str):
                 value_repr = v.value
@@ -178,7 +179,8 @@ def test_handler_declares_tool_classes_for_every_tool(handler_file: Path):
     tools, classes = parsed
     if not tools:
         pytest.fail(
-            f"{handler_file.name}: 有 TOOL_CLASSES 但无 TOOLS — 声明可能漂移; 请按 {DOC_REF} 检查"
+            f"{handler_file.name}: 有 TOOL_CLASSES 但无 TOOLS — "
+            f"声明可能漂移; 请按 {DOC_REF} 检查"
         )
         return
     missing = [t for t in tools if t not in classes]
@@ -322,11 +324,16 @@ def test_registry_get_tool_class_returns_nonnull_for_every_registered_tool():
 # ============================================================================
 
 
-def test_register_warns_when_tool_lacks_explicit_approval_class(caplog):
-    """C19-D2: 注册一个没声明 ApprovalClass 的工具时, register() 必须 WARN.
+def test_register_logs_when_tool_lacks_explicit_approval_class(caplog):
+    """C19-D2: 注册一个没声明 ApprovalClass 的工具时, register() 必须记录日志.
 
-    护栏的"运行时反馈环": 开发者看到本地启动 WARN 后会按 cookbook 修, 比 CI
-    红灯更早一步. 没这个测试, D2 的 WARN 逻辑可能在重构中被悄悄删掉.
+    护栏的"运行时反馈环": 开发者在 LOG_LEVEL=DEBUG 下看到提示后会按 cookbook
+    修, 比 CI 红灯更早一步. 没这个测试, D2 的日志逻辑可能在重构中被悄悄删掉.
+
+    RCA v11 §2.5 (Fix-G1): the message was downgraded from WARNING to
+    DEBUG to silence the ~500-line startup noise; the same data is
+    still surfaced by the CI completeness gate so dev DEBUG ↔ CI red
+    stay aligned.
     """
     import logging
 
@@ -341,18 +348,30 @@ def test_register_warns_when_tool_lacks_explicit_approval_class(caplog):
     registry = SystemHandlerRegistry()
     bare = _BareHandler()
 
-    with caplog.at_level(logging.WARNING, logger="openakita.tools.handlers"):
+    with caplog.at_level(
+        logging.DEBUG, logger="openakita.tools.handlers"
+    ):
         registry.register("bare_for_test", bare.__call__)
 
-    policy_warns = [r.getMessage() for r in caplog.records if "[Policy]" in r.getMessage()]
-    assert len(policy_warns) == 2, (
-        f"Expected 2 [Policy] WARNs (one per undeclared tool), "
-        f"got {len(policy_warns)}: {policy_warns}"
+    policy_msgs = [
+        r.getMessage()
+        for r in caplog.records
+        if "[Policy]" in r.getMessage()
+    ]
+    assert len(policy_msgs) == 2, (
+        f"Expected 2 [Policy] log entries (one per undeclared tool), "
+        f"got {len(policy_msgs)}: {policy_msgs}"
     )
-    joined = "\n".join(policy_warns)
+    joined = "\n".join(policy_msgs)
     assert "my_undeclared_tool" in joined
     assert "another_undeclared" in joined
-    assert "§4.21" in joined, "WARN message must reference the cookbook path so devs find the fix"
+    assert "§4.21" in joined, (
+        "Log message must reference the cookbook path so devs find the fix"
+    )
+    policy_records = [r for r in caplog.records if "[Policy]" in r.getMessage()]
+    assert all(r.levelno == logging.DEBUG for r in policy_records), (
+        "Per Fix-G1 the policy classification reminder is DEBUG-level"
+    )
 
 
 def test_register_does_not_warn_when_all_tools_have_classes():

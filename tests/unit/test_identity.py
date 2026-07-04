@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-import openakita.core.identity as identity_mod
+# ``Identity`` is canonically defined in ``openakita.agent.identity`` (ADR-0003
+# split). The ``core.identity`` shim re-exports it, but ``monkeypatch.setattr``
+# must target the module where ``_sync_identity_file`` actually looks the helper
+# up, i.e. the canonical agent module — patching the shim would be a no-op.
+import openakita.agent.identity as identity_mod
 from openakita.core.identity import (
     Identity,
     _file_hash,

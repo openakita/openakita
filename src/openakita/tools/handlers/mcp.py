@@ -33,7 +33,7 @@ from ..mcp_workspace import (
 )
 
 if TYPE_CHECKING:
-    from ...core.agent import Agent
+    from ...agent.core import Agent
 
 logger = logging.getLogger(__name__)
 

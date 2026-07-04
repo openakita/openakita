@@ -1,0 +1,7 @@
+{
+  "name": "supports_lifecycle_node_positive",
+  "probe": "supports_lifecycle_node",
+  "node": "classify_risk",
+  "expected": true,
+  "description": "classify_risk is a supported lifecycle node"
+}

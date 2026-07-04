@@ -141,24 +141,30 @@ class IntervalTrigger(Trigger):
     def get_next_run_time(self, last_run: datetime | None = None) -> datetime:
         now = datetime.now()
 
-        if last_run is None:
-            # 首次运行：计算从 start_time 开始的下一个间隔时间点
-            # 注意：不立即执行，而是等到下一个间隔
-            if now < self.start_time:
-                # start_time 还没到，返回 start_time
-                return self.start_time
+        # interval 任务对齐到以 start_time 为锚的固定墙钟栅格（与 CronTrigger
+        # 的槽位对齐语义一致）。把下一次运行锚定到栅格、而非锚定到 last_run
+        # （调用方会把 last_run 设为本轮**完成时刻**），可避免每轮的执行耗时被
+        # 叠加进下一次计划——即不再产生累积漂移。实测 60s 间隔曾漂移到 ~75s，
+        # 根因就是"完成时刻 + interval"的锚点。
+        if now < self.start_time:
+            # start_time 还没到，返回 start_time
+            return self.start_time
 
-            # start_time 已过，计算下一个对齐的时间点
-            elapsed = now - self.start_time
-            intervals_passed = int(elapsed.total_seconds() / self.interval.total_seconds())
-            next_run = self.start_time + self.interval * (intervals_passed + 1)
-            return next_run
+        # last_run 在这里被当作"下界(floor)"而非锚点：
+        # - 成功/推进路径会传入一个未来的 min_next（now + advance + 5），用于
+        #   跳过 advance 提前触发窗口、避免同一槽位被重复触发；
+        # - 常规路径传入的是过去的完成时刻，低于 now 因而被忽略。
+        # 两种情况都返回严格晚于 floor 的第一个栅格槽位。
+        floor = now
+        if last_run is not None and last_run > floor:
+            floor = last_run
 
-        # 计算下一次运行时间
-        next_run = last_run + self.interval
+        elapsed = floor - self.start_time
+        intervals_passed = int(elapsed.total_seconds() / self.interval.total_seconds())
+        next_run = self.start_time + self.interval * (intervals_passed + 1)
 
-        # 如果下一次运行时间已过，计算最近的下一次
-        while next_run < now:
+        # 补偿错过的槽位（catch-up），但不叠加执行耗时。
+        while next_run <= floor:
             next_run += self.interval
 
         return next_run

@@ -12,13 +12,10 @@ base64 = "0.22.1"
 flate2 = "1.0.35"
 
 [dependencies]
-# tao#1180: upstream PR tauri-apps/tao#1188 replaces the panic in
-# move_state_to(Destroyed → *) with a debug log. Until that PR is merged
-# and released, we patch tao via [patch.crates-io] below to pull from our
-# fork (SimYng/tao branch fix/no-panic-destroyed-0.34.8). Once upstream
-# ships the fix, remove the [patch] section and bump tao naturally.
-# The self-heal logic in main.rs (try_self_heal_relaunch / restart.marker)
-# is kept as a defence-in-depth fallback but should no longer trigger.
+# TODO(tao#1180): Tauri 2.10.x 锁死 tao 0.34.x，仍存在 Windows 事件循环
+# "cannot move state from Destroyed" panic（详见 https://github.com/tauri-apps/tao/issues/1180）。
+# 上游 tao 修复后请升级 Tauri/tao 验证 panic 不再出现，
+# 然后移除 src/main.rs 中的 try_self_heal_relaunch / restart.marker 自愈逻辑。
 tauri = { version = "2.10.1", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -46,11 +43,14 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-notification = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+winreg = "0.55"
 # Used by src/crash_handler.rs to install SetUnhandledExceptionFilter +
 # MiniDumpWriteDump for native crashes (0xc0000005 / 0xc0000374 / 0xc000001d).
 # Dumps land in ~/.openakita/crashdumps/openakita-{pid}-{ts}.dmp and are
@@ -59,14 +59,6 @@ libc = "0.2"
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Storage_FileSystem",
-  # CreateFileW takes an `*const SECURITY_ATTRIBUTES`, so windows-sys gates the
-  # function (not the FileSystem module) behind Win32_Security. We only ever
-  # pass NULL for it, but the symbol still won't link without this feature.
-  # Until now the build only compiled because some other crate in the graph
-  # happened to enable Win32_Security and feature-unification leaked it in;
-  # bumping any git dependency re-ran resolution and dropped it, breaking the
-  # crash handler's CreateFileW import. Declare the real dependency explicitly.
-  "Win32_Security",
   "Win32_System_Diagnostics_Debug",
   "Win32_System_Kernel",
   "Win32_System_Memory",
@@ -74,33 +66,3 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_Threading",
 ] }
 
-# Keep enough debug info in release builds so future minidumps and panic
-# backtraces can be resolved back to source locations. The investigation of
-# the v1.27.12 / v1.27.13 minidumps from feedback issue #591 showed that
-# without per-line debug data we can only see `openakita-desktop.exe
-# +0x4E05A7` and `+0x857407`; with `line-tables-only` the same dump
-# resolves to the actual Rust function and line, which is what makes the
-# difference between "we know it crashed somewhere in our binary" and "we
-# know which use-after-free or null deref to fix".
-#
-# `line-tables-only` is the cheapest setting that produces useful
-# symbolized stacks: it adds roughly 5-15% to the Windows MSVC binary size
-# and emits the standard `target/release/<name>.pdb` that MSVC already
-# produces, just with a populated line-table section. release.yml archives
-# the resulting *.pdb alongside the .exe so future user crash dumps can be
-# analysed offline even after the CI runner is recycled.
-[patch.crates-io]
-# Patch tao to prevent UB after event loop enters Destroyed state (tao#1180).
-# Two changes to runner.rs:
-#   1. move_state_to(Destroyed → *): panic → debug log + state restore
-#   2. All public entry points (poll, send_event, main_events_cleared,
-#      redraw_events_cleared, dispatch_buffered_events) early-return when
-#      is_destroyed() is true — prevents callers from continuing to process
-#      events with freed resources after the transition is silently rejected.
-# Without (2), the panic-to-log fix alone caused heap corruption manifesting
-# as ud2 (ILLEGAL_INSTRUCTION) in tauri_runtime_wry::clone after idle periods.
-# Upstream PR: https://github.com/tauri-apps/tao/pull/1188
-tao = { git = "https://github.com/SimYng/tao.git", branch = "fix/no-panic-destroyed-0.34.8" }
-
-[profile.release]
-debug = "line-tables-only"

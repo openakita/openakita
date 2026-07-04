@@ -719,7 +719,7 @@ class RetrievalEngine:
         recent_messages: list[dict] | None = None,
     ) -> dict | None:
         """调用 think_lightweight (compiler model) 做查询拆解."""
-        from openakita.core.tool_executor import smart_truncate as _st
+        from openakita.agent.tools import smart_truncate as _st
 
         context_hint = ""
         if recent_messages:

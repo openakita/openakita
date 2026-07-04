@@ -122,6 +122,20 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
   ask_user: "org.eventType.askUser",
   done: "org.eventType.done",
   error: "org.eventType.error",
+  // v2 agent-pipeline raw event types (UI issue #5/#6): alias onto the
+  // closest already-translated label so the node monitor "recent activity"
+  // and "thinking chain" render readable Chinese instead of a bare dot.
+  agent_run_started: "org.eventType.nodeActivated",
+  agent_run_finished: "org.eventType.taskCompleted",
+  agent_run_failed: "org.eventType.taskFailed",
+  agent_run_cancelled: "org.eventType.taskRejected",
+  subtask_assigned: "org.eventType.taskAssigned",
+  child_dispatch: "org.eventType.taskAssigned",
+  node_tool_called: "org.eventType.toolCallStart",
+  node_tool_completed: "org.eventType.toolCallEnd",
+  node_tool_failed: "org.eventType.workbenchToolFailed",
+  node_thinking: "org.eventType.thinking",
+  command_done: "org.eventType.done",
 };
 
 export const MSG_TYPE_LABELS: Record<string, string> = {
@@ -153,6 +167,7 @@ export const DATA_KEY_LABELS: Record<string, string> = {
   model: "org.dataKey.model",
   result_preview: "org.dataKey.resultPreview",
   deliverable_preview: "org.dataKey.deliverablePreview",
+  thinking: "org.dataKey.thinking",
   error: "org.dataKey.error",
   content: "org.dataKey.content",
   task: "org.dataKey.task",
@@ -348,7 +363,14 @@ export function translateDataValue(
   nodeNameMap?: Map<string, string>,
 ): string {
   const s = String(value);
-  if ((key === "node_id" || key === "new_node_id") && nodeNameMap?.has(s)) {
+  // Resolve node-id-bearing keys to readable role titles (UI issue #6: the
+  // process log should read "委派给 主编" not a raw node id).
+  if (
+    (key === "node_id" || key === "new_node_id" || key === "from" || key === "to"
+      || key === "from_node" || key === "to_node" || key === "child_node_id"
+      || key === "parent_node_id" || key === "assignee_node_id")
+    && nodeNameMap?.has(s)
+  ) {
     return nodeNameMap.get(s)!;
   }
   const i18nKey = DATA_VALUE_LABELS[s];

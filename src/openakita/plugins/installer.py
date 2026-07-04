@@ -88,6 +88,77 @@ class PluginInstallError(Exception):
     """Installation could not complete."""
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 deferred validator (NOT yet active).
+#
+# Roadmap reference: ``docs/follow-ups/skipped-items-roadmap.md`` §A.2.
+# RCA cross-ref: ``_skip_items_rca_v11.md`` §2.5 Phase 3.
+#
+# This is the future enforcement hook for the ``tool_classes`` schema
+# escalation plan. It is intentionally NOT wired into any install path
+# right now (default mode is ``'off'``) — flipping the default to
+# ``'warn'`` then ``'error'`` is a 3-release deprecation cycle that
+# only starts once §A.1 incremental backfill reaches >=95 % coverage.
+#
+# Calling this with ``mode='off'`` returns the list of missing tool
+# names but takes no action. Callers wiring this in Phase N+1 / N+2
+# should pass ``mode='warn'`` / ``'error'`` and act on the returned
+# list (log a warning, raise ``PluginInstallError``, etc.).
+# ---------------------------------------------------------------------------
+
+
+def _validate_tool_classes_completeness(
+    manifest: Any, *, mode: str = "off"
+) -> list[str]:
+    """Return the list of tool names missing ``tool_classes`` declarations.
+
+    Args:
+        manifest: A :class:`~openakita.plugins.manifest.PluginManifest`
+            instance (or any object exposing ``provides.tools`` /
+            ``tool_classes`` attributes — duck-typed for testability).
+        mode: ``'off'`` (default), ``'warn'``, or ``'error'``. Currently
+            all install paths pass ``'off'``. Phase 3 of the policy
+            hardening plan will flip the default to ``'warn'`` then
+            ``'error'``.
+
+    Returns:
+        List of tool names declared in ``provides.tools`` but absent
+        from ``tool_classes``. Empty list means fully covered.
+
+    See ``docs/follow-ups/skipped-items-roadmap.md`` §A.2 and
+    ``_skip_items_rca_v11.md`` §2.5 for the full deprecation plan.
+    """
+    if mode not in {"off", "warn", "error"}:
+        raise ValueError(f"_validate_tool_classes_completeness: invalid mode {mode!r}")
+
+    try:
+        provides = getattr(manifest, "provides", None) or {}
+        tools = list(provides.get("tools") or []) if isinstance(provides, dict) else []
+        if not tools:
+            tools = list(getattr(manifest, "tools", []) or [])
+        declared = getattr(manifest, "tool_classes", None) or {}
+        if not isinstance(declared, dict):
+            declared = {}
+    except Exception:  # noqa: BLE001 — defensive against duck-typed inputs
+        return []
+
+    missing = [str(t) for t in tools if str(t) and str(t) not in declared]
+
+    if mode == "off" or not missing:
+        return missing
+    plugin_id = getattr(manifest, "id", "?")
+    message = (
+        f"Plugin '{plugin_id}': {len(missing)} tool(s) missing tool_classes "
+        f"declarations: {missing!r}. See docs/follow-ups/"
+        "skipped-items-roadmap.md §A.2."
+    )
+    if mode == "warn":
+        logger.warning(message)
+    else:
+        raise PluginInstallError(message)
+    return missing
+
+
 # --- Windows-friendly file-system helpers -----------------------------------
 
 _RMTREE_ATTEMPTS = 5

@@ -816,7 +816,7 @@ class Session:
                 if not isinstance(content, str) or not content:
                     continue
 
-                from openakita.core.tool_executor import smart_truncate
+                from openakita.agent.tools import smart_truncate
 
                 is_rule = any(w in content for w in self._RULE_SIGNAL_WORDS)
                 if is_rule and rules_len < max_rules_len:

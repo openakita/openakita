@@ -1,6 +1,6 @@
 import pytest
 
-from openakita.core.tool_executor import ToolExecutor
+from openakita.agent.tools import ToolExecutor
 from openakita.llm.client import LLMClient
 from openakita.llm.converters.messages import convert_messages_to_openai
 from openakita.llm.types import (

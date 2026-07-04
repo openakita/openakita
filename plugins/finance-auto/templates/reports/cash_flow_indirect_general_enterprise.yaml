@@ -1,0 +1,214 @@
+# templates/reports/cash_flow_indirect_general_enterprise.yaml
+# 现金流量表 · 间接法 · 一般企业会计准则 — M2 Biz Stage 4.
+#
+# Built to pair with backend/services/cash_flow.py
+# (IndirectCashFlowEngine).  Every ``data_source: manual_input`` rule
+# references one of the ``cf_*`` synthetic keys the engine produces;
+# the engine pushes them into the ``manual_inputs`` table so the
+# existing W3 report-generator pipeline can serve this template
+# without code changes.
+
+template_id: cf_indirect_ge_v1
+name: 现金流量表（间接法 · 一般企业）
+sheet_kind: cash_flow
+accounting_standard: general_enterprise
+industry: general
+xltpl_file: templates/excel/现金流量表_企业会计准则.xlsx
+version: 1
+
+rules:
+  # ============================================================
+  # 一、经营活动产生的现金流量（间接法）
+  # ============================================================
+  - reference_code: CF_SECTION_OPERATING
+    target_line_no: 1
+    target_label: 一、经营活动产生的现金流量（间接法）
+    indent_level: 0
+    data_source: section
+
+  - reference_code: CF_NET_PROFIT
+    target_line_no: 2
+    target_label: "1. 净利润"
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_net_profit
+
+  - reference_code: CF_DEPRECIATION
+    target_line_no: 3
+    target_label: "2. 加：折旧 / 摊销"
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_dep_amort
+    notes: 引擎按累计折旧(1602)/累计摊销(1702)期间增额推导，亦可手工覆盖
+
+  - reference_code: CF_ASSET_IMPAIRMENT
+    target_line_no: 4
+    target_label: "3. 加：资产减值损失"
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_asset_impairment
+
+  - reference_code: CF_FINANCE_COST
+    target_line_no: 5
+    target_label: "4. 加：财务费用"
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_finance_cost
+
+  - reference_code: CF_AR_DELTA
+    target_line_no: 6
+    target_label: "5. 加：应收账款的减少（减：增加）"
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_ar_delta
+
+  - reference_code: CF_AP_DELTA
+    target_line_no: 7
+    target_label: "6. 加：应付账款的增加（减：减少）"
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_ap_delta
+
+  - reference_code: CF_INVENTORY_DELTA
+    target_line_no: 8
+    target_label: "7. 加：存货的减少（减：增加）"
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_inventory_delta
+
+  - reference_code: CF_TAXES_PAYABLE_DELTA
+    target_line_no: 9
+    target_label: "8. 加：应交税费的增加（减：减少）"
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_taxes_payable_delta
+
+  - reference_code: CF_EMPLOYEE_PAYABLE_DELTA
+    target_line_no: 10
+    target_label: "9. 加：应付职工薪酬的增加（减：减少）"
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_employee_payable_delta
+
+  - reference_code: CF_OPERATING_NET
+    target_line_no: 11
+    target_label: 经营活动产生的现金流量净额
+    indent_level: 0
+    data_source: manual_input
+    manual_input_key: cf_operating_net
+    is_total: true
+    notes: 引擎已聚合每项，亦可改用 SUM_LINES(2,10) 公式
+
+  # ============================================================
+  # 二、投资活动产生的现金流量
+  # ============================================================
+  - reference_code: CF_SECTION_INVESTING
+    target_line_no: 12
+    target_label: 二、投资活动产生的现金流量
+    indent_level: 0
+    data_source: section
+
+  - reference_code: CF_FIXED_ASSETS_DELTA
+    target_line_no: 13
+    target_label: 购建固定资产支付的现金（按 BS Δ 推算）
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_fixed_assets_delta
+    sign: -1
+
+  - reference_code: CF_INTANGIBLE_ASSETS_DELTA
+    target_line_no: 14
+    target_label: 取得无形资产支付的现金（按 BS Δ 推算）
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_intangible_assets_delta
+    sign: -1
+
+  - reference_code: CF_LT_INVEST_DELTA
+    target_line_no: 15
+    target_label: 取得长期股权投资支付的现金
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_lt_invest_delta
+    sign: -1
+
+  - reference_code: CF_INVESTING_NET
+    target_line_no: 16
+    target_label: 投资活动产生的现金流量净额
+    indent_level: 0
+    data_source: manual_input
+    manual_input_key: cf_investing_net
+    is_total: true
+
+  # ============================================================
+  # 三、筹资活动产生的现金流量
+  # ============================================================
+  - reference_code: CF_SECTION_FINANCING
+    target_line_no: 17
+    target_label: 三、筹资活动产生的现金流量
+    indent_level: 0
+    data_source: section
+
+  - reference_code: CF_ST_BORROWING_DELTA
+    target_line_no: 18
+    target_label: 短期借款的增加（减：减少）
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_st_borrowing_delta
+
+  - reference_code: CF_LT_BORROWING_DELTA
+    target_line_no: 19
+    target_label: 长期借款的增加（减：减少）
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_lt_borrowing_delta
+
+  - reference_code: CF_PAID_IN_CAPITAL_DELTA
+    target_line_no: 20
+    target_label: 实收资本的增加
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_paid_in_capital_delta
+
+  - reference_code: CF_DIVIDENDS_PAID
+    target_line_no: 21
+    target_label: 分配股利、利润或偿付利息支付的现金
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_dividends_paid
+    sign: -1
+
+  - reference_code: CF_INTEREST_PAID
+    target_line_no: 22
+    target_label: 支付的利息
+    indent_level: 1
+    data_source: manual_input
+    manual_input_key: cf_interest_paid
+    sign: -1
+
+  - reference_code: CF_FINANCING_NET
+    target_line_no: 23
+    target_label: 筹资活动产生的现金流量净额
+    indent_level: 0
+    data_source: manual_input
+    manual_input_key: cf_financing_net
+    is_total: true
+
+  # ============================================================
+  # 四、汇率变动 + 净变化
+  # ============================================================
+  - reference_code: CF_NET_CHANGE
+    target_line_no: 24
+    target_label: 五、现金及现金等价物净增加额
+    indent_level: 0
+    data_source: manual_input
+    manual_input_key: cf_net_change
+    is_total: true
+
+  - reference_code: CF_CASH_DELTA_BS_CHECK
+    target_line_no: 25
+    target_label: 期末货币资金 - 期初货币资金（BS Δ 用于交叉验证）
+    indent_level: 0
+    data_source: manual_input
+    manual_input_key: cf_cash_delta_bs
+    notes: 与 CF_NET_CHANGE 比对，差额提示数据完整性问题

@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ..base import ChannelAdapter
+from ..base import ChannelAdapter, cooperative_shutdown
 from ..types import (
     MediaFile,
     MediaStatus,
@@ -895,18 +895,52 @@ class QQBotAdapter(ChannelAdapter):
             else:
                 content.files.append(media)
 
-    async def stop(self) -> None:
-        """停止 QQ 官方机器人"""
+    async def stop(self, *, force_close_after_s: float | None = None) -> None:
+        """停止 QQ 官方机器人，带 force-close 兜底。
+
+        Sprint 17 P1-A 治根（forensics: ``_v34_biz/_p1a_ws_force_close.md``）：
+
+        Pre-fix ``await self._task`` 没有 timeout——``_task`` 内部跑 ``_run_ws_client()``
+        循环，里面 ``websockets.connect(..., close_timeout=10)`` 在被 cancel 时
+        最多还能等 10s（QQ Gateway close-frame 慢 ack）。同样 ``_webhook_runner.cleanup()``
+        没 timeout，aiohttp web runner 卡 close 也会拖死 stop。
+
+        虽然 v33 实测 qqbot ~0.5s（远好于 wework_ws 4s），但这是 latent 风险：
+        QQ 平台抖动时 close_timeout=10s 会被吃满。本次顺手治根，与 B2 同模式。
+
+        Args:
+            force_close_after_s: 每个 cooperative await 的硬超时秒数；不传则读
+                ``settings.channels_ws_force_close_after_s``（默认 2.0s）。
+        """
         self._running = False
 
+        if force_close_after_s is None:
+            try:
+                from openakita.config import settings as _settings
+
+                force_close_after_s = float(
+                    getattr(_settings, "channels_ws_force_close_after_s", 2.0) or 2.0
+                )
+            except Exception:
+                force_close_after_s = 2.0
+
         if self._webhook_runner:
-            await self._webhook_runner.cleanup()
+            await cooperative_shutdown(
+                self._webhook_runner.cleanup(),
+                deadline_s=force_close_after_s,
+                label="qqbot._webhook_runner.cleanup",
+                logger_=logger,
+            )
             self._webhook_runner = None
 
         if self._task:
             self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+            await cooperative_shutdown(
+                self._task,
+                deadline_s=force_close_after_s,
+                label="qqbot._task",
+                logger_=logger,
+            )
 
         logger.info(f"QQ Official Bot adapter stopped (mode: {self.mode})")
 

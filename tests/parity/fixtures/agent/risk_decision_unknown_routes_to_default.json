@@ -1,0 +1,7 @@
+{
+  "name": "risk_decision_unknown_routes_to_default",
+  "probe": "risk_decision_next_node",
+  "label": "made_up_label",
+  "expected": "run_loop",
+  "description": "Unknown labels route to the safe run_loop default"
+}

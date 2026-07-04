@@ -1,0 +1,27 @@
+# M2 Biz Stage 6 — Consolidation elimination YAML defaults.
+#
+# Loaded on demand by the ConsolidationService when an admin wants to
+# pre-populate a new consolidation group with the three most common
+# elimination rules.  Per v0.3 Part Biz §2.3.
+
+eliminations:
+  - kind: inter_ar_ap
+    rule_key: intra_group_ar_ap
+    debit_target: BS_2202  # 应付账款
+    credit_target: BS_1122  # 应收账款
+    rationale: 母子公司内部往来抵消（应收 ↔ 应付）
+    review_required: true
+
+  - kind: inter_sales
+    rule_key: intra_group_sales
+    debit_target: PL_REVENUE  # 营业收入
+    credit_target: PL_COST    # 营业成本
+    rationale: 母子公司内部销售抵消（营业收入 ↔ 营业成本）
+    review_required: true
+
+  - kind: inter_investment
+    rule_key: intra_group_lt_investment
+    debit_target: BS_TOTAL_OWNERS_EQUITY  # 子公司所有者权益
+    credit_target: BS_1501                # 长期股权投资
+    rationale: 母公司长期股权投资 ↔ 子公司所有者权益份额（按持股比例）
+    review_required: true

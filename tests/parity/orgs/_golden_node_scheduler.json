@@ -1,0 +1,34 @@
+{
+  "scheduler_dispatch_prompt": {
+    "extras": {
+      "prompt": "[定时任务] 巡检\n指令: 检查服务状态\n\n请执行上述任务。\n\n汇报规则：仅在发现异常/问题时向 领导 汇报。如果一切正常，简要记录到你的私有记忆即可。"
+    },
+    "final_message": "prompt",
+    "success": true,
+    "tool_sequence": []
+  },
+  "scheduler_next_fire_cron": {
+    "extras": {
+      "fire_iso": "2026-05-19T12:05:00+00:00"
+    },
+    "final_message": "next_fire",
+    "success": true,
+    "tool_sequence": []
+  },
+  "scheduler_next_fire_interval": {
+    "extras": {
+      "fire_iso": "2026-05-19T12:10:00+00:00"
+    },
+    "final_message": "next_fire",
+    "success": true,
+    "tool_sequence": []
+  },
+  "scheduler_next_fire_once": {
+    "extras": {
+      "fire_iso": "2026-05-19T12:02:00+00:00"
+    },
+    "final_message": "next_fire",
+    "success": true,
+    "tool_sequence": []
+  }
+}

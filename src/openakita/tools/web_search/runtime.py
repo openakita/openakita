@@ -70,23 +70,63 @@ async def run_web_search(
     region: str = "wt-wt",
     safesearch: str = "moderate",
     timeout_seconds: float = 0.0,
+    allow_fallback: bool = False,
 ) -> SearchBundle:
-    """Dispatch a web search to a provider (explicit or auto-detect)."""
+    """Dispatch a web search to a provider (explicit or auto-detect).
+
+    ``allow_fallback`` (reliability fix, 2026-06): when an EXPLICIT
+    ``provider_id`` is configured (e.g. ``settings.web_search_provider``) and
+    that one provider is unavailable / fails with a credential / auth / quota /
+    network error, fall back to auto-detect across the OTHER available
+    providers instead of hard-failing. This is what lets the org/agent path
+    survive a broken default source (real bug: ``jina`` 401 because the free
+    endpoint now needs a key). The dedicated *test* endpoint keeps the strict
+    "no fallback" contract by leaving ``allow_fallback=False`` so it can probe
+    one specific provider.
+    """
     if provider_id:
         provider = get_provider(provider_id)
-        if not provider.is_available():
+        if provider.is_available():
+            try:
+                results = await provider.search(
+                    query,
+                    max_results=max_results,
+                    region=region,
+                    safesearch=safesearch,
+                    timeout_seconds=timeout_seconds,
+                )
+                return SearchBundle(provider_id=provider.id, results=results)
+            except _FALLBACK_ERRORS as exc:
+                if not allow_fallback:
+                    raise
+                logger.info(
+                    "[web_search] explicit provider %s failed (%s); "
+                    "falling back to auto-detect across other sources",
+                    provider_id,
+                    type(exc).__name__,
+                )
+        elif not allow_fallback:
             raise MissingCredentialError(
                 _provider_unavailable_message(provider_id),
                 provider_id=provider_id,
             )
-        results = await provider.search(
-            query,
+        else:
+            logger.info(
+                "[web_search] explicit provider %s unavailable; "
+                "falling back to auto-detect across other sources",
+                provider_id,
+            )
+        # Fallback path: auto-detect excluding the failed explicit provider.
+        return await _auto_search(
+            kind="web",
+            query=query,
             max_results=max_results,
             region=region,
             safesearch=safesearch,
+            timelimit=None,
             timeout_seconds=timeout_seconds,
+            exclude={provider_id},
         )
-        return SearchBundle(provider_id=provider.id, results=results)
 
     return await _auto_search(
         kind="web",
@@ -108,29 +148,64 @@ async def run_news_search(
     safesearch: str = "moderate",
     timelimit: str | None = None,
     timeout_seconds: float = 0.0,
+    allow_fallback: bool = False,
 ) -> SearchBundle:
-    """Dispatch a news search to a provider, skipping providers that don't support news."""
+    """Dispatch a news search to a provider, skipping providers that don't support news.
+
+    ``allow_fallback`` mirrors :func:`run_web_search`: an explicit provider that
+    is unavailable / fails on credential / auth / quota / network falls back to
+    auto-detect across the other news-capable providers.
+    """
     if provider_id:
         provider = get_provider(provider_id)
-        if not provider.is_available():
+        if provider.is_available():
+            try:
+                results = await provider.news_search(
+                    query,
+                    max_results=max_results,
+                    region=region,
+                    safesearch=safesearch,
+                    timelimit=timelimit,
+                    timeout_seconds=timeout_seconds,
+                )
+                if results is not None:
+                    return SearchBundle(provider_id=provider.id, results=results)
+                # Provider doesn't do news → fall through to auto (or raise).
+                if not allow_fallback:
+                    raise MissingCredentialError(
+                        f"Provider {provider_id!r} does not support news_search",
+                        provider_id=provider_id,
+                    )
+            except _FALLBACK_ERRORS as exc:
+                if not allow_fallback:
+                    raise
+                logger.info(
+                    "[news_search] explicit provider %s failed (%s); "
+                    "falling back to auto-detect across other sources",
+                    provider_id,
+                    type(exc).__name__,
+                )
+        elif not allow_fallback:
             raise MissingCredentialError(
                 _provider_unavailable_message(provider_id),
                 provider_id=provider_id,
             )
-        results = await provider.news_search(
-            query,
+        else:
+            logger.info(
+                "[news_search] explicit provider %s unavailable; "
+                "falling back to auto-detect across other sources",
+                provider_id,
+            )
+        return await _auto_search(
+            kind="news",
+            query=query,
             max_results=max_results,
             region=region,
             safesearch=safesearch,
             timelimit=timelimit,
             timeout_seconds=timeout_seconds,
+            exclude={provider_id},
         )
-        if results is None:
-            raise MissingCredentialError(
-                f"Provider {provider_id!r} does not support news_search",
-                provider_id=provider_id,
-            )
-        return SearchBundle(provider_id=provider.id, results=results)
 
     return await _auto_search(
         kind="news",
@@ -152,8 +227,11 @@ async def _auto_search(
     safesearch: str,
     timelimit: str | None,
     timeout_seconds: float,
+    exclude: set[str] | None = None,
 ) -> SearchBundle:
     candidates = available_providers()
+    if exclude:
+        candidates = [p for p in candidates if p.id not in exclude]
     if not candidates:
         # No provider is available at all (e.g. ddgs lib uninstalled + no Keys set)
         raise NoProviderAvailable(

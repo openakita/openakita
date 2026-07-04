@@ -1,0 +1,13 @@
+{
+  "name": "classify_inbound_risk_shell_rm_rf",
+  "probe": "classify_inbound_risk_end_to_end",
+  "message": "rm -rf /",
+  "expected": {
+    "risk_level": "high",
+    "target_kind": "shell_command",
+    "requires_confirmation": true,
+    "skip_gate_label": "run",
+    "skip_gate_reason": null
+  },
+  "description": "Dangerous shell command: classifier flags HIGH/shell_command/requires_confirmation; with no trust mode and no trusted-path session grant, should_skip_risk_gate returns label='run' (no skip, normal gate must run)."
+}

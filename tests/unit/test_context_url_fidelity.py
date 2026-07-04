@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from openakita.core.context_manager import ContextManager
+from openakita.agent.context import ContextManager
 
 
 def test_extract_urls_from_messages_keeps_exact_links():

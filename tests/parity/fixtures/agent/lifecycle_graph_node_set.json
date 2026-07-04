@@ -1,0 +1,13 @@
+{
+  "name": "lifecycle_graph_node_set",
+  "probe": "graph_nodes",
+  "expected": [
+    "classify_risk",
+    "error",
+    "finalize",
+    "init",
+    "run_loop",
+    "validate_input"
+  ],
+  "description": "lifecycle graph has exactly the documented 6 nodes"
+}

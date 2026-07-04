@@ -1,0 +1,18 @@
+{
+  "name": "verify_incomplete_routes_back_to_reason",
+  "decision_kind": "verify_incomplete",
+  "expected_exit_reason": "verify_incomplete",
+  "is_terminal": false,
+  "text": "Verification was incomplete; need another pass.",
+  "last_user_text": "Are you sure?",
+  "tool_results": null,
+  "recent_messages": null,
+  "expected_guard_passed": {
+    "source_tag": true,
+    "tool_failure_ack": true,
+    "unbacked_action": true,
+    "recap_context": true,
+    "waiting_for_user": true,
+    "recoverable_tool_issue": true
+  }
+}

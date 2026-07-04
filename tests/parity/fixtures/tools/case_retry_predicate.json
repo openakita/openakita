@@ -1,0 +1,9 @@
+{
+  "description": "is_retriable_tool_error agrees v1 vs v2 for ToolSkipped",
+  "input": {
+    "exc_kind": "ToolSkipped"
+  },
+  "expected": {
+    "retriable": false
+  }
+}

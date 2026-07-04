@@ -122,14 +122,17 @@ class SystemHandlerRegistry:
         self._collect_tool_policies(handler, tool_names or [])
         self._collect_tool_guidance(handler, tool_names or [])
 
-        # C19-D2: WARN for tools without an explicit ApprovalClass declaration.
-        # Falls back to ApprovalClassifier heuristics at decision time, which
-        # works but is opaque (cookbook §4.21). The check is the same data
-        # source as the CI completeness gate, so dev WARN ↔ CI red are aligned.
+        # C19-D2: log unclassified tools so they fall back to ApprovalClassifier
+        # heuristics at decision time. Same data source as the CI completeness
+        # gate, so dev log ↔ CI red are aligned (cookbook §4.21).
+        #
+        # Downgraded from WARNING to DEBUG to reduce startup noise; the same
+        # data is still surfaced by the CI completeness gate. See RCA v11 §2.5
+        # Phase 1.
         if tool_names:
             unclassified = [t for t in tool_names if t not in self._tool_classes]
             for tool in unclassified:
-                logger.warning(
+                logger.debug(
                     "[Policy] Tool %r in handler %r has no explicit "
                     "ApprovalClass (will fall back to classifier heuristics). "
                     "Add an entry under TOOL_CLASSES in the handler class, or "

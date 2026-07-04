@@ -1,0 +1,20 @@
+### 四(四) 固定资产 (单位：元)
+
+**1. 固定资产原价及累计折旧**
+
+| 类别 | 期初原价 | 本期增加 | 本期减少 | 期末原价 |
+|---|---:|---:|---:|---:|
+{% for cat in cost_categories %}| {{ cat.label }} | {{ cat.begin }} | {{ cat.increase }} | {{ cat.decrease }} | {{ cat.end }} |
+{% endfor %}| **合计** | **{{ cost_total_begin }}** | **{{ cost_total_increase }}** | **{{ cost_total_decrease }}** | **{{ cost_total_end }}** |
+
+**2. 期末账面价值**
+
+| 项目 | 金额 |
+|---|---:|
+| 固定资产原价 | {{ cost_total_end }} |
+| 减：累计折旧 | {{ accumulated_depreciation }} |
+| **固定资产账面价值** | **{{ net_book_value }}** |
+{% if impairment_notes %}
+
+减值准备说明：{{ impairment_notes }}。
+{% endif %}

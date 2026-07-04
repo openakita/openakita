@@ -13,7 +13,7 @@ import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from openakita.memory.retention import apply_retention
@@ -22,6 +22,11 @@ from openakita.memory.types import MemoryPriority, MemoryType, SemanticMemory
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/memories", tags=["memory"])
+
+# Upper bound on a single memory's content length. Prevents a single oversized
+# entry (exploratory testing accepted 57 KB) from polluting the DB and later
+# blowing up prompt-context budgets. 16 KB is generous for a fact/rule/summary.
+_MAX_MEMORY_CONTENT_LEN = 16384
 
 # In-process review task state (single-task, no need for DB persistence)
 _review_task: asyncio.Task | None = None
@@ -126,6 +131,26 @@ class MigrateWorkspaceRequest(BaseModel):
     scope: str = "user"
 
 
+class MergeOwnerRequest(BaseModel):
+    """Merge one owner (``user_id``) bucket's memories into the canonical one.
+
+    Resolves the historical ``default`` bucket residue left by the earlier
+    owner-scoping fix into the desktop canonical identity (``desktop_user``).
+
+    - ``from_owner`` defaults to the legacy ``default`` bucket.
+    - ``to_owner`` empty → the caller's current canonical owner (desktop panel
+      resolves to ``desktop_user`` via ``_current_owner``).
+    - ``dry_run`` defaults to ``True``: report counts/samples only, no writes.
+    """
+
+    from_owner: str = "default"
+    to_owner: str = ""
+    from_workspace_id: str = "default"
+    to_workspace_id: str = ""
+    scope: str = "user"
+    dry_run: bool = True
+
+
 IDENTITY_SLOT_ALIASES: dict[str, str] = {
     "姓名": "user.name",
     "名字": "user.name",
@@ -188,13 +213,44 @@ def _serialize(mem: Any) -> dict:
 
 
 def _current_owner(request: Request) -> tuple[str, str]:
+    # 1) Explicit override for (future) multi-user REST clients: an upstream
+    #    proxy / caller can pin the tenant via headers without relying on any
+    #    request-context state.
+    user_hdr = (request.headers.get("X-OpenAkita-User") or "").strip()
+    ws_hdr = (request.headers.get("X-OpenAkita-Workspace") or "").strip()
+    if user_hdr:
+        return user_hdr, (ws_hdr or "default")
+
+    # 2) Honour a real owner already bound to *this* request context (e.g. tests
+    #    or a future path that starts a memory session before hitting the route).
+    user_id, workspace_id = "default", "default"
     mm = _get_manager(request)
     if mm and hasattr(mm, "_current_owner"):
         try:
-            return mm._current_owner()
+            user_id, workspace_id = mm._current_owner()
         except Exception:
-            pass
-    return "default", "default"
+            user_id, workspace_id = "default", "default"
+
+    # 3) The /api/memories management panel is the desktop single-user surface.
+    #    It hits this route directly, WITHOUT a memory session bound to the
+    #    request context, so the manager's per-request ContextVar falls back to
+    #    "default". The desktop *chat* path, however, binds owner to
+    #    "desktop_user" (see chat.py get_session(user_id="desktop_user")). Those
+    #    two buckets never overlap, so memories created in the panel were
+    #    invisible to the agent's conversation recall and vice-versa (Domain3
+    #    P1-1). Align the REST fallback to the same canonical desktop identity so
+    #    the panel and the chat share one owner bucket.
+    #
+    #    We deliberately do NOT trust the memory manager's *mutable singleton*
+    #    owner across contexts here: on a multi-user backend it reflects whoever
+    #    (possibly an IM user) chatted most recently, and leaking that onto the
+    #    desktop admin surface would be a cross-tenant read. Only the per-request
+    #    ContextVar value above is trusted; when it is the generic fallback we
+    #    resolve to the desktop identity.
+    if user_id in ("default", "", "anonymous"):
+        user_id = "desktop_user"
+
+    return user_id, workspace_id
 
 
 def _owner_counts(store: Any) -> dict[str, Any]:
@@ -541,6 +597,12 @@ async def create_memory(request: Request, body: MemoryCreateRequest):
         content = body.content.strip()
         if not content:
             raise HTTPException(400, "Memory content cannot be empty")
+        if len(content) > _MAX_MEMORY_CONTENT_LEN:
+            raise HTTPException(
+                413,
+                f"Memory content too long: {len(content)} chars "
+                f"(max {_MAX_MEMORY_CONTENT_LEN})",
+            )
         try:
             mem_type = MemoryType(body.type)
         except ValueError:
@@ -556,11 +618,18 @@ async def create_memory(request: Request, body: MemoryCreateRequest):
             tags=body.tags or [],
         )
         apply_retention(mem)
+        # Route the write through the SAME owner resolution the read paths use
+        # (_current_owner), otherwise the manager's per-request ContextVar owner
+        # defaults to "default" on the REST panel surface and the created memory
+        # lands in the "default" bucket while list/stats read "desktop_user" —
+        # re-splitting the buckets that fix #2 (P1) was meant to unify.
+        user_id, workspace_id = _current_owner(request)
         mm = _get_manager(request)
         if mm and hasattr(mm, "save_user_memory"):
-            mem_id = mm.save_user_memory(mem, scope="user")
+            mem_id = mm.save_user_memory(
+                mem, scope="user", user_id=user_id, workspace_id=workspace_id
+            )
         else:
-            user_id, workspace_id = _current_owner(request)
             mem_id = store.save_semantic(
                 mem,
                 scope="user",
@@ -582,8 +651,8 @@ async def list_memories(
     search: str | None = None,
     q: str | None = None,
     min_score: float = 0.0,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     sort_by: str = "importance_score",
     sort_order: str = "desc",
     include_inactive: bool = False,
@@ -829,6 +898,56 @@ async def migrate_workspace(request: Request, body: MigrateWorkspaceRequest):
         "user_id": user_id,
         "scope": body.scope or "user",
     }
+
+
+@router.post("/merge-owner")
+async def merge_owner(request: Request, body: MergeOwnerRequest | None = None):
+    """Merge a historical owner bucket (``from_owner``) into the canonical one.
+
+    Motivation: the earlier owner-scoping fix aligned REST reads/writes to the
+    desktop canonical identity (``desktop_user``) but left ~150 legacy memories
+    stranded in the ``user_id='default'`` bucket — invisible to the panel and
+    to conversation recall. ``migrate-workspace`` only rewrites ``workspace_id``
+    and ``claim-legacy`` only handles the ``legacy_quarantine`` scope, so
+    neither can perform an owner (``user_id``) merge. This endpoint does it
+    safely by routing every source memory through ``save_user_memory`` so the
+    existing content-dedup + identity-slot supersede logic applies.
+
+    Safety:
+    - ``dry_run=true`` (default) writes nothing; it returns the counts/samples a
+      real run would produce so the operator can inspect before executing.
+    - Content duplicates are skipped (never duplicated); identity-slot conflicts
+      (same ``subject``/``predicate``) keep the newer value and retire the loser
+      via ``superseded_by`` rather than raising or double-activating a slot.
+    - Idempotent: moved rows leave the source bucket and retired rows go
+      inactive, so re-running returns all-zero counts.
+    """
+    mm = _get_manager(request)
+    if mm is None or not hasattr(mm, "merge_owner_memories"):
+        raise HTTPException(503, "Memory manager not available")
+
+    body = body or MergeOwnerRequest()
+    # Canonical owner for defaulting to_owner / to_workspace_id (desktop panel
+    # resolves to desktop_user via _current_owner).
+    canon_user, canon_workspace = _current_owner(request)
+    from_user = (body.from_owner or "default").strip() or "default"
+    to_user = (body.to_owner or "").strip() or canon_user
+    from_workspace = (body.from_workspace_id or "default").strip() or "default"
+    to_workspace = (body.to_workspace_id or "").strip() or canon_workspace
+    scope = (body.scope or "user").strip() or "user"
+
+    if not to_user:
+        raise HTTPException(400, "to_owner is required (and no canonical owner is bound)")
+
+    report = mm.merge_owner_memories(
+        from_user_id=from_user,
+        to_user_id=to_user,
+        from_workspace_id=from_workspace,
+        to_workspace_id=to_workspace,
+        scope=scope,
+        dry_run=body.dry_run,
+    )
+    return {"ok": True, **report}
 
 
 @router.post("/review")

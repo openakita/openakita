@@ -1,4 +1,4 @@
-from openakita.core.reasoning_engine import ReasoningEngine
+from openakita.agent.reasoning import ReasoningEngine
 
 
 def test_repeated_web_fetch_uses_cached_summary_without_external_retry():

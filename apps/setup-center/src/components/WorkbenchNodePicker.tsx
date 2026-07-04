@@ -2,7 +2,7 @@
  * WorkbenchNodePicker
  * ────────────────────────────────────────────────────────────────
  * 在组织编排器中弹出一个选择框，列出后端通过
- * `GET /api/orgs/plugin-workbench-templates` 返回的"工作台模板"。
+ * `GET /api/v2/orgs/plugin-workbench-templates` 返回的"工作台模板"。
  * 每个模板对应一个已加载并注册了 LLM 工具的工作台应用，点击后回调上层用
  * `template.suggested_node` 在画布上创建一个预配置的叶子节点
  * （`external_tools` 已锁定为该工作台的工具集，`plugin_origin` 写入
@@ -81,7 +81,7 @@ export function WorkbenchNodePicker(props: WorkbenchNodePickerProps) {
     setError(null);
     (async () => {
       try {
-        const res = await safeFetch(`${apiBaseUrl}/api/orgs/plugin-workbench-templates`);
+        const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/plugin-workbench-templates`);
         const data = await res.json();
         if (cancelled) return;
         setItems(Array.isArray(data) ? data : []);

@@ -22,6 +22,7 @@ import "./styles.css";
 import { App } from "./App";
 import { PetView } from "./views/PetView";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { StaleBundleBanner } from "./components/StaleBundleBanner";
 import { initTheme } from "./theme";
 import { logger } from "./platform/logger";
 import { copyToClipboard, readFromClipboard } from "./utils/clipboard";
@@ -423,6 +424,10 @@ waitForBackend().then((ok) => {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
+    {/* P-RC-2 P2.8: stale-bundle banner. Lives outside
+        GlobalErrorBoundary so a render crash in App.tsx does
+        not also blank the upgrade prompt. */}
+    <StaleBundleBanner />
     <GlobalErrorBoundary>
       {window.location.pathname === "/pet" ? (
         <PetView />

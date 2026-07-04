@@ -1,0 +1,9 @@
+{
+  "name": "lifecycle_init_to_validate",
+  "probe": "graph_successors",
+  "node": "init",
+  "expected": [
+    "validate_input"
+  ],
+  "description": "init -> validate_input is the only successor"
+}

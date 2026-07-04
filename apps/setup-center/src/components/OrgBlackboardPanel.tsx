@@ -38,7 +38,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
       try {
         const params = new URLSearchParams({ limit: "100" });
         if (s && s !== "all") params.set("scope", s);
-        const res = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/memory?${params}`);
+        const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/memory?${params}`);
         const data = await res.json();
         setEntries(data || []);
       } catch {
@@ -47,6 +47,13 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
         setLoading(false);
       }
     }, [apiBaseUrl, orgId]);
+
+    // Auto-load on mount / scope (tab) switch / org switch. Clearing entries
+    // when the org changes avoids briefly showing a previous org's records
+    // before the fresh fetch resolves (the panel otherwise keeps stale data).
+    useEffect(() => {
+      setEntries([]);
+    }, [orgId]);
 
     useEffect(() => {
       fetchData(scope);
@@ -74,7 +81,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
 
     const handleDelete = async (entryId: string) => {
       try {
-        await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/memory/${entryId}`, { method: "DELETE" });
+        await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/memory/${entryId}`, { method: "DELETE" });
         setEntries(prev => prev.filter(e => e.id !== entryId));
       } catch { /* ignore */ }
     };

@@ -2,7 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from openakita.core.current_turn import CurrentTurnInput, SessionObjectRegistry
-from openakita.core.tool_executor import ToolExecutor
+from openakita.agent.tools import ToolExecutor
 from openakita.tools.handlers import SystemHandlerRegistry
 
 

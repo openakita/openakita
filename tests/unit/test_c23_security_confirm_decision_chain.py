@@ -225,14 +225,30 @@ class TestPayloadIntegration:
     def test_yield_points_include_decision_chain(self) -> None:
         from pathlib import Path
 
-        engine_src = Path("src/openakita/core/reasoning_engine.py").read_text(encoding="utf-8")
+        engine_src = Path("src/openakita/core/_reasoning_engine_legacy.py").read_text(
+            encoding="utf-8"
+        )
         channel_src = Path("src/openakita/core/security_confirm_channel.py").read_text(
             encoding="utf-8"
         )
+        risk_gate_tools_src = Path("src/openakita/core/risk_gate_tools.py").read_text(
+            encoding="utf-8"
+        )
+        confirm_yields = engine_src.count('"type": "security_confirm"')
+        chain_emits = engine_src.count('"decision_chain": _pr.to_ui_chain()')
+        assert confirm_yields >= 2, (
+            f"Expected ≥2 security_confirm yield points, got {confirm_yields}. "
+            "If you split / refactored the yield sites, update this guard."
+        )
+        assert chain_emits == confirm_yields, (
+            f"Found {confirm_yields} security_confirm yields but only "
+            f"{chain_emits} include decision_chain. Every security_confirm "
+            "yield must carry decision_chain (C23 P2-2)."
+        )
 
         assert "security_confirm_display" not in engine_src
-        assert "register_policy_confirm(" in engine_src
-        assert "prepare_riskgate_tool_prompt(" in engine_src
+        assert "register_policy_confirm(" in channel_src
+        assert "prepare_riskgate_tool_prompt(" in risk_gate_tools_src
         assert '"type": "security_confirm"' in channel_src
         assert '"decision_chain":' in channel_src
         assert '"display": security_confirm_display(' in channel_src

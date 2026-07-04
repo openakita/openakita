@@ -20,7 +20,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from openakita.core.brain import Brain
+    from openakita.agent.brain import Brain
 
 logger = logging.getLogger(__name__)
 

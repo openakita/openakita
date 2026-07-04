@@ -121,7 +121,10 @@ def test_orchestrator_persist_uses_atomic_json_write(tmp_path, monkeypatch):
     "module_path,functions",
     [
         ("openakita.core.proactive", ["_load", "_save"]),
-        ("openakita.core.user_profile", ["_load_state", "_save_state"]),
+        # ADR-0003: the user-profile manager moved to ``openakita.agent.user_profile``;
+        # ``openakita.core.user_profile`` is now a thin re-export shim (no source-level
+        # ``def _load_state(``), so point the source-scan at the canonical home.
+        ("openakita.agent.user_profile", ["_load_state", "_save_state"]),
         ("openakita.sessions.user", ["_load_users", "_save_users"]),
         ("openakita.channels.adapters.telegram", ["_load_paired_users", "_save_paired_users"]),
         ("openakita.channels.media.storage", ["_load_index", "_save_index"]),

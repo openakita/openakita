@@ -253,6 +253,9 @@ class WebSearchHandler:
                 region=region,
                 safesearch=safesearch,
                 timeout_seconds=timeout_seconds,
+                # Agent path: a broken default source (e.g. jina 401) should fall
+                # back to other available providers rather than hard-failing.
+                allow_fallback=True,
             )
         except NoProviderAvailable as exc:
             _raise_config_error(exc.error_code)
@@ -324,6 +327,7 @@ class WebSearchHandler:
                 safesearch=safesearch,
                 timelimit=timelimit,
                 timeout_seconds=timeout_seconds,
+                allow_fallback=True,
             )
         except NoProviderAvailable as exc:
             # news_search 比 web_search 更挑剔：当前内置 provider 中只有 ddg

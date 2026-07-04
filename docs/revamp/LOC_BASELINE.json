@@ -1,0 +1,21 @@
+{
+  "_comment": "Per-file LOC baseline used by scripts/revamp_loc_audit.py. Update only at phase boundaries (P-RC-X commits) and only to lower the values for agent/* files as their real rewrites land. core/* and orgs/* baselines must never grow \u2014 they are the giants we are shrinking.",
+  "agent_growth_budget": 50,
+  "files": {
+    "src/openakita/core/_brain_legacy.py": 1802,
+    "src/openakita/core/_tool_executor_legacy.py": 1818,
+    "src/openakita/core/_context_manager_legacy.py": 1799,
+    "src/openakita/core/_reasoning_engine_legacy.py": 8069,
+    "src/openakita/core/_agent_legacy.py": 9211,
+    "src/openakita/core/_supervisor_legacy.py": 853,
+    "src/openakita/orgs/runtime.py": 6355,
+    "src/openakita/orgs/tool_handler.py": 3474,
+    "src/openakita/orgs/templates.py": 1266,
+    "src/openakita/orgs/messenger.py": 651,
+    "src/openakita/agent/core.py": 336,
+    "src/openakita/agent/reasoning.py": 352,
+    "src/openakita/agent/brain.py": 369,
+    "src/openakita/agent/tools.py": 347,
+    "src/openakita/agent/context.py": 336
+  }
+}

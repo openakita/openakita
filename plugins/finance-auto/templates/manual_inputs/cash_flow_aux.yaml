@@ -1,0 +1,62 @@
+# M1 W3 Stage 4 — preset list of "manual inputs" the cash-flow statement
+# needs but neither the trial balance nor the VAT declaration provides.
+#
+# Source: v0.1 main design §7.2 (cash_flow_aux preset; 7 keys).
+#
+# Each entry has:
+#   key           - stable machine identifier persisted to manual_inputs.field_key
+#   label         - Chinese display label
+#   value_type    - cny / text  (UI hint; backend keeps it string-typed)
+#   default_source - manual | vat_declaration  (controls API default)
+#   source_hint   - human-readable provenance hint (UI tooltip)
+#   required_by   - which CF reference_code(s) consume the value
+
+manual_inputs:
+  - key: vat_output
+    label: 当期销项税额
+    value_type: cny
+    default_source: vat_declaration
+    source_hint: 增值税申报表附表一-合计销项税额
+    required_by: [CF_SALES_CASH]
+
+  - key: vat_input
+    label: 当期进项税额（含已认证）
+    value_type: cny
+    default_source: vat_declaration
+    source_hint: 增值税申报表附表二-合计进项税额
+    required_by: [CF_PURCHASE_CASH]
+
+  - key: bill_discount_received
+    label: 收到的票据贴现款
+    value_type: cny
+    default_source: manual
+    source_hint: 银行流水 — 票据贴现入账金额
+    required_by: [CF_SALES_CASH]
+
+  - key: interest_paid
+    label: 当期实际支付的利息
+    value_type: cny
+    default_source: manual
+    source_hint: 财务费用明细 - 利息支出借方发生额
+    required_by: [CF_INTEREST_PAID]
+
+  - key: interest_income
+    label: 当期实际收到的利息
+    value_type: cny
+    default_source: manual
+    source_hint: 财务费用明细 - 利息收入贷方发生额
+    required_by: [CF_INTEREST_RECEIVED]
+
+  - key: bank_fee_paid
+    label: 银行手续费 + 汇兑损益
+    value_type: cny
+    default_source: manual
+    source_hint: 6603 财务费用明细 - 手续费 + 汇兑损益
+    required_by: [CF_OTHER_OPERATING_CASH_OUT]
+
+  - key: social_security_paid
+    label: 实际缴纳社保（含个人代扣）
+    value_type: cny
+    default_source: manual
+    source_hint: 2211 应付职工薪酬 - 社保子项借方发生额
+    required_by: [CF_EMPLOYEE_CASH_OUT]

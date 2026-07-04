@@ -1,0 +1,11 @@
+{
+  "description": "smart_truncate returns original when under cap",
+  "input": {
+    "content": "hello world",
+    "limit": 1000
+  },
+  "expected": {
+    "out": "hello world",
+    "was_truncated": false
+  }
+}

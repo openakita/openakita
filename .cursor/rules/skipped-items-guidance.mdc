@@ -1,0 +1,57 @@
+---
+description: Guidance for AI agents touching plugin manifests, legacy 308 shim, template responses, or LLM tool budgets — items intentionally deferred by exploratory testing v10/v11
+globs:
+  - "plugins/**/plugin.json"
+  - "plugins-archive/**/plugin.json"
+  - "dist-plugins/**/plugin.json"
+  - "src/openakita/plugins/**"
+  - "src/openakita/api/routes/_orgs_v2_legacy_redirects.py"
+  - "src/openakita/api/routes/orgs_v2.py"
+  - "src/openakita/api/routes/health.py"
+  - "src/openakita/api/server.py"
+  - "src/openakita/core/_agent_legacy.py"
+  - "src/openakita/core/_brain_legacy.py"
+  - "apps/setup-center/src/api/orgs.ts"
+alwaysApply: false
+---
+
+# Skipped Items Guidance
+
+These code paths have intentionally-deferred follow-ups tracked in
+[docs/follow-ups/skipped-items-roadmap.md](mdc:docs/follow-ups/skipped-items-roadmap.md).
+Before making changes:
+
+1. Read the relevant section in `skipped-items-roadmap.md` AND its
+   cross-reference in `_skip_items_rca_v11.md`.
+2. If a section says **"DO NOT do yet"**, respect it unless the user
+   explicitly asks for that change with awareness of the deferral.
+3. For plugin manifests: run
+   `python scripts/audit_tool_classes.py --plugin <id>` and follow its
+   suggestion when adding new tools (see also
+   [plugin-tool-classes-howto.md](mdc:docs/plugin-tool-classes-howto.md)).
+4. For lazy tool loading or sub-agent tool isolation, check whether
+   the trigger conditions in §A.5 are met before making large
+   structural changes; otherwise prefer the feature flag added in
+   `Settings.effective_tools_main_chat_stable`.
+
+## Quick reference table
+
+| You are about to touch… | Read first |
+|-------------------------|------------|
+| `plugins/**/plugin.json` | §A.1 + audit script |
+| `src/openakita/plugins/manifest.py` or `installer.py` | §A.2 (deferred validator stub) |
+| `src/openakita/api/routes/_orgs_v2_legacy_redirects.py` | §A.3 (don't remove yet — observe `/api/diagnostics/legacy-shim-stats`) |
+| `src/openakita/api/routes/orgs_v2.py::list_templates` | §A.4 (bare-array unification target) |
+| `src/openakita/api/server.py` (shim `include_router`) | §A.3 |
+| `apps/setup-center/src/api/orgs.ts` | §A.4 (frontend assumes runtime shape) |
+| `core/_agent_legacy.py::_effective_tools` / `core/_brain_legacy.py::_convert_tools_to_llm` | §A.5 + `_skip_items_rca_v11.md` §1 |
+
+## When in doubt
+
+* Honour the **DO NOT do yet** notes.
+* The roadmap file is the single source of truth — code-level TODOs
+  link back to it, not the other way around.
+* If you complete an item, move its section to `## Completed` in the
+  roadmap (do not delete history).
+
+See also: top-level `AGENTS.md` "Project evolution / open follow-ups".

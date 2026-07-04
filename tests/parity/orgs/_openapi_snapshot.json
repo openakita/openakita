@@ -1,0 +1,254 @@
+{
+  "/api/v2/orgs": [
+    "GET",
+    "POST"
+  ],
+  "/api/v2/orgs-spec": [
+    "GET",
+    "POST"
+  ],
+  "/api/v2/orgs-spec/templates": [
+    "GET"
+  ],
+  "/api/v2/orgs-spec/templates/{template_id}": [
+    "GET"
+  ],
+  "/api/v2/orgs-spec/templates/{template_id}/instantiate": [
+    "POST"
+  ],
+  "/api/v2/orgs-spec/{org_id}": [
+    "DELETE",
+    "GET",
+    "PATCH"
+  ],
+  "/api/v2/orgs-spec/{org_id}/stream": [
+    "GET"
+  ],
+  "/api/v2/orgs/_p97/health": [
+    "GET"
+  ],
+  "/api/v2/orgs/avatar-presets": [
+    "GET"
+  ],
+  "/api/v2/orgs/avatars/upload": [
+    "POST"
+  ],
+  "/api/v2/orgs/from-template": [
+    "POST"
+  ],
+  "/api/v2/orgs/import": [
+    "POST"
+  ],
+  "/api/v2/orgs/plugin-workbench-templates": [
+    "GET"
+  ],
+  "/api/v2/orgs/templates": [
+    "GET"
+  ],
+  "/api/v2/orgs/templates/{template_id}": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}": [
+    "DELETE",
+    "GET",
+    "PATCH",
+    "PUT"
+  ],
+  "/api/v2/orgs/{org_id}/activity": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/archive": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/audit-log": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/broadcast": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/command": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/commands/{command_id}": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/commands/{command_id}/cancel": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/duplicate": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/events": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/events/stream": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/export": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/inbox": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/inbox/read-all": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/inbox/{msg_id}/read": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/inbox/{msg_id}/resolve": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/memory": [
+    "GET",
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/memory/{memory_id}": [
+    "DELETE"
+  ],
+  "/api/v2/orgs/{org_id}/messages": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/active-plan": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/dismiss": [
+    "DELETE"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/freeze": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/identity": [
+    "GET",
+    "PUT"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/mcp": [
+    "GET",
+    "PUT"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/offline": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/online": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/prompt-preview": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/schedules": [
+    "GET",
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/schedules/{schedule_id}": [
+    "DELETE",
+    "PUT"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/status": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/tasks": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/thinking": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/nodes/{node_id}/unfreeze": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/pause": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/policies": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/policies/search": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/policies/{filename}": [
+    "DELETE",
+    "GET",
+    "PUT"
+  ],
+  "/api/v2/orgs/{org_id}/projects": [
+    "GET",
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/projects/{project_id}": [
+    "DELETE",
+    "GET",
+    "PUT"
+  ],
+  "/api/v2/orgs/{org_id}/projects/{project_id}/tasks": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/projects/{project_id}/tasks/{task_id}": [
+    "DELETE",
+    "PUT"
+  ],
+  "/api/v2/orgs/{org_id}/projects/{project_id}/tasks/{task_id}/cancel": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/projects/{project_id}/tasks/{task_id}/dispatch": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/reports": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/reports/generate": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/reports/summary": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/resume": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/save-as-template": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/scale/clone": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/scale/recruit": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/scaling/requests": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/scaling/{request_id}/approve": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/scaling/{request_id}/reject": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/start": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/stats": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/status": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/stop": [
+    "POST"
+  ],
+  "/api/v2/orgs/{org_id}/stream": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/tasks": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/tasks/{task_id}": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/tasks/{task_id}/timeline": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/tasks/{task_id}/tree": [
+    "GET"
+  ],
+  "/api/v2/orgs/{org_id}/unarchive": [
+    "POST"
+  ]
+}

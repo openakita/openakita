@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from openakita.core.brain import Brain
+from openakita.agent.brain import Brain
 from openakita.llm.client import _friendly_error_hint
 from openakita.llm.error_types import FailoverReason
 from openakita.llm.types import (
@@ -106,7 +106,7 @@ def test_brain_tool_schema_budget_scales_down_for_small_context(monkeypatch):
     brain._llm_client = SimpleNamespace(endpoints=[endpoint])
     brain.get_current_model_info = lambda: {"name": "local"}
 
-    monkeypatch.setattr("openakita.core.brain.settings.api_tools_schema_budget_tokens", 12000)
+    monkeypatch.setattr("openakita.core._brain_legacy.settings.api_tools_schema_budget_tokens", 12000)
 
     tools = [
         {

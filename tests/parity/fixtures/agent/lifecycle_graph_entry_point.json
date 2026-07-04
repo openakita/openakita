@@ -1,0 +1,6 @@
+{
+  "name": "lifecycle_graph_entry_point",
+  "probe": "graph_entry_point",
+  "expected": "init",
+  "description": "lifecycle graph entry point is the init node"
+}

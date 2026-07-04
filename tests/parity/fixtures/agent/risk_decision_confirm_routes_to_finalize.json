@@ -1,0 +1,7 @@
+{
+  "name": "risk_decision_confirm_routes_to_finalize",
+  "probe": "risk_decision_next_node",
+  "label": "confirm",
+  "expected": "finalize",
+  "description": "RiskGateDecision('confirm') routes to finalize"
+}

@@ -21,7 +21,9 @@
     "tauri:dev:external-backend": "cross-env OPENAKITA_EXTERNAL_BACKEND_DEV=1 tauri dev --config src-tauri/tauri.external-backend.dev.conf.json",
     "cap:sync": "npx cap sync",
     "cap:android": "npx cap open android",
-    "cap:ios": "npx cap open ios"
+    "cap:ios": "npx cap open ios",
+    "test": "vitest",
+    "test:run": "vitest run"
   },
   "dependencies": {
     "@capacitor/android": "^8.1.0",
@@ -66,7 +68,7 @@
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "sonner": "^2.0.7",
+    "sonner": "^1.7.4",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.1",
     "three": "^0.183.2",
@@ -74,7 +76,10 @@
     "unist-util-visit-parents": "^6.0.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@tauri-apps/cli": "^2.0.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/katex": "^0.16.8",
     "@types/node": "^25.5.0",
     "@types/react": "^18.3.12",
@@ -85,8 +90,10 @@
     "cross-env": "^7.0.3",
     "eslint": "^9.0.0",
     "eslint-plugin-react-hooks": "^5.0.0",
+    "jsdom": "^29.1.1",
     "playwright": "^1.59.1",
     "typescript": "^5.7.3",
-    "vite": "^6.1.1"
+    "vite": "^6.1.1",
+    "vitest": "^4.1.6"
   }
 }

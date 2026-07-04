@@ -2,10 +2,10 @@ import inspect
 
 import pytest
 
-from openakita.core.context_manager import ContextManager
+from openakita.agent.context import ContextManager
+from openakita.agent.reasoning import ReasoningEngine
 from openakita.core.loop_budget_guard import LoopBudgetGuard
 from openakita.core.microcompact import microcompact
-from openakita.core.reasoning_engine import ReasoningEngine
 from openakita.prompt.builder import _build_catalogs_section
 
 
@@ -21,9 +21,7 @@ class DummyPluginCatalog:
 def test_context_pressure_includes_system_tools_and_real_usage():
     cm = ContextManager(DummyBrain())
     messages = [{"role": "user", "content": "短消息"}]
-    tools = [
-        {"name": "big_tool", "input_schema": {"type": "object", "properties": {"x": "y" * 5000}}}
-    ]
+    tools = [{"name": "big_tool", "input_schema": {"type": "object", "properties": {"x": "y" * 5000}}}]
 
     pressure = cm.calculate_context_pressure(
         messages,
@@ -167,12 +165,8 @@ def test_microcompact_dedupes_cached_and_repeated_tool_results():
 
 
 def test_token_anomaly_compaction_uses_configured_summary_chars(monkeypatch):
-    monkeypatch.setattr(
-        "openakita.core.reasoning_engine.settings.context_token_anomaly_threshold", 100
-    )
-    monkeypatch.setattr(
-        "openakita.core.reasoning_engine.settings.context_cached_summary_chars", 100
-    )
+    monkeypatch.setattr("openakita.core._reasoning_engine_legacy.settings.context_token_anomaly_threshold", 100)
+    monkeypatch.setattr("openakita.core._reasoning_engine_legacy.settings.context_cached_summary_chars", 100)
     engine = object.__new__(ReasoningEngine)
     working_messages = [
         {
@@ -226,9 +220,7 @@ def test_tool_failures_are_tracked_by_exact_invocation():
 
 
 def test_stream_tool_failure_tracking_uses_current_tool_call():
-    # v1.27.14 (plan v1.28, S1.5): reason_stream 是 outer wrapper，主体
-    # 重命名到 _reason_stream_impl；测试同步切到新方法。
-    source = inspect.getsource(ReasoningEngine._reason_stream_impl)
+    source = inspect.getsource(ReasoningEngine.reason_stream)
 
     assert 'tool_args=_stc.get("input", _stc.get("arguments", {}))' not in source
     assert 'tool_args=tc_rec.get("input", tc_rec.get("arguments", {}))' in source

@@ -8,6 +8,13 @@ const isWebBuild = buildTarget === "web";
 const isCapBuild = buildTarget === "capacitor";
 const isRemoteBuild = isWebBuild || isCapBuild;
 
+// P-RC-2 commit P2.8: stable build identifier embedded into the
+// bundle. CI sets VITE_BUILD_ID to a short SHA / timestamp; in dev
+// we fall back to a unique-per-process value so HMR reloads still
+// show the same id within a session and differ between server
+// restarts.
+const buildId = process.env.VITE_BUILD_ID || `dev-${Date.now().toString(36)}`;
+
 function tauriStubPlugin(): Plugin {
   const prefix = "@tauri-apps/";
   return {
@@ -41,6 +48,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), ...(isRemoteBuild ? [tauriStubPlugin()] : [])],
   define: {
     __BUILD_TARGET__: JSON.stringify(buildTarget),
+    __BUILD_ID__: JSON.stringify(buildId),
   },
   resolve: {
     alias: {

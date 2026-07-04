@@ -1,0 +1,37 @@
+# templates/industry_overrides/restaurant.yaml
+# M1 W3 Stage 5 — 餐饮业 行业覆盖
+#
+# Restaurants typically have hundreds of customer / supplier sub-accounts
+# but accountants only care about the top performers — pre-enable light
+# aux mode and turn the report simplifier on by default for AR/AP.
+
+industry: restaurant
+label: 餐饮服务业
+description: |
+  覆盖项：默认账套 aux_mode=light（仅保留科目级辅助核算汇总，省存
+  储 + 加快后续报表生成）；BS_1122 应收账款 / BS_2202 应付账款
+  默认启用 simplify(top_n=10) 让"上千家供应商"摊到一行"其他"。
+
+org_defaults:
+  aux_mode: light
+
+report_overrides:
+  balance_sheet:
+    BS_1122:
+      simplify:
+        enabled: true
+        strategy: top_n
+        top_n: 10
+        sort_by: amount_desc
+        merge_label: 其他客户
+        keep_negative_separate: true
+        footnote_template: "其他 {count} 家客户合计 {amount} 元"
+    BS_2202:
+      simplify:
+        enabled: true
+        strategy: top_n
+        top_n: 10
+        sort_by: amount_desc
+        merge_label: 其他供应商
+        keep_negative_separate: true
+        footnote_template: "其他 {count} 家供应商合计 {amount} 元"

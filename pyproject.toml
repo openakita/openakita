@@ -32,7 +32,7 @@ dependencies = [
     # CLI and UI
     "rich>=13.7.0",
     "prompt-toolkit>=3.0.43",
-    "typer>=0.12.0",
+    "typer>=0.12.0,<1",
 
     # Async and HTTP
     "httpx[socks]>=0.27.0",
@@ -44,7 +44,7 @@ dependencies = [
     "aiosqlite>=0.20.0",
 
     # Data validation
-    "pydantic>=2.5.0",
+    "pydantic>=2.5.0,<3",
     "pydantic-settings>=2.1.0",
 
     # Git operations
@@ -61,7 +61,7 @@ dependencies = [
     "filelock>=3.13.0",
 
     # HTTP API (serve mode + Desktop Terminal)
-    "fastapi>=0.110.0",
+    "fastapi>=0.110.0,<1",
     "uvicorn>=0.27.0",
 
     # IM Channels - Telegram (default)
@@ -183,10 +183,23 @@ all = [
     "openakita-plugin-sdk>=0.7.0",
 ]
 
+# 财务自动化插件（plugins/finance-auto）运行时依赖
+# 保持与 `plugins/finance-auto/requirements.txt` 同步。
+# 用法： pip install -e ".[finance-auto]"
+# 关闭审计项 EX-P1-5（_finance_plugin_audit_extended_report.md）。
+finance-auto = [
+    "openpyxl>=3.1.5,<4.0",        # .xlsx Tier 1 解析
+    "xlrd==1.2.0",                 # .xls Tier 2（2.x 已移除 .xls 支持，故锁定）
+    "xltpl>=0.20,<1.0",            # 审计模板 .xlsx 渲染（PyPI 当前 HEAD = 0.21）
+    "keyring>=24.0,<26.0",         # OS keyring（Windows Credential Manager / macOS Keychain / Secret Service）
+    "pywin32>=306; sys_platform == 'win32'",  # .xls Tier 3 COM fallback（Windows-only）
+    "cryptography>=42.0,<46.0",    # AES-256-GCM + PBKDF2-HMAC-SHA256
+]
+
 # 开发依赖
 dev = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
+    "pytest>=8.0.0,<9",
+    "pytest-asyncio>=0.23.0,<1",
     "pytest-cov>=4.1.0",
     "ruff>=0.1.9",
     "mypy>=1.8.0",

@@ -94,7 +94,7 @@ export function OrgInboxSidebar({
       if (filter === "approval") params.set("pending_approval", "true");
       params.set("limit", "50");
 
-      const resp = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/inbox?${params}`);
+      const resp = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/inbox?${params}`);
       if (resp.ok) {
         const data: InboxResponse = await resp.json();
         setMessages(data.messages);
@@ -120,7 +120,7 @@ export function OrgInboxSidebar({
 
   const handleMarkRead = async (msgId: string) => {
     try {
-      const resp = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/inbox/${msgId}/read`, { method: "POST" });
+      const resp = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/inbox/${msgId}/read`, { method: "POST" });
       if (!resp.ok) console.error("Mark read failed:", resp.status);
     } catch (e) {
       console.error("Mark read error:", e);
@@ -130,7 +130,7 @@ export function OrgInboxSidebar({
 
   const handleMarkAllRead = async () => {
     try {
-      const resp = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/inbox/read-all`, { method: "POST" });
+      const resp = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/inbox/read-all`, { method: "POST" });
       if (!resp.ok) console.error("Mark all read failed:", resp.status);
     } catch (e) {
       console.error("Mark all read error:", e);
@@ -140,7 +140,7 @@ export function OrgInboxSidebar({
 
   const handleResolve = async (msgId: string, decision: string) => {
     try {
-      const resp = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/inbox/${msgId}/resolve`, {
+      const resp = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/inbox/${msgId}/resolve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ decision }),

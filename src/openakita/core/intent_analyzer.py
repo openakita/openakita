@@ -15,7 +15,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .brain import Brain
+    from ._brain_legacy import Brain
 
 logger = logging.getLogger(__name__)
 

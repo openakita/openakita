@@ -1,0 +1,18 @@
+{
+  "name": "source_tag_mismatch_no_tools",
+  "decision_kind": "final_answer",
+  "expected_exit_reason": "normal",
+  "is_terminal": false,
+  "text": "已通过网络查询确认 [来源:工具]",
+  "last_user_text": "请帮我查一下",
+  "tool_results": null,
+  "recent_messages": null,
+  "expected_guard_passed": {
+    "source_tag": false,
+    "tool_failure_ack": true,
+    "unbacked_action": true,
+    "recap_context": true,
+    "waiting_for_user": true,
+    "recoverable_tool_issue": true
+  }
+}

@@ -1,0 +1,28 @@
+# templates/peer_benchmarks/restaurant.yaml
+# M3 Biz Stage 4 — 餐饮业 同业基准数据
+#
+# Documentation-only mirror of the canonical SQL rows seeded by the v10
+# migration (see _PEER_BENCHMARKS in v10_notes_peer.py).  Restaurants
+# typically post higher gross margin and faster asset turnover than
+# manufacturing while running a thinner current ratio and higher debt
+# load — the quartiles below mirror that profile.
+
+industry_code: restaurant
+label: 餐饮业
+sample_size: 95
+period_label: "2024"
+source: seed
+accounting_standard: small_enterprise
+metrics:
+  - metric_code: gross_margin
+    metric_name: 毛利率
+    quartiles: { p25: 0.55, p50: 0.65, p75: 0.72 }
+  - metric_code: current_ratio
+    metric_name: 流动比率
+    quartiles: { p25: 0.70, p50: 1.00, p75: 1.40 }
+  - metric_code: asset_turnover
+    metric_name: 总资产周转率
+    quartiles: { p25: 1.20, p50: 1.80, p75: 2.60 }
+  - metric_code: debt_ratio
+    metric_name: 资产负债率
+    quartiles: { p25: 0.40, p50: 0.58, p75: 0.72 }

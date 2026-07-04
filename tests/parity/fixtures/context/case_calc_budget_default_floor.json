@@ -1,0 +1,11 @@
+{
+  "description": "zero context_window falls through to DEFAULT_MAX_CONTEXT_TOKENS",
+  "input": {
+    "context_window": 0,
+    "max_tokens": 0,
+    "fallback_window": 0
+  },
+  "expected": {
+    "is_default": true
+  }
+}

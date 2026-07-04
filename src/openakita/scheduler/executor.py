@@ -337,7 +337,7 @@ class TaskExecutor:
 
             try:
                 # 使用 Brain 直接判断，不创建完整 Agent（更轻量、不会发消息）
-                from ..core.brain import Brain
+                from ..agent.brain import Brain
 
                 brain = Brain()
 
@@ -872,7 +872,7 @@ class TaskExecutor:
                 return await AgentFactory().create(profile)
             logger.warning("Unknown scheduled task agent_profile_id=%r, using default", profile_id)
 
-        from ..core.agent import Agent
+        from ..agent.core import Agent
 
         agent = Agent()
         await agent.initialize(start_scheduler=False)
@@ -1056,7 +1056,7 @@ class TaskExecutor:
 
             mm = self.memory_manager
             if not mm:
-                from ..core.brain import Brain
+                from ..agent.brain import Brain
                 from ..memory import MemoryManager
 
                 brain = Brain()
@@ -1168,7 +1168,7 @@ class TaskExecutor:
             if not conversation_text.strip():
                 return True, "Recent turns have no meaningful content"
 
-            from ..core.brain import Brain
+            from ..agent.brain import Brain
 
             brain = Brain()
 
@@ -1420,8 +1420,8 @@ class TaskExecutor:
         try:
             from datetime import datetime
 
+            from ..agent.brain import Brain
             from ..config import settings
-            from ..core.brain import Brain
             from ..evolution import SelfChecker
             from ..logging import LogCleaner
             from .consolidation_tracker import ConsolidationTracker

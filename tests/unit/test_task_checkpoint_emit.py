@@ -6,7 +6,7 @@
 - 写入成功时返回值与 session.context.task_checkpoints 一致。
 """
 
-from openakita.core.reasoning_engine import _build_task_checkpoint_event
+from openakita.core._reasoning_engine_legacy import _build_task_checkpoint_event
 from openakita.sessions.session import Session, SessionContext
 
 

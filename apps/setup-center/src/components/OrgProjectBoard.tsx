@@ -39,6 +39,10 @@ interface ProjectTask {
   description: string;
   status: string;
   assignee_node_id: string | null;
+  // P4 阶段B: 层级/派发关系，用于甘特图按父子缩进表达阶段树。
+  delegated_by?: string | null;
+  parent_task_id?: string | null;
+  depth?: number;
   priority: number;
   progress_pct: number;
   created_at: string;
@@ -88,6 +92,57 @@ const STATUS_META: Record<string, { label: string; color: string; order: number 
 
 const COLUMNS = Object.entries(STATUS_META).map(([key, v]) => ({ key, ...v }));
 
+/**
+ * P4 阶段B: order tasks as a TREE for the Gantt (parent → its children,
+ * depth-annotated) so the 派发层级/阶段关系 is visible. Falls back to a flat
+ * status-then-creation order when no parent links exist (older runs). Exported
+ * so it can be unit-tested independently of React rendering.
+ */
+export function orderTasksForGantt<T extends {
+  id: string;
+  status: string;
+  created_at: string;
+  parent_task_id?: string | null;
+}>(tasks: T[]): Array<T & { _depth: number }> {
+  const byCreated = (a: T, b: T) =>
+    new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+  const ids = new Set(tasks.map(tk => tk.id));
+  const childrenOf = new Map<string, T[]>();
+  const roots: T[] = [];
+  for (const tk of tasks) {
+    const pid = tk.parent_task_id;
+    if (pid && ids.has(pid)) {
+      const arr = childrenOf.get(pid) || [];
+      arr.push(tk);
+      childrenOf.set(pid, arr);
+    } else {
+      roots.push(tk);
+    }
+  }
+  if (childrenOf.size === 0) {
+    return [...tasks]
+      .sort((a, b) => {
+        const oa = STATUS_META[a.status]?.order ?? 9;
+        const ob = STATUS_META[b.status]?.order ?? 9;
+        return oa !== ob ? oa - ob : byCreated(a, b);
+      })
+      .map(tk => ({ ...tk, _depth: 0 }));
+  }
+  const out: Array<T & { _depth: number }> = [];
+  const seen = new Set<string>();
+  const walk = (tk: T, depth: number) => {
+    if (seen.has(tk.id)) return; // guard against cycles
+    seen.add(tk.id);
+    out.push({ ...tk, _depth: depth });
+    for (const k of (childrenOf.get(tk.id) || []).slice().sort(byCreated)) {
+      walk(k, depth + 1);
+    }
+  };
+  for (const r of roots.slice().sort(byCreated)) walk(r, 0);
+  for (const tk of tasks) if (!seen.has(tk.id)) out.push({ ...tk, _depth: 0 });
+  return out;
+}
+
 const PROJECT_TYPE_LABEL: Record<string, string> = { temporary: "org.projectType.temporary", permanent: "org.projectType.permanent" };
 const PROJECT_STATUS_LABEL: Record<string, string> = {
   planning: "org.projectStatus.planning", active: "org.projectStatus.active", paused: "org.projectStatus.paused", completed: "org.projectStatus.completed", archived: "org.projectStatus.archived",
@@ -136,8 +191,8 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
     setTaskTimeline([]);
     try {
       const [detailRes, timelineRes] = await Promise.all([
-        safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/tasks/${taskId}`),
-        safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/tasks/${taskId}/timeline`),
+        safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/tasks/${taskId}`),
+        safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/tasks/${taskId}/timeline`),
       ]);
       if (detailRes.ok) setTaskDetail(await detailRes.json());
       if (timelineRes.ok) {
@@ -161,7 +216,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
 
   const fetchProjects = useCallback(async () => {
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects`);
+      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/projects`);
       if (res.ok) {
         const data = await res.json();
         setProjects(data);
@@ -187,17 +242,16 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       }, 250);
     };
 
+    // Only the org:* WS events the v2 OrgRuntime actually emits trigger a
+    // board refresh. v1-era names (task_accepted/rejected/failed/cancelled,
+    // command_phase, command_stopped_no_progress) were dead listeners — v2
+    // never fires them. org:command_cancelled is the real cancel terminal.
     const refreshEvents = new Set([
       "org:task_delegated",
       "org:task_delivered",
-      "org:task_accepted",
-      "org:task_rejected",
-      "org:task_failed",
       "org:task_complete",
-      "org:task_cancelled",
       "org:command_done",
-      "org:command_phase",
-      "org:command_stopped_no_progress",
+      "org:command_cancelled",
     ]);
 
     const unsubscribe = onWsEvent((event, raw) => {
@@ -266,8 +320,8 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
     try {
       await safeFetch(
         editingProject
-          ? `${apiBaseUrl}/api/orgs/${orgId}/projects/${editingProject.id}`
-          : `${apiBaseUrl}/api/orgs/${orgId}/projects`,
+          ? `${apiBaseUrl}/api/v2/orgs/${orgId}/projects/${editingProject.id}`
+          : `${apiBaseUrl}/api/v2/orgs/${orgId}/projects`,
         {
         method: editingProject ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -287,7 +341,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const createTask = async () => {
     if (!newTaskTitle.trim() || !selectedProjectId) return;
     try {
-      await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${selectedProjectId}/tasks`, {
+      await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/projects/${selectedProjectId}/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: newTaskTitle, description: newTaskDesc, assignee_node_id: newTaskAssignee || null, status: "todo" }),
@@ -299,7 +353,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
 
   const deleteProject = async (projectId: string) => {
     try {
-      await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${projectId}`, { method: "DELETE" });
+      await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/projects/${projectId}`, { method: "DELETE" });
       if (selectedProjectId === projectId) setSelectedProjectId(null);
       fetchProjects();
     } catch { /* ignore */ }
@@ -307,7 +361,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
 
   const updateTaskStatus = async (projectId: string, taskId: string, newStatus: string) => {
     try {
-      await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${projectId}/tasks/${taskId}`, {
+      await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/projects/${projectId}/tasks/${taskId}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
@@ -317,7 +371,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
 
   const deleteTask = async (projectId: string, taskId: string) => {
     try {
-      await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${projectId}/tasks/${taskId}`, { method: "DELETE" });
+      await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/projects/${projectId}/tasks/${taskId}`, { method: "DELETE" });
       if (selectedTask?.id === taskId) closeTaskDetail();
       fetchProjects();
     } catch { /* ignore */ }
@@ -334,7 +388,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const dispatchTask = async (projectId: string, taskId: string) => {
     setDispatchingTaskId(taskId);
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${projectId}/tasks/${taskId}/dispatch`, { method: "POST" });
+      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/projects/${projectId}/tasks/${taskId}/dispatch`, { method: "POST" });
       if (res.ok) fetchProjects();
     } catch { /* ignore */ }
     finally { setDispatchingTaskId(null); }
@@ -343,7 +397,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const cancelTask = async (projectId: string, taskId: string) => {
     setCancellingTaskId(taskId);
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/projects/${projectId}/tasks/${taskId}/cancel`, { method: "POST" });
+      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/projects/${projectId}/tasks/${taskId}/cancel`, { method: "POST" });
       if (res.ok) fetchProjects();
     } catch { /* ignore */ }
     finally { setCancellingTaskId(null); }
@@ -354,13 +408,19 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
 
   const projectStats = useMemo(() => {
     const total = tasks.length;
-    const done = tasks.filter(tk => tk.status === "accepted").length;
+    const accepted = tasks.filter(tk => tk.status === "accepted").length;
     const inProgress = tasks.filter(tk => tk.status === "in_progress").length;
     const delivered = tasks.filter(tk => tk.status === "delivered").length;
     const todo = tasks.filter(tk => tk.status === "todo").length;
     const blocked = tasks.filter(tk => tk.status === "blocked" || tk.status === "rejected").length;
+    // UI issue #8: the autonomous orchestrator marks tasks ``delivered`` and
+    // never auto-``accepted`` (acceptance is a human gesture). So a fully
+    // delivered project showed "完成 0 / 0%". Treat delivered AND accepted as
+    // completed for progress aggregation; the percentage therefore reaches
+    // 100% once every task has been delivered.
+    const done = accepted + delivered;
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-    return { total, done, inProgress, delivered, todo, blocked, pct };
+    return { total, done, accepted, inProgress, delivered, todo, blocked, pct };
   }, [tasks]);
 
   if (loading) {
@@ -679,7 +739,20 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
             <div ref={projectTrackRef} className="opb-project-track">
               {projects.map((project) => {
                 const total = project.tasks.length;
-                const done = project.tasks.filter((tk) => tk.status === "accepted").length;
+                // UI issue #8: count delivered + accepted as completed (the
+                // autonomous orchestrator delivers but never auto-accepts), so
+                // a fully delivered project shows 100% instead of 0%.
+                const done = project.tasks.filter(
+                  (tk) => tk.status === "accepted" || tk.status === "delivered",
+                ).length;
+                // Reflect completion in the status badge once every task is
+                // delivered/accepted, even if the backend project record still
+                // says "active" (it is only flipped to completed on human
+                // acceptance). Never downgrade an already-terminal status.
+                const displayStatus =
+                  total > 0 && done === total && project.status !== "archived"
+                    ? "completed"
+                    : project.status;
                 const selected = project.id === selectedProjectId;
                 return (
                   <Card
@@ -719,8 +792,8 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
                       <div className="opb-project-card__body">
                         <div className="opb-project-card__meta">
                           <Badge variant="secondary" className="h-5 gap-1 px-1.5 text-[10px] font-medium">
-                            <span className="opb-status-dot" style={{ background: PROJECT_STATUS_COLOR[project.status] || "#3b82f6" }} />
-                            {t(PROJECT_STATUS_LABEL[project.status]) || project.status}
+                            <span className="opb-status-dot" style={{ background: PROJECT_STATUS_COLOR[displayStatus] || "#3b82f6" }} />
+                            {t(PROJECT_STATUS_LABEL[displayStatus]) || displayStatus}
                           </Badge>
                           <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-medium">
                             {t(PROJECT_TYPE_LABEL[project.project_type]) || project.project_type}
@@ -806,7 +879,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
               )}
 
               <div className="opb-progress-track">
-                {projectStats.done > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.done / projectStats.total) * 100}%`, background: "#22c55e" }} />}
+                {projectStats.accepted > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.accepted / projectStats.total) * 100}%`, background: "#22c55e" }} />}
                 {projectStats.delivered > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.delivered / projectStats.total) * 100}%`, background: "#8b5cf6" }} />}
                 {projectStats.inProgress > 0 && <div className="opb-progress-fill" style={{ width: `${(projectStats.inProgress / projectStats.total) * 100}%`, background: "#3b82f6" }} />}
               </div>
@@ -1076,15 +1149,8 @@ function GanttView({
   cancellingTaskId: string | null;
 }) {
   const { t } = useTranslation();
-  const sorted = useMemo(() =>
-    [...tasks].sort((a, b) => {
-      const oa = STATUS_META[a.status]?.order ?? 9;
-      const ob = STATUS_META[b.status]?.order ?? 9;
-      if (oa !== ob) return oa - ob;
-      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-    }),
-    [tasks]
-  );
+  // P4 阶段B: tree-ordered + depth-annotated rows (see orderTasksForGantt).
+  const sorted = useMemo(() => orderTasksForGantt(tasks), [tasks]);
 
   const timeRange = useMemo(() => {
     if (tasks.length === 0) return { start: new Date(), end: new Date(), days: 7 };
@@ -1109,7 +1175,8 @@ function GanttView({
   const getBarStyle = (task: ProjectTask) => {
     const rangeMs = timeRange.end.getTime() - timeRange.start.getTime();
     if (rangeMs <= 0) return { left: "0%", width: "100%" };
-    const start = new Date(task.created_at).getTime();
+    // P4 阶段B: 时间条起点优先用 started_at(派单/开始时间),回退 created_at。
+    const start = new Date(task.started_at || task.created_at).getTime();
     const now = Date.now();
     const end = task.completed_at ? new Date(task.completed_at).getTime()
       : task.delivered_at ? new Date(task.delivered_at).getTime()
@@ -1133,9 +1200,17 @@ function GanttView({
             const assignee = task.assignee_node_id ? nodeMap.get(task.assignee_node_id) : null;
             const pct = task.progress_pct ?? 0;
             const barStyle = getBarStyle(task);
+            const depth = task._depth || 0;
             return (
               <div key={task.id} className="opb-gantt-row" onClick={() => onTaskClick(task)}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: depth * 18 }}>
+                  {depth > 0 && (
+                    <span
+                      aria-hidden
+                      title={t("org.projectBoard.subtaskOf", { defaultValue: "子任务（由上级拆解派发）" })}
+                      style={{ color: "var(--muted)", fontSize: 12, marginRight: -2, userSelect: "none" }}
+                    >└</span>
+                  )}
                   <OrgAvatar avatarId={(assignee as any)?.avatar || null} size={24} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</div>

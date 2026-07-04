@@ -863,7 +863,7 @@ class SessionManager:
                             block = dict(block)
                             block["content"] = "[图片数据已清理，请重新截图]"
                         else:
-                            from openakita.core.tool_executor import smart_truncate
+                            from openakita.agent.tools import smart_truncate
 
                             block = dict(block)
                             block["content"], _ = smart_truncate(

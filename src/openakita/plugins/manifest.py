@@ -1,4 +1,24 @@
-"""Plugin manifest (plugin.json) parsing and validation."""
+"""Plugin manifest (plugin.json) parsing and validation.
+
+ROADMAP — Phase 3: ``tool_classes`` schema escalation. Tracked in
+``docs/follow-ups/skipped-items-roadmap.md`` §A.2.
+
+When the plugin ecosystem reaches >=95% ``tool_classes`` coverage
+(audited by ``scripts/audit_tool_classes.py``), promote
+``tool_classes`` from optional to required. Migration path:
+
+    1. WARN at install time when missing    (release N+1)
+    2. ERROR at install time, opt-out flag  (release N+2, 2.0 major)
+    3. Remove opt-out flag                  (release N+3)
+
+The deferred validator stub lives in ``installer.py`` as
+``_validate_tool_classes_completeness`` (mode='off' by default). Do
+NOT flip the default away from 'off' or mark ``tool_classes``
+``required`` here until §A.1 backfill hits the coverage threshold;
+unaware plugins would break on install.
+
+RCA cross-ref: ``_skip_items_rca_v11.md`` §2.5.
+"""
 
 from __future__ import annotations
 

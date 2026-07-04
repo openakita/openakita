@@ -56,9 +56,11 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg transform-gpu data-[size=sm]:max-w-xs data-[state=open]:animate-[dialog-fade-in_150ms_ease-out_both] data-[state=closed]:animate-[dialog-fade-out_100ms_ease-in_both] data-[size=default]:sm:max-w-lg",
+          "group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-lg border bg-background p-6 shadow-lg data-[size=sm]:max-w-xs data-[state=open]:animate-[dialog-fade-in_150ms_ease-out_both] data-[state=closed]:animate-[dialog-fade-out_100ms_ease-in_both] data-[size=default]:sm:max-w-lg",
           className
         )}
+        // smoke-B1: see dialog.tsx -- Tailwind v4 ``translate`` property
+        // already centers; an inline ``transform`` would double-shift.
         {...props}
       />
     </AlertDialogPortal>

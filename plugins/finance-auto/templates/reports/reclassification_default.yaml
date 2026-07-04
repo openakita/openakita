@@ -1,0 +1,67 @@
+## M2 Biz Stage 3 — 默认重分类规则集
+##
+## YAML 加载器 (services.reclassification.ReclassificationService) 会读取
+## 这个文件并按照 priority ASC 顺序执行 active=true 的规则.
+##
+## 字段语义见 services/reclassification.py 顶部文档.
+
+rules:
+  - name: 应收账款负余额重分类为应付
+    description: 应收账款（1122/1123/1131）期末出现贷方余额时，按谨慎性原则重分类为应付。
+    priority: 10
+    active: true
+    when:
+      account_code_starts: ['1122', '1123', '1131']
+      balance_direction: credit
+      threshold: '0.01'
+    action:
+      move_to_account_code: '2202'
+      direction_after: credit
+      reason: 应收账款负余额按谨慎性原则重分类为应付
+      parse_issue_severity: warning
+      parse_issue_threshold: '100000'
+
+  - name: 应付账款负余额重分类为应收
+    description: 应付账款（2202/2203）期末出现借方余额时，按谨慎性原则重分类为应收。
+    priority: 11
+    active: true
+    when:
+      account_code_starts: ['2202', '2203']
+      balance_direction: debit
+      threshold: '0.01'
+    action:
+      move_to_account_code: '1122'
+      direction_after: debit
+      reason: 应付账款负余额按谨慎性原则重分类为应收
+      parse_issue_severity: warning
+      parse_issue_threshold: '100000'
+
+  - name: 预收账款重分类为合同负债
+    description: 新准则下预收账款（2203）合并入合同负债（2202）报表项。
+    priority: 50
+    active: true
+    when:
+      account_code_starts: ['2203']
+      balance_direction: credit
+      threshold: '0.01'
+    action:
+      move_to_account_code: '2202'
+      direction_after: credit
+      reason: 新准则将预收账款并入合同负债
+      parse_issue_severity: info
+      parse_issue_threshold: '1000000'
+
+  - name: 预付账款重分类为合同资产
+    description: 新准则下预付账款（1123）合并入合同资产（1122）报表项。
+    priority: 51
+    active: true
+    when:
+      account_code_starts: ['1123']
+      balance_direction: debit
+      threshold: '0.01'
+    action:
+      move_to_account_code: '1122'
+      direction_after: debit
+      reason: 新准则将预付账款并入合同资产
+      parse_issue_severity: info
+      parse_issue_threshold: '1000000'

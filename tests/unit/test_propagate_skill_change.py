@@ -26,7 +26,7 @@ def _build_fake_agent(*, initialized: bool = True, ctx_system: str | None = "old
 
     绑定真实的 ``Agent.propagate_skill_change`` 方法（unbound 版本）以便验证真实逻辑。
     """
-    from openakita.core.agent import Agent
+    from openakita.agent.core import Agent
 
     fake = SimpleNamespace()
     fake.skill_loader = MagicMock()
@@ -85,7 +85,7 @@ def patched_env(monkeypatch, tmp_path):
         collect_skills_mock,
     )
     monkeypatch.setattr(
-        "openakita.core.agent.Agent.notify_pools_skills_changed",
+        "openakita.core._agent_legacy.Agent.notify_pools_skills_changed",
         staticmethod(notify_pools_mock),
     )
     monkeypatch.setattr("openakita.skills.events.notify_skills_changed", notify_changed_mock)

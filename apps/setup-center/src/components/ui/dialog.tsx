@@ -52,6 +52,7 @@ function DialogContent({
   children,
   showCloseButton = true,
   onCloseAnimationEnd,
+  style: userStyle,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
@@ -63,9 +64,16 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg bg-popover text-popover-foreground p-6 shadow-lg outline-none transform-gpu data-[state=open]:animate-[dialog-fade-in_150ms_ease-out_both] data-[state=closed]:animate-[dialog-fade-out_100ms_ease-in_both] sm:max-w-lg",
+          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-lg bg-popover text-popover-foreground p-6 shadow-lg outline-none data-[state=open]:animate-[dialog-fade-in_150ms_ease-out_both] data-[state=closed]:animate-[dialog-fade-out_100ms_ease-in_both] sm:max-w-lg",
           className
         )}
+        // smoke-B1: keep any caller-supplied style props but DO NOT
+        // re-impose ``transform: translate(-50%, -50%)`` here.  Tailwind
+        // v4 emits the modern CSS ``translate`` property (independent of
+        // ``transform``) from ``-translate-x-1/2 -translate-y-1/2`` -- an
+        // inline ``transform`` would stack on top of that, double-shifting
+        // the modal off-screen up-left (see debug probe in tmp_p10).
+        style={userStyle}
         onAnimationEnd={(e) => {
           if (
             onCloseAnimationEnd &&

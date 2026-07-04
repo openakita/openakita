@@ -35,7 +35,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 PLUGIN_ID = "happyhorse-video"
 HERE = Path(__file__).resolve().parent
-REPORT_PATH = HERE / "smoke_e2e_report.json"
+REPORT_PATH = HERE / "artifacts" / "smoke_e2e_report.json"
 
 
 class Client:
@@ -115,6 +115,7 @@ class Report:
             "warn": sum(1 for i in self.items if i["status"] == "warn"),
             "skip": sum(1 for i in self.items if i["status"] == "skip"),
         }
+        REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
         REPORT_PATH.write_text(
             json.dumps({"summary": summary, "items": self.items}, ensure_ascii=False, indent=2),
             encoding="utf-8",

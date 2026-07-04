@@ -65,6 +65,142 @@ from pydantic import BaseModel, Field, ValidationError
 PLUGIN_DIR = Path(__file__).resolve().parent
 PLUGIN_ID = "happyhorse-video"
 
+# ---------------------------------------------------------------------------
+# v2 workbench manifest (ADR-0009)
+# ---------------------------------------------------------------------------
+# Declared per ADR-0009 so the v2 ``runtime/nodes/workbench_node.py`` can
+# instantiate this plugin as a multi-function ``WorkbenchNode`` per role.
+# Each mode declares the exact tool subset the LLM is allowed to call —
+# replacing the "trust the system prompt" pattern that the legacy code
+# admits was unreliable. The aigc-video-studio template (Phase 5) will
+# instantiate one ``WorkbenchNode`` per mode below and wire them together
+# through the supervisor / dual-ledger orchestrator.
+#
+# Validated by ``runtime.nodes.manifest.WorkbenchManifest.parse(WORKBENCH)``.
+WORKBENCH: dict[str, Any] = {
+    "id": PLUGIN_ID,
+    "title": "Happy Horse Video Studio",
+    "description": (
+        "Multi-modal AIGC studio: 7 image modes, 9 video modes, "
+        "long-video storyboarding, plus utility / status tools."
+    ),
+    "version": 2,
+    "ui": {
+        "url": f"/plugins/{PLUGIN_ID}/ui/dist/index.html",
+        "min_width": 720,
+        "icon": f"/plugins/{PLUGIN_ID}/ui/icon.svg",
+    },
+    "capabilities": [
+        "t2i", "i2i", "image_edit", "image_ecommerce",
+        "t2v", "i2v", "r2v", "video_edit",
+        "photo_speak", "video_relip", "video_reface",
+        "pose_drive", "avatar_compose",
+        "storyboard", "long_video", "video_concat",
+    ],
+    "modes": [
+        {
+            "id": "art_director",
+            "label": "Art Director",
+            "description": (
+                "Decomposes user briefs into shot lists and orchestrates the "
+                "long-video pipeline. Owns storyboard / long-video / cost "
+                "preview / status tools; never produces pixels itself."
+            ),
+            "system_prompt_override": (
+                "You are the Art Director of an AIGC video studio. Decompose "
+                "the user brief into a coherent storyboard (with hh_storyboard"
+                "_decompose) and drive the long-video pipeline (with hh_long_"
+                "video_create + hh_video_concat). Use hh_cost_preview before "
+                "any expensive batch and hh_status / hh_list to track progress. "
+                "Do NOT call image / video / digital-human tools directly — "
+                "delegate those to the Image Artist, Video Animator, or "
+                "Portrait Actor mode."
+            ),
+            "tools": [
+                "hh_storyboard_decompose",
+                "hh_long_video_create",
+                "hh_video_concat",
+                "hh_cost_preview",
+                "hh_status",
+                "hh_list",
+            ],
+            "ui_panel": "director",
+        },
+        {
+            "id": "image_artist",
+            "label": "Image Artist",
+            "description": (
+                "Generates and edits stills using DashScope Wan/Qwen image "
+                "models. Covers text-to-image, image edit, style repaint, "
+                "background swap, outpainting, sketch-to-image and e-commerce."
+            ),
+            "system_prompt_override": (
+                "You are the Image Artist. Pick the right image mode for the "
+                "task and call exactly one hh_image_* tool per turn. Always "
+                "describe size / model_id explicitly when the user has a "
+                "preference."
+            ),
+            "tools": [
+                "hh_image_create",
+                "hh_image_edit",
+                "hh_image_style_repaint",
+                "hh_image_background",
+                "hh_image_outpaint",
+                "hh_image_sketch",
+                "hh_image_ecommerce",
+                "hh_status",
+            ],
+            "ui_panel": "imagery",
+        },
+        {
+            "id": "video_animator",
+            "label": "Video Animator",
+            "description": (
+                "Generates motion. Owns text-to-video, image-to-video, "
+                "reference-to-video and video edit pipelines."
+            ),
+            "system_prompt_override": (
+                "You are the Video Animator. Drive hh_t2v / hh_i2v / hh_r2v / "
+                "hh_video_edit. When upstream produced asset ids, prefer "
+                "from_asset_ids over re-uploading. Always set duration and "
+                "aspect_ratio explicitly so downstream concat works cleanly."
+            ),
+            "tools": [
+                "hh_t2v",
+                "hh_i2v",
+                "hh_r2v",
+                "hh_video_edit",
+                "hh_status",
+            ],
+            "ui_panel": "animator",
+        },
+        {
+            "id": "portrait_actor",
+            "label": "Portrait Actor",
+            "description": (
+                "Digital-human pipelines: portrait talking, lip relip, face "
+                "reface, pose drive, multi-image avatar composition."
+            ),
+            "system_prompt_override": (
+                "You are the Portrait Actor. Use hh_photo_speak for static "
+                "portraits + voice; hh_video_relip / hh_video_reface for "
+                "post-production on existing footage; hh_pose_drive for "
+                "motion transfer; hh_avatar_compose for multi-image avatars."
+            ),
+            "tools": [
+                "hh_photo_speak",
+                "hh_video_relip",
+                "hh_video_reface",
+                "hh_pose_drive",
+                "hh_avatar_compose",
+                "hh_status",
+            ],
+            "ui_panel": "speaker",
+        },
+    ],
+    "default_mode": "art_director",
+}
+
 # Plugin loader injects PLUGIN_DIR onto sys.path so we can import the
 # vendored helper modules by their bare ``happyhorse_*`` names.
 from happyhorse_dashscope_client import (  # noqa: E402

@@ -2004,15 +2004,60 @@ async def post_feedback_reply(report_id: str, body: dict):
 # ─── Public feedback browsing endpoints ───
 
 
+_FEEDBACK_SEARCH_MAX_URI_QUERY_BYTES = 2048
+
+
 @router.get("/api/feedback-public-search")
 async def public_feedback_search(
+    request: Request,
     q: str = "",
     page: int = 1,
     per_page: int = 20,
     state: str = "all",
     type: str = "",
 ):
-    """Proxy public feedback search to FC /issues/search."""
+    """Proxy public feedback search to FC /issues/search.
+
+    Two staged guards keep this endpoint cheap:
+
+    * The whole query string is rejected with a structured ``414`` if
+      it exceeds 2KB. exploratory v12 §10.3 saw 10KB query strings
+      get killed by starlette / uvicorn before FastAPI parsed any
+      parameters -- the client only saw ``RemoteProtocolError`` with
+      no status. We now own the rejection envelope in the 2-8KB
+      window (uvicorn's default cap is ~8KB) so callers get a JSON
+      error instead of a disconnect.
+    * The ``q`` parameter itself is capped at 256 chars (Fix-11 /
+      v11 issue #18): the upstream feedback hub answered slow
+      paginated scans in 7-8s for long strings, blocking the desktop
+      chat thread while it waited.
+    """
+    total_query_length = len(request.url.query)
+    if total_query_length > _FEEDBACK_SEARCH_MAX_URI_QUERY_BYTES:
+        raise HTTPException(
+            status_code=414,
+            detail={
+                "code": "uri_too_long",
+                "message": (
+                    "Total query string length exceeds the endpoint cap; "
+                    "shorten the request before retrying."
+                ),
+                "limit": _FEEDBACK_SEARCH_MAX_URI_QUERY_BYTES,
+                "total_query_length": total_query_length,
+            },
+        )
+    if len(q) > 256:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "query_too_long",
+                "message": "Search query must be 256 characters or fewer.",
+                "max_length": 256,
+                "received_length": len(q),
+                "total_query_length": total_query_length,
+            },
+        )
+
     import httpx
 
     endpoint = _get_bug_report_endpoint()

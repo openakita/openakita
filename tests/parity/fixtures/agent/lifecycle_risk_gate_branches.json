@@ -1,0 +1,11 @@
+{
+  "name": "lifecycle_risk_gate_branches",
+  "probe": "graph_successors_set",
+  "node": "classify_risk",
+  "expected": [
+    "error",
+    "finalize",
+    "run_loop"
+  ],
+  "description": "classify_risk branches to run_loop / finalize / error"
+}

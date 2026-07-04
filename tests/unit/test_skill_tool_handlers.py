@@ -504,7 +504,7 @@ class TestWatcherCallback:
     def test_on_skills_dir_changed_calls_propagate_hot_reload(self):
         import types
 
-        from openakita.core.agent import Agent
+        from openakita.agent.core import Agent
         from openakita.skills.events import SkillEvent
 
         fake = SimpleNamespace()
@@ -517,7 +517,7 @@ class TestWatcherCallback:
     def test_on_skills_dir_changed_swallows_exceptions(self):
         import types
 
-        from openakita.core.agent import Agent
+        from openakita.agent.core import Agent
 
         fake = SimpleNamespace()
         fake.propagate_skill_change = MagicMock(side_effect=RuntimeError("fail"))

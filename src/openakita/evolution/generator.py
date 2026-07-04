@@ -9,8 +9,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..agent.brain import Brain
 from ..config import settings
-from ..core.brain import Brain
 from ..skills.loader import SkillLoader
 from ..skills.registry import SkillRegistry
 from ..tools.file import FileTool

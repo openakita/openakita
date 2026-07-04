@@ -1,0 +1,71 @@
+---
+description: When editing a plugin manifest, every `provides.tools[*]` entry must have a `tool_classes` declaration
+globs:
+  - "plugins/**/plugin.json"
+  - "plugins-archive/**/plugin.json"
+  - "dist-plugins/**/plugin.json"
+  - "src/openakita/plugins/manifest.py"
+  - "src/openakita/plugins/installer.py"
+  - "src/openakita/plugins/api.py"
+alwaysApply: false
+---
+
+# Plugin `tool_classes` Declaration
+
+When editing a plugin manifest, every tool listed under
+`provides.tools` must have a matching entry in `tool_classes`. The
+host classifier falls back to brittle prefix heuristics otherwise —
+several known false-positives are documented in
+[`_skip_items_rca_v11.md`](mdc:_skip_items_rca_v11.md) §2.3.
+
+## How to choose a class
+
+1. Run the audit script to get a suggestion:
+   ```powershell
+   .venv\Scripts\python.exe scripts\audit_tool_classes.py --plugin <id> --format table
+   ```
+2. Take **high-confidence** suggestions as-is.
+3. Hand-review **medium / low / unknown** rows. The script's
+   `--format patch` mode prints the evidence chain.
+4. Never ship `unknown` as a deliberate declaration — it is the
+   safety-by-default sentinel.
+
+See the full guide:
+[`docs/plugin-tool-classes-howto.md`](mdc:docs/plugin-tool-classes-howto.md)
+
+## ApprovalClass values (lower-case strings)
+
+`readonly_global` · `readonly_scoped` · `readonly_search` ·
+`mutating_scoped` · `mutating_global` · `destructive` ·
+`exec_low_risk` · `exec_capable` · `control_plane` · `interactive` ·
+`network_out` · `unknown`
+
+## Manifest shape
+
+```jsonc
+{
+  "provides": { "tools": ["my_tool", "my_other_tool"] },
+  "tool_classes": {
+    "my_tool": "network_out",
+    "my_other_tool": "readonly_scoped"
+  }
+}
+```
+
+## Roadmap context
+
+This is part of the §A.1 incremental backfill from
+[`docs/follow-ups/skipped-items-roadmap.md`](mdc:docs/follow-ups/skipped-items-roadmap.md).
+When coverage reaches >=95 % across `plugins/**` and
+`plugins-archive/**`, the manifest schema will escalate `tool_classes`
+from optional to required (§A.2). Until then:
+
+* **DO** declare classes for every new tool you add.
+* **DO** run the audit before opening a PR that touches a plugin manifest.
+* **DO NOT** mark `tool_classes` `required` in
+  `src/openakita/plugins/manifest.py` yet — the §A.2 deferred
+  validator stub in `installer.py` is the right hook point.
+* **DO NOT** auto-apply low / medium / unknown suggestions blindly.
+
+See also `.cursor/rules/add-internal-tool.mdc` for the in-tree
+counterpart (declaring `TOOL_CLASSES` on built-in handlers).

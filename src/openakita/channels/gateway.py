@@ -34,7 +34,7 @@ from .group_response import GroupResponseMode, SmartModeThrottle
 from .types import MediaStatus, MessageContent, OutgoingMessage, UnifiedMessage
 
 if TYPE_CHECKING:
-    from ..core.brain import Brain
+    from ..agent.brain import Brain
     from ..llm.stt_client import STTClient
     from .dm_pairing import DMPairingManager
     from .media_parser import MediaParseResult
@@ -1025,6 +1025,63 @@ class MessageGateway:
         self._group_context_buffer: dict[str, collections.deque] = {}
         self._GROUP_CONTEXT_MAX_ITEMS = 20
         self._GROUP_CONTEXT_TTL = 600  # 10 分钟
+
+        # ==================== Runtime v2 canary dispatch ====================
+        # 每个 session 当前正在跑的 v2 dispatch 的 CancellationToken；用户
+        # 通过 IM 发送"中止/结束任务"等 fast-path 时（commit 5 接入），
+        # 我们查表把它 cancel 掉，由 Supervisor 自动落最终 checkpoint。
+        from openakita.runtime.cancel_token import CancellationToken as _CT
+        self._v2_cancel_tokens: dict[str, _CT] = {}
+
+        # 把 session->org_id 的查询能力注入到 runtime.session_bridge，让
+        # runtime.channel_routing.dispatch_inbound_message_to_v2 不必导入
+        # openakita.sessions（避免 fork-style 重写后的循环依赖，ADR-0001）。
+        try:
+            from openakita.runtime.session_bridge import register_session_org_lookup
+            register_session_org_lookup(self._lookup_org_id_for_session)
+        except Exception as _exc:
+            logger.debug("[v2 dispatch] failed to register session lookup: %s", _exc)
+
+    def _lookup_org_id_for_session(self, session_key: str) -> str | None:
+        """Reverse-lookup helper used by ``runtime.session_bridge``.
+
+        Reads ``bound_org_id`` off the session metadata produced by the
+        ``/org bind`` handler (see ``_handle_org_command``). Returns
+        ``None`` for unbound sessions or any internal failure (never
+        raises -- the runtime contract forbids it).
+
+        P-RC-2 (G-RC-1 residual risk #3): when the session is not in
+        the hot ``_sessions`` dict, we fall through to
+        ``SessionManager._try_recover_session_from_disk`` so a freshly
+        restarted process still routes canary IM traffic to v2 instead
+        of forcing every cold session through legacy until the first
+        ``get_session(create_if_missing=True)`` rehydrates it.
+        """
+        try:
+            sessions = getattr(self.session_manager, "_sessions", None)
+            if isinstance(sessions, dict):
+                session = sessions.get(session_key)
+                if session is not None:
+                    bound = session.get_metadata("bound_org_id") or ""
+                    return str(bound) if bound else None
+            # Cold path: try to rehydrate from disk WITHOUT mutating the
+            # hot dict. We reuse the existing private recovery helper
+            # because re-implementing the JSON read here would mean two
+            # places to touch when the session schema evolves.
+            recover = getattr(
+                self.session_manager,
+                "_try_recover_session_from_disk",
+                None,
+            )
+            if recover is None:
+                return None
+            recovered = recover(session_key)
+            if recovered is None:
+                return None
+            bound = recovered.get_metadata("bound_org_id") or ""
+            return str(bound) if bound else None
+        except Exception:
+            return None
 
     def enable_dm_pairing(self, data_dir: "Path") -> None:
         """Enable DM Pairing authorization."""
@@ -2131,13 +2188,49 @@ class MessageGateway:
                     await task
         self._session_tasks.clear()
 
-        # 停止所有适配器
-        for name, adapter in self._adapters.items():
+        # Sprint 14 / v31 Phase A 治根：把适配器 stop 改为并发 + 单 adapter
+        # bounded timeout。
+        #
+        # 历史上这里是串行 ``for adapter in adapters: await adapter.stop()``，
+        # wework_ws (×3) / qqbot (×2) 的 stop() 内 ``await connection_task``
+        # 和 ``await ws.close()`` 都没有 timeout 兜底，单个适配器卡住就会让整
+        # 个 lifespan shutdown 挂 13~20s（v23/v24/v26/v28/v29/v30 六次复现）。
+        #
+        # 现在改成 ``asyncio.gather`` + per-adapter ``asyncio.wait_for``：
+        # 一个 wedged adapter 顶多吃掉自己 PER 秒的预算，其它 adapter 并行
+        # 收尸；返回前最坏 = settings.channels_gateway_stop_timeout_s（默认
+        # 8s），与"≤10s 干净退"的 SLO 留 2s 余量。
+        per_adapter_timeout_s: float = 8.0
+        try:
+            from openakita.config import settings as _settings
+
+            per_adapter_timeout_s = float(
+                getattr(_settings, "channels_gateway_stop_timeout_s", 8) or 8
+            )
+        except Exception:
+            # config 取不到（早期 import 路径异常）也要能 stop 干净。
+            pass
+
+        async def _stop_one(_name: str, _adapter: ChannelAdapter) -> None:
             try:
-                await adapter.stop()
-                logger.info(f"Stopped adapter: {name}")
+                await asyncio.wait_for(_adapter.stop(), timeout=per_adapter_timeout_s)
+                logger.info(f"Stopped adapter: {_name}")
+            except TimeoutError:
+                # asyncio.TimeoutError on Py3.11+ aliases the built-in;
+                # the adapter is wedged — log and abandon, don't block the rest.
+                logger.warning(
+                    "[Gateway.stop] adapter %s did not stop within %.1fs, abandoning",
+                    _name,
+                    per_adapter_timeout_s,
+                )
             except Exception as e:
-                logger.error(f"Failed to stop adapter {name}: {e}")
+                logger.error(f"Failed to stop adapter {_name}: {e}")
+
+        if self._adapters:
+            await asyncio.gather(
+                *[_stop_one(name, adapter) for name, adapter in self._adapters.items()],
+                return_exceptions=True,
+            )
 
         logger.info("MessageGateway stopped")
 
@@ -2383,6 +2476,20 @@ class MessageGateway:
             await self._restart_cmd_handler.handle_restart_command(session_key, message)
             return
         # ==================== /终极重启指令拦截 ====================
+
+        # ==================== Runtime v2 cancel fast-path (P-RC-1) ====================
+        # 当该 session 上有一条 v2 dispatch 正在跑（_try_dispatch_v2 把
+        # CancellationToken 塞进 _v2_cancel_tokens），且用户文本是公认的
+        # 中止/取消指令，立即 cancel token 并 return。Supervisor 会捕获
+        # CancelledByToken、走 _terminate 写最终 checkpoint，再由
+        # ImStreamBridge 把 lifecycle.cancelled 翻译回 IM。
+        if session_key in self._v2_cancel_tokens and (
+            self._is_bare_org_cancel(_raw_text) or self._is_abort_text(_raw_text)
+        ):
+            handled = await self._cancel_v2_dispatch(session_key, message, _raw_text)
+            if handled:
+                return
+        # ==================== /Runtime v2 cancel fast-path ====================
 
         # ==================== 组织控制 fast-path ====================
         # /org cancel  /org running  /org last —— 这三条**不能**进消息队列：
@@ -2718,6 +2825,39 @@ class MessageGateway:
         logger.info(f"[Abort-FastPath] Session {session_key} cancelled: {user_text}")
         await self._send_feedback(message, "✅ 收到，正在停止当前任务…")
 
+    async def _cancel_v2_dispatch(
+        self,
+        session_key: str,
+        message: UnifiedMessage,
+        user_text: str,
+    ) -> bool:
+        """P-RC-1: fire the cooperative cancel token for a live v2 dispatch.
+
+        Returns ``True`` if a token was present and cancelled (the
+        caller should ``return`` immediately so the legacy fast-paths
+        do not also run). Returns ``False`` if the session has no
+        v2 dispatch in flight -- the caller continues with the next
+        check.
+
+        The supervisor's outer ``run`` is wrapped in a try/except
+        ``CancelledByToken`` block that always lands a final
+        checkpoint via ``_terminate``, so resume is exact.
+        """
+        token = self._v2_cancel_tokens.get(session_key)
+        if token is None:
+            return False
+        try:
+            token.cancel("user_cancel_via_im")
+        except Exception as exc:  # noqa: BLE001 -- never break the gateway loop
+            logger.warning("[v2 dispatch] cancel token raise: %s", exc, exc_info=True)
+            return False
+        logger.info(
+            "[v2 dispatch] cancel fired session=%s text=%r", session_key, user_text,
+        )
+        with contextlib.suppress(Exception):
+            await self._send_feedback(message, "✅ 收到，正在停止当前 v2 任务…")
+        return True
+
     # ==================== 中断机制 ====================
 
     async def _add_interrupt_message(
@@ -2955,6 +3095,107 @@ class MessageGateway:
                 if org_id and task:
                     return str(org_id), task
         return None
+
+    async def _try_dispatch_v2(
+        self,
+        message: "UnifiedMessage",
+        attachments: list | None = None,
+    ) -> bool:
+        """P-RC-1: dispatch a canary org's IM message through v2 Supervisor.
+
+        Returns ``True`` iff v2 took the message (the caller MUST NOT
+        run the legacy path). Returns ``False`` for every reason that
+        should keep the legacy path live: flag off, org not canary,
+        session not bound, runtime not ready, or any unexpected error.
+
+        Gating order (cheapest first):
+        1. ``settings.runtime_v2_enabled`` master switch;
+        2. ``settings.runtime_v2_canary_orgs`` allow-list (added in
+           commit 6; absent / empty -> nobody is canary);
+        3. session reverse lookup -> bound org id;
+        4. org id in canary allow-list;
+        5. construct ``StreamBus`` / ``ImStreamBridge`` /
+           ``CancellationToken``, stash the token for the cancel verb
+           (commit 5), call ``dispatch_inbound_message_to_v2``.
+
+        The supervisor's stream events are translated into Chinese IM
+        messages by ``ImStreamBridge.relay_to`` running as a sibling
+        background task; both the bridge and the dispatch share the
+        same ``StreamBus`` instance.
+        """
+        try:
+            from openakita.config import settings
+
+            if not getattr(settings, "runtime_v2_enabled", False):
+                return False
+            canary_orgs = getattr(settings, "runtime_v2_canary_orgs", set()) or set()
+            if not canary_orgs:
+                return False
+
+            session_key = self._get_session_key(message)
+            from openakita.runtime.session_bridge import get_org_id_for_session
+
+            org_id = get_org_id_for_session(session_key)
+            if not org_id or org_id not in canary_orgs:
+                return False
+
+            from openakita.runtime.cancel_token import CancellationToken
+            from openakita.runtime.channel_routing import dispatch_inbound_message_to_v2
+            from openakita.runtime.im_stream_bridge import ImStreamBridge
+            from openakita.runtime.stream import StreamBus
+
+            stream_bus = StreamBus()
+            bridge = ImStreamBridge(stream_bus=stream_bus)
+            cancel_token = CancellationToken()
+            self._v2_cancel_tokens[session_key] = cancel_token
+
+            async def _bridge_send(_key: str, body: str) -> None:
+                await self._send_response(message, body)
+
+            relay_task = asyncio.create_task(
+                bridge.relay_to(_bridge_send, session_key=session_key),
+            )
+            # Let the relay task reach ``bus.subscribe`` before the
+            # supervisor starts emitting; otherwise the first
+            # lifecycle.started event fans out to zero subscribers.
+            await asyncio.sleep(0)
+            text = (message.plain_text or "").strip()
+            try:
+                plan = await dispatch_inbound_message_to_v2(
+                    session_key=session_key,
+                    org_id=org_id,
+                    message=text,
+                    attachments=attachments,
+                    cancel_token=cancel_token,
+                    stream_bus=stream_bus,
+                )
+            finally:
+                self._v2_cancel_tokens.pop(session_key, None)
+                # P-RC-2: ``StreamBus.close()`` now waits for every
+                # subscription that opted into drain-on-close to drain
+                # to zero pending items before signalling close (default
+                # timeout 2s; warning logged on timeout). The 10x
+                # ``asyncio.sleep(0)`` workaround that lived here in
+                # P-RC-1 is no longer needed.
+                with contextlib.suppress(Exception):
+                    await stream_bus.close()
+                relay_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await relay_task
+
+            logger.info(
+                "[v2 dispatch] session=%s org=%s status=%s reason=%s",
+                session_key, org_id, plan.status, plan.reason,
+            )
+            if plan.routed or plan.cancelled:
+                return True
+            return False
+        except Exception as exc:  # noqa: BLE001 -- never break the legacy path
+            logger.warning(
+                "[v2 dispatch] _try_dispatch_v2 failed (non-fatal): %s", exc,
+                exc_info=True,
+            )
+            return False
 
     def _get_org_manager(self):
         """从 OrgCommandService 链路上取出 OrgManager 单例。
@@ -3550,13 +3791,13 @@ class MessageGateway:
             return True
 
         try:
-            from openakita.orgs.command_service import (
+            from openakita.orgs.command_models import (
                 OrgCommandRequest,
                 OrgCommandSource,
                 OrgCommandSurface,
                 default_scope_for_surface,
-                get_command_service,
             )
+            from openakita.orgs.command_service import get_command_service
 
             svc = get_command_service()
             if svc is None:
@@ -3699,6 +3940,10 @@ class MessageGateway:
             f"user={message.user_id}, "
             f'text="{user_text[:100]}"'
         )
+
+        # P-RC-1: canary-org v2 dispatch. Returns True if v2 took over.
+        if await self._try_dispatch_v2(message):
+            return
 
         typing_task: asyncio.Task | None = None
         session = None

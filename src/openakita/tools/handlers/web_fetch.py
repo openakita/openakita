@@ -23,7 +23,7 @@ from ...core.policy_v2 import ApprovalClass
 from ...utils.url_safety import safe_urlparse
 
 if TYPE_CHECKING:
-    from ...core.agent import Agent
+    from ...agent.core import Agent
 
 logger = logging.getLogger(__name__)
 

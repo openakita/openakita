@@ -145,6 +145,7 @@ def _parse_range(
     end: str | None,
     period: str | None,
     hours: int | None = None,
+    days: int | None = None,
 ) -> tuple[str, str]:
     """Resolve time range and return as SQLite-compatible UTC timestamp strings.
 
@@ -177,6 +178,14 @@ def _parse_range(
         h = max(1, min(h, 365 * 24))
         delta = timedelta(hours=h)
 
+    if delta is None and days is not None:
+        try:
+            d = int(days)
+        except Exception:
+            d = 7
+        d = max(1, min(d, 365))
+        delta = timedelta(days=d)
+
     if delta is None:
         delta_map = {
             "1h": timedelta(hours=1),
@@ -204,13 +213,14 @@ async def summary(
     start: str | None = Query(None),
     end: str | None = Query(None),
     hours: int | None = Query(None, ge=1, le=8760),
+    days: int | None = Query(None, ge=1, le=365),
     endpoint_name: str | None = Query(None),
     operation_type: str | None = Query(None),
 ):
     db = await _get_db()
     if db is None:
         return _db_unavailable_payload()
-    start_str, end_str = _parse_range(start, end, period, hours=hours)
+    start_str, end_str = _parse_range(start, end, period, hours=hours, days=days)
     try:
         rows = await db.get_token_usage_summary(
             start_time=start_str,
@@ -326,11 +336,12 @@ async def total(
     start: str | None = Query(None),
     end: str | None = Query(None),
     hours: int | None = Query(None, ge=1, le=8760),
+    days: int | None = Query(None, ge=1, le=365),
 ):
     db = await _get_db()
     if db is None:
         return _db_unavailable_payload()
-    start_str, end_str = _parse_range(start, end, period, hours=hours)
+    start_str, end_str = _parse_range(start, end, period, hours=hours, days=days)
     try:
         row = await db.get_token_usage_total(start_time=start_str, end_time=end_str)
     except Exception as e:

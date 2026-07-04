@@ -446,7 +446,7 @@ class TestImPrefixSseFlow:
 
     def test_is_im_conversation_helper_still_recognizes_prefixes(self) -> None:
         """Helper is now used for timeout heuristic, not for early-exit."""
-        from openakita.core.reasoning_engine import _is_im_conversation
+        from openakita.core._reasoning_engine_legacy import _is_im_conversation
 
         assert _is_im_conversation("telegram:1234") is True
         assert _is_im_conversation("feishu:abc") is True

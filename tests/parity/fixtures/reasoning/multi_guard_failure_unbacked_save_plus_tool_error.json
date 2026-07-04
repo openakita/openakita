@@ -1,0 +1,24 @@
+{
+  "name": "multi_guard_failure_unbacked_save_plus_tool_error",
+  "decision_kind": "final_answer",
+  "expected_exit_reason": "normal",
+  "is_terminal": false,
+  "text": "已经保存到 D:/notes/今日笔记.md 了，请查收",
+  "last_user_text": "帮我保存到笔记",
+  "tool_results": [
+    {
+      "name": "read_file",
+      "content": "FileNotFoundError: 路径不存在",
+      "is_error": true
+    }
+  ],
+  "recent_messages": null,
+  "expected_guard_passed": {
+    "source_tag": true,
+    "tool_failure_ack": false,
+    "unbacked_action": false,
+    "recap_context": true,
+    "waiting_for_user": true,
+    "recoverable_tool_issue": true
+  }
+}

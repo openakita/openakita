@@ -1,0 +1,9 @@
+{
+  "name": "lifecycle_validate_to_risk",
+  "probe": "graph_successors",
+  "node": "validate_input",
+  "expected": [
+    "classify_risk"
+  ],
+  "description": "validate_input -> classify_risk is the only successor"
+}

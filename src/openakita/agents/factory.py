@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from .profile import AgentProfile, AgentType, SkillsMode
 
 if TYPE_CHECKING:
-    from openakita.core.agent import Agent
+    from openakita.agent.core import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ class AgentFactory:
         share_from: Any = None,
         **kwargs: Any,
     ) -> Agent:
-        from openakita.core.agent import Agent, get_primary_agent
+        from openakita.agent.core import Agent, get_primary_agent
 
         agent = Agent(name=profile.get_display_name(), brain=parent_brain, **kwargs)
 

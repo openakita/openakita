@@ -20,7 +20,6 @@
       "resources/openakita-server/",
       "resources/bootstrap/"
     ],
-    "createUpdaterArtifacts": true,
     "macOS": {
       "entitlements": "Entitlements.plist",
       "signingIdentity": "-",
@@ -42,10 +41,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1RTQ1NjM2RkMxQ0Y4MDMKUldRRCtCejhObGJrUmR2VWdtbDMwSmhqdlE2RURSYTJKUTIxV25wRE1mcFA0Sy82Vi9zbUo3YWQK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFBNkE0NDkxRERCMTNBMzQKUldRME9ySGRrVVJxR25HeDhLZTNmK3hEc2hySHhmaVZkeVVmOUZpTitibEVjaC9KUStMamJJSjYK",
       "endpoints": [
-        "https://openakita-admin-api.fzstack.com/updater/release.json?version={{current_version}}&platform={{target}}",
-        "https://dl-openakita.fzstack.com/api/release.json"
+        "https://openakita.ai/api/latest.json"
       ],
       "windows": {
         "installMode": "passive"
@@ -54,7 +52,7 @@
   },
   "app": {
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* https://* ws://127.0.0.1:* ws://localhost:* wss://*; img-src 'self' data: blob: http: https: asset: http://asset.localhost https://asset.localhost; media-src 'self' blob: http://127.0.0.1:* http://localhost:* asset: http://asset.localhost https://asset.localhost; style-src 'self' 'unsafe-inline' https://*.alicdn.com; font-src 'self' data: https://*.alicdn.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://o.alicdn.com https://g.alicdn.com; frame-src 'self' http://127.0.0.1:* http://localhost:* https://*.alibaba.com",
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* https://* ws://127.0.0.1:* ws://localhost:* wss://*; img-src 'self' data: blob: http: https: asset: http://asset.localhost https://asset.localhost; media-src 'self' blob: http://127.0.0.1:* http://localhost:* asset: http://asset.localhost https://asset.localhost; object-src 'self' blob: http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline' https://*.alicdn.com; font-src 'self' data: https://*.alicdn.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://o.alicdn.com https://g.alicdn.com; frame-src 'self' blob: http://127.0.0.1:* http://localhost:* https://*.alibaba.com",
       "assetProtocol": {
         "enable": true,
         "scope": [

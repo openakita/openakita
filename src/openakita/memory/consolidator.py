@@ -213,7 +213,7 @@ class MemoryConsolidator:
             )
 
         # 使用 LLM 生成详细摘要
-        from openakita.core.tool_executor import smart_truncate as _st
+        from openakita.agent.tools import smart_truncate as _st
 
         conv_text = "\n".join(
             [

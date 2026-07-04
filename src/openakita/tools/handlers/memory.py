@@ -39,7 +39,7 @@ from ..tool_result import (
 )
 
 if TYPE_CHECKING:
-    from ...core.agent import Agent
+    from ...agent.core import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -768,7 +768,7 @@ class MemoryHandler:
                         recent_messages=getattr(mm, "_recent_messages", None),
                     )
                     if candidates:
-                        from openakita.core.tool_executor import smart_truncate as _st
+                        from openakita.agent.tools import smart_truncate as _st
 
                         logger.info(
                             f"[search_memory] RetrievalEngine: {len(candidates)} candidates for '{query[:50]}'"
@@ -1251,7 +1251,7 @@ class MemoryHandler:
             for mid in ep.linked_memory_ids[:10]:
                 mem = store.get_semantic(mid)
                 if mem:
-                    from openakita.core.tool_executor import smart_truncate as _st
+                    from openakita.agent.tools import smart_truncate as _st
 
                     mem_trunc, _ = _st(mem.content or "", 300, save_full=False, label="mem_linked")
                     lines.append(f"- [{mem.type.value}] {mem_trunc}")

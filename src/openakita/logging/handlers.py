@@ -59,6 +59,8 @@ class ColoredConsoleHandler(logging.StreamHandler):
     def __init__(self, stream: TextIO = None):
         output_stream = stream or sys.stdout
         if output_stream is None or getattr(output_stream, "closed", False):
+            # Long-lived stream owned by logging.StreamHandler; a `with` block
+            # would close the fd immediately, leaving the handler broken.
             output_stream = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
         # 双保险：即使 _ensure_utf8 已全局 reconfigure stdout，这里仍对 handler 自身
         # 的 stream 做 UTF-8 包装，防止 logging 在 _ensure_utf8 导入之前初始化的极端场景。
@@ -72,6 +74,7 @@ class ColoredConsoleHandler(logging.StreamHandler):
                 # pythonw.exe can run with sys.stdout attached to a closed file.
                 # In that mode logs still go to file/session handlers; the console
                 # handler should become a no-op instead of breaking requests.
+                # Long-lived stream owned by logging.StreamHandler (see super().__init__).
                 output_stream = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
         super().__init__(output_stream)
         # 检测是否支持颜色（Windows 需要特殊处理）

@@ -1,4 +1,4 @@
-from openakita.core.agent import Agent
+from openakita.agent.core import Agent
 
 
 def test_tool_trace_summary_omits_rate_limit_control_messages():

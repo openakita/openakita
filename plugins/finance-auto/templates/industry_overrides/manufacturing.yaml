@@ -1,0 +1,35 @@
+# templates/industry_overrides/manufacturing.yaml
+# M1 W3 Stage 5 — 制造业 行业覆盖
+#
+# Overlay semantics (deep-merge into the base config):
+#   * Top-level scalar values replace base values.
+#   * Top-level dicts are merged key-by-key (recursive).
+#   * Top-level lists OVERWRITE base lists (we never auto-extend lists
+#     to avoid silent contamination of the rules array; templates own
+#     their full rule chain via the v0.3 'extends' mechanism instead).
+#
+# Manufacturing typically reports more 16xx / 14xx detail rows and the
+# light aux mode would lose useful 1601 sub-account info; force full.
+
+industry: manufacturing
+label: 制造业
+description: |
+  覆盖项：默认账套 aux_mode=full 以便完整保留 1601 固定资产 / 1604
+  在建工程 / 1405 存货 的辅助核算明细；同时为常见制造业一级科目
+  追加初始 manual_inputs（折旧、低值易耗品摊销）。
+
+org_defaults:
+  aux_mode: full
+
+manual_inputs_overlay:
+  - key: depreciation_expense
+    label: 折旧费用（间接法用）
+    value_type: cny
+    default_source: manual
+    source_hint: 资产折旧台账 / 1602 累计折旧本期发生额
+    required_by: [CF_DEPRECIATION_ADJUST]
+  - key: amortization_low_value
+    label: 低值易耗品摊销
+    value_type: cny
+    default_source: manual
+    source_hint: 1404 / 1405 辅助账明细

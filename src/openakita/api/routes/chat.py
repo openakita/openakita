@@ -521,7 +521,7 @@ def _append_unique_artifacts(collected: list[dict], artifacts: list[dict]) -> li
 
 def _resolve_agent(agent: object):
     """Resolve the actual Agent instance."""
-    from openakita.core.agent import Agent
+    from openakita.agent.core import Agent
 
     if isinstance(agent, Agent):
         return agent
@@ -658,7 +658,8 @@ async def _cancel_running_chat_task(
             "action": "noop",
             "reason": reason,
             "conversation_id": conv_id,
-            "message": "No running task to cancel",
+            "busy": False,
+            "message": "No running task to cancel (conversation lifecycle is idle)",
         }
 
     if not _agent_has_cancel_target(actual_agent, conv_id):
@@ -676,7 +677,11 @@ async def _cancel_running_chat_task(
             "action": "noop",
             "reason": reason,
             "conversation_id": conv_id,
-            "message": "No running task to cancel",
+            "busy": True,
+            "message": (
+                "Lifecycle was busy but the agent turn already cleaned up; "
+                "nothing left to cancel"
+            ),
         }
 
     actual_agent.cancel_current_task(reason, session_id=conv_id)
@@ -1880,7 +1885,7 @@ async def _stream_org_command_chat(
             yield _sse("done")
             return
 
-        from openakita.orgs.command_service import (
+        from openakita.orgs.command_models import (
             OrgCommandError,
             OrgCommandRequest,
             OrgCommandSource,
@@ -2054,6 +2059,18 @@ async def chat(request: Request, body: ChatRequest):
 
     conversation_id = body.conversation_id
     client_id = body.client_id or ""
+    # F3/F4 (Domain1): when a caller omits client_id (the frontend always sends
+    # one; this is external/API traffic), the entire lifecycle busy-lock block
+    # below used to be skipped — so double-texting policy (QUEUE/STEER/REJECT)
+    # and /api/chat/cancel were bypassed and the same conversation could run
+    # unbounded concurrent turns. Synthesize a stable fallback client_id keyed on
+    # conversation_id so these requests enter the *same* tested lifecycle path
+    # (keyed by conversation_id). Two concurrent client-less requests to one
+    # conversation now share this key → treated as same-client → serialized by
+    # the QUEUE policy instead of racing. Frontend behaviour is untouched
+    # because body.client_id is always truthy there.
+    if not client_id:
+        client_id = f"__server_fallback__::{conversation_id}"
     request_id = f"chat_{_uuid.uuid4().hex[:12]}"
     session_manager = getattr(request.app.state, "session_manager", None)
 

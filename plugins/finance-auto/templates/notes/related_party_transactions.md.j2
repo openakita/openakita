@@ -1,0 +1,19 @@
+### 六 关联方及其交易 (单位：元)
+
+**数据部分** (data-driven half)
+
+| 关联方 | 关系 | 本期发生额 | 期末余额 |
+|---|---|---:|---:|
+{% for rp in related_parties %}| {{ rp.name }} | {{ rp.relation }} | {{ rp.amount }} | {{ rp.balance }} |
+{% endfor %}| **合计** | — | **{{ total_amount }}** | **{{ total_balance }}** |
+
+本期与关联方发生交易合计 {{ total_amount }} 元，涉及 {{ party_count }} 个关联方。
+
+**描述部分** (narrative — Sibling B / S11 草拟)
+
+> [此段由 NotesGenerator 标记为 `narrative_pending_ai`；S11 工作流将根据上表
+> 起草关联方性质、定价政策、是否公允等说明，并提示用户人工复核敏感字段。]
+{% if narrative_seed %}
+
+预填提示：{{ narrative_seed }}。
+{% endif %}

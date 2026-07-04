@@ -10,7 +10,13 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from ..core.capabilities import (
+# Import from the canonical home (``agent.capabilities``) rather than the
+# ``core.capabilities`` re-export shim: the shim is loaded lazily via
+# ``agent`` package init, and routing this library-internal import through it
+# creates a partially-initialized-module circular import when the capabilities
+# chain is entered before the skills chain (surfaced by ``import
+# openakita.api.server`` after the upstream merge reordered the agents imports).
+from openakita.agent.capabilities import (
     CapabilityDescriptor,
     CapabilityKind,
     CapabilityOrigin,

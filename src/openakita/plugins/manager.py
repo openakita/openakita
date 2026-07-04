@@ -15,6 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from ..core.log_health import record_health_event
+from ..runtime.nodes.manifest import (
+    WorkbenchManifest,
+    WorkbenchManifestError,
+)
 from .api import PluginAPI, PluginBase
 from .asset_bus import AssetBus
 from .compat import check_compatibility
@@ -221,6 +225,40 @@ class PluginManager:
         """Expose loaded plugins dict (read-only access for AgentFactory filtering)."""
         return self._loaded
 
+    def get_workbench_manifest(self, plugin_id: str) -> WorkbenchManifest | None:
+        """Return the parsed v2 ``WORKBENCH`` manifest for a loaded plugin.
+
+        Public accessor used by the v2 runtime (``WorkbenchNode``,
+        ``api/routes/orgs_v2``) to discover workbench-capable plugins
+        without inspecting private state.
+
+        Returns ``None`` when the plugin is not loaded, or when the
+        plugin has not opted in to the workbench protocol (no
+        ``WORKBENCH`` constant), or when the constant failed
+        validation at load time. The latter two are indistinguishable
+        on purpose: callers should treat any ``None`` as "this plugin
+        is a plain tool provider" and fall back to the legacy path.
+        """
+        loaded = self._loaded.get(plugin_id)
+        if loaded is None:
+            return None
+        return loaded.workbench_manifest
+
+    def list_workbench_plugins(self) -> list[tuple[str, WorkbenchManifest]]:
+        """List every loaded plugin that exposes a v2 workbench manifest.
+
+        Returns a list of ``(plugin_id, manifest)`` pairs. Stable
+        ordering by plugin id keeps API responses deterministic.
+        """
+        return sorted(
+            (
+                (plugin_id, loaded.workbench_manifest)
+                for plugin_id, loaded in self._loaded.items()
+                if loaded.workbench_manifest is not None
+            ),
+            key=lambda item: item[0],
+        )
+
     @property
     def failed_count(self) -> int:
         return len(self._failed)
@@ -392,6 +430,14 @@ class PluginManager:
         if not plugin_dirs:
             logger.debug("No plugins found in %s", self._plugins_dir)
             return
+
+        # Hygiene check (commit feat(plugins) reseed): warn if any plugin
+        # under the git-tracked seed tree (``<project>/plugins``) has been
+        # edited but not yet re-copied into the runtime tree we are about
+        # to load from (``<project>/data/plugins``).  Silent when in sync;
+        # gated by ``settings.plugins_drift_warn_enabled`` for prod images
+        # that ship without the seed tree.
+        self._maybe_warn_on_source_drift()
 
         # Parse all manifests first for topological sorting
         parsed: list[tuple[Path, PluginManifest]] = []
@@ -621,6 +667,7 @@ class PluginManager:
         sys_path_entry = ""
         deps_path_entry = ""
         imported_modules: set[str] = set()
+        workbench_manifest: WorkbenchManifest | None = None
 
         # Surface missing pip deps loudly during plugin load instead of letting
         # the user discover them via an opaque ``ModuleNotFoundError`` 30 seconds
@@ -652,6 +699,7 @@ class PluginManager:
                     sys_path_entry,
                     deps_path_entry,
                     imported_modules,
+                    workbench_manifest,
                 ) = self._load_python_plugin(manifest, plugin_dir)
                 plugin_instance.on_load(api)
                 self._try_load_plugin_skill(manifest, plugin_dir, api)
@@ -672,6 +720,7 @@ class PluginManager:
             sys_path_entry=sys_path_entry,
             deps_path_entry=deps_path_entry,
             imported_modules=imported_modules,
+            workbench_manifest=workbench_manifest,
         )
         entry = self._state.get_entry(manifest.id)
         if entry is None or not entry.pending_update_path:
@@ -750,11 +799,11 @@ class PluginManager:
 
     def _load_python_plugin(
         self, manifest: PluginManifest, plugin_dir: Path
-    ) -> tuple[PluginBase, str, str, str, set[str]]:
+    ) -> tuple[PluginBase, str, str, str, set[str], WorkbenchManifest | None]:
         """Load a Python plugin module.
 
         Returns ``(instance, module_name, sys_path_entry, deps_path_entry,
-        imported_modules)``.
+        imported_modules, workbench_manifest)``.
 
         ``imported_modules`` lists submodules newly registered in
         ``sys.modules`` whose source file lives under ``plugin_dir`` — so the
@@ -767,6 +816,13 @@ class PluginManager:
         PyInstaller's bundled stdlib / pydantic on the front of the path
         keeps winning over any plugin-local copy — the same precaution
         ``runtime_env.inject_module_paths`` takes for ``~/.openakita/modules``.
+
+        ``workbench_manifest`` is the parsed v2 workbench manifest extracted
+        from a top-level ``WORKBENCH`` dict in the plugin module (per
+        ADR-0009). ``None`` when the plugin has not opted in. Parse failures
+        are logged as warnings and the plugin still loads as a plain tool
+        provider — the ADR is explicit that the workbench protocol is
+        opt-in and must not regress legacy plugins.
         """
         entry_path = plugin_dir / manifest.entry
         if not entry_path.exists():
@@ -912,12 +968,39 @@ class PluginManager:
                 f"Plugin.Plugin must be a subclass of PluginBase, got {type(plugin_class)}"
             )
 
+        # ADR-0009: opt-in v2 workbench manifest discovery. The plugin
+        # may declare a top-level ``WORKBENCH`` dict; we parse it via
+        # the runtime's typed parser so consumers (WorkbenchNode,
+        # api/routes/orgs_v2) can rely on validated shape. Plugins
+        # without the constant — or whose constant fails validation —
+        # remain plain tool providers; we never abort plugin loading on
+        # a workbench-only error.
+        workbench_manifest: WorkbenchManifest | None = None
+        raw_workbench = getattr(module, "WORKBENCH", None)
+        if raw_workbench is not None:
+            try:
+                workbench_manifest = WorkbenchManifest.parse(raw_workbench)
+            except WorkbenchManifestError as exc:
+                logger.warning(
+                    "Plugin '%s' declares WORKBENCH but it failed validation: %s. "
+                    "The plugin will still load as a plain tool provider.",
+                    manifest.id,
+                    exc,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Plugin '%s' WORKBENCH parsing raised %s; ignoring manifest.",
+                    manifest.id,
+                    exc,
+                )
+
         return (
             plugin_class(),
             module_name,
             plugin_dir_str if added_to_path else "",
             deps_dir_str if deps_added_to_path else "",
             imported_modules,
+            workbench_manifest,
         )
 
     def _load_mcp_plugin(self, manifest: PluginManifest, plugin_dir: Path, api: PluginAPI) -> None:
@@ -1622,13 +1705,97 @@ class PluginManager:
         """
         return self._failed.pop(plugin_id, None) is not None
 
-    async def shutdown(self) -> None:
-        """Release host-owned resources (Asset Bus connection).
+    async def unload_all_plugins(
+        self,
+        *,
+        per_plugin_timeout_s: float = 3.0,
+        max_concurrency: int = 8,
+    ) -> int:
+        """Unload every loaded plugin, releasing per-plugin OS resources.
 
-        Plugin instances are torn down via :meth:`unload_plugin`; this
-        method only handles host singletons that outlive any single
-        plugin. Safe to call multiple times.
+        Sprint 16 P0 (root cause of v32 ~13 s lifespan→exit hang):
+        each loaded plugin's ``on_load`` typically opens an ``aiosqlite``
+        connection through its ``TaskManager``, and each open connection
+        spawns a **non-daemon** ``_connection_worker_thread`` (aiosqlite
+        core.py line 90 forgot ``daemon=True``). Plugins already write
+        ``await self._tm.close()`` in ``on_unload``, but until v33 the
+        host never called ``pm.unload_plugin(pid)`` during serve-mode
+        shutdown — so 14 stale worker threads pinned Python's interpreter
+        teardown for ~13 s in every v32 PHASEA run (see
+        ``_v32_biz_e2e/_diagnostics_analysis.md``).
+
+        Sprint 16 P0 / v33 smoke iteration 1: serve-mode dev installs
+        ship 17+ plugins, and the slowest plugins (e.g. seedance-video,
+        ppt-maker, subtitle-craft) take 0.5–3.5 s each to drain their
+        own poll loops inside ``on_unload``. Sequential unload exceeded
+        the 8 s lifespan stage budget on round one — only 3/17 plugins
+        unloaded before the watchdog fired. This version unloads in
+        parallel under a small concurrency cap so the slow plugins
+        overlap with the fast ones; the cap (default 8) keeps the
+        event loop from being flooded by simultaneous GC passes /
+        sys.modules churn from 20+ plugins at once.
+
+        Each :meth:`unload_plugin` call is wrapped in a per-plugin
+        :func:`asyncio.wait_for` so one plugin's hung ``on_unload``
+        cannot starve the others. The seed iteration order is the
+        current ``_loaded`` insertion order reversed (LIFO) so the
+        most-recently-loaded plugin tears down first, matching the
+        natural dependency direction.
+
+        Returns the number of plugins for which ``unload_plugin``
+        returned ``True`` (i.e. did real work). Plugins that timed
+        out, raised, or were already unloaded count as 0.
         """
+        plugin_ids = list(self._loaded.keys())
+        plugin_ids.reverse()
+        if not plugin_ids:
+            return 0
+
+        sem = asyncio.Semaphore(max(1, int(max_concurrency)))
+
+        async def _one(pid: str) -> bool:
+            async with sem:
+                try:
+                    return await asyncio.wait_for(
+                        self.unload_plugin(pid), timeout=per_plugin_timeout_s
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "[Shutdown] Plugin '%s' unload exceeded %.1fs; abandoning to "
+                        "keep teardown moving (worker thread may stay alive but the "
+                        "force-exit watchdog will still bound the process exit).",
+                        pid,
+                        per_plugin_timeout_s,
+                    )
+                    return False
+                except Exception as exc:  # noqa: BLE001 -- shutdown must never raise
+                    logger.warning(
+                        "[Shutdown] Plugin '%s' unload failed: %s", pid, exc
+                    )
+                    return False
+
+        results = await asyncio.gather(*[_one(pid) for pid in plugin_ids])
+        return sum(1 for r in results if r)
+
+    async def shutdown(self, *, unload_plugins: bool = True) -> None:
+        """Release host-owned resources (loaded plugins + Asset Bus).
+
+        Sprint 16 P0 extended scope: by default this now also unloads
+        every loaded plugin via :meth:`unload_all_plugins`, so plugin
+        ``on_unload`` (and the ``await self._tm.close()`` it almost
+        always contains) actually runs during host shutdown. The flag
+        is provided so callers that have already iterated plugin
+        unloads themselves (e.g. ``Agent.shutdown``) can opt out and
+        only release host singletons.
+
+        Safe to call multiple times.
+        """
+        if unload_plugins and self._loaded:
+            try:
+                n = await self.unload_all_plugins()
+                logger.info("[Shutdown] PluginManager: unloaded %d plugin(s)", n)
+            except Exception as exc:  # noqa: BLE001 -- shutdown must never raise
+                logger.warning("[Shutdown] PluginManager.unload_all_plugins error: %s", exc)
         try:
             await self._asset_bus.close()
         except Exception as e:
@@ -1651,6 +1818,30 @@ class PluginManager:
         return "\n".join(tail)
 
 
+    def _maybe_warn_on_source_drift(self) -> None:
+        """Emit WARN logs if ``plugins/`` is newer than ``data/plugins/``.
+
+        Best-effort and self-contained: any failure (settings missing,
+        seed tree absent, walk error) downgrades to DEBUG so the drift
+        check never blocks plugin startup.  See
+        :func:`openakita.plugins.reseed.warn_on_drift` for the details.
+        """
+        try:
+            from ..config import settings
+
+            if not getattr(settings, "plugins_drift_warn_enabled", True):
+                return
+            # data/plugins -> data -> project_root -> project_root/plugins
+            source_root = self._plugins_dir.parent.parent / "plugins"
+            if not source_root.is_dir() or source_root.resolve() == self._plugins_dir.resolve():
+                return
+            from .reseed import warn_on_drift
+
+            warn_on_drift(source_root, self._plugins_dir, logger)
+        except Exception as exc:  # pragma: no cover - never block startup
+            logger.debug("plugin drift check skipped: %s", exc)
+
+
 class _LoadedPlugin:
     """Internal record for a loaded plugin."""
 
@@ -1663,6 +1854,7 @@ class _LoadedPlugin:
         "sys_path_entry",
         "deps_path_entry",
         "imported_modules",
+        "workbench_manifest",
     )
 
     def __init__(
@@ -1675,6 +1867,7 @@ class _LoadedPlugin:
         sys_path_entry: str = "",
         deps_path_entry: str = "",
         imported_modules: set[str] | None = None,
+        workbench_manifest: WorkbenchManifest | None = None,
     ) -> None:
         self.manifest = manifest
         self.api = api
@@ -1689,3 +1882,8 @@ class _LoadedPlugin:
         # Submodules imported by the plugin from its own directory; cleared on unload
         # so reinstall picks up fresh code instead of cached stale modules.
         self.imported_modules: set[str] = imported_modules or set()
+        # v2 workbench manifest extracted from the plugin module's
+        # top-level ``WORKBENCH`` dict, if any. ``None`` for plugins
+        # that have not opted in to the workbench protocol — those keep
+        # working as plain tool providers, exactly as before.
+        self.workbench_manifest: WorkbenchManifest | None = workbench_manifest

@@ -1,0 +1,27 @@
+{
+  "id": "case-max-tokens",
+  "label": "max_tokens stop_reason propagates",
+  "system": "be helpful",
+  "messages": [
+    {
+      "role": "user",
+      "content": "write a long essay"
+    }
+  ],
+  "mock_response": {
+    "content_blocks": [
+      {
+        "type": "text",
+        "text": "...partial..."
+      }
+    ],
+    "stop_reason": "max_tokens",
+    "input_tokens": 50,
+    "output_tokens": 1024
+  },
+  "expected": {
+    "final_text": "...partial...",
+    "tool_sequence": [],
+    "stop_reason": "max_tokens"
+  }
+}

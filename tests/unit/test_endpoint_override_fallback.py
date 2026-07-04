@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from openakita.core.reasoning_engine import ReasoningEngine
+from openakita.agent.reasoning import ReasoningEngine
 from openakita.llm.client import EndpointOverride, LLMClient
 from openakita.llm.types import AllEndpointsFailedError, EndpointConfig
 

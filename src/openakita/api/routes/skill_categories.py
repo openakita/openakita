@@ -31,7 +31,7 @@ router = APIRouter()
 
 
 def _resolve_agent(request: Request):
-    from openakita.core.agent import Agent
+    from openakita.agent.core import Agent
 
     agent = getattr(request.app.state, "agent", None)
     if isinstance(agent, Agent):

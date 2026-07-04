@@ -1,0 +1,23 @@
+{
+  "name": "recoverable_tool_error_passes_metadata",
+  "decision_kind": "tool_use",
+  "expected_exit_reason": "normal",
+  "is_terminal": false,
+  "text": "I will retry the tool.",
+  "last_user_text": "Try again.",
+  "tool_results": [
+    {
+      "content": "unknown_tool: foo",
+      "is_error": true
+    }
+  ],
+  "recent_messages": null,
+  "expected_guard_passed": {
+    "source_tag": true,
+    "tool_failure_ack": false,
+    "unbacked_action": true,
+    "recap_context": true,
+    "waiting_for_user": true,
+    "recoverable_tool_issue": true
+  }
+}

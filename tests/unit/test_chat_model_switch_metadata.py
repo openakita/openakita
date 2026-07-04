@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from openakita.api.schemas import ChatRequest
-from openakita.core.agent import Agent
+from openakita.agent.core import Agent
 from openakita.sessions.session import Session
 
 

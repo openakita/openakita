@@ -24,8 +24,8 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
+from .agent.core import Agent
 from .config import settings
-from .core.agent import Agent
 from .logging import setup_logging
 
 # MCP stdio 子进程模式：stdout 专属 JSONRPC 协议，禁止一切控制台日志输出
@@ -103,6 +103,13 @@ app = typer.Typer(
     help="OpenAkita - 全能自进化AI助手",
     add_completion=False,
 )
+
+# Sub-app: ``openakita plugins ...`` (see ``cli/plugins_cmd.py``).
+# Registered eagerly so ``--help`` discovers it without importing the
+# rest of the CLI surface (Typer lazily resolves the command body).
+from .cli.plugins_cmd import plugins_app as _plugins_app  # noqa: E402
+
+app.add_typer(_plugins_app, name="plugins")
 
 # Rich 控制台
 console = Console()
@@ -747,37 +754,76 @@ async def stop_im_channels(*, graceful: bool = True, drain_timeout: float = 30.0
     """
     停止 IM 通道
 
+    Sprint 17 P1-A 治根（forensics: ``_v34_biz/_im_shutdown_chain_inventory.md``）：
+
+    - Gateway drain 与 desktop_pool 收尾 **并行** 起跑（两者完全独立——desktop_pool 不
+      被任何 IM in-flight task 引用），把"先 drain 再 desktop"的串行链折叠成 max。
+    - 每一层 ``await`` 加 ``settings.lifespan_stage_timeout_s`` (默认 8s) 的 wait_for
+      兜底，防止某一 sub-stage 失控把 35s 外层 wait_for 全吃光。
+    - Orchestrator → SessionManager 仍保持串行依赖：orchestrator 内部任务可能持有
+      session 引用，必须在 orchestrator.shutdown 完成后再关 session manager。
+
+    v33 backend_run1.log 时序证据：MessageGateway stopped → Orchestrator complete
+    → SessionManager stopped 三者间隔 ~0.001s + ~0.041s，主刀仍在 gateway 内部
+    wework_ws WS adapter 收尸（见 c2 commit）。
+
     Args:
         graceful: True 时先排空进行中任务再停止，False 时立即停止
         drain_timeout: 排空等待超时秒数
     """
     global _message_gateway, _session_manager, _orchestrator, _desktop_pool
 
-    # Gateway drain MUST happen first — agents and orchestrator must stay alive
-    # so in-flight IM responses can finish sending before we tear down the pool.
+    # Per-stage timeout：lifespan_stage_timeout_s 与 server.py lifespan handler
+    # 同源；取不到时降级到 8s 默认。
+    try:
+        from openakita.config import settings as _settings
+
+        stage_timeout = float(getattr(_settings, "lifespan_stage_timeout_s", 8) or 8)
+    except Exception:
+        stage_timeout = 8.0
+
+    async def _bounded(label: str, coro):
+        try:
+            await asyncio.wait_for(coro, timeout=stage_timeout)
+        except TimeoutError:
+            logger.warning(
+                "[Shutdown] stop_im_channels stage %s exceeded %.1fs, abandoning",
+                label,
+                stage_timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 -- shutdown must not raise
+            logger.warning("[Shutdown] stop_im_channels stage %s error: %s", label, exc)
+
+    # ── Phase 1: gateway drain/stop ∥ desktop_pool.stop ──
+    # gateway drain MUST happen before orchestrator shutdown so in-flight IM
+    # responses can finish; desktop_pool is independent and runs in parallel.
+    phase1_aws: list = []
+    had_gateway = bool(_message_gateway)
+    had_desktop = bool(_desktop_pool)
     if _message_gateway:
         if graceful:
-            await _message_gateway.drain(timeout=drain_timeout)
+            phase1_aws.append(
+                _bounded("gateway.drain", _message_gateway.drain(timeout=drain_timeout))
+            )
         else:
-            await _message_gateway.stop()
-        logger.info("MessageGateway stopped")
-
+            phase1_aws.append(_bounded("gateway.stop", _message_gateway.stop()))
     if _desktop_pool:
-        try:
-            await _desktop_pool.stop()
-        except Exception as e:
-            logger.warning(f"Desktop pool shutdown error: {e}")
+        phase1_aws.append(_bounded("desktop_pool.stop", _desktop_pool.stop()))
+    if phase1_aws:
+        await asyncio.gather(*phase1_aws, return_exceptions=True)
+    if had_gateway:
+        logger.info("MessageGateway stopped")
+    if had_desktop:
         _desktop_pool = None
 
+    # ── Phase 2: orchestrator.shutdown (depends on gateway drained) ──
     if _orchestrator:
-        try:
-            await _orchestrator.shutdown()
-        except Exception as e:
-            logger.warning(f"Orchestrator shutdown error: {e}")
+        await _bounded("orchestrator.shutdown", _orchestrator.shutdown())
         _orchestrator = None
 
+    # ── Phase 3: session_manager.stop (depends on orchestrator drained) ──
     if _session_manager:
-        await _session_manager.stop()
+        await _bounded("session_manager.stop", _session_manager.stop())
         logger.info("SessionManager stopped")
 
 
@@ -1611,6 +1657,68 @@ def status():
         await show_status(agent)
 
     asyncio.run(_status())
+
+
+@app.command()
+def stop(
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="后端监听地址（默认 127.0.0.1，与 settings.api_host 一致）",
+    ),
+    port: int = typer.Option(
+        18900, "--port", help="后端监听端口（默认 18900）"
+    ),
+    timeout: float = typer.Option(
+        5.0, "--timeout", help="HTTP 调用超时秒数（默认 5）"
+    ),
+):
+    """向运行中的后端发送 graceful shutdown 信号。
+
+    Sprint 14 / v31 Phase A 配套 CLI：用 ``openakita stop`` 取代手敲
+    ``Invoke-RestMethod -Uri ... -Method Post``。后端 ``/api/shutdown``
+    会先走 graceful 路径，``settings.shutdown_force_exit_grace_s`` 秒后
+    若仍未自退则强制 ``os._exit(0)``。
+
+    Sprint 15 / v32 Phase B 修法（取证见
+    ``_v32_biz/_phase_b_cli_trust_env.md``）：底层 ``httpx.Client`` 强制
+    ``trust_env=False``，禁用 ``HTTP_PROXY`` / ``HTTPS_PROXY`` /
+    ``ALL_PROXY`` 环境变量读取。开发机常装 v2ray / clash 把 127.0.0.1
+    也走代理，对死端口返回 503，导致 CLI 误判 ``unexpected status 503``
+    退 1；正确的 dead-backend 表现应是 exit=2 + ``no backend listening``。
+
+    退出码：
+        0  shutdown 信号已被后端接受（HTTP 200）
+        1  HTTP 状态码非 200（401/403/5xx 等）
+        2  端口无后端监听（``httpx.ConnectError``）
+    """
+    import httpx
+
+    url = f"http://{host}:{port}/api/shutdown"
+    try:
+        # ``trust_env=False`` MUST be set on the Client (not just the
+        # call). httpx reads proxy / verify / cert env vars from the
+        # Client config; the module-level ``httpx.post()`` shortcut
+        # creates a transient Client whose ``trust_env`` defaults to
+        # True. Using an explicit Client closes that gap.
+        with httpx.Client(trust_env=False, timeout=timeout) as client:
+            r = client.post(url)
+    except httpx.ConnectError:
+        typer.echo(f"no backend listening on {host}:{port}", err=True)
+        raise typer.Exit(2) from None
+    except httpx.RequestError as exc:
+        typer.echo(f"shutdown request failed: {exc!r}", err=True)
+        raise typer.Exit(1) from None
+
+    if r.status_code == 200:
+        try:
+            typer.echo(f"shutdown signal accepted: {r.json()}")
+        except Exception:
+            typer.echo(f"shutdown signal accepted (status=200, body={r.text[:200]})")
+        return
+
+    typer.echo(f"unexpected status {r.status_code}: {r.text[:200]}", err=True)
+    raise typer.Exit(1)
 
 
 @app.command()

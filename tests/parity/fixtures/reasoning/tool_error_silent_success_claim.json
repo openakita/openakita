@@ -1,0 +1,24 @@
+{
+  "name": "tool_error_silent_success_claim",
+  "decision_kind": "final_answer",
+  "expected_exit_reason": "normal",
+  "is_terminal": false,
+  "text": "任务已经完成了，请查收输出。",
+  "last_user_text": "写入文件",
+  "tool_results": [
+    {
+      "name": "write_file",
+      "content": "Permission denied: cannot write to /etc/hosts",
+      "is_error": true
+    }
+  ],
+  "recent_messages": null,
+  "expected_guard_passed": {
+    "source_tag": true,
+    "tool_failure_ack": false,
+    "unbacked_action": true,
+    "recap_context": true,
+    "waiting_for_user": true,
+    "recoverable_tool_issue": true
+  }
+}

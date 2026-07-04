@@ -1,0 +1,9 @@
+{
+  "description": "group_messages([]) -> []",
+  "input": {
+    "messages": []
+  },
+  "expected": {
+    "groups_count": 0
+  }
+}

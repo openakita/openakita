@@ -62,6 +62,8 @@ import { WorkbenchNodePicker, type WorkbenchTemplate } from "../components/Workb
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { OrgAvatar, AVATAR_PRESETS } from "../components/OrgAvatars";
 import { OrgChatPanel } from "../components/OrgChatPanel";
+import { TemplatePickerDialog } from "../components/TemplatePickerDialog";
+import type { OrgWire } from "../api/orgs";
 import { OrgBlackboardPanel, type OrgBlackboardPanelHandle } from "../components/OrgBlackboardPanel";
 import { OrgMonitorPanel } from "../components/OrgMonitorPanel";
 import { OrgDashboard } from "../components/OrgDashboard";
@@ -84,7 +86,7 @@ import {
   EDGE_COLORS, getDeptColor,
   BB_TYPE_COLORS, BB_TYPE_LABELS,
   type OrgNodeData, type OrgEdgeData, type OrgSummary,
-  type OrgFull, type TemplateSummary,
+  type OrgFull,
 } from "./orgEditorConstants";
 import agentOrgImg from "../assets/agent_org.png";
 
@@ -329,7 +331,11 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
       onMouseLeave={() => setHovered(false)}
       style={{
         background: "var(--card-bg, #fff)",
-        border: `2px solid ${selected ? "var(--primary)" : isAnomaly ? "#f59e0b" : isError ? "var(--danger)" : isBusy ? statusColor : "var(--line)"}`,
+        // UI issue #5: a busy node now uses a consistent indigo accent border +
+        // the radar-ping ring (see orgNodePulse) instead of the department/
+        // status colour, so "executing" never visually fights the node's own
+        // colour. The animated box-shadow below fully drives the busy glow.
+        border: `2px solid ${selected ? "var(--primary)" : isAnomaly ? "#f59e0b" : isError ? "var(--danger)" : isBusy ? "#6366f1" : "var(--line)"}`,
         borderRadius: "var(--radius)",
         padding: 0,
         minWidth: 180,
@@ -338,8 +344,6 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
           ? "0 0 0 2px var(--primary)"
           : isAnomaly
           ? "0 0 12px rgba(245,158,11,0.35)"
-          : isBusy
-          ? `0 0 16px ${statusColor}50`
           : isError
           ? `0 0 12px var(--danger, #ef4444)30`
           : "0 1px 4px rgba(0,0,0,0.08)",
@@ -635,7 +639,6 @@ export function OrgEditorView({
 
   // State
   const [orgList, setOrgList] = useState<OrgSummary[]>([]);
-  const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [currentOrg, setCurrentOrg] = useState<OrgFull | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -644,7 +647,6 @@ export function OrgEditorView({
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lastSavedRef = useRef<string>("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [showTemplates, setShowTemplates] = useState(false);
   const [showNewNodeForm, setShowNewNodeForm] = useState(false);
   const [showWorkbenchPicker, setShowWorkbenchPicker] = useState(false);
   const [propsTab, setPropsTab] = useState<"overview" | "identity" | "capabilities">("overview");
@@ -831,7 +833,7 @@ export function OrgEditorView({
 
   const fetchOrgList = useCallback(async (): Promise<OrgSummary[]> => {
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs`);
+      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs`);
       const data = await res.json();
       const list = Array.isArray(data) ? (data as OrgSummary[]) : [];
       list.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
@@ -843,21 +845,16 @@ export function OrgEditorView({
     }
   }, [apiBaseUrl]);
 
-  const fetchTemplates = useCallback(async () => {
-    try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/templates`);
-      const data = await res.json();
-      setTemplates(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error("Failed to fetch templates:", e);
-    }
-  }, [apiBaseUrl]);
-
   const fetchOrg = useCallback(async (orgId: string) => {
     setLoading(true);
-    setActiveDrawer(null);
+    // NOTE: do NOT close the command-center / inbox drawer here. ``fetchOrg`` is
+    // also the ``org:command_done`` refresh path, and closing the drawer on
+    // completion slammed the 指挥台 shut exactly as the final "任务完成汇报" bubble
+    // rendered -- so the user never saw it (test14 #1 + #2, the real break that
+    // made every prior OrgChatPanel-side fix look ineffective). Drawer closing on
+    // ORG/TAB switch is handled by the ``[viewMode, selectedOrgId]`` reset effect.
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}`);
+      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}`);
       const data: OrgFull = await res.json();
       if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
       setSaveStatus("idle");
@@ -922,12 +919,11 @@ export function OrgEditorView({
   useEffect(() => {
     if (visible) {
       fetchOrgList();
-      fetchTemplates();
       fetchMcpServers();
       fetchAvailableSkills();
       fetchAgentProfiles();
     }
-  }, [visible, fetchOrgList, fetchTemplates, fetchMcpServers, fetchAvailableSkills, fetchAgentProfiles]);
+  }, [visible, fetchOrgList, fetchMcpServers, fetchAvailableSkills, fetchAgentProfiles]);
 
   useEffect(() => {
     if (selectedOrgId && visible) {
@@ -935,24 +931,78 @@ export function OrgEditorView({
     }
   }, [selectedOrgId, visible, fetchOrg]);
 
+  // Auto-close the "节点详情" (node detail) sidebar whenever the user leaves the
+  // 编排 (canvas) view for the 项目/看板 tabs, or switches to a different org.
+  // The detail panel only makes sense over the canvas; leaving it open while
+  // the center switches to the project board / dashboard (or another org) is
+  // stale UI. Keyed on viewMode + selectedOrgId only, so selecting a node on
+  // the canvas is unaffected (selectedNodeId is not a dependency here).
+  useEffect(() => {
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    setShowNodeChat(false);
+    // Close the command-center / inbox drawer only on an actual ORG or TAB
+    // switch (this effect's deps), NOT on the ``command_done`` refresh -- so a
+    // finished run keeps the 指挥台 open and the final report bubble stays visible.
+    setActiveDrawer(null);
+  }, [viewMode, selectedOrgId]);
+
 
   // ── WebSocket for real-time org events ──
 
   const triggerEdgeAnimation = useCallback((fromNode: string, toNode: string, color: string) => {
-    const edgeKey = edges.find(
+    if (!fromNode || !toNode) return;
+    let edgeKey = edges.find(
       (e) => (e.source === fromNode && e.target === toNode) || (e.source === toNode && e.target === fromNode),
     )?.id;
+    // UI issue #9: org delegations often happen between nodes that have no
+    // pre-drawn structural edge (the supervisor can dispatch to any node), so
+    // the graph looked "一跳一跳" — a node lit up busy with no connecting line.
+    // When there is no structural edge AND both endpoints differ, draw a
+    // TRANSIENT dashed edge so the委派→交付 hand-off is always visible. It is
+    // tagged ``__transient`` so it is removed after the pulse and never saved.
+    let transientId: string | null = null;
+    if (!edgeKey && fromNode !== toNode) {
+      transientId = `__transient-${fromNode}-${toNode}`;
+      edgeKey = transientId;
+      setEdges((prev) => {
+        if (prev.some((e) => e.id === transientId)) return prev;
+        const hasFrom = prev.some((e) => e.source === fromNode || e.target === fromNode)
+          || nodes.some((n) => n.id === fromNode);
+        const hasTo = prev.some((e) => e.source === toNode || e.target === toNode)
+          || nodes.some((n) => n.id === toNode);
+        if (!hasFrom || !hasTo) return prev;
+        return [
+          ...prev,
+          {
+            id: transientId!,
+            source: fromNode,
+            target: toNode,
+            type: "default",
+            animated: true,
+            style: { stroke: color, strokeWidth: 2, strokeDasharray: "4 4" },
+            markerEnd: { type: MarkerType.ArrowClosed, color },
+            data: { __transient: true, edge_type: "collaborate" },
+          } as Edge,
+        ];
+      });
+    }
     if (!edgeKey) return;
-    setEdgeAnimations((prev) => ({ ...prev, [edgeKey]: { color, ts: Date.now() } }));
-    setEdgeFlowCounts((prev) => ({ ...prev, [edgeKey]: (prev[edgeKey] || 0) + 1 }));
+    const animKey = edgeKey;
+    setEdgeAnimations((prev) => ({ ...prev, [animKey]: { color, ts: Date.now() } }));
+    setEdgeFlowCounts((prev) => ({ ...prev, [animKey]: (prev[animKey] || 0) + 1 }));
     setTimeout(() => {
       setEdgeAnimations((prev) => {
         const copy = { ...prev };
-        if (copy[edgeKey]?.ts && Date.now() - copy[edgeKey].ts >= 4500) delete copy[edgeKey];
+        if (copy[animKey]?.ts && Date.now() - copy[animKey].ts >= 4500) delete copy[animKey];
         return copy;
       });
+      // Remove the transient edge once its pulse fades.
+      if (transientId) {
+        setEdges((prev) => prev.filter((e) => e.id !== transientId));
+      }
     }, 5000);
-  }, [edges]);
+  }, [edges, nodes, setEdges]);
 
   const currentOrgId = currentOrg?.id;
   useEffect(() => {
@@ -963,6 +1013,16 @@ export function OrgEditorView({
       const d = raw as Record<string, unknown> | null;
       if (!d || d.org_id !== orgId) return;
 
+      // NOTE: the v2 OrgRuntime emits exactly these org:* WS events
+      // (see src/openakita/orgs/runtime.py + command_service.py):
+      //   org:node_status, org:task_delegated, org:task_delivered,
+      //   org:task_complete, org:blackboard_update, org:command_done,
+      //   org:command_cancelled.
+      // The v1-era branches (task_accepted/rejected, escalation, message,
+      // status_change, command_phase, command_started/stopped_no_progress,
+      // quota_exhausted, watchdog_recovery, broadcast, meeting_*) were dead
+      // listeners — v2 never fires them — so they were removed to stop
+      // pretending those animations/toasts can happen.
       if (ev === "org:node_status") {
         const { node_id, status, current_task } = d as any;
         setNodes((prev) => {
@@ -977,51 +1037,16 @@ export function OrgEditorView({
         triggerEdgeAnimation((d as any).from_node, (d as any).to_node, "var(--primary)");
       } else if (ev === "org:task_delivered") {
         triggerEdgeAnimation((d as any).from_node, (d as any).to_node, "var(--ok)");
-      } else if (ev === "org:task_accepted") {
-        triggerEdgeAnimation((d as any).accepted_by, (d as any).from_node, "#22c55e");
-      } else if (ev === "org:task_rejected") {
-        triggerEdgeAnimation((d as any).rejected_by, (d as any).from_node, "var(--danger)");
-      } else if (ev === "org:escalation") {
-        triggerEdgeAnimation((d as any).from_node, (d as any).to_node, "var(--danger)");
-      } else if (ev === "org:message") {
-        triggerEdgeAnimation((d as any).from_node, (d as any).to_node, "#a78bfa");
       } else if (ev === "org:blackboard_update") {
         bbPanelRef.current?.refresh();
-      } else if (ev === "org:status_change") {
-        const newStatus = (d as any).status as string;
-        setCurrentOrg((prev) => prev ? { ...prev, status: newStatus } : prev);
-        setOrgList((prev) => prev.map((o) => o.id === orgId ? { ...o, status: newStatus } : o));
-        if (newStatus === "dormant" || newStatus === "paused") {
-          if (newStatus === "dormant") {
-            setNodes((prev) => prev.map((n) => ({
-              ...n,
-              data: { ...n.data, status: "idle", current_task: null, _runtime: null },
-            })));
-          }
-        }
       } else if (ev === "org:task_complete") {
         triggerEdgeAnimation((d as any).node_id, (d as any).node_id, "#22c55e");
-      } else if (
-        ev === "org:command_done" ||
-        ev === "org:command_stopped_no_progress"
-      ) {
+      } else if (ev === "org:command_done" || ev === "org:command_cancelled") {
+        // org:command_cancelled is the real cancel event v2 emits (was
+        // mistakenly listened to as org:task_cancelled before, so the canvas
+        // never refreshed on cancel). Reload the org + blackboard so a
+        // finished/cancelled command settles the canvas immediately.
         void fetchOrg(orgId);
-        bbPanelRef.current?.refresh();
-      } else if (ev === "org:command_started") {
-        bbPanelRef.current?.refresh();
-      } else if (ev === "org:command_phase") {
-        // command_phase is emitted by polling/diagnostics and can arrive every few seconds.
-        // Avoid reloading the whole canvas here; node_status/task events already update live state.
-        bbPanelRef.current?.refresh();
-      } else if (ev === "org:task_cancelled") {
-        bbPanelRef.current?.refresh();
-      } else if (ev === "org:quota_exhausted") {
-        showToast(t("org.editor.quotaExhausted"), "error");
-      } else if (ev === "org:watchdog_recovery") {
-        showToast(t("org.editor.watchdogRecovery", { name: (d as any).node_id }), "error");
-      } else if (ev === "org:broadcast") {
-        triggerEdgeAnimation((d as any).from_node, (d as any).from_node, "#a78bfa");
-      } else if (ev === "org:meeting_started" || ev === "org:meeting_completed") {
         bbPanelRef.current?.refresh();
       }
     });
@@ -1031,7 +1056,7 @@ export function OrgEditorView({
   const handleStartOrg = useCallback(async () => {
     if (!currentOrg) return;
     try {
-      await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/start`, { method: "POST" });
+      await safeFetch(`${apiBaseUrl}/api/v2/orgs/${currentOrg.id}/start`, { method: "POST" });
       setCurrentOrg({ ...currentOrg, status: "active" });
       setOrgList((prev) => prev.map((o) => o.id === currentOrg.id ? { ...o, status: "active" } : o));
       const mode = (currentOrg as any).operation_mode || "command";
@@ -1054,7 +1079,7 @@ export function OrgEditorView({
     if (!currentOrg || stoppingRef.current) return;
     stoppingRef.current = true;
     try {
-      await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/stop`, { method: "POST" });
+      await safeFetch(`${apiBaseUrl}/api/v2/orgs/${currentOrg.id}/stop`, { method: "POST" });
       setCurrentOrg((prev) => prev ? { ...prev, status: "dormant" } : prev);
       setOrgList((prev) => prev.map((o) => o.id === currentOrg.id ? { ...o, status: "dormant" } : o));
       // 不再依赖 WS：HTTP 成功立即把所有节点视觉状态清零，避免装机版 WS 被
@@ -1093,12 +1118,12 @@ export function OrgEditorView({
           filters: [{ name: "JSON", extensions: ["json"] }],
         });
         if (!savePath) return;
-        const res = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/export`, { method: "POST" });
+        const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${currentOrg.id}/export`, { method: "POST" });
         const data = await res.json();
         await writeTextFile(savePath, JSON.stringify(data, null, 2));
         showToast(t("org.editor.exportedTo", { path: savePath }));
       } else {
-        const res = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/export`, { method: "POST" });
+        const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${currentOrg.id}/export`, { method: "POST" });
         const data = await res.json();
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
@@ -1118,7 +1143,7 @@ export function OrgEditorView({
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/import`, {
+      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/import`, {
         method: "POST",
         body: formData,
       });
@@ -1135,17 +1160,17 @@ export function OrgEditorView({
   const [confirmReset, setConfirmReset] = useState(false);
   const handleResetOrg = useCallback(async () => {
     if (!currentOrg) return;
+    // P-RC-10 P10.5e (GroupC): the v1 server-side reset endpoint was
+    // retired at P-RC-9 P9.9eta-2 (v1 router deletion) and v2 mint has
+    // no equivalent; gracefully degrade to a local-only UI reset.
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/reset`, { method: "POST" });
-      const data = await res.json();
-      setCurrentOrg(data);
       setLayoutLocked(false);
       bbPanelRef.current?.refresh();
       setOrgStats(null);
       showToast(t("org.editor.orgReset"));
     } catch (e) { console.error("Failed to reset org:", e); }
     setConfirmReset(false);
-  }, [currentOrg, apiBaseUrl]);
+  }, [currentOrg]);
 
   // ── Save ──
 
@@ -1155,7 +1180,7 @@ export function OrgEditorView({
       const { status, _runtime, _liveMode, current_task, ...configData } = n.data as any;
       return { ...configData, position: n.position };
     });
-    const updatedEdges = edges.map((e) => ({
+    const updatedEdges = edges.filter((e) => !(e.data as any)?.__transient).map((e) => ({
       ...(e.data || {}),
       id: e.id,
       source: e.source,
@@ -1227,7 +1252,7 @@ export function OrgEditorView({
     if (snapshot === lastSavedRef.current) return true;
     setSaveStatus("saving");
     try {
-      const resp = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}`, {
+      const resp = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${currentOrg.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: snapshot,
@@ -1279,7 +1304,7 @@ export function OrgEditorView({
     setCreatingOrg(true);
     const defaultName = t("org.editor.newOrg");
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs`, {
+      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: defaultName, description: "" }),
@@ -1305,41 +1330,49 @@ export function OrgEditorView({
     }
   }, [apiBaseUrl, fetchOrgList, showToast]);
 
-  const handleCreateFromTemplate = useCallback(async (templateId: string) => {
-    if (orgCreateBusyRef.current) return;
-    orgCreateBusyRef.current = true;
-    setCreatingOrg(true);
-    try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/from-template`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template_id: templateId }),
-      });
-      const data = (await res.json()) as { id?: string; name?: string };
-      const list = await fetchOrgList();
-      let newId = typeof data?.id === "string" && data.id ? data.id : "";
-      if (!newId && list.length > 0) {
-        const sorted = [...list].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-        newId = sorted[0]?.id ?? "";
+  // P9.8gamma fix: TemplatePickerDialog (formerly Drawer) POSTs to mint runtime's
+  // /api/v2/orgs/from-template (B8), which instantiates AND persists
+  // in one call. The OrgWire handed to onCreated is the already-saved
+  // mint-runtime org, so this handler only needs to refresh the
+  // sidebar list (so the new id surfaces) and select the new org.
+  const handleCreateOrgV2FromTemplate = useCallback(
+    async (org: OrgWire) => {
+      if (orgCreateBusyRef.current) return;
+      orgCreateBusyRef.current = true;
+      setCreatingOrg(true);
+      try {
+        const list = await fetchOrgList();
+        let newId = typeof org?.id === "string" ? org.id : "";
+        if (!newId && list.length > 0) {
+          const sorted = [...list].sort((a, b) =>
+            (b.created_at || "").localeCompare(a.created_at || ""),
+          );
+          newId = sorted[0]?.id ?? "";
+        }
+        if (newId) setSelectedOrgId(newId);
+        showToast(
+          newId
+            ? t("org.editor.createdFromTemplate")
+            : t("org.editor.createdButNotFound"),
+          newId ? "ok" : "error",
+        );
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("Failed to refresh after v2 create-from-template:", e);
+        showToast(t("org.editor.createFromTemplateFailed", { error: msg }), "error");
+      } finally {
+        orgCreateBusyRef.current = false;
+        setCreatingOrg(false);
       }
-      if (newId) setSelectedOrgId(newId);
-      setShowTemplates(false);
-      showToast(newId ? t("org.editor.createdFromTemplate") : t("org.editor.createdButNotFound"), newId ? "ok" : "error");
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("Failed to create from template:", e);
-      showToast(t("org.editor.createFromTemplateFailed", { error: msg }), "error");
-    } finally {
-      orgCreateBusyRef.current = false;
-      setCreatingOrg(false);
-    }
-  }, [apiBaseUrl, fetchOrgList, showToast, t]);
+    },
+    [fetchOrgList, showToast, t],
+  );
 
   const [confirmDeleteOrgId, setConfirmDeleteOrgId] = useState<string | null>(null);
 
   const handleDeleteOrg = useCallback(async (orgId: string) => {
     try {
-      await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}`, { method: "DELETE" });
+      await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}`, { method: "DELETE" });
       if (selectedOrgId === orgId) {
         if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
         setActiveDrawer(null);
@@ -1560,7 +1593,7 @@ export function OrgEditorView({
     }
     const fetchStats = async () => {
       try {
-        const res = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/stats`);
+        const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${currentOrg.id}/stats`);
         if (res.ok) setOrgStats(await res.json());
       } catch (e) { /* ignore */ }
     };
@@ -1701,7 +1734,7 @@ export function OrgEditorView({
     setContextMenu(null);
     if (!selectedOrgId) return;
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/${selectedOrgId}/nodes/${nodeId}/unfreeze`, { method: "POST" });
+      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${selectedOrgId}/nodes/${nodeId}/unfreeze`, { method: "POST" });
       if (!res.ok) throw new Error(await res.text());
       setNodes((prev) => prev.map((n) => {
         if (n.id !== nodeId) return n;
@@ -1935,53 +1968,50 @@ export function OrgEditorView({
             borderRadius: 12, overflow: "hidden",
             boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
           }}>
-            <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>{t("orgEditor.title")}</span>
-              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            {/* Sidebar header — flush against the card top so the action row
+                does not float in white space (user report 2026-05-23).  Since
+                v1 orgs were removed, the legacy inline "模板" dropdown is gone
+                and the modal-based TemplatePickerDialog is the single canonical
+                "create from template" entry. */}
+            <div style={{ padding: "8px 10px 6px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+              <span style={{ fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", flexShrink: 0 }}>{t("orgEditor.title")}</span>
+              <div style={{ display: "flex", gap: 2, alignItems: "center", flexShrink: 0 }}>
                 <TooltipProvider delayDuration={300}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => setShowTemplates(!showTemplates)} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">{t("org.editor.template")}</Button>
+                      <span data-testid="org-editor-v2-template-trigger">
+                        <TemplatePickerDialog
+                          apiBase={apiBaseUrl}
+                          onCreated={(org) => void handleCreateOrgV2FromTemplate(org)}
+                        >
+                          <Button variant="link" size="sm" disabled={creatingOrg} className="h-7 px-2 text-xs font-medium text-primary cursor-pointer">{t("org.editor.newOrgBtn")}</Button>
+                        </TemplatePickerDialog>
+                      </span>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">{t("org.editor.createFromTemplate")}</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">{t("org.editor.create")}</Button>
+                      <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-1.5 text-xs text-muted-foreground cursor-pointer">{t("org.editor.createBlankBtn")}</Button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">{t("org.editor.createBlank")}</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">{t("org.editor.import")}</Button>
+                      <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-1.5 text-xs text-muted-foreground cursor-pointer">{t("org.editor.import")}</Button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">{t("org.editor.importFromFile")}</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+                <input
+                  ref={orgImportRef}
+                  type="file"
+                  accept=".json,.akita-org"
+                  style={{ display: "none" }}
+                  onChange={handleImportOrg}
+                />
               </div>
             </div>
-            {showTemplates && (
-              <div style={{ padding: "0 8px 8px" }}>
-                <div className="card" style={{ padding: 8, fontSize: 12 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>{t("org.editor.createFromTemplateLong")}</div>
-                  {templates.length === 0 && (
-                    <div style={{ color: "var(--muted)", padding: "6px 8px" }}>{t("org.editor.emptyOrgHint")}</div>
-                  )}
-                  {templates.map((tpl) => (
-                    <div key={tpl.id} onClick={() => handleCreateFromTemplate(tpl.id)}
-                      style={{ padding: "6px 8px", borderRadius: "var(--radius-sm)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}
-                      className="navItem"
-                    >
-                      <span><IconBuilding size={14} /></span>
-                      <div>
-                        <div style={{ fontWeight: 500 }}>{tpl.name}</div>
-                        <div style={{ fontSize: 10, color: "var(--muted)" }}>{t("org.editor.nodeCount", { count: tpl.node_count })}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
             <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 8px" }}>
               {orgList.length === 0 && (
                 <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: 20 }}>
@@ -2082,29 +2112,41 @@ export function OrgEditorView({
           boxShadow: "0 8px 24px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)",
         }}
       >
-        <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>{t("orgEditor.title")}</span>
-          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        {/* Compact sidebar header — 3 actions in one tight row, flush with
+            the panel top (user report 2026-05-23).  v1 orgs were removed at
+            P-RC-9, so the legacy "模板" inline dropdown is gone and the modal
+            TemplatePickerDialog is the single canonical "create from template"
+            entry; "空白" is the quick shortcut for a blank org. */}
+        <div style={{ padding: "8px 10px 6px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+          <span style={{ fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", flexShrink: 0 }}>{t("orgEditor.title")}</span>
+          <div style={{ display: "flex", gap: 2, alignItems: "center", flexShrink: 0 }}>
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="link" size="sm" onClick={() => setShowTemplates(!showTemplates)} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
-                    {t("org.editor.template")}
-                  </Button>
+                  <span data-testid="org-editor-v2-template-trigger-compact">
+                    <TemplatePickerDialog
+                      apiBase={apiBaseUrl}
+                      onCreated={(org) => void handleCreateOrgV2FromTemplate(org)}
+                    >
+                      <Button variant="link" size="sm" disabled={creatingOrg} className="h-7 px-2 text-xs font-medium text-primary cursor-pointer">
+                        {t("org.editor.newOrgBtn")}
+                      </Button>
+                    </TemplatePickerDialog>
+                  </span>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">{t("org.editor.createFromTemplate")}</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
-                    {t("org.editor.create")}
+                  <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-1.5 text-xs text-muted-foreground cursor-pointer">
+                    {t("org.editor.createBlankBtn")}
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">{t("org.editor.createBlank")}</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
+                  <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-1.5 text-xs text-muted-foreground cursor-pointer">
                     {t("org.editor.import")}
                   </Button>
                 </TooltipTrigger>
@@ -2118,45 +2160,11 @@ export function OrgEditorView({
               style={{ display: "none" }}
               onChange={handleImportOrg}
             />
-            <button className="btnSmall" onClick={() => setShowLeftPanel(false)} title={t("org.editor.close")} style={{ minWidth: 28, minHeight: 28, opacity: 0.5 }}>
+            <button className="btnSmall" onClick={() => setShowLeftPanel(false)} title={t("org.editor.close")} style={{ minWidth: 24, minHeight: 24, opacity: 0.5, marginLeft: 2 }}>
               <IconX size={14} />
             </button>
           </div>
         </div>
-
-        {/* Templates dropdown */}
-        {showTemplates && (
-          <div style={{ padding: "0 8px 8px" }}>
-            <div className="card" style={{ padding: 8, fontSize: 12 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>{t("org.editor.createFromTemplateLong")}</div>
-              {templates.length === 0 && (
-                <div style={{ color: "var(--muted)", padding: "6px 8px" }}>{t("org.editor.emptyOrgHint")}</div>
-              )}
-              {templates.map((tpl) => (
-                <div
-                  key={tpl.id}
-                  onClick={() => handleCreateFromTemplate(tpl.id)}
-                  style={{
-                    padding: "6px 8px",
-                    borderRadius: "var(--radius-sm)",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    marginBottom: 2,
-                  }}
-                  className="navItem"
-                >
-                  <span><IconBuilding size={14} /></span>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{tpl.name}</div>
-                    <div style={{ fontSize: 10, color: "var(--muted)" }}>{t("org.editor.nodeCount", { count: tpl.node_count })}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Org list */}
         <div style={{ flex: 1, overflowY: "auto", padding: "0 8px" }}>
@@ -2532,8 +2540,18 @@ export function OrgEditorView({
                 task_timeout:    { icon: "⏱", label: t("org.dashboard.feedTimeout"),  tip: t("org.dashboard.feedTimeoutTip"),  cls: "feed-timeout" },
                 task_completed:  { icon: "✓", label: t("org.dashboard.feedComplete"), tip: t("org.dashboard.feedCompleteTip"), cls: "feed-completed" },
                 node_activated:  { icon: "▶", label: t("org.dashboard.feedExecute"),  tip: t("org.dashboard.feedExecuteTip"),  cls: "feed-activated" },
+                // UI issue #3: these were missing, so a cancelled/failed task fell
+                // through to ``meta.label || t.type`` and rendered the RAW ENGLISH
+                // event type (e.g. "task_cancelled") in an otherwise-Chinese feed.
+                task_cancelled:  { icon: "⏹", label: t("org.dashboard.feedCancel"),   tip: t("org.dashboard.feedCancelTip"),   cls: "feed-rejected" },
+                task_failed:     { icon: "✗", label: t("org.dashboard.feedFailed"),   tip: t("org.dashboard.feedFailedTip"),   cls: "feed-rejected" },
+                // UI feedback: tool steps now flow into recent_tasks so each
+                // feed line carries 做了什么 (工具名 + 入参/产出摘要).
+                tool_called:     { icon: "🛠", label: t("org.dashboard.feedToolCall"), tip: t("org.dashboard.feedToolCallTip"), cls: "feed-activated" },
+                tool_completed:  { icon: "✓", label: t("org.dashboard.feedToolDone"), tip: t("org.dashboard.feedToolDoneTip"), cls: "feed-completed" },
               };
-              const defaultMeta = { icon: "•", label: "", tip: "", cls: "" };
+              // Chinese generic fallback so an unmapped type never leaks English.
+              const defaultMeta = { icon: "•", label: t("org.dashboard.feedEvent"), tip: "", cls: "" };
 
               const busyLines: { key: string; node: string; text: string; pct: number }[] = [];
               for (const n of perNode) {
@@ -2597,7 +2615,7 @@ export function OrgEditorView({
                         <span className="org-feed-time" title={fullTimeStr}>{timeStr}</span>
                         <span className={`org-feed-badge ${meta.cls}`} title={meta.tip}>
                           <span className="org-feed-badge-icon">{meta.icon}</span>
-                          {meta.label || t.type}
+                          {meta.label || t("org.dashboard.feedEvent")}
                         </span>
                         <span className="org-feed-who">{fromLabel}</span>
                         {toLabel && <>
@@ -2679,9 +2697,11 @@ export function OrgEditorView({
               />
               <div className="org-drawer-slide" style={{ display: chatPanelOpen ? undefined : "none" }}>
                 <OrgChatPanel
+                  key={`org-cmd-${selectedOrgId}`}
                   orgId={selectedOrgId}
                   nodeId={null}
                   apiBaseUrl={apiBaseUrl}
+                  runtime="v2"
                   showHeader
                   title={t("org.editor.orgCommandCenter", { name: currentOrg?.name || t("org.editor.orgDefault") })}
                   onClose={() => setActiveDrawer(null)}
@@ -3369,9 +3389,11 @@ export function OrgEditorView({
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
             <OrgChatPanel
+              key={`org-node-${selectedOrgId}-${selectedNodeId}`}
               orgId={selectedOrgId}
               nodeId={selectedNodeId}
               apiBaseUrl={apiBaseUrl}
+              runtime="v2"
               compact
               nodeNames={nodeNameMap}
             />
@@ -3747,7 +3769,7 @@ export function OrgEditorView({
                         const form = new FormData();
                         form.append("file", file);
                         try {
-                          const res = await safeFetch(`${apiBaseUrl}/api/orgs/avatars/upload`, {
+                          const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/avatars/upload`, {
                             method: "POST",
                             body: form,
                           });
@@ -4024,7 +4046,7 @@ export function OrgEditorView({
                           if (!currentOrg) return;
                           setPromptPreviewLoading(true);
                           try {
-                            const resp = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/nodes/${selectedNode.id}/prompt-preview`);
+                            const resp = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${currentOrg.id}/nodes/${selectedNode.id}/prompt-preview`);
                             if (resp.ok) {
                               const data = await resp.json();
                               setFullPromptPreview(data.full_prompt);
@@ -5264,14 +5286,9 @@ export function OrgEditorView({
                 {t("org.editor.importConfig")}
                 <input type="file" accept=".json" style={{ display: "none" }} onChange={handleImportOrg} />
               </label>
-              {liveMode && (<>
-                <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={async () => {
-                  try { await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/heartbeat/trigger`, { method: "POST" }); } catch {}
-                }}>{t("org.editor.triggerHeartbeat")}</button>
-                <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={async () => {
-                  try { await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/standup/trigger`, { method: "POST" }); } catch {}
-                }}>{t("org.editor.triggerStandup")}</button>
-              </>)}
+              {/* P-RC-10 P10.5e (GroupC): heartbeat-trigger and standup-trigger
+                  buttons removed -- their v1 server-side endpoints were retired
+                  at P-RC-9 P9.9eta-2 and v2 mint exposes no equivalents. */}
             </div>
           </div>
         </div>

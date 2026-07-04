@@ -7,7 +7,7 @@
 import logging
 from dataclasses import dataclass
 
-from ..core.brain import Brain
+from ..agent.brain import Brain
 from ..skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)

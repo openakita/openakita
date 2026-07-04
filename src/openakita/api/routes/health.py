@@ -79,6 +79,43 @@ def _memory_subsystem_status(request: Request) -> dict:
     return {"status": "unknown", "reason": None, "details": None, "repair_available": False}
 
 
+def _frontend_bundle_status(request: Request, backend_version: str) -> dict[str, Any]:
+    """Return a structured view of the SPA bundle vs backend version.
+
+    Exposes the v11 Fix-5 startup signal (which previously lived only
+    in ``logger.warning`` lines) as a JSON field so the frontend can
+    show a "rebuild SPA" hint without scraping logs (exploratory v12
+    §10.2 follow-up).
+
+    Shape::
+
+        {
+            "build_id": "dev-mpgq6mn8" | "1.27.12" | None,
+            "backend_version": "1.27.12",
+            "outdated": True | False,
+        }
+
+    The endpoint never flips ``status`` to non-ok based on this -- the
+    field is purely informational.
+    """
+    try:
+        from .build_info import is_frontend_bundle_outdated
+
+        bundle_id = getattr(request.app.state, "frontend_bundle_build_id", None)
+        return {
+            "build_id": bundle_id,
+            "backend_version": backend_version,
+            "outdated": is_frontend_bundle_outdated(bundle_id, backend_version),
+        }
+    except Exception as exc:  # noqa: BLE001 -- never break /api/health
+        logger.debug("[Health] frontend_bundle status skipped: %s", exc)
+        return {
+            "build_id": None,
+            "backend_version": backend_version,
+            "outdated": False,
+        }
+
+
 def _read_last_shutdown_marker() -> dict:
     try:
         from openakita.config import settings
@@ -275,6 +312,7 @@ async def health(request: Request):
         "startup_phase": readiness.get("phase", "http_ready"),
         "readiness": readiness,
         "memory_subsystem": _memory_subsystem_status(request),
+        "frontend_bundle": _frontend_bundle_status(request, backend_version),
         "degraded_subsystems": _degraded_registry.snapshot(),
         "last_shutdown": _read_last_shutdown_marker(),
     }
@@ -554,6 +592,37 @@ async def last_link_diagnostic(request: Request):
     return getattr(request.app.state, "last_link_diagnostic", None) or {}
 
 
+@router.get("/api/diagnostics/legacy-shim-stats")
+async def legacy_shim_stats() -> dict[str, Any]:
+    """Read-only counter for legacy 308 shim hits.
+
+    Used to decide whether the
+    ``src/openakita/api/routes/_orgs_v2_legacy_redirects.py`` shim can
+    be removed in the 2.1.0 minor. See
+    ``docs/follow-ups/skipped-items-roadmap.md`` §A.3 for the full
+    exit criterion. RCA cross-ref: ``_skip_items_rca_v11.md`` §3.
+
+    The counter is in-process and resets on restart — pair this
+    endpoint with log scraping for long-window evidence.
+    """
+    from openakita.api.routes._orgs_v2_legacy_redirects import get_shim_hit_stats
+
+    return {
+        "hits": get_shim_hit_stats(),
+        "removal_target": "2.1.0",
+        "sunset_header": "2026-12-01",
+        "advice": (
+            "Only POST /api/v2/orgs/templates/{id}/instantiate is "
+            "reachable today (the other 8 shim routes are shadowed by "
+            "the v2 runtime router registered first in server.py). "
+            "When hits for that one path stay 0 for >=30 days post the "
+            "Sunset marker, the shim file can be removed. See "
+            "docs/follow-ups/skipped-items-roadmap.md §A.3 and "
+            "_exploratory_test_report_v12.md §10.4."
+        ),
+    }
+
+
 @router.post("/api/diagnostics/clear-session-caches")
 async def clear_session_caches_endpoint(request: Request, conversation_id: str | None = None):
     """User-triggered, non-destructive cache clear for the active session.
@@ -609,7 +678,7 @@ async def domain_unblock(conversation_id: str, host: str):
 
 def _get_llm_client(agent: object):
     """Resolve LLMClient from Agent."""
-    from openakita.core.agent import Agent
+    from openakita.agent.core import Agent
 
     actual = agent if isinstance(agent, Agent) else None
     if actual is None:

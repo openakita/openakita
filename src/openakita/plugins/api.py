@@ -259,7 +259,49 @@ class PluginAPI:
             self.log("No valid tool definitions provided", "warning")
             return
 
-        tool_registry.register(handler_name, handler, tool_names=tool_names)
+        # RCA v11 §4.2 (Fix-G2): forward ``manifest.tool_classes`` to the
+        # registry so plugins that already classify their tools stop
+        # tripping the heuristic-fallback path (and the CI completeness
+        # gate). ``manifest.tool_classes`` holds ``dict[str, str]``;
+        # convert the string values to ``ApprovalClass`` enum members
+        # here, mirroring ``PluginManager.get_tool_class``. Unknown class
+        # strings are skipped (logged at debug) rather than raising, so
+        # one bad manifest entry cannot block plugin registration.
+        tool_classes: dict[str, Any] | None = None
+        manifest_classes = getattr(self._manifest, "tool_classes", None)
+        if isinstance(manifest_classes, dict) and manifest_classes:
+            try:
+                from ..core.policy_v2.enums import ApprovalClass
+            except Exception as exc:
+                self.log(
+                    f"policy_v2 not importable, skipping tool_classes bridge: {exc}",
+                    "debug",
+                )
+            else:
+                converted: dict[str, Any] = {}
+                wanted = set(tool_names)
+                for name, klass_str in manifest_classes.items():
+                    if name not in wanted:
+                        continue
+                    if not isinstance(klass_str, str) or not klass_str:
+                        continue
+                    try:
+                        converted[name] = ApprovalClass(klass_str.strip().lower())
+                    except ValueError:
+                        self.log(
+                            f"Unknown ApprovalClass {klass_str!r} for tool "
+                            f"'{name}' in manifest.tool_classes; ignored",
+                            "debug",
+                        )
+                if converted:
+                    tool_classes = converted
+
+        tool_registry.register(
+            handler_name,
+            handler,
+            tool_names=tool_names,
+            tool_classes=tool_classes,
+        )
         self._registered_tools.extend(tool_names)
 
         tool_defs = self._host.get("tool_definitions")

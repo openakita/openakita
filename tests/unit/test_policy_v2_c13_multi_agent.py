@@ -33,7 +33,7 @@ import pytest
 
 from openakita.core.policy_v2 import PolicyContext
 from openakita.core.policy_v2.adapter import build_policy_context
-from openakita.core.reasoning_engine import _compute_confirm_dedup_key
+from openakita.core._reasoning_engine_legacy import _compute_confirm_dedup_key
 from openakita.core.ui_confirm_bus import UIConfirmBus
 
 
@@ -434,7 +434,7 @@ def test_tool_executor_security_confirm_marker_has_no_c13_fields() -> None:
     contributor 不会重蹈覆辙。"""
     import inspect
 
-    import openakita.core.tool_executor as te
+    import openakita.core._tool_executor_legacy as te
 
     src = inspect.getsource(te)
     # 找到 _security_confirm 块

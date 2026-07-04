@@ -189,7 +189,7 @@ def test_tool_summary_replay_path_wraps_content():
     sanitize to return a deterministic string and inspecting the appended
     glue.
     """
-    from openakita.core import agent as _agent_mod
+    from openakita.core import _agent_legacy as _agent_mod
     from openakita.core.policy_v2 import prompt_hardening
 
     raw = "history tool summary"

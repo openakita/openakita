@@ -1,0 +1,12 @@
+### 四(二) 应收账款账龄分析 (单位：元)
+
+| 账龄区间 | 期末余额 | 占比 | 期初余额 |
+|---|---:|---:|---:|
+{% for bucket in aging_buckets %}| {{ bucket.label }} | {{ bucket.end }} | {{ bucket.pct }}% | {{ bucket.begin }} |
+{% endfor %}| **合计** | **{{ total_end }}** | **100.00%** | **{{ total_begin }}** |
+
+期末应收账款余额合计 {{ total_end }} 元；其中 1 年以内占比 {{ within_1y_pct }}%。
+{% if aging_notes %}
+
+{{ aging_notes }}
+{% endif %}

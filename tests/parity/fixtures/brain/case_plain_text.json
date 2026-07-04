@@ -1,0 +1,27 @@
+{
+  "id": "case-plain-text",
+  "label": "single text block round-trips through Brain",
+  "system": "be helpful",
+  "messages": [
+    {
+      "role": "user",
+      "content": "ping"
+    }
+  ],
+  "mock_response": {
+    "content_blocks": [
+      {
+        "type": "text",
+        "text": "pong"
+      }
+    ],
+    "stop_reason": "end_turn",
+    "input_tokens": 5,
+    "output_tokens": 2
+  },
+  "expected": {
+    "final_text": "pong",
+    "tool_sequence": [],
+    "stop_reason": "end_turn"
+  }
+}

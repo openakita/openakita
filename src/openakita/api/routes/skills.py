@@ -60,7 +60,7 @@ def _invalidate_skills_cache() -> None:
 
 def _resolve_agent(request: Request):
     """返回真实 Agent 实例（解包可能的 thin wrapper / _local_agent）。"""
-    from openakita.core.agent import Agent
+    from openakita.agent.core import Agent
 
     agent = getattr(request.app.state, "agent", None)
     if isinstance(agent, Agent):
@@ -1082,7 +1082,7 @@ async def get_skill_content(skill_name: str, request: Request):
             pass
 
     if not skill:
-        return {"error": f"Skill '{skill_name}' not found"}
+        raise HTTPException(404, f"Skill '{skill_name}' not found")
 
     try:
         content = skill.path.read_text(encoding="utf-8")

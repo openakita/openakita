@@ -1,201 +1,30 @@
-"""Shared hard-budget guard for ReAct loops."""
+"""Re-export shim — loop budget guard moved to ``agent.loop_budget``.
+
+Canonical home: :mod:`openakita.agent.loop_budget` (renamed from
+``loop_budget_guard`` to match the audit's MOVE target column).
+Shim preserved at the legacy path until Phase 8, per ADR-0003 and
+``docs/revamp/core_audit.md``.
+
+Active callers:
+
+* :mod:`openakita.core.reasoning_engine`
+* :mod:`tests.unit.test_loop_budget_guard`
+* :mod:`tests.unit.test_destructive_intent_gate`
+* :mod:`tests.unit.test_context_budget_repair`
+
+Do not add new code here.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import logging
-from dataclasses import dataclass, field
-
-logger = logging.getLogger(__name__)
-
-
-READONLY_EXPLORATION_TOOLS = frozenset(
-    {
-        "read_file",
-        "list_directory",
-        "grep",
-        "glob",
-        "web_fetch",
-        "web_search",
-        "news_search",
-        "get_tool_info",
-        "list_skills",
-        "get_skill_info",
-        "search_memory",
-        "get_memory_stats",
-        "get_session_context",
-    }
+from openakita.agent.loop_budget import (
+    READONLY_EXPLORATION_TOOLS,
+    LoopBudgetDecision,
+    LoopBudgetGuard,
 )
 
-
-@dataclass(frozen=True)
-class LoopBudgetDecision:
-    should_stop: bool
-    exit_reason: str = ""
-    message: str = ""
-    should_warn: bool = False
-
-
-@dataclass
-class LoopBudgetGuard:
-    # 默认对齐 Claude Code 哲学：CLI/IM 真人场景下不强加业务护栏。
-    # 0 / 负值 = 禁用对应检测。仅在用户主动收紧时启用：
-    # - max_total_tool_calls <= 0：不限工具调用总数
-    # - readonly_stagnation_limit <= 0：不做只读探索软提醒
-    # - readonly_stagnation_hard_limit <= 0：不做只读探索硬终止
-    max_total_tool_calls: int = 0
-    readonly_stagnation_limit: int = 0
-    readonly_stagnation_hard_limit: int = 0
-    token_anomaly_threshold: int = 40_000
-    # Default 0.98 → only force termination when prompt is essentially at the
-    # model context window. Set lower for stricter safety, higher (up to 0.99)
-    # for "let long tasks finish at all costs". Overridable per-call via
-    # ``check_token_growth(near_context_ratio=...)``.
-    near_context_ratio: float = 0.98
-    total_tool_calls_seen: int = 0
-    token_anomaly_recoveries: int = 0
-    readonly_seen_fingerprints: set[str] = field(default_factory=set)
-    readonly_stagnation_rounds: int = 0
-
-    def record_tool_calls(self, tool_calls: list[dict]) -> LoopBudgetDecision:
-        # 累计仍在做（token_anomaly 检测用得到 total_tool_calls_seen），
-        # 但仅在 max_total_tool_calls > 0 时才执行上限检测。
-        self.total_tool_calls_seen += len(tool_calls or [])
-        if self.max_total_tool_calls > 0 and self.total_tool_calls_seen > self.max_total_tool_calls:
-            return LoopBudgetDecision(
-                True,
-                "tool_budget_exceeded",
-                f"⚠️ 本轮任务工具调用已达到预算上限（{self.max_total_tool_calls} 次），"
-                "已自动终止以避免继续消耗 token。请基于已有结果给出结论，"
-                "或缩小范围后重新发起。",
-            )
-        return LoopBudgetDecision(False)
-
-    def record_tool_results(
-        self,
-        tool_calls: list[dict],
-        tool_results: list[dict],
-    ) -> LoopBudgetDecision:
-        # 当软/硬限制都未启用时，跳过整段只读停滞检测。
-        if self.readonly_stagnation_limit <= 0 and self.readonly_stagnation_hard_limit <= 0:
-            return LoopBudgetDecision(False)
-        if self._is_readonly_exploration_round(tool_calls):
-            fingerprint = self._tool_result_fingerprint(tool_results)
-            if not fingerprint or fingerprint in self.readonly_seen_fingerprints:
-                self.readonly_stagnation_rounds += 1
-            else:
-                self.readonly_seen_fingerprints.add(fingerprint)
-                self.readonly_stagnation_rounds = 0
-            if (
-                self.readonly_stagnation_hard_limit > 0
-                and self.readonly_stagnation_rounds >= self.readonly_stagnation_hard_limit
-            ):
-                return LoopBudgetDecision(
-                    True,
-                    "readonly_stagnation",
-                    "⚠️ 只读探索已经连续多轮没有获得新信息，任务已自动终止。"
-                    "请基于已经读取到的内容总结结论，或提供更具体的文件/关键词继续。",
-                )
-            if (
-                self.readonly_stagnation_limit > 0
-                and self.readonly_stagnation_rounds >= self.readonly_stagnation_limit
-            ):
-                return LoopBudgetDecision(
-                    False,
-                    "readonly_stagnation_warning",
-                    "⚠️ 只读探索已经连续多轮没有获得明显新信息。请换查询角度、扩大/缩小关键词，"
-                    "或基于已有材料收敛结论。",
-                    should_warn=True,
-                )
-        else:
-            self.readonly_stagnation_rounds = 0
-        return LoopBudgetDecision(False)
-
-    def check_token_growth(
-        self,
-        input_tokens: int,
-        output_tokens: int,
-        *,
-        recovered: bool = False,
-        max_recoveries: int = 1,
-        context_safe: bool | None = None,
-        max_context_tokens: int | None = None,
-        near_context_ratio: float | None = None,
-    ) -> LoopBudgetDecision:
-        total_tokens = input_tokens + output_tokens
-        # Resolve effective ratio: per-call override > dataclass default.
-        # Clamp to a sensible range so a misconfigured value cannot produce
-        # nonsense (e.g. negative or >1).
-        eff_ratio = (
-            near_context_ratio if near_context_ratio is not None else self.near_context_ratio
-        )
-        try:
-            eff_ratio = float(eff_ratio)
-        except (TypeError, ValueError):
-            eff_ratio = 0.98
-        eff_ratio = min(max(eff_ratio, 0.5), 0.99)
-
-        near_context_limit = bool(max_context_tokens) and total_tokens >= int(
-            max_context_tokens * eff_ratio
-        )
-
-        # A large prompt is not necessarily context bloat. Long-running tasks can
-        # have high fixed overhead from system prompt and tool schemas while the
-        # message history is still safely below its budget.
-        if context_safe is True and not near_context_limit:
-            return LoopBudgetDecision(False)
-
-        if recovered:
-            self.token_anomaly_recoveries += 1
-            return LoopBudgetDecision(False)
-        if total_tokens > self.token_anomaly_threshold and self.total_tool_calls_seen >= max(
-            5, self.max_total_tool_calls // 2
-        ):
-            logger.info(
-                "[LoopBudget] token anomaly: input=%s output=%s ctx_max=%s "
-                "hard_terminate_ratio=%.2f anomaly_threshold=%s tool_calls=%s/%s "
-                "recoveries=%s/%s",
-                input_tokens,
-                output_tokens,
-                max_context_tokens or "?",
-                eff_ratio,
-                self.token_anomaly_threshold,
-                self.total_tool_calls_seen,
-                self.max_total_tool_calls,
-                self.token_anomaly_recoveries,
-                max_recoveries,
-            )
-            if self.token_anomaly_recoveries < max_recoveries:
-                return LoopBudgetDecision(
-                    False,
-                    "token_growth_recoverable",
-                    "⚠️ 检测到上下文增长过快，将先压缩历史内容并在下一轮继续。",
-                    should_warn=True,
-                )
-            return LoopBudgetDecision(
-                True,
-                "token_growth_terminated",
-                "⚠️ 检测到上下文 token 异常膨胀且工具调用已接近预算，"
-                "已尝试压缩但仍未恢复到安全区，已自动终止以避免继续扩大上下文。"
-                "请基于已有信息总结结论。",
-            )
-        return LoopBudgetDecision(False)
-
-    @staticmethod
-    def _tool_result_fingerprint(tool_results: list[dict]) -> str:
-        parts: list[str] = []
-        for result in tool_results:
-            if not isinstance(result, dict):
-                continue
-            content = str(result.get("content", ""))
-            parts.append(
-                hashlib.md5(content[:4000].encode("utf-8", errors="ignore")).hexdigest()[:10]
-            )
-        return "|".join(parts)
-
-    @staticmethod
-    def _is_readonly_exploration_round(tool_calls: list[dict]) -> bool:
-        if not tool_calls:
-            return False
-        names = {str(tc.get("name", "")) for tc in tool_calls if isinstance(tc, dict)}
-        return bool(names) and names.issubset(READONLY_EXPLORATION_TOOLS)
+__all__ = [
+    "READONLY_EXPLORATION_TOOLS",
+    "LoopBudgetDecision",
+    "LoopBudgetGuard",
+]

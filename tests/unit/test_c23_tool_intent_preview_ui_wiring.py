@@ -104,7 +104,7 @@ def test_backend_still_emits_tool_intent_preview() -> None:
     If someone removes _emit_tool_intent_previews, the frontend
     wiring becomes dead code — flag it loudly here so we drop the
     handler in the same commit."""
-    src = Path("src/openakita/core/tool_executor.py").read_text(encoding="utf-8")
+    src = Path("src/openakita/core/_tool_executor_legacy.py").read_text(encoding="utf-8")
     assert "_emit_tool_intent_previews" in src, (
         "Backend emitter `_emit_tool_intent_previews` is gone; either "
         "restore it or drop the frontend wiring + this test in the "

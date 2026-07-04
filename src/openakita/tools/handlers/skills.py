@@ -28,14 +28,14 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core._tool_executor_legacy import MAX_TOOL_RESULT_CHARS, OVERFLOW_MARKER, save_overflow
 from ...core.policy_v2 import ApprovalClass
-from ...core.tool_executor import MAX_TOOL_RESULT_CHARS, OVERFLOW_MARKER, save_overflow
 from ...skills.catalog import SKILL_INSTRUCTION_ADVISORY
 from ...skills.events import SkillEvent
 from ...skills.exposure import build_skill_exposure
 
 if TYPE_CHECKING:
-    from ...core.agent import Agent
+    from ...agent.core import Agent
 
 logger = logging.getLogger(__name__)
 

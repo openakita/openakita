@@ -1,0 +1,11 @@
+{
+  "description": "save_overflow writes a file and returns its path",
+  "input": {
+    "tool_name": "my_tool",
+    "content": "important full output"
+  },
+  "expected": {
+    "file_exists": true,
+    "content": "important full output"
+  }
+}

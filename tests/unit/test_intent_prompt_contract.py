@@ -1,6 +1,6 @@
-from openakita.core.agent import (
+from openakita.agent.core import Agent
+from openakita.core._agent_legacy import (
     MINIMAL_PROMPT_TOOLS,
-    Agent,
     _apply_previous_answer_replay_hint,
     _looks_like_external_tool_request,
     _looks_like_previous_answer_replay_request,
@@ -159,7 +159,19 @@ def test_minimal_prompt_preserves_working_facts(tmp_path):
     assert "temporary_name: alpha" in prompt
 
 
-def test_fast_chat_effective_tools_use_minimal_schema_set():
+def test_fast_chat_effective_tools_use_minimal_schema_set(monkeypatch):
+    """Legacy intent-driven minimal-prompt path (Fix-G4 rollback).
+
+    RCA v11 §1.5 (Fix-G4) added ``settings.effective_tools_main_chat_stable``
+    which defaults to True and bypasses the intent-driven minimal-prompt
+    filter so the main-chat tool set stays stable across turns. This test
+    flips the flag back to False to keep covering the legacy branch as a
+    rollback contract.
+    """
+    from openakita.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "effective_tools_main_chat_stable", False)
+
     agent = Agent.__new__(Agent)
     agent._tools = [
         {"name": "read_file", "category": "File System"},
@@ -188,6 +200,64 @@ def test_fast_chat_effective_tools_use_minimal_schema_set():
     assert tool_names == {"read_file", "web_search"}
     assert tool_names <= MINIMAL_PROMPT_TOOLS
     assert agent._last_minimal_toolset is True
+
+
+def test_main_chat_stable_mode_keeps_full_toolset_across_intents():
+    """Fix-G4 (RCA v11 §1.5): the default stable mode must keep the
+    main-chat tool set deterministic across intents.
+
+    With ``effective_tools_main_chat_stable=True`` (the default), the
+    intent-driven minimal-prompt filter is bypassed, so a FAST/CHAT
+    intent no longer drops Browser / Scheduled / non-minimal File System
+    tools. ``delegate_to_agent`` is in ``ALWAYS_LOAD_TOOLS`` and therefore
+    gets ``_promoted=True``.
+    """
+    from openakita.tools.defer_config import DEFER_INDIVIDUAL_TOOLS
+
+    agent = Agent.__new__(Agent)
+    agent._tools = [
+        {"name": "read_file", "category": "File System"},
+        {"name": "web_search", "category": "Web Search"},
+        {"name": "browser_navigate", "category": "Browser"},
+        {"name": "run_shell", "category": "File System"},
+        {"name": "schedule_task", "category": "Scheduled Tasks"},
+        {"name": "delegate_to_agent", "category": "Agents"},
+    ]
+    agent._current_intent = IntentResult(
+        intent=IntentType.CHAT,
+        prompt_depth=PromptDepth.FAST,
+        requires_tools=False,
+        force_tool=False,
+    )
+    agent._current_user_message = "你好"
+    agent._is_sub_agent_call = False
+    agent._agent_tool_names = frozenset()
+    agent._cron_disabled_tools = set()
+    agent._current_session_type = "cli"
+    agent._discovered_tools = set()
+    agent.tool_catalog = _FakeToolCatalog()
+    agent._get_raw_context_window = lambda: 0
+
+    effective = agent._effective_tools
+    tool_names = {tool["name"] for tool in effective}
+
+    expected = {
+        name
+        for name in {
+            "read_file",
+            "web_search",
+            "browser_navigate",
+            "run_shell",
+            "schedule_task",
+            "delegate_to_agent",
+        }
+        if name not in DEFER_INDIVIDUAL_TOOLS
+    }
+    assert tool_names == expected
+    promoted = {t["name"] for t in effective if t.get("_promoted")}
+    assert "delegate_to_agent" in promoted
+    assert "run_shell" in promoted
+    assert agent._last_minimal_toolset is False
 
 
 def test_selfcheck_fix_policy_limits_exposed_tools():

@@ -1591,7 +1591,7 @@ export function ChatView({
     if (!visible || !serviceRunning) return;
     const fetchOrgs = async () => {
       try {
-        const res = await safeFetch(`${apiBaseUrl}/api/orgs`);
+        const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs`);
         const data = await res.json();
         setOrgList(data.map((o: any) => ({ id: o.id, name: o.name, icon: o.icon || "", status: o.status })));
       } catch { /* ignore */ }
@@ -4752,7 +4752,7 @@ export function ChatView({
   const handleCancelTask = useCallback(() => {
     if (orgCommandPendingRef.current && activeOrgCommandRef.current) {
       const { orgId, commandId } = activeOrgCommandRef.current;
-      safeFetch(`${apiBaseRef.current}/api/orgs/${orgId}/commands/${commandId}/cancel`, {
+      safeFetch(`${apiBaseRef.current}/api/v2/orgs/${orgId}/commands/${commandId}/cancel`, {
         method: "POST",
       }).catch(() => {
         notifyError("组织命令停止请求失败，请稍后重试");

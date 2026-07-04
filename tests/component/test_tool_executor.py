@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from openakita.core.tool_executor import OVERFLOW_MARKER, ToolExecutor
+from openakita.agent.tools import OVERFLOW_MARKER, ToolExecutor
 from openakita.core.permission import PermissionDecision
 from openakita.tools.errors import ErrorType, ToolError
 

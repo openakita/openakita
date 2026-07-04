@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from openakita.core.agent import Agent
-from openakita.core.brain import Brain
+from openakita.agent.core import Agent
+from openakita.agent.brain import Brain
 from openakita.llm.client import _friendly_error_hint
 from openakita.llm.error_types import FailoverReason
 from openakita.tools.definitions import AGENT_TOOLS, BASE_TOOLS, HUB_TOOLS, ORG_SETUP_TOOLS

@@ -2,9 +2,10 @@
  * Organization Monitor Panel — runtime monitoring for a selected node.
  * Manages its own data fetching (events, schedules, thinking, tasks).
  */
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { safeFetch } from "../providers";
+import { onWsEvent } from "../platform/websocket";
 import type { Node } from "@xyflow/react";
 import {
   fmtTime, fmtDateTime,
@@ -143,6 +144,55 @@ const WRAP_TEXT_STYLE = {
   whiteSpace: "pre-wrap",
 } as const;
 
+// UI issue #5/#6: the ``/events?actor=`` feed returns RAW event-store records
+// whose fields are ``type`` / ``ts`` and top-level payload keys — NOT the
+// ``event_type`` / ``data`` / ``timestamp`` shape this panel renders. Without
+// normalization every row collapsed to a bare colored dot with no label or
+// content. Project the raw record onto the expected shape, remapping payload
+// keys onto the ones that already have Chinese ``DATA_KEY_LABELS``.
+const EVENT_BOOKKEEPING_KEYS = new Set([
+  "org_id", "at", "ts", "timestamp", "type", "event_type", "event_id", "id",
+  "command_id", "node_id", "chain_id", "parent_chain_id", "depth", "superstep",
+  "emitted_at", "seq",
+]);
+const EVENT_DATA_KEY_ALIAS: Record<string, string> = {
+  content_preview: "task",
+  content: "task",
+  result: "result_preview",
+  child_node_id: "to",
+  parent_node_id: "from",
+  exit_reason: "reason",
+};
+// Epoch seconds (``time.time()`` from the backend) vs ms: ``fmtTime`` feeds
+// the value straight into ``new Date(n)`` which expects ms, so a seconds
+// epoch (~1.7e9) renders as 1970. Promote seconds to ms.
+function toMs(v: any): any {
+  if (typeof v === "number") return v < 1e12 ? Math.round(v * 1000) : v;
+  if (typeof v === "string" && v && !Number.isNaN(Number(v))) {
+    const n = Number(v);
+    return n < 1e12 ? Math.round(n * 1000) : n;
+  }
+  return v;
+}
+function normalizeRawEvent(evt: any): { event_type: string; timestamp: any; data: Record<string, any>; event_id: any } {
+  const event_type = evt.event_type || evt.type || "";
+  const timestamp = toMs(evt.timestamp ?? evt.ts ?? evt.at);
+  let data: Record<string, any> = (evt.data && typeof evt.data === "object")
+    ? evt.data
+    : (evt.payload && typeof evt.payload === "object" ? evt.payload : {});
+  if (Object.keys(data).length === 0) {
+    // Derive a readable ``data`` dict from the meaningful top-level fields.
+    const derived: Record<string, any> = {};
+    for (const [k, v] of Object.entries(evt)) {
+      if (EVENT_BOOKKEEPING_KEYS.has(k)) continue;
+      if (v === null || v === undefined || v === "") continue;
+      derived[EVENT_DATA_KEY_ALIAS[k] || k] = v;
+    }
+    data = derived;
+  }
+  return { event_type, timestamp, data, event_id: evt.event_id ?? evt.id };
+}
+
 export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: OrgMonitorPanelProps) {
   const { t } = useTranslation();
   const mdModules = useMdModules();
@@ -154,6 +204,11 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
   const [nodeTasks, setNodeTasks] = useState<{ assigned: any[]; delegated: any[] } | null>(null);
   const [nodeActivePlan, setNodeActivePlan] = useState<any>(null);
   const [nodeTasksLoading, setNodeTasksLoading] = useState(false);
+  // 任务2：把两个数据拉取函数暴露给 WS 订阅，便于节点状态/任务/思维链一变化
+  // 就【即时】重拉，而不是干等 8s/10s 轮询。ref 保证 WS effect 不必随
+  // fetch 闭包变化而反复重订阅。
+  const fetchDetailRef = useRef<() => void>(() => {});
+  const fetchTasksRef = useRef<() => void>(() => {});
 
   const nodeNameMap = useMemo(
     () => new Map(nodes.map((n) => [n.id, (n.data as any)?.role_title || n.id])),
@@ -173,22 +228,25 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
     const fetchNodeDetail = async () => {
       try {
         const [eventsRes, schedulesRes, thinkingRes] = await Promise.all([
-          safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/events?actor=${nodeId}&limit=20`),
-          safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/nodes/${nodeId}/schedules`),
-          safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/nodes/${nodeId}/thinking?limit=30`),
+          safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/events?actor=${nodeId}&limit=20`),
+          safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/nodes/${nodeId}/schedules`),
+          safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/nodes/${nodeId}/thinking?limit=30`),
         ]);
         if (eventsRes.ok) setNodeEvents(await eventsRes.json());
         if (schedulesRes.ok) setNodeSchedules(await schedulesRes.json());
         if (thinkingRes.ok) {
           const data = await thinkingRes.json();
-          setNodeThinking(data.timeline || []);
+          const tl = (data.timeline || data.thinking || []) as any[];
+          setNodeThinking(tl.map((it) => ({ ...it, timestamp: toMs(it.timestamp) })));
         }
       } catch (e) {
         console.error("Failed to fetch node detail:", e);
       }
     };
+    fetchDetailRef.current = fetchNodeDetail;
     fetchNodeDetail();
-    const interval = setInterval(fetchNodeDetail, 8000);
+    // 轮询仅作为 WS 漏推时的兜底，缩短到 4s（WS 即时推送是主路径）。
+    const interval = setInterval(fetchNodeDetail, 4000);
     return () => clearInterval(interval);
   }, [visible, nodeId, orgId, apiBaseUrl]);
 
@@ -203,8 +261,8 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
     const fetchNodeTasks = async () => {
       try {
         const [tasksRes, planRes] = await Promise.all([
-          safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/nodes/${nodeId}/tasks`),
-          safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/nodes/${nodeId}/active-plan`),
+          safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/nodes/${nodeId}/tasks`),
+          safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/nodes/${nodeId}/active-plan`),
         ]);
         if (tasksRes.ok) {
           const data = await tasksRes.json();
@@ -225,10 +283,62 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
         setNodeTasksLoading(false);
       }
     };
+    fetchTasksRef.current = fetchNodeTasks;
     fetchNodeTasks();
-    const interval = setInterval(fetchNodeTasks, 10000);
+    // 兜底轮询缩短到 5s；任务分配/委派变化主要靠下方 WS 即时重拉。
+    const interval = setInterval(fetchNodeTasks, 5000);
     return () => clearInterval(interval);
   }, [nodeId, orgId, apiBaseUrl]);
+
+  // 任务2：即时推送。订阅全局 WS，命中本组织且与本节点相关的事件时，
+  // 防抖后立刻重拉「分配/委派任务 + 最近活动 + 思维链」，让节点一开工、
+  // 状态/任务一变化就实时反映，而不是等轮询窗口。
+  useEffect(() => {
+    if (!visible || !nodeId || !orgId) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const kick = () => {
+      if (timer) return; // 300ms 合并窗口，避免事件风暴触发多次重拉
+      timer = setTimeout(() => {
+        timer = null;
+        try { fetchTasksRef.current(); } catch { /* noop */ }
+        try { fetchDetailRef.current(); } catch { /* noop */ }
+      }, 300);
+    };
+    const off = onWsEvent((ev, raw) => {
+      const d = (raw || {}) as Record<string, unknown>;
+      if (d.org_id && d.org_id !== orgId) return;
+      // 与本节点相关、或会影响本节点任务/活动/思维链的事件集合。
+      switch (ev) {
+        case "org:node_status":
+          if (d.node_id === nodeId) kick();
+          break;
+        case "org:task_delegated":
+          if (d.from_node === nodeId || d.to_node === nodeId) kick();
+          break;
+        case "org:task_complete":
+        case "org:task_delivered":
+          if (!d.node_id || d.node_id === nodeId
+            || d.from_node === nodeId || d.to_node === nodeId) kick();
+          break;
+        case "org:blackboard_update":
+          if (!d.node_id || d.node_id === nodeId) kick();
+          break;
+        case "org:command_done":
+        // org:command_cancelled is the real cancel event v2 emits (was
+        // listened to as the non-existent org:task_cancelled before, so the
+        // monitor never refreshed on cancel). Refresh on either terminal.
+        case "org:command_cancelled":
+          kick();
+          break;
+        default:
+          break;
+      }
+    });
+    return () => {
+      off();
+      if (timer) clearTimeout(timer);
+    };
+  }, [visible, nodeId, orgId]);
 
   if (!selectedNode) return null;
 
@@ -308,10 +418,12 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
             <div style={{ fontSize: 11, color: "var(--muted)" }}>{t("org.monitor.noActivity")}</div>
           ) : (
             <div style={{ maxHeight: 300, overflowY: "auto" }}>
-              {nodeEvents.slice(0, 15).map((evt: any, i: number) => {
+              {nodeEvents.slice(0, 15).map((rawEvt: any, i: number) => {
+                const evt = normalizeRawEvent(rawEvt);
                 const dataEntries = Object.entries(evt.data || {});
                 const isEvtExpanded = expandedIdx === `evt-${i}`;
                 const fullText = dataEntries.map(([k, v]) => `**${t(DATA_KEY_LABELS[k] || k)}**: ${translateDataValue(k, v, nodeNameMap)}`).join("\n\n");
+                const evtFinished = evt.event_type.includes("finish") || evt.event_type.includes("complete") || evt.event_type.includes("done");
                 return (
                   <div key={evt.event_id || i}
                     onClick={() => setExpandedIdx(isEvtExpanded ? null : `evt-${i}`)}
@@ -324,22 +436,30 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                     <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0 }}>
                       <span style={{
                         width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                        background: evt.event_type?.includes("fail") || evt.event_type?.includes("error")
+                        background: evt.event_type.includes("fail") || evt.event_type.includes("error")
                           ? "var(--danger)"
-                          : evt.event_type?.includes("complete") ? "var(--ok)" : "var(--primary)",
+                          : evtFinished ? "var(--ok)" : "var(--primary)",
                       }} />
                       <span style={{ fontWeight: 500, ...WRAP_TEXT_STYLE }}>
-                        {t(EVENT_TYPE_LABELS[evt.event_type] || evt.event_type?.replace(/_/g, " "))}
+                        {t(EVENT_TYPE_LABELS[evt.event_type] || evt.event_type.replace(/_/g, " "))}
                       </span>
                       <span style={{ color: "var(--muted)", fontSize: 10, marginLeft: "auto" }}>
                         {fmtTime(evt.timestamp)}
                       </span>
+                      {fullText && (
+                        <span aria-hidden style={{
+                          fontSize: 9, color: "var(--muted)", flexShrink: 0,
+                          display: "inline-block", transition: "transform 0.2s ease",
+                          transform: isEvtExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                        }}>▸</span>
+                      )}
                     </div>
                     {fullText && (
                       <div className="bb-entry-content" style={{
                         marginTop: 2, marginLeft: 12, fontSize: 10,
-                        maxHeight: isEvtExpanded ? "none" : 48,
-                        overflow: isEvtExpanded ? "visible" : "hidden",
+                        maxHeight: isEvtExpanded ? 400 : 40,
+                        overflow: "hidden",
+                        transition: "max-height 0.28s ease",
                         ...WRAP_TEXT_STYLE,
                       }}>
                         {mdModules ? (
@@ -347,8 +467,10 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                         ) : <div style={{ whiteSpace: "pre-wrap" }}>{fullText}</div>}
                       </div>
                     )}
-                    {!isEvtExpanded && fullText.length > 80 && (
-                      <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2, marginLeft: 12 }}>{t("org.monitor.expandFull")}</div>
+                    {fullText.length > 80 && (
+                      <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2, marginLeft: 12 }}>
+                        {isEvtExpanded ? t("org.monitor.collapse") : t("org.monitor.expandFull")}
+                      </div>
                     )}
                   </div>
                 );

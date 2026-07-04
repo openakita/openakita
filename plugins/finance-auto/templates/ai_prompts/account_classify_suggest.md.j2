@@ -1,0 +1,21 @@
+你是中国会计准则专家。下面是一组无法自动归类的会计科目（仅含科目编码 + 科目名称，不含任何金额或客户信息）。
+
+请按 GB/T 24589 财政部《企业会计准则》六大类目给每条科目建议归类：
+- 资产
+- 负债
+- 所有者权益
+- 收入
+- 成本
+- 费用 / 损益（含期间费用 / 营业外）
+
+输入科目清单（已脱敏）：
+$safe_payload_json
+
+输出 JSON 数组，每个元素包含：
+- account_code: 科目编码
+- account_name: 科目名称
+- suggested_category: 上述六大类之一
+- suggested_subcategory: 二级类目（如「应收款项」、「短期借款」、「主营业务收入」）
+- balance_side: "debit" 或 "credit"
+- confidence: 0.0 - 1.0
+- reason: 一句话依据

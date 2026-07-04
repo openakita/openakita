@@ -85,6 +85,11 @@ def _allow_interrupt(monkeypatch):
     yield
 
 
+# The agent-layer preempt helper (``Agent._preempt_or_queue_prev_task`` +
+# ``_append_preempt_marker`` + conversation_id-first task lookup + QUEUE
+# timeout cancel/abandon) is ported into ``core/_agent_legacy`` after the
+# ADR-0003 split (Batch C). All tests below are active.
+
 # ── S1.1: resolve_policy ──────────────────────────────────────────────
 
 
