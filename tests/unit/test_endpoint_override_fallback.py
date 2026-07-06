@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -5,7 +6,7 @@ import pytest
 
 from openakita.agent.reasoning import ReasoningEngine
 from openakita.llm.client import EndpointOverride, LLMClient
-from openakita.llm.types import AllEndpointsFailedError, EndpointConfig
+from openakita.llm.types import AllEndpointsFailedError, EndpointConfig, Message
 
 
 class FakeLLMClient:
@@ -97,6 +98,41 @@ def _provider(
     )
 
 
+class StreamProvider:
+    def __init__(
+        self,
+        name: str,
+        *,
+        priority: int,
+        capabilities: list[str],
+        healthy: bool = True,
+    ) -> None:
+        self.name = name
+        self.config = EndpointConfig(
+            name=name,
+            provider="openai",
+            api_type="openai",
+            base_url="https://example.invalid/v1",
+            model=f"{name}-model",
+            priority=priority,
+            capabilities=capabilities,
+        )
+        self.model = self.config.model
+        self.is_healthy = healthy
+        self.cooldown_remaining = 0 if healthy else 30
+        self.error_category = "transient"
+        self.calls = 0
+
+    def reset_cooldown(self) -> None:
+        self.is_healthy = True
+        self.cooldown_remaining = 0
+
+    async def chat_stream(self, request):
+        self.calls += 1
+        yield {"type": "message_start", "message": {"id": "msg-1"}}
+        yield {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}
+
+
 def _llm_client_with_required_override(
     selected: SimpleNamespace,
     fallback: SimpleNamespace,
@@ -140,6 +176,57 @@ def test_preferred_endpoint_can_fall_back_when_unhealthy():
     )
 
     assert [provider.name for provider in eligible] == ["glm"]
+
+
+@pytest.mark.asyncio
+async def test_prefer_endpoint_switch_emits_stream_notice_metadata():
+    LLMClient._auth_failed_endpoints.clear()
+    LLMClient._auth_logged_endpoints.clear()
+    selected = StreamProvider(
+        "opencode-free",
+        priority=2,
+        capabilities=["text", "tools"],
+    )
+    actual = StreamProvider(
+        "lmstudio-thinking",
+        priority=1,
+        capabilities=["text", "tools", "thinking"],
+    )
+
+    client = object.__new__(LLMClient)
+    client._providers = {selected.name: selected, actual.name: actual}
+    client._settings = {}
+    client._endpoint_override = None
+    client._conversation_overrides = {
+        "conv-1": EndpointOverride(
+            endpoint_name=selected.name,
+            expires_at=datetime.now() + timedelta(minutes=5),
+            policy="prefer",
+        )
+    }
+    client._last_success_endpoint = None
+    client._endpoint_lock = asyncio.Lock()
+
+    events = [
+        event
+        async for event in client._chat_stream_impl(
+            messages=[Message(role="user", content="hi")],
+            tools=[],
+            enable_thinking=True,
+            conversation_id="conv-1",
+        )
+    ]
+
+    assert events[0] == {
+        "type": "endpoint_meta",
+        "endpoint_name": "lmstudio-thinking",
+        "selected_endpoint": "opencode-free",
+        "prefer_switched": True,
+        "switch_reason": "capability_mismatch",
+        "missing_capabilities": ["thinking"],
+    }
+    assert actual.calls == 1
+    assert selected.calls == 0
 
 
 @pytest.mark.asyncio

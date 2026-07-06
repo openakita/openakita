@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -184,6 +185,34 @@ class TestTurnBoundaryReplayFloor:
         # on 6, 7 (since_seq=5 is past the floor, so the floor is a no-op here).
         replayed = s.replay_from(5)
         assert [e.seq for e in replayed] == [6, 7]
+
+    def test_endpoint_notice_replays_with_original_seq(self) -> None:
+        """Prefer-mode endpoint notices are normal SSE events and resume-safe."""
+        s = SSESession(session_id="conv_turn_endpoint_notice")
+        s.begin_turn()
+        text = s.add_event("text_delta", {"type": "text_delta", "content": "before"})
+        notice = s.add_event(
+            "endpoint_notice",
+            {
+                "type": "endpoint_notice",
+                "reason_code": "endpoint_prefer_switch",
+                "from_endpoint": "opencode-free",
+                "endpoint": "lmstudio-thinking",
+                "missing_capabilities": ["thinking"],
+            },
+        )
+
+        replayed = s.replay_from(text.seq)
+
+        assert [e.seq for e in replayed] == [notice.seq]
+        assert replayed[0].event_type == "endpoint_notice"
+        assert replayed[0].payload["reason_code"] == "endpoint_prefer_switch"
+        frame = format_sse_frame(
+            replayed[0],
+            data_json=json.dumps(replayed[0].payload, ensure_ascii=False),
+        )
+        assert frame.startswith(f"id: {notice.seq}\n")
+        assert '"endpoint_notice"' in frame
 
     def test_first_turn_floor_is_zero_no_behavior_change(self) -> None:
         """Before any begin_turn the floor is 0 — legacy replay behavior."""

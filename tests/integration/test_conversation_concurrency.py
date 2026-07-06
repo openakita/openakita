@@ -868,6 +868,24 @@ class TestSSEDeltaCoalescer:
         assert len(out) == 1
         assert out[0] == ("chain_text", {"content": "abcde"})
 
+    def test_endpoint_notice_bypasses_delta_buffer(self) -> None:
+        from openakita.core.sse_throttle import DeltaCoalescer
+
+        c = DeltaCoalescer(interval_ms=10_000, max_chars=10_000)
+        c.offer("text_delta", {"content": "partial"})
+        out = c.offer(
+            "endpoint_notice",
+            {
+                "reason_code": "endpoint_prefer_switch",
+                "from_endpoint": "opencode-free",
+                "endpoint": "lmstudio-thinking",
+            },
+        )
+
+        assert [e[0] for e in out] == ["text_delta", "endpoint_notice"]
+        assert out[1][1]["reason_code"] == "endpoint_prefer_switch"
+        assert c.has_pending() is False
+
 
 # ── S2 P0-3: partial assistant text persistence ───────────────────────
 

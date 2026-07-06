@@ -202,7 +202,15 @@ export type StreamEvent =
     }
   | { type: "death_switch"; active: boolean; reason?: string }
   | { type: "ui_preference"; theme?: string; language?: string }
-  | { type: "endpoint_notice"; reason_code?: string; notice_type?: string; endpoint?: string }
+  | {
+      type: "endpoint_notice";
+      reason_code?: string;
+      notice_type?: string;
+      endpoint?: string;
+      from_endpoint?: string;
+      switch_reason?: string;
+      missing_capabilities?: string[];
+    }
   | { type: "budget_warning"; dimension?: string; level?: string; usage_ratio?: number; renewed?: boolean; message?: string }
   | { type: "budget_exceeded"; message?: string }
   | {

@@ -4119,6 +4119,20 @@ export function ChatView({
                   noticeText = endpointName
                     ? `当前模型「${endpointName}」未返回思考过程，已自动降级为非思考模式继续回答。`
                     : "当前模型未返回思考过程，已自动降级为非思考模式继续回答。";
+                } else if (reasonCode === "endpoint_prefer_switch") {
+                  const fromEndpoint = String((event as any).from_endpoint || "");
+                  const missingCaps = Array.isArray((event as any).missing_capabilities)
+                    ? (event as any).missing_capabilities.join("、")
+                    : "";
+                  const switchReason = String((event as any).switch_reason || "");
+                  const reasonText = missingCaps
+                    ? `不支持本轮需要的能力（${missingCaps}）`
+                    : switchReason === "selected_endpoint_unhealthy"
+                      ? "当前不可用"
+                      : "不适合本轮请求";
+                  noticeText = fromEndpoint && endpointName
+                    ? `当前为「优先使用此模型」模式，所选模型「${fromEndpoint}」${reasonText}，已自动切换到「${endpointName}」继续回答。`
+                    : "当前为「优先使用此模型」模式，所选模型不适合本轮请求，已自动切换到可用模型继续回答。";
                 } else if (reasonCode === "endpoint_failover") {
                   const fromEndpoint = String((event as any).from_endpoint || "");
                   noticeText = fromEndpoint && endpointName

@@ -746,6 +746,17 @@ class LLMClient:
                 cancel_event=cancel_event,
             )
 
+        prefer_switch_meta = self._build_prefer_switch_meta(
+            eligible,
+            require_tools=require_tools,
+            require_vision=require_vision,
+            require_video=require_video,
+            require_thinking=require_thinking,
+            require_audio=require_audio,
+            require_pdf=require_pdf,
+            conversation_id=conversation_id,
+        )
+
         _413_retried = False
         _token_range_retried = False
         last_error: Exception | None = None
@@ -765,6 +776,8 @@ class LLMClient:
                     f"[LLM-Stream] endpoint={provider.name} model={provider.model} "
                     f"action=stream_request"
                 )
+                if i == 0 and prefer_switch_meta:
+                    yield prefer_switch_meta
                 if i > 0 and eligible:
                     yield {
                         "type": "endpoint_meta",
@@ -1250,6 +1263,78 @@ class LLMClient:
             f"Trying all {len(providers_sorted)} endpoints as last resort."
         )
         return providers_sorted
+
+    def _get_effective_override(self, conversation_id: str | None = None) -> EndpointOverride | None:
+        """Return the active endpoint override for this request, if any."""
+        if conversation_id:
+            ov = self._conversation_overrides.get(conversation_id)
+            if ov and not ov.is_expired:
+                return ov
+            if ov and ov.is_expired:
+                self._conversation_overrides.pop(conversation_id, None)
+
+        ov = self._endpoint_override
+        if ov and not ov.is_expired:
+            return ov
+        if ov and ov.is_expired:
+            logger.info("[LLM] Override expired, restoring default")
+            self._endpoint_override = None
+        return None
+
+    def _build_prefer_switch_meta(
+        self,
+        eligible: list[LLMProvider],
+        *,
+        require_tools: bool = False,
+        require_vision: bool = False,
+        require_video: bool = False,
+        require_thinking: bool = False,
+        require_audio: bool = False,
+        require_pdf: bool = False,
+        conversation_id: str | None = None,
+    ) -> dict | None:
+        """Build stream metadata when prefer mode does not use the selected endpoint."""
+        override = self._get_effective_override(conversation_id)
+        if not override or override.policy != "prefer" or not eligible:
+            return None
+
+        selected_endpoint = override.endpoint_name
+        actual_endpoint = eligible[0].name
+        if not selected_endpoint or actual_endpoint == selected_endpoint:
+            return None
+
+        selected_provider = self._providers.get(selected_endpoint)
+        switch_reason = "auto_selection"
+        missing: list[str] = []
+        if selected_provider is None:
+            switch_reason = "selected_endpoint_missing"
+        elif not selected_provider.is_healthy:
+            switch_reason = "selected_endpoint_unhealthy"
+        else:
+            cfg = selected_provider.config
+            if require_tools and not cfg.has_capability("tools"):
+                missing.append("tools")
+            if require_vision and not cfg.has_capability("vision"):
+                missing.append("vision")
+            if require_video and not cfg.has_capability("video"):
+                missing.append("video")
+            if require_thinking and not cfg.has_capability("thinking"):
+                missing.append("thinking")
+            if require_audio and not cfg.has_capability("audio"):
+                missing.append("audio")
+            if require_pdf and not cfg.has_capability("pdf"):
+                missing.append("pdf")
+            if missing:
+                switch_reason = "capability_mismatch"
+
+        return {
+            "type": "endpoint_meta",
+            "endpoint_name": actual_endpoint,
+            "selected_endpoint": selected_endpoint,
+            "prefer_switched": True,
+            "switch_reason": switch_reason,
+            "missing_capabilities": missing,
+        }
 
     # ==================== 端点筛选 ====================
 

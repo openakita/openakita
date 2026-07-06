@@ -3765,6 +3765,8 @@ class ReasoningEngine:
             _thinking_notice_emitted = False
             # --- Vision 降级通知节流（一次会话只发一次） ---
             _vision_notice_emitted = False
+            # --- Prefer 模式端点自动切换通知节流 ---
+            _endpoint_switch_notice_emitted = False
             _last_real_input_tokens: int | None = None
 
             # --- 恢复的 Todo：补发 SSE 事件让前端重建 FloatingPlanBar ---
@@ -4079,6 +4081,22 @@ class ReasoningEngine:
                         elif _evt_type == "endpoint_meta":
                             # 由 LLMClient 注入的端点元信息（vision_degraded 等）
                             # 转换成前端协议一致的 endpoint_notice。
+                            if (
+                                stream_event.get("prefer_switched")
+                                and not _endpoint_switch_notice_emitted
+                            ):
+                                _endpoint_switch_notice_emitted = True
+                                yield {
+                                    "type": "endpoint_notice",
+                                    "notice_type": "auto_switch",
+                                    "endpoint": stream_event.get("endpoint_name", ""),
+                                    "from_endpoint": stream_event.get("selected_endpoint", ""),
+                                    "reason_code": "endpoint_prefer_switch",
+                                    "switch_reason": stream_event.get("switch_reason", ""),
+                                    "missing_capabilities": stream_event.get(
+                                        "missing_capabilities", []
+                                    ),
+                                }
                             if stream_event.get("failover_from"):
                                 yield {
                                     "type": "endpoint_notice",
