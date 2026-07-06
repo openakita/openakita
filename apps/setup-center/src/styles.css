@@ -2717,6 +2717,103 @@ button.btnApplyRestart:hover {
   margin: 0.3em 0;
 }
 
+.releaseNotesFooter {
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.appUpdateDialogActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.appUpdateDialogActionsRight {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.appUpdateProgressToast {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  background: var(--panel2);
+  border: 1px solid var(--brand);
+  border-radius: 10px;
+  bottom: 20px;
+  box-shadow: var(--shadow);
+  color: var(--brand);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(400px, calc(100vw - 32px));
+  padding: 12px 20px;
+  position: fixed;
+  right: 20px;
+  z-index: 9998;
+}
+
+.appUpdateProgressHeader {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.appUpdateProgressIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.appUpdateProgressTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.appUpdateProgressDetail {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.appUpdateProgressTrack {
+  background: color-mix(in srgb, var(--brand) 18%, transparent);
+  border-radius: 4px;
+  height: 6px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.appUpdateProgressFill {
+  background: var(--brand);
+  border-radius: 4px;
+  height: 100%;
+  transition: width 0.3s;
+}
+
+.appUpdateProgressText {
+  color: var(--brand);
+  font-size: 11px;
+}
+
+.appUpdateProgressError {
+  color: #c62828;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.appUpdateProgressActions {
+  display: flex;
+  gap: 8px;
+}
+
 /* Dialog sections */
 .dialogSection {
   margin-bottom: 16px;

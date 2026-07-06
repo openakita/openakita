@@ -46,7 +46,7 @@ import type {
 } from "./types";
 import {
   IconCheckCircle, IconXCircle, IconInfo,
-  IconAlertCircle, IconCheck, IconPartyPopper,
+  IconAlertCircle, IconCheck,
 } from "./icons";
 import { ChevronRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -110,6 +110,7 @@ import { DegradedBanner } from "./components/DegradedBanner";
 import { ModalOverlay } from "./components/ModalOverlay";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
+import { AppUpdateDialog, UpdateProgressToast } from "./components/AppUpdateDialog";
 import { useNotifications } from "./hooks/useNotifications";
 import { notifySuccess, notifyError, notifyLoading, dismissLoading } from "./utils/notify";
 import { Toaster } from "@/components/ui/sonner";
@@ -406,15 +407,20 @@ function MainApp() {
     newRelease, setNewRelease,
     updateAvailable, setUpdateAvailable, updateProgress, setUpdateProgress,
     checkVersionMismatch, checkForAppUpdate,
+    skipReleaseVersion, remindReleaseLater,
     doDownloadAndInstall, doRelaunchAfterUpdate,
   } = useVersionCheck();
+  const appUpdateCheckStartedRef = useRef(false);
 
   // ── 独立初始化 autostart 状态（不依赖 refreshStatus 的复杂前置条件，Web 跳过） ──
   useEffect(() => {
-    if (IS_WEB) return;
+    if (!IS_TAURI) return;
     invoke<boolean>("autostart_is_enabled")
       .then((en) => setAutostartEnabled(en))
       .catch(() => setAutostartEnabled(null));
+    invoke<boolean>("get_auto_update")
+      .then((en) => setAutoUpdateEnabled(en))
+      .catch(() => setAutoUpdateEnabled(true));
   }, []);
 
   // Ensure boot overlay is removed once React actually mounts.
@@ -2992,13 +2998,15 @@ function MainApp() {
     await doStartLocalService(wsId);
   }
 
-  // ── Check for app updates once desktop version is known (respects auto-update toggle) ──
+  // ── Check for app updates once per desktop UI launch (respects auto-update toggle) ──
   useEffect(() => {
-    if (desktopVersion === "0.0.0") return; // not yet loaded
-    if (autoUpdateEnabled === false) return; // user disabled auto-update
-    checkForAppUpdate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [desktopVersion, autoUpdateEnabled]);
+    if (!IS_TAURI) return;
+    if (desktopVersion === "0.0.0") return;
+    if (autoUpdateEnabled !== true) return;
+    if (appUpdateCheckStartedRef.current) return;
+    appUpdateCheckStartedRef.current = true;
+    void checkForAppUpdate();
+  }, [desktopVersion, autoUpdateEnabled, checkForAppUpdate]);
 
   /** Stop the running service: try API shutdown first, then PID kill, then verify. */
   async function doStopService(wsId?: string | null) {
@@ -5215,72 +5223,21 @@ function MainApp() {
           </div>
         )}
 
-        {/* ── Update notification with download/install support ── */}
-        {newRelease && (
-          <div style={{ position: "fixed", bottom: 20, right: 20, zIndex: 9998, background: "var(--panel2)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", border: "1px solid var(--brand)", borderRadius: 10, padding: "12px 20px", maxWidth: 400, boxShadow: "var(--shadow)", display: "flex", flexDirection: "column", gap: 8, color: "var(--brand)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 16 }}>{updateProgress.status === "done" ? <IconCheckCircle size={16} /> : updateProgress.status === "error" ? <IconXCircle size={16} /> : <IconPartyPopper size={16} />}</span>
-              <span style={{ fontWeight: 600, fontSize: 13 }}>
-                {updateProgress.status === "done" ? t("version.updateReady") : updateProgress.status === "error" ? t("version.updateFailed") : t("version.newRelease")}
-              </span>
-              {updateProgress.status === "idle" && (
-                <button style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "var(--muted)" }} onClick={() => {
-                  setNewRelease(null);
-                  localStorage.setItem("openakita_release_dismissed", newRelease.latest);
-                }}>&times;</button>
-              )}
-            </div>
-
-            {/* Version info */}
-            <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-              {t("version.newReleaseDetail", { latest: newRelease.latest, current: newRelease.current })}
-            </div>
-
-            {/* Download progress bar */}
-            {updateProgress.status === "downloading" && (
-              <div style={{ width: "100%", background: "#bbdefb", borderRadius: 4, height: 6, overflow: "hidden" }}>
-                <div style={{ width: `${updateProgress.percent || 0}%`, background: "#1976d2", height: "100%", borderRadius: 4, transition: "width 0.3s" }} />
-              </div>
-            )}
-            {updateProgress.status === "downloading" && (
-              <div style={{ fontSize: 11, color: "#1565c0" }}>{t("version.downloading")} {updateProgress.percent || 0}%</div>
-            )}
-            {updateProgress.status === "installing" && (
-              <div style={{ fontSize: 11, color: "#1565c0" }}>{t("version.installing")}</div>
-            )}
-            {updateProgress.status === "error" && (
-              <div style={{ fontSize: 11, color: "#c62828" }}>{updateProgress.error}</div>
-            )}
-
-            {/* Action buttons */}
-            <div style={{ display: "flex", gap: 8 }}>
-              {updateProgress.status === "idle" && updateAvailable && (
-                <button className="btnSmall btnSmallPrimary" style={{ fontSize: 11 }} onClick={doDownloadAndInstall}>
-                  {t("version.updateNow")}
-                </button>
-              )}
-              {updateProgress.status === "idle" && !updateAvailable && (
-                <a href={newRelease.url} target="_blank" rel="noreferrer" className="btnSmall btnSmallPrimary" style={{ fontSize: 11, textDecoration: "none" }}>{t("version.viewRelease")}</a>
-              )}
-              {updateProgress.status === "done" && (
-                <button className="btnSmall btnSmallPrimary" style={{ fontSize: 11 }} onClick={doRelaunchAfterUpdate}>
-                  {t("version.restartNow")}
-                </button>
-              )}
-              {updateProgress.status === "idle" && (
-                <button className="btnSmall" style={{ fontSize: 11 }} onClick={() => {
-                  setNewRelease(null);
-                  localStorage.setItem("openakita_release_dismissed", newRelease.latest);
-                }}>{t("version.dismiss")}</button>
-              )}
-              {updateProgress.status === "error" && (
-                <button className="btnSmall" style={{ fontSize: 11 }} onClick={() => {
-                  setUpdateProgress({ status: "idle" });
-                }}>{t("version.retry")}</button>
-              )}
-            </div>
-          </div>
+        {newRelease && updateProgress.status === "idle" && (
+          <AppUpdateDialog
+            release={newRelease}
+            updateAvailable={updateAvailable}
+            onUpdate={doDownloadAndInstall}
+            onSkipVersion={() => skipReleaseVersion(newRelease.latest)}
+            onRemindLater={() => remindReleaseLater(newRelease.latest)}
+          />
         )}
+        <UpdateProgressToast
+          release={newRelease}
+          updateProgress={updateProgress}
+          onRelaunch={doRelaunchAfterUpdate}
+          onRetry={doDownloadAndInstall}
+        />
 
         <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
         <Dialog open={inboxDialogOpen} onOpenChange={setInboxDialogOpen}>

@@ -2,6 +2,16 @@ import { useCallback, useEffect, useState } from "react";
 import { getAppVersion, checkForUpdate, relaunchApp, type UpdateInfo } from "../platform";
 
 const GITHUB_REPO = "openakita/openakita";
+const SKIPPED_RELEASE_KEY = "openakita_release_skipped";
+const LEGACY_DISMISSED_RELEASE_KEY = "openakita_release_dismissed";
+const REMIND_LATER_RELEASE_KEY = "openakita_release_remind_later_session";
+
+export type NewReleaseInfo = { latest: string; current: string; url: string };
+export type UpdateProgressState = {
+  status: "idle" | "downloading" | "installing" | "done" | "error";
+  percent?: number;
+  error?: string;
+};
 
 export function compareSemver(a: string, b: string): number {
   const parse = (v: string) => v.replace(/^v/, "").split(".").map((s) => parseInt(s, 10) || 0);
@@ -14,17 +24,54 @@ export function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+function normalizeReleaseVersion(version: string): string {
+  return String(version || "").trim().replace(/^v/i, "");
+}
+
+function getStoredValue(storage: Storage, key: string): string | null {
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function setStoredValue(storage: Storage, key: string, value: string): void {
+  try {
+    storage.setItem(key, value);
+  } catch {
+    // Storage can be unavailable in restricted webviews; the update prompt still works.
+  }
+}
+
+function removeStoredValue(storage: Storage, key: string): void {
+  try {
+    storage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
+function isReleaseSuppressed(version: string): boolean {
+  const normalized = normalizeReleaseVersion(version);
+  if (!normalized) return false;
+  const skipped = normalizeReleaseVersion(
+    getStoredValue(localStorage, SKIPPED_RELEASE_KEY)
+      || getStoredValue(localStorage, LEGACY_DISMISSED_RELEASE_KEY)
+      || "",
+  );
+  if (skipped === normalized) return true;
+  const remindLater = normalizeReleaseVersion(getStoredValue(sessionStorage, REMIND_LATER_RELEASE_KEY) || "");
+  return remindLater === normalized;
+}
+
 export function useVersionCheck() {
   const [desktopVersion, setDesktopVersion] = useState("0.0.0");
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
   const [versionMismatch, setVersionMismatch] = useState<{ backend: string; desktop: string } | null>(null);
-  const [newRelease, setNewRelease] = useState<{ latest: string; current: string; url: string } | null>(null);
+  const [newRelease, setNewRelease] = useState<NewReleaseInfo | null>(null);
   const [updateAvailable, setUpdateAvailable] = useState<UpdateInfo | null>(null);
-  const [updateProgress, setUpdateProgress] = useState<{
-    status: "idle" | "downloading" | "installing" | "done" | "error";
-    percent?: number;
-    error?: string;
-  }>({ status: "idle" });
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgressState>({ status: "idle" });
 
   useEffect(() => {
     getAppVersion().then((v) => setDesktopVersion(v)).catch(() => setDesktopVersion("1.10.5"));
@@ -39,17 +86,16 @@ export function useVersionCheck() {
   }, [desktopVersion]);
 
   const checkForAppUpdate = useCallback(async () => {
-    const dismissKey = "openakita_release_dismissed";
     try {
       const update = await checkForUpdate({ apiBaseUrl: "http://127.0.0.1:18900" });
       if (update) {
-        const dismissed = localStorage.getItem(dismissKey);
-        if (dismissed !== update.version) {
+        const latest = normalizeReleaseVersion(update.version);
+        if (!isReleaseSuppressed(latest)) {
           setUpdateAvailable(update);
           setNewRelease({
-            latest: update.version,
+            latest,
             current: desktopVersion,
-            url: `https://github.com/${GITHUB_REPO}/releases/tag/v${update.version}`,
+            url: `https://github.com/${GITHUB_REPO}/releases/tag/v${latest}`,
           });
         }
       }
@@ -63,10 +109,10 @@ export function useVersionCheck() {
         const data = await res.json();
         const tagName = (data.tag_name || "").replace(/^v/, "");
         if (tagName && compareSemver(tagName, desktopVersion) > 0) {
-          const dismissed = localStorage.getItem(dismissKey);
-          if (dismissed !== tagName) {
+          const latest = normalizeReleaseVersion(tagName);
+          if (!isReleaseSuppressed(latest)) {
             setNewRelease({
-              latest: tagName,
+              latest,
               current: desktopVersion,
               url: data.html_url || `https://github.com/${GITHUB_REPO}/releases`,
             });
@@ -75,6 +121,25 @@ export function useVersionCheck() {
       } catch { /* both methods failed */ }
     }
   }, [desktopVersion]);
+
+  const skipReleaseVersion = useCallback((version: string) => {
+    const normalized = normalizeReleaseVersion(version);
+    if (!normalized) return;
+    setStoredValue(localStorage, SKIPPED_RELEASE_KEY, normalized);
+    removeStoredValue(localStorage, LEGACY_DISMISSED_RELEASE_KEY);
+    removeStoredValue(sessionStorage, REMIND_LATER_RELEASE_KEY);
+    setNewRelease(null);
+    setUpdateAvailable(null);
+    setUpdateProgress({ status: "idle" });
+  }, []);
+
+  const remindReleaseLater = useCallback((version: string) => {
+    const normalized = normalizeReleaseVersion(version);
+    if (!normalized) return;
+    setStoredValue(sessionStorage, REMIND_LATER_RELEASE_KEY, normalized);
+    setNewRelease(null);
+    setUpdateProgress({ status: "idle" });
+  }, []);
 
   const doDownloadAndInstall = useCallback(async () => {
     if (!updateAvailable) return;
@@ -116,6 +181,8 @@ export function useVersionCheck() {
     updateProgress, setUpdateProgress,
     checkVersionMismatch,
     checkForAppUpdate,
+    skipReleaseVersion,
+    remindReleaseLater,
     doDownloadAndInstall,
     doRelaunchAfterUpdate,
   };
