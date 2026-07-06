@@ -88,6 +88,8 @@ export function MessageParts({
                 mdModules={mdModules}
                 className="chatMdContent"
                 streaming={streaming}
+                apiBaseUrl={apiBaseUrl}
+                onImagePreview={onImagePreview}
               />
             ) : null;
           case "tools":

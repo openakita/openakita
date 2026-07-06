@@ -93,7 +93,7 @@ export const FlatMessageItem = memo(function FlatMessageItem({
           {msg.attachments && msg.attachments.length > 0 && (
             <div style={{ marginBottom: 6 }}>
               {msg.attachments.map((att, i) => (
-                <AttachmentPreview key={i} att={att} apiBaseUrl={apiBaseUrl} />
+                <AttachmentPreview key={i} att={att} apiBaseUrl={apiBaseUrl} onImagePreview={onImagePreview} />
               ))}
             </div>
           )}
@@ -102,6 +102,8 @@ export const FlatMessageItem = memo(function FlatMessageItem({
             mdModules={mdModules}
             className="chatMdContent"
             streaming={!!msg.streaming}
+            apiBaseUrl={apiBaseUrl}
+            onImagePreview={onImagePreview}
           />
         </div>
       )}

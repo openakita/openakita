@@ -1,19 +1,32 @@
 import { useDeferredValue, useMemo, useRef, useState } from "react";
 import { useSmoothReveal } from "../hooks/useSmoothReveal";
 import type { MdModules } from "../utils/chatTypes";
+import { appendAuthToken } from "../utils/chatHelpers";
 
 const MARKDOWN_PREVIEW_CHAR_LIMIT = 40_000;
+
+function resolveMarkdownImageUrl(src: string, apiBaseUrl?: string): string {
+  if (!src) return "";
+  if (src.startsWith("data:") || src.startsWith("blob:")) return src;
+  if (src.startsWith("http")) return appendAuthToken(src);
+  if (src.startsWith("/")) return appendAuthToken(`${apiBaseUrl || ""}${src}`);
+  return src;
+}
 
 export function MarkdownContent({
   content,
   mdModules,
   className,
   streaming = false,
+  apiBaseUrl,
+  onImagePreview,
 }: {
   content: string;
   mdModules?: MdModules | null;
   className?: string;
   streaming?: boolean;
+  apiBaseUrl?: string;
+  onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   // Track whether THIS mounted instance has ever seen streaming=true.
@@ -39,11 +52,45 @@ export function MarkdownContent({
   // 可丢弃正在进行的上一帧渲染重来、并在主线程忙时让位给打字/滚动，
   // 从根上压平"逐 token 重解析重提交"的卡顿（记忆化只治 KaTeX，这个治整棵树）。
   const renderContent = useDeferredValue(revealed);
+  const markdownComponents = useMemo(() => {
+    if (!onImagePreview) return undefined;
+    return {
+      img: ({ node: _node, src, alt, title, ...props }: any) => {
+        const imageUrl = resolveMarkdownImageUrl(String(src || ""), apiBaseUrl);
+        return (
+          <img
+            {...props}
+            src={imageUrl}
+            alt={alt || ""}
+            title={title}
+            role={imageUrl ? "button" : undefined}
+            tabIndex={imageUrl ? 0 : undefined}
+            style={{ ...(props.style || {}), cursor: imageUrl ? "pointer" : props.style?.cursor }}
+            onClick={(e) => {
+              props.onClick?.(e);
+              if (!imageUrl || e.defaultPrevented) return;
+              onImagePreview(imageUrl, imageUrl, alt || title || "image");
+            }}
+            onKeyDown={(e) => {
+              props.onKeyDown?.(e);
+              if (!imageUrl || e.defaultPrevented || (e.key !== "Enter" && e.key !== " ")) return;
+              e.preventDefault();
+              onImagePreview(imageUrl, imageUrl, alt || title || "image");
+            }}
+          />
+        );
+      },
+    };
+  }, [apiBaseUrl, onImagePreview]);
 
   return (
     <div className={className}>
       {mdModules ? (
-        <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>
+        <mdModules.ReactMarkdown
+          remarkPlugins={mdModules.remarkPlugins}
+          rehypePlugins={mdModules.rehypePlugins}
+          components={markdownComponents}
+        >
           {renderContent}
         </mdModules.ReactMarkdown>
       ) : (
