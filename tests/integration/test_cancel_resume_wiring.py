@@ -9,8 +9,8 @@ These tests cover the wiring added on top of the (already-green) helper
 unit tests in ``test_cancel_cleanup.py``:
 
 * ``ReasoningEngine._resume_eligible`` gating (sub-agent / ephemeral id).
-* ``_maybe_persist_cancelled_working_messages`` only persists a cancelled
-  turn that actually ran tools, keyed off ``state.session_id``.
+* ``_maybe_persist_resumable_working_messages`` persists resumable exits
+  that actually ran tools, keyed off ``state.session_id``.
 * ``_maybe_load_resume_working_messages`` restores the structured tool
   blocks and merges the new human-user tail + a continue nudge — and the
   result stays Anthropic-well-formed after orphan synthesis ("不重做").
@@ -21,6 +21,7 @@ unit tests in ``test_cancel_cleanup.py``:
 
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 from pathlib import Path
@@ -80,6 +81,21 @@ def _tool_turn() -> list[dict]:
     ]
 
 
+def _persist_user_cancel_snapshot(
+    engine: ReasoningEngine,
+    working_messages: list[dict],
+    state: TaskState,
+    model: str = "claude",
+) -> None:
+    engine._maybe_persist_resumable_working_messages(
+        working_messages,
+        state,
+        model,
+        exit_reason="user_cancelled",
+        detail=state.cancel_reason,
+    )
+
+
 # ── has_tool_blocks ───────────────────────────────────────────────────
 
 
@@ -126,28 +142,117 @@ class TestPersistGuard:
         return data_dir / "working_messages" / f"{conv}.json"
 
     def test_persists_cancelled_turn_with_tools(self, engine, data_dir) -> None:
-        engine._maybe_persist_cancelled_working_messages(
-            _tool_turn(), self._state(session_id="conv-1"), "claude"
-        )
+        _persist_user_cancel_snapshot(engine, _tool_turn(), self._state(session_id="conv-1"))
         assert self._file(data_dir, "conv-1").exists()
 
     def test_skips_turn_without_tool_blocks(self, engine, data_dir) -> None:
-        engine._maybe_persist_cancelled_working_messages(
-            [{"role": "user", "content": "hi"}], self._state(session_id="conv-2"), "claude"
+        _persist_user_cancel_snapshot(
+            engine, [{"role": "user", "content": "hi"}], self._state(session_id="conv-2")
         )
         assert not self._file(data_dir, "conv-2").exists()
 
     def test_skips_sub_agent(self, engine, data_dir) -> None:
-        engine._maybe_persist_cancelled_working_messages(
-            _tool_turn(), self._state(session_id="conv-3", is_sub_agent=True), "claude"
+        _persist_user_cancel_snapshot(
+            engine, _tool_turn(), self._state(session_id="conv-3", is_sub_agent=True)
         )
         assert not self._file(data_dir, "conv-3").exists()
 
     def test_skips_ephemeral_run_id(self, engine, data_dir) -> None:
-        engine._maybe_persist_cancelled_working_messages(
-            _tool_turn(), self._state(session_id="_run_xyz"), "claude"
-        )
+        _persist_user_cancel_snapshot(engine, _tool_turn(), self._state(session_id="_run_xyz"))
         assert not self._file(data_dir, "_run_xyz").exists()
+
+    def test_persists_non_cancel_recoverable_exit_with_tools(self, engine, data_dir) -> None:
+        st = self._state(session_id="conv-error", cancelled=False, cancel_reason="")
+        engine._maybe_persist_recoverable_exit_working_messages(
+            _tool_turn(),
+            st,
+            "claude",
+            exit_reason="stream_error",
+            done_seen=True,
+            error_seen=True,
+            detail="upstream stream failed",
+        )
+        f = self._file(data_dir, "conv-error")
+        assert f.exists()
+        payload = json.loads(f.read_text(encoding="utf-8"))
+        assert payload["metadata"]["exit_reason"] == "stream_error"
+        assert payload["metadata"]["detail"] == "upstream stream failed"
+        assert getattr(st, "_resume_persisted", False) is True
+
+    def test_skips_completed_non_error_exit(self, engine, data_dir) -> None:
+        st = self._state(session_id="conv-ok", cancelled=False, cancel_reason="")
+        engine._maybe_persist_recoverable_exit_working_messages(
+            _tool_turn(),
+            st,
+            "claude",
+            exit_reason="completed",
+            done_seen=True,
+            error_seen=False,
+        )
+        assert not self._file(data_dir, "conv-ok").exists()
+
+
+# ── outer exit hooks ─────────────────────────────────────────────────
+
+
+class TestRecoverableExitHooks:
+    @pytest.mark.asyncio
+    async def test_run_wrapper_persists_recoverable_exit_before_clear(self, engine, data_dir) -> None:
+        conv = "conv-run-max"
+
+        async def fake_run_impl(*args, **kwargs) -> str:
+            st = TaskState(task_id="t", session_id=conv)
+            st.is_sub_agent = False
+            st.current_model = "claude"
+            kwargs["_on_state_resolved"](st)
+            engine._last_working_messages = _tool_turn()
+            engine._last_exit_reason = "max_iterations"
+            return "hit max iterations"
+
+        engine._run_impl = fake_run_impl
+        result = await engine.run(
+            [{"role": "user", "content": "继续"}],
+            tools=[],
+            conversation_id=conv,
+        )
+
+        assert result == "hit max iterations"
+        f = data_dir / "working_messages" / f"{conv}.json"
+        assert f.exists()
+        payload = json.loads(f.read_text(encoding="utf-8"))
+        assert payload["metadata"]["exit_reason"] == "max_iterations"
+
+    @pytest.mark.asyncio
+    async def test_reason_stream_wrapper_persists_stream_that_ends_without_done(
+        self, engine, data_dir
+    ) -> None:
+        conv = "conv-stream-incomplete"
+
+        async def fake_reason_stream_impl(*args, **kwargs):
+            st = TaskState(task_id="t", session_id=conv)
+            st.is_sub_agent = False
+            st.current_model = "claude"
+            kwargs["_on_state_resolved"](st)
+            engine._last_working_messages = _tool_turn()
+            engine._last_exit_reason = "normal"
+            yield {"type": "chain_text", "content": "still working"}
+
+        engine._reason_stream_impl = fake_reason_stream_impl
+
+        events = [
+            ev
+            async for ev in engine.reason_stream(
+                [{"role": "user", "content": "do work"}],
+                tools=[],
+                conversation_id=conv,
+            )
+        ]
+
+        assert events == [{"type": "chain_text", "content": "still working"}]
+        f = data_dir / "working_messages" / f"{conv}.json"
+        assert f.exists()
+        payload = json.loads(f.read_text(encoding="utf-8"))
+        assert payload["metadata"]["exit_reason"] == "stream_incomplete"
 
 
 # ── load + merge ("不重做") ─────────────────────────────────────────────
@@ -207,8 +312,8 @@ class TestLoadAndMerge:
         synthesize_tool_results_for_orphans(merged)
         assert find_orphan_tool_uses(merged) == []
 
-    def test_funnel_persist_key_matches_seed_load_key(self, engine, data_dir) -> None:
-        """Contract lock: the funnel persists keyed off ``state.session_id``
+    def test_persist_key_matches_seed_load_key(self, engine, data_dir) -> None:
+        """Contract lock: the persist helper keys off ``state.session_id``
         while the seed loads keyed off the ``conversation_id`` param.  In the
         engine these are the same string (``state.session_id`` is seeded from
         ``conversation_id``); if a future refactor breaks that equivalence,
@@ -220,8 +325,8 @@ class TestLoadAndMerge:
         st.cancelled = True
         st.cancel_reason = "用户从界面取消任务"
 
-        # Funnel side (uses state.session_id as the key).
-        engine._maybe_persist_cancelled_working_messages(_tool_turn(), st, "claude")
+        # Persist side (uses state.session_id as the key).
+        _persist_user_cancel_snapshot(engine, _tool_turn(), st)
 
         # Seed side (uses conversation_id param as the key).
         merged = engine._maybe_load_resume_working_messages(
@@ -329,14 +434,14 @@ class TestClearResumeState:
     def test_just_persisted_flag_preserves_file_even_if_not_cancelled(
         self, engine, data_dir
     ) -> None:
-        """The funnel sets ``state._resume_persisted`` after writing a snapshot;
+        """The persist helper sets ``state._resume_persisted`` after writing a snapshot;
         the finally-stage clear must honour it even if ``cancelled`` reads
         False (defends against any cancel path that doesn't leave cancelled
         True at finally time)."""
         st = TaskState(task_id="t", session_id="conv-flag")
         st.is_sub_agent = False
         st.cancelled = True
-        engine._maybe_persist_cancelled_working_messages(_tool_turn(), st, "claude")
+        _persist_user_cancel_snapshot(engine, _tool_turn(), st)
         f = data_dir / "working_messages" / "conv-flag.json"
         assert f.exists()
         assert getattr(st, "_resume_persisted", False) is True

@@ -44,6 +44,7 @@ import type {
   EnvMap,
 } from "../types";
 import { genId, timeAgo } from "../utils";
+import { SseStateMachine, type SseFrame } from "../utils/sseStateMachine";
 import { notifyError, notifyInfo } from "../utils/notify";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import {
@@ -386,7 +387,9 @@ type StreamTransport =
 
 type SendMessageOptions = {
   appendUserMessage?: boolean;
+  countAssistantMessage?: boolean;
   initialStreamStatus?: string;
+  reuseAssistantMessageId?: string;
   streamTransport?: StreamTransport;
 };
 
@@ -2725,7 +2728,7 @@ export function ChatView({
     };
 
     // 创建流式助手消息占位
-    const assistantMsg: ChatMessage = {
+    let assistantMsg: ChatMessage = {
       id: genId(),
       role: "assistant",
       content: "",
@@ -2786,12 +2789,30 @@ export function ChatView({
     const fallbackMessages = canUseRenderedMessages
       ? [...latestMessagesRef.current]
       : loadMessagesFromStorage(STORAGE_KEY_MSGS_PREFIX + thisConvId);
+    const reuseAssistantMessageId = options?.reuseAssistantMessageId;
+    let initialMessages = [...fallbackMessages, ...(appendUserMessage ? [userMsg] : [])];
+    if (reuseAssistantMessageId) {
+      let reused = false;
+      initialMessages = initialMessages.map((m) => {
+        if (m.id !== reuseAssistantMessageId || m.role !== "assistant") return m;
+        reused = true;
+        assistantMsg = {
+          ...m,
+          streaming: true,
+          streamStatus: options?.initialStreamStatus ?? m.streamStatus ?? null,
+        };
+        return assistantMsg;
+      });
+      if (!reused) initialMessages = [...initialMessages, assistantMsg];
+    } else {
+      initialMessages = [...initialMessages, assistantMsg];
+    }
     const sctx: StreamContext = {
       abort,
       reader: null,
       isStreaming: true,
       userStopped: false,
-      messages: [...fallbackMessages, ...(appendUserMessage ? [userMsg] : []), assistantMsg],
+      messages: initialMessages,
       activeSubAgents: [],
       subAgentTasks: [],
       isDelegating: false,
@@ -3184,8 +3205,8 @@ export function ChatView({
       let reader = _initialReader;
       sctx.reader = reader;
 
-      let decoder = new TextDecoder();
-      let buffer = "";
+      const sseMachine = new SseStateMachine();
+      sseMachine.start();
       let currentContent = "";
       let currentThinking = "";
       let currentToolCalls: ChatToolCall[] = [];
@@ -3311,70 +3332,44 @@ export function ChatView({
             // Drop the dropped stream's partial frame + decoder state so a
             // multibyte char split across the break can't bleed into the new
             // stream. resume replays full frames from since_seq.
-            buffer = "";
-            decoder = new TextDecoder();
+            sseMachine.resetStream();
+            sseMachine.start();
             continue;
           }
           throw readErr;
         }
 
+        let frames: SseFrame[] = [];
         if (value) {
-          buffer += decoder.decode(value, { stream: true });
+          frames = sseMachine.push(value);
           resetIdleTimer(); // 收到数据，重置空闲计时
         }
 
         // ── 2. 再次检查 abort（read 可能返回 done:true 而非抛异常） ──
         if (abort.signal.aborted) break;
 
-        // 拆行：done 时 flush 全部 buffer，否则保留不完整的末行
-        let lines: string[];
         if (done) {
-          lines = buffer.split("\n");
-          buffer = "";
-        } else {
-          lines = buffer.split("\n");
-          buffer = lines.pop() || "";
+          frames = [...frames, ...sseMachine.finish()];
         }
 
         // C17 Phase B.3：SSE 帧由 ``id: <seq>\ndata: {json}\n\n`` 组成。
-        // 收到 id 行就记下来；下一条 data 行用该 seq 做 dedup。Spec 允许
-        // ``id`` 是空字符串 → 重置上次 lastEventId，但我们用 0 表示
-        // "本帧没 id"。如果同一 buffer 行里只看到 data 没看到前置 id，
-        // ``pendingSeq=0`` 让 dedup 走 no-op（向后兼容老服务端无 id 帧）。
-        //
-        // C17 二轮：``pendingSeq`` 现在只在两种边界清零：
-        //   1. 空行（SSE 帧分隔符 ``\n\n``）
-        //   2. 下一条 ``id:`` 行覆盖
-        // 之前在 ``rememberSeq`` / hasSeenSeq 命中后立即清零会让 SSE 规范
-        // 允许的 "同 id 多 data 行" 跳过 dedup（虽然后端目前 1:1，但代理 /
-        // IM 网关转发可能合并），保守起见保留 pendingSeq 直到帧结束。
-        let pendingSeq = 0;
-        for (const line of lines) {
-          if (line === "") {
-            pendingSeq = 0; // SSE frame separator
-            continue;
-          }
-          if (line.startsWith("id: ")) {
-            const v = Number.parseInt(line.slice(4).trim(), 10);
-            pendingSeq = Number.isFinite(v) && v > 0 ? v : 0;
-            continue;
-          }
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6).trim();
+        // 解析状态由 SseStateMachine 持有，所以 id/data 跨 chunk 时也能
+        // 正确关联；空 id 或无 id 的老服务端帧继续走 no-op dedup。
+        for (const frame of frames) {
+          const data = frame.data.trim();
           if (data === "[DONE]") continue;
+          const frameSeqRaw = frame.id != null ? Number.parseInt(frame.id.trim(), 10) : 0;
+          const frameSeq = Number.isFinite(frameSeqRaw) && frameSeqRaw > 0 ? frameSeqRaw : 0;
 
-          // Dedup before parsing: if we already processed this seq, skip.
-          // Keep ``pendingSeq`` non-zero so subsequent data: lines under
-          // the same id (replay duplicates) are also dropped.
-          if (pendingSeq > 0 && thisConvId && hasSeenSeq(thisConvId, pendingSeq)) {
+          // Dedup before parsing: if we already processed this frame seq, skip.
+          if (frameSeq > 0 && thisConvId && hasSeenSeq(thisConvId, frameSeq)) {
             continue;
           }
           try {
             const event: StreamEvent = JSON.parse(data);
             sseParseFailures = 0;
-            if (pendingSeq > 0 && thisConvId) {
-              rememberSeq(thisConvId, pendingSeq);
-              // intentionally NOT zeroing pendingSeq: see C17 二轮 above.
+            if (frameSeq > 0 && thisConvId) {
+              rememberSeq(thisConvId, frameSeq);
             }
 
             switch (event.type) {
@@ -4344,8 +4339,8 @@ export function ChatView({
           if (resumed) {
             reader = resumed;
             sctx.reader = resumed;
-            buffer = "";
-            decoder = new TextDecoder();
+            sseMachine.resetStream();
+            sseMachine.start();
             continue;
           }
           break;
@@ -4543,6 +4538,9 @@ export function ChatView({
       setStreamingTick(t => t + 1);
 
       const finalStatus = sctx._hadError ? "error" : "completed";
+      const messageCountIncrement = appendUserMessage
+        ? 2
+        : (options?.countAssistantMessage === false ? 0 : 1);
       setConversations((prev) => {
         const updated = prev.map((c) =>
           c.id === thisConvId
@@ -4550,7 +4548,7 @@ export function ChatView({
                 ...c,
                 lastMessage: appendUserMessage ? text.slice(0, 60) : (c.lastMessage || text.slice(0, 60)),
                 timestamp: Date.now(),
-                messageCount: (c.messageCount || 0) + (appendUserMessage ? 2 : 1),
+                messageCount: (c.messageCount || 0) + messageCountIncrement,
                 status: finalStatus as ConversationStatus,
               }
             : c
@@ -4578,6 +4576,94 @@ export function ChatView({
       });
     }
   }, [pendingAttachments, isCurrentConvStreaming, activeConvId, chatMode, selectedEndpoint, selectedEndpointPolicy, apiBase, slashCommands, endpoints.length, thinkingMode, thinkingDepth, t, setInputValue]);
+
+  const startupReattachDoneRef = useRef(false);
+  useEffect(() => {
+    if (!serviceRunning || startupReattachDoneRef.current) return;
+    startupReattachDoneRef.current = true;
+    let cancelled = false;
+
+    const pickReusableAssistantId = (convId: string): string | undefined => {
+      const renderedMessages =
+        displayedMessagesConvIdRef.current === convId ? latestMessagesRef.current : [];
+      const storedMessages = loadMessagesFromStorage(STORAGE_KEY_MSGS_PREFIX + convId);
+      const baseMessages = renderedMessages.length >= storedMessages.length ? renderedMessages : storedMessages;
+      for (let i = baseMessages.length - 1; i >= 0; i -= 1) {
+        const msg = baseMessages[i];
+        if (msg.role === "assistant" && (msg.streaming || msg.streamStatus)) return msg.id;
+      }
+      return undefined;
+    };
+
+    const toResumeUrl = (convId: string) => {
+      const sinceSeq = lastSeqByConv.current.get(convId) ?? 0;
+      return `${apiBase}/api/chat/resume?conversation_id=${encodeURIComponent(convId)}&since_seq=${sinceSeq}`;
+    };
+
+    (async () => {
+      try {
+        const res = await safeFetch(`${apiBase}/api/chat/busy`, {
+          method: "GET",
+          signal: AbortSignal.timeout(5000),
+        });
+        const data = await res.json().catch(() => null);
+        if (cancelled) return;
+
+        const myClientId = getClientId();
+        const localIds = new Set(latestConversationsRef.current.map((c) => c.id));
+        const busyItems = (
+          Array.isArray(data?.busy_conversations) ? data.busy_conversations : []
+        ) as { conversation_id?: string; client_id?: string }[];
+        const targets = busyItems
+          .map((item) => ({
+            convId: String(item.conversation_id || ""),
+            clientId: String(item.client_id || ""),
+          }))
+          .filter(({ convId, clientId }) =>
+            convId &&
+            localIds.has(convId) &&
+            !streamContexts.current.get(convId)?.isStreaming &&
+            (!clientId || clientId === myClientId)
+          );
+
+        if (targets.length === 0) return;
+        logger.info("Chat", "startup_resume_attach", {
+          count: targets.length,
+          conversations: targets.map((tgt) => tgt.convId),
+        });
+
+        for (const { convId } of targets) {
+          if (cancelled) break;
+          updateConvStatus(convId, "running");
+          void sendMessage(
+            t("chat.resumeOnStartupMessage", "正在重新连接运行中的任务"),
+            convId,
+            undefined,
+            "agent",
+            [],
+            undefined,
+            {
+              appendUserMessage: false,
+              countAssistantMessage: false,
+              initialStreamStatus: t("chat.resumeOnStartup", "正在重新连接运行中的任务..."),
+              reuseAssistantMessageId: pickReusableAssistantId(convId),
+              streamTransport: {
+                kind: "resume",
+                url: toResumeUrl(convId),
+              },
+            },
+          );
+        }
+      } catch {
+        // Best-effort startup recovery. The detached-running poll and stale
+        // recovery effects will still reconcile visible sessions.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, getClientId, sendMessage, serviceRunning, t, updateConvStatus, STORAGE_KEY_MSGS_PREFIX]);
 
   useEffect(() => {
     const toAbsoluteApiUrl = (rawUrl: string) => {

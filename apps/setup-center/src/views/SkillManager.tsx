@@ -6,6 +6,7 @@ import { invoke, IS_TAURI } from "../platform";
 import { useTranslation } from "react-i18next";
 import type { SkillInfo, SkillConfigField, MarketplaceSkill, EnvMap } from "../types";
 import { envGet, envSet } from "../utils";
+import { consumeSseStream } from "../utils/sseStateMachine";
 import { IconGear, IconZap, IconPackage, IconStar, IconCheck, IconX, IconDownload, IconSearch, IconFolderOpen, IconEdit, IconTrash, IconEye } from "../icons";
 import { Loader2, ChevronDown, ChevronRight } from "lucide-react";
 import { safeFetch } from "../providers";
@@ -1595,8 +1596,6 @@ export function SkillManager({
     }
 
     const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let finalResult: CategoryMassActionResult | null = null;
     const applyProgress = (event: CategoryMassProgressEvent) => {
       if (event.result) finalResult = event.result;
@@ -1613,28 +1612,15 @@ export function SkillManager({
       if (event.error) throw new Error(event.error);
     };
 
-    const parseBlock = (block: string) => {
-      const dataLines = block
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart());
-      if (dataLines.length === 0) return;
-      const raw = dataLines.join("\n");
-      if (!raw) return;
-      const event = JSON.parse(raw) as CategoryMassProgressEvent;
-      applyProgress(event);
-    };
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const blocks = buffer.split(/\r?\n\r?\n/);
-      buffer = blocks.pop() || "";
-      for (const block of blocks) parseBlock(block);
-    }
-    buffer += decoder.decode();
-    if (buffer.trim()) parseBlock(buffer);
+    await consumeSseStream({
+      reader,
+      onFrame: (frame) => {
+        const raw = frame.data.trim();
+        if (!raw) return;
+        const event = JSON.parse(raw) as CategoryMassProgressEvent;
+        applyProgress(event);
+      },
+    });
     return finalResult || {};
   }, [apiBaseUrl]);
 

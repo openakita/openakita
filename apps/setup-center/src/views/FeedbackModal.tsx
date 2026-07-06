@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { downloadFile, showInFolder, invoke, IS_TAURI, onDragDrop, readFileBase64 } from "../platform";
 import { IconX, IconInfo } from "../icons";
 import { safeFetch } from "../providers";
+import { consumeSseStream } from "../utils/sseStateMachine";
 import {
   Dialog,
   DialogContent,
@@ -504,32 +505,19 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
 
       if (contentType.includes("text/event-stream") && res.body) {
         const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          const blocks = buffer.split("\n\n");
-          buffer = blocks.pop() || "";
-
-          for (const block of blocks) {
-            const eventMatch = block.match(/^event:\s*(.+)$/m);
-            const dataMatch = block.match(/^data:\s*(.+)$/m);
-            if (!eventMatch || !dataMatch) continue;
-            const eventType = eventMatch[1].trim();
+        await consumeSseStream({
+          reader,
+          onFrame: (frame) => {
             let data: any;
-            try { data = JSON.parse(dataMatch[1]); } catch { continue; }
+            try { data = JSON.parse(frame.data); } catch { return; }
 
-            if (eventType === "progress") {
+            if (frame.event === "progress") {
               setUploadProgress({
                 percent: data.percent ?? 0,
                 phase: data.phase ?? "",
                 detail: data.detail ?? "",
               });
-            } else if (eventType === "complete") {
+            } else if (frame.event === "complete") {
               setUploadProgress(null);
               if (data.status === "upload_failed") {
                 const dlUrl = data.download_url ? `${apiBase}${data.download_url}` : undefined;
@@ -544,11 +532,11 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
                 resetForm();
                 setPhase("success");
               }
-            } else if (eventType === "error") {
+            } else if (frame.event === "error") {
               handleSseError(data);
             }
-          }
-        }
+          },
+        });
       } else {
         setUploadProgress(null);
         const data = await res.json();
@@ -958,4 +946,3 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
     </Dialog>
   );
 }
-

@@ -39,6 +39,7 @@ from ..tracing.tracer import get_tracer
 from ._context_manager_legacy import ContextManager
 from ._context_manager_legacy import _CancelledError as _CtxCancelledError
 from ._supervisor_legacy import TOKEN_ANOMALY_THRESHOLD, RuntimeSupervisor
+from .abort_scope import current_abort_scope
 from .agent_state import AgentState, IllegalReasoningEntry, TaskState, TaskStatus
 from .cancel_cleanup import (
     DEFAULT_TTL_SECONDS,
@@ -752,6 +753,20 @@ class ReasoningEngine:
             "exit_plan_mode",
         }
     )
+    _RECOVERABLE_RESUME_EXIT_REASONS = frozenset(
+        {
+            "budget_exceeded",
+            "budget_paused",
+            "loop_terminated",
+            "max_iterations",
+            "reason_error",
+            "run_error",
+            "stream_error",
+            "stream_incomplete",
+            "verify_incomplete",
+            "illegal_state",
+        }
+    )
 
     def __init__(
         self,
@@ -1384,6 +1399,116 @@ class ReasoningEngine:
         mode: str = "agent",
         agent_voice: str = "",
     ) -> str:
+        """Outer wrapper for the non-streaming ReAct loop."""
+        captured_state_ref: dict[str, Any] = {"state": None}
+        _scope_attach: dict[str, Any] = {"parent": None, "attached": False}
+        _run_error: BaseException | None = None
+
+        def _on_state_resolved(st: Any) -> None:
+            captured_state_ref["state"] = st
+            try:
+                _parent = current_abort_scope.get()
+                if (
+                    _parent is not None
+                    and _parent is not st.abort_root
+                    and st.abort_root.parent is None
+                ):
+                    _parent.children.append(st.abort_root)
+                    st.abort_root.parent = _parent
+                    _scope_attach["parent"] = _parent
+                    _scope_attach["attached"] = True
+                    if _parent.event.is_set() and not st.abort_root.event.is_set():
+                        st.abort_root.abort(_parent.reason, _from=_parent.name)
+            except Exception:
+                logger.debug("[ReAct] sub-agent AbortScope attach failed", exc_info=True)
+
+        try:
+            return await self._run_impl(
+                messages,
+                tools=tools,
+                system_prompt=system_prompt,
+                base_system_prompt=base_system_prompt,
+                task_description=task_description,
+                task_monitor=task_monitor,
+                session_type=session_type,
+                interrupt_check_fn=interrupt_check_fn,
+                conversation_id=conversation_id,
+                thinking_mode=thinking_mode,
+                thinking_depth=thinking_depth,
+                progress_callback=progress_callback,
+                agent_profile_id=agent_profile_id,
+                endpoint_override=endpoint_override,
+                endpoint_policy=endpoint_policy,
+                force_tool_retries=force_tool_retries,
+                tool_evidence_required=tool_evidence_required,
+                is_sub_agent=is_sub_agent,
+                mode=mode,
+                agent_voice=agent_voice,
+                _on_state_resolved=_on_state_resolved,
+            )
+        except BaseException as exc:
+            _run_error = exc
+            raise
+        finally:
+            st = captured_state_ref.get("state")
+            _exit_reason = getattr(self, "_last_exit_reason", "") or ""
+            if _run_error is not None and _exit_reason in ("", "normal"):
+                _exit_reason = "run_error"
+            self._maybe_persist_recoverable_exit_working_messages(
+                getattr(self, "_last_working_messages", []),
+                st,
+                getattr(st, "current_model", "")
+                or getattr(getattr(self, "_brain", None), "model", ""),
+                exit_reason=_exit_reason,
+                done_seen=True,
+                error_seen=_run_error is not None,
+                detail=(str(_run_error)[:500] if _run_error is not None else ""),
+            )
+            if st is not None and not st.settled_event.is_set():
+                try:
+                    st.mark_settled()
+                except Exception:
+                    logger.debug(
+                        "[ReAct] mark_settled failed in run() outer wrapper finally",
+                        exc_info=True,
+                    )
+            if _scope_attach.get("attached"):
+                _parent = _scope_attach.get("parent")
+                if _parent is not None and st is not None:
+                    try:
+                        _parent.remove_child(st.abort_root)
+                    except Exception:
+                        pass
+                    if st.abort_root.parent is _parent:
+                        st.abort_root.parent = None
+
+            self._maybe_clear_resume_state(conversation_id, is_sub_agent, st)
+
+    async def _run_impl(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict],
+        system_prompt: str = "",
+        base_system_prompt: str = "",
+        task_description: str = "",
+        task_monitor: Any = None,
+        session_type: str = "cli",
+        interrupt_check_fn: Any = None,
+        conversation_id: str | None = None,
+        thinking_mode: str | None = None,
+        thinking_depth: str | None = None,
+        progress_callback: Any = None,
+        agent_profile_id: str = "default",
+        endpoint_override: str | None = None,
+        endpoint_policy: str = "prefer",
+        force_tool_retries: int | None = None,
+        tool_evidence_required: bool = False,
+        is_sub_agent: bool = False,
+        mode: str = "agent",
+        agent_voice: str = "",
+        _on_state_resolved: Any = None,
+    ) -> str:
         """
         主推理循环: Reason -> Act -> Observe。
 
@@ -1442,7 +1567,19 @@ class ReasoningEngine:
             state.cancel_reason = ""
             state.cancel_event = asyncio.Event()
 
+        # Issue #608: tag the task so resume persistence can skip writing a
+        # resumable snapshot for delegated sub-agents (they share the parent
+        # conversation_id and would otherwise clobber the parent's resume state).
+        state.is_sub_agent = is_sub_agent
+
+        if _on_state_resolved is not None:
+            try:
+                _on_state_resolved(state)
+            except Exception:
+                logger.debug("[ReAct] _on_state_resolved callback failed", exc_info=True)
+
         self._context_manager.set_cancel_event(state.cancel_event)
+        current_abort_scope.set(state.abort_root)
 
         tracer = get_tracer()
         tracer.begin_trace(
@@ -1517,6 +1654,7 @@ class ReasoningEngine:
                 current_model = str(current_info["model"])
         except Exception:
             pass
+        state.current_model = current_model
 
         # ForceToolCall 配置
         im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 2)))
@@ -1717,6 +1855,7 @@ class ReasoningEngine:
                 )
                 if switch_result:
                     current_model, working_messages = switch_result
+                    state.current_model = current_model
                     no_tool_call_count = 0
                     tools_executed_in_task = False
                     _supervisor_intervened = False
@@ -1901,6 +2040,7 @@ class ReasoningEngine:
                     continue
                 elif isinstance(retry_result, tuple):
                     current_model, working_messages = retry_result
+                    state.current_model = current_model
                     await _emit_progress("当前模型不可用，正在切换到备用模型...")
                     no_tool_call_count = 0
                     tools_executed_in_task = False
@@ -3187,6 +3327,155 @@ class ReasoningEngine:
         turn_id: str = "",
         agent_voice: str = "",
     ):
+        """Outer wrapper for the streaming ReAct loop."""
+        captured_state_ref: dict[str, Any] = {"state": None}
+        _scope_attach: dict[str, Any] = {"parent": None, "attached": False}
+        _stream_done_seen = False
+        _stream_error_seen = False
+        _stream_exit_reason = ""
+
+        def _on_state_resolved(st: Any) -> None:
+            captured_state_ref["state"] = st
+            try:
+                _parent = current_abort_scope.get()
+                if (
+                    _parent is not None
+                    and _parent is not st.abort_root
+                    and st.abort_root.parent is None
+                ):
+                    _parent.children.append(st.abort_root)
+                    st.abort_root.parent = _parent
+                    _scope_attach["parent"] = _parent
+                    _scope_attach["attached"] = True
+                    if _parent.event.is_set() and not st.abort_root.event.is_set():
+                        st.abort_root.abort(_parent.reason, _from=_parent.name)
+            except Exception:
+                logger.debug("[ReAct-Stream] sub-agent AbortScope attach failed", exc_info=True)
+
+        try:
+            async for event in self._reason_stream_impl(
+                messages,
+                tools=tools,
+                system_prompt=system_prompt,
+                base_system_prompt=base_system_prompt,
+                task_description=task_description,
+                task_monitor=task_monitor,
+                session_type=session_type,
+                plan_mode=plan_mode,
+                mode=mode,
+                endpoint_override=endpoint_override,
+                endpoint_policy=endpoint_policy,
+                conversation_id=conversation_id,
+                thinking_mode=thinking_mode,
+                thinking_depth=thinking_depth,
+                agent_profile_id=agent_profile_id,
+                session=session,
+                force_tool_retries=force_tool_retries,
+                tool_evidence_required=tool_evidence_required,
+                is_sub_agent=is_sub_agent,
+                request_id=request_id,
+                turn_id=turn_id,
+                agent_voice=agent_voice,
+                _on_state_resolved=_on_state_resolved,
+            ):
+                _event_type = event.get("type") if isinstance(event, dict) else ""
+                if _event_type == "done":
+                    _stream_done_seen = True
+                elif _event_type == "error":
+                    _stream_error_seen = True
+                    _stream_exit_reason = str(event.get("code") or "stream_error")
+                elif _event_type == "task_checkpoint":
+                    _checkpoint_exit = str(event.get("exit_reason") or "").strip()
+                    if _checkpoint_exit:
+                        _stream_exit_reason = _checkpoint_exit
+
+                _st = captured_state_ref.get("state")
+                if _st is not None:
+                    _et = event.get("type")
+                    if _et in ("text_delta", "chain_text"):
+                        _content = event.get("content", "")
+                        if isinstance(_content, str) and _content:
+                            try:
+                                _st.append_partial_text(_content)
+                            except Exception:  # pragma: no cover
+                                logger.debug(
+                                    "[ReAct-Stream] append_partial_text failed",
+                                    exc_info=True,
+                                )
+                    elif _et in ("thinking_delta", "reasoning_delta"):
+                        _content = event.get("content", "")
+                        if isinstance(_content, str) and _content:
+                            try:
+                                _st.append_partial_thinking(_content)
+                            except Exception:  # pragma: no cover
+                                logger.debug(
+                                    "[ReAct-Stream] append_partial_thinking failed",
+                                    exc_info=True,
+                                )
+                yield event
+        finally:
+            st = captured_state_ref.get("state")
+            _exit_reason = _stream_exit_reason or getattr(self, "_last_exit_reason", "") or ""
+            if not _stream_done_seen and _exit_reason in ("", "normal"):
+                _exit_reason = "stream_incomplete"
+            elif _stream_error_seen and _exit_reason in ("", "normal"):
+                _exit_reason = "stream_error"
+            self._maybe_persist_recoverable_exit_working_messages(
+                getattr(self, "_last_working_messages", []),
+                st,
+                getattr(st, "current_model", "")
+                or getattr(getattr(self, "_brain", None), "model", ""),
+                exit_reason=_exit_reason,
+                done_seen=_stream_done_seen,
+                error_seen=_stream_error_seen,
+            )
+            if st is not None and not st.settled_event.is_set():
+                try:
+                    st.mark_settled()
+                except Exception:
+                    logger.debug(
+                        "[ReAct-Stream] mark_settled failed in outer wrapper finally",
+                        exc_info=True,
+                    )
+            if _scope_attach.get("attached"):
+                _parent = _scope_attach.get("parent")
+                if _parent is not None and st is not None:
+                    try:
+                        _parent.remove_child(st.abort_root)
+                    except Exception:
+                        pass
+                    if st.abort_root.parent is _parent:
+                        st.abort_root.parent = None
+
+            self._maybe_clear_resume_state(conversation_id, is_sub_agent, st)
+
+    async def _reason_stream_impl(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        system_prompt: str = "",
+        base_system_prompt: str = "",
+        task_description: str = "",
+        task_monitor: Any = None,
+        session_type: str = "desktop",
+        plan_mode: bool = False,
+        mode: str = "agent",
+        endpoint_override: str | None = None,
+        endpoint_policy: str = "prefer",
+        conversation_id: str | None = None,
+        thinking_mode: str | None = None,
+        thinking_depth: str | None = None,
+        agent_profile_id: str = "default",
+        session: Any = None,
+        force_tool_retries: int | None = None,
+        tool_evidence_required: bool = False,
+        is_sub_agent: bool = False,
+        request_id: str = "",
+        turn_id: str = "",
+        agent_voice: str = "",
+        _on_state_resolved: Any = None,
+    ):
         """
         流式推理循环，为 HTTP API (SSE) 设计。
 
@@ -3251,7 +3540,19 @@ class ReasoningEngine:
             state.cancel_reason = ""
             state.cancel_event = asyncio.Event()
 
+        # Issue #608: tag the task so resume persistence can skip writing a
+        # resumable snapshot for delegated sub-agents (they share the parent
+        # conversation_id and would otherwise clobber the parent's resume state).
+        state.is_sub_agent = is_sub_agent
+
+        if _on_state_resolved is not None:
+            try:
+                _on_state_resolved(state)
+            except Exception:
+                logger.debug("[ReAct-Stream] _on_state_resolved callback failed", exc_info=True)
+
         self._context_manager.set_cancel_event(state.cancel_event)
+        current_abort_scope.set(state.abort_root)
 
         try:
             # === 动态 System Prompt（追加活跃 Plan） ===
@@ -3337,6 +3638,7 @@ class ReasoningEngine:
                     current_model = str(current_info["model"])
             except Exception:
                 pass
+            state.current_model = current_model
 
             # === 与 run() 一致的循环控制变量 ===
             state.original_user_messages = [
@@ -3594,6 +3896,7 @@ class ReasoningEngine:
                     )
                     if switch_result:
                         current_model, working_messages = switch_result
+                        state.current_model = current_model
                         no_tool_call_count = 0
                         tools_executed_in_task = False
                         _supervisor_intervened = False
@@ -3870,6 +4173,7 @@ class ReasoningEngine:
                         continue
                     elif isinstance(retry_result, tuple):
                         current_model, working_messages = retry_result
+                        state.current_model = current_model
                         # PR-G1: 切换模型属于 reasoning restart，前一段 text_delta
                         # 多半是不完整的报错或被截断的回复——必须清前端 buffer，
                         # 否则用户会看到「半截错误信息 + 新模型完整回答」拼成的诡异内容。
@@ -6552,7 +6856,13 @@ class ReasoningEngine:
 
         # Issue #608: persist the (orphan-repaired) working_messages so the
         # next turn resumes completed tool work instead of re-running it.
-        self._maybe_persist_cancelled_working_messages(working_messages, state, current_model)
+        self._maybe_persist_resumable_working_messages(
+            working_messages,
+            state,
+            current_model,
+            exit_reason="user_cancelled",
+            detail=(getattr(state, "cancel_reason", "") if state else ""),
+        )
 
         cancel_reason = (state.cancel_reason if state else "") or "用户请求停止"
         logger.info(
@@ -6588,7 +6898,13 @@ class ReasoningEngine:
 
         # Issue #608: persist the (orphan-repaired) working_messages so the
         # next turn resumes completed tool work instead of re-running it.
-        self._maybe_persist_cancelled_working_messages(working_messages, state, current_model)
+        self._maybe_persist_resumable_working_messages(
+            working_messages,
+            state,
+            current_model,
+            exit_reason="user_cancelled",
+            detail=(getattr(state, "cancel_reason", "") if state else ""),
+        )
 
         cancel_reason = (state.cancel_reason if state else "") or "用户请求停止"
         logger.info(
@@ -8452,17 +8768,20 @@ class ReasoningEngine:
             return False
         return not str(conversation_id).startswith("_run_")
 
-    def _maybe_persist_cancelled_working_messages(
+    def _maybe_persist_resumable_working_messages(
         self,
         working_messages: list[dict],
         state: "TaskState | None",
         current_model: str,
+        *,
+        exit_reason: str,
+        detail: str = "",
     ) -> None:
-        """取消收尾时持久化完整 working_messages，供下一轮续聊恢复（Issue #608）。
+        """Persist complete working_messages for a future continuation.
 
         key 用 ``state.session_id``（在两个 loop 入口处恒等于 conversation_id）。
         仅当含真实工具块时才落盘，避免无意义旁路文件。任何异常都吞掉——持久化
-        失败不应影响取消收尾本身。
+        失败不应影响当前退出路径本身。
         """
         try:
             conversation_id = getattr(state, "session_id", "") if state else ""
@@ -8471,13 +8790,17 @@ class ReasoningEngine:
                 return
             if not working_messages or not has_tool_blocks(working_messages):
                 return
+            synthetic_count = synthesize_tool_results_for_orphans(working_messages)
             written = persist_working_messages(
                 conversation_id,
                 working_messages,
                 base_dir=settings.data_dir,
                 metadata={
+                    "exit_reason": exit_reason or "",
                     "cancel_reason": (getattr(state, "cancel_reason", "") if state else ""),
                     "model": current_model or "",
+                    "detail": (detail or "")[:500],
+                    "synthetic_tool_results": synthetic_count,
                 },
             )
             # Mark on the state object that this turn just wrote a resume
@@ -8491,7 +8814,65 @@ class ReasoningEngine:
                 except Exception:
                     pass
         except Exception as exc:
-            logger.debug("[CancelResume] persist skipped: %s", exc)
+            logger.debug("[ResumeSnapshot] persist skipped: %s", exc)
+
+    def _maybe_persist_cancelled_working_messages(
+        self,
+        working_messages: list[dict],
+        state: "TaskState | None",
+        current_model: str,
+    ) -> None:
+        """Backward-compatible cancel wrapper for older local callers."""
+        self._maybe_persist_resumable_working_messages(
+            working_messages,
+            state,
+            current_model,
+            exit_reason="user_cancelled",
+            detail=(getattr(state, "cancel_reason", "") if state else ""),
+        )
+
+    def _maybe_persist_recoverable_exit_working_messages(
+        self,
+        working_messages: list[dict],
+        state: "TaskState | None",
+        current_model: str,
+        *,
+        exit_reason: str,
+        done_seen: bool,
+        error_seen: bool = False,
+        detail: str = "",
+    ) -> None:
+        """Persist a resume snapshot for non-completed exits.
+
+        Normal completed / ask-user / plan-review turns must keep clearing stale
+        snapshots. Error, missing-done, budget/max-iteration and explicit failed
+        checkpoint exits keep the structured tool context so a later "continue"
+        turn does not rebuild from flattened visible history and redo tools.
+        """
+        try:
+            if state is not None and getattr(state, "_resume_persisted", False):
+                return
+
+            normalized = (exit_reason or "").strip()
+            should_persist = (
+                error_seen
+                or not done_seen
+                or normalized in self._RECOVERABLE_RESUME_EXIT_REASONS
+                or bool(getattr(state, "cancelled", False) if state is not None else False)
+            )
+            if not should_persist:
+                return
+            if not normalized:
+                normalized = "stream_error" if error_seen else "stream_incomplete"
+            self._maybe_persist_resumable_working_messages(
+                working_messages,
+                state,
+                current_model,
+                exit_reason=normalized,
+                detail=detail,
+            )
+        except Exception as exc:
+            logger.debug("[ResumeSnapshot] recoverable-exit persist skipped: %s", exc)
 
     def _maybe_clear_resume_state(
         self,
@@ -8501,14 +8882,14 @@ class ReasoningEngine:
     ) -> None:
         """正常（非取消）退出时清除旁路文件，避免下一轮误加载已完成任务的旧状态。
 
-        取消退出时**不清**——funnel 刚 persist 的文件要留给续聊。在 reason_stream
+        取消退出时**不清**——persist helper 刚写入的文件要留给续聊。在 reason_stream
         impl 的 finally 与 run() wrapper 的 finally 集中调用，覆盖所有 return 分支。
         """
         try:
             if not self._resume_eligible(conversation_id, is_sub_agent):
                 return
             # Preserve a snapshot this turn just persisted for resume. We check
-            # an explicit per-turn flag set by the persist funnel rather than
+            # an explicit per-turn flag set by the persist helper rather than
             # re-inferring ``cancelled`` here — bulletproof against any cancel
             # path that doesn't leave ``cancelled`` True at finally time.
             if state is not None and (
@@ -8775,6 +9156,12 @@ class ReasoningEngine:
         except Exception:
             pass
         return False
+
+
+# Keep source-inspection sentinels pointed at the live loop bodies even though
+# the public entry points are thin wrappers for settle/resume cleanup.
+ReasoningEngine.run.__wrapped__ = ReasoningEngine._run_impl
+ReasoningEngine.reason_stream.__wrapped__ = ReasoningEngine._reason_stream_impl
 
 
 # P11.2b: restore legacy private aliases dropped during P-RC-5 reasoning-engine trim.
