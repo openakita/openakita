@@ -6147,6 +6147,7 @@ export function ChatView({
                 key={`${att.name}-${att.type}-${idx}`}
                 att={att}
                 apiBaseUrl={apiBaseUrl}
+                onImagePreview={handleImagePreview}
                 onRemove={() => setPendingAttachments((prev) => prev.filter((_, i) => i !== idx))}
               />
             ))}
