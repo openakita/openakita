@@ -99,6 +99,36 @@ class TestChatEndpoint:
         assert captured_kwargs["mode"] == "agent"
         assert captured_kwargs["plan_mode"] is False
 
+    async def test_chat_passes_normal_ask_user_reply_to_agent(
+        self, client, mock_agent, monkeypatch
+    ):
+        captured_kwargs = {}
+
+        async def fake_stream(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            yield {"type": "text_delta", "content": "continued"}
+            yield {"type": "done"}
+
+        monkeypatch.setattr(mock_agent, "chat_with_session_stream", fake_stream)
+
+        resp = await client.post(
+            "/api/chat",
+            json={
+                "message": "选择方案 A",
+                "conversation_id": "test-conv-ask-user-reply",
+                "ask_user_reply": {
+                    "kind": "normal",
+                    "message_id": "ask-msg-1",
+                    "answer": "选择方案 A",
+                },
+            },
+        )
+
+        assert resp.status_code == 200
+        ask_user_reply = captured_kwargs["ask_user_reply"]
+        assert ask_user_reply.answer == "选择方案 A"
+        assert ask_user_reply.message_id == "ask-msg-1"
+
     async def test_chat_permission_mode_sets_policy_v2_session_override(
         self, client, app, tmp_path
     ):
@@ -492,9 +522,7 @@ class TestChatControlEndpoints:
         )
         assert resp.status_code == 200
 
-    async def test_cancel_idle_conversation_does_not_leave_pending_cancel(
-        self, client, mock_agent
-    ):
+    async def test_cancel_idle_conversation_does_not_leave_pending_cancel(self, client, mock_agent):
         mock_agent._pending_cancels = {}
         mock_agent.cancel_current_task = MagicMock()
 

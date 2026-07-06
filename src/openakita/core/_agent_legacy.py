@@ -3502,6 +3502,7 @@ class Agent:
         session: Session | None = None,
         mode: str | None = None,
         conversation_id: str | None = None,
+        ask_user_reply: Any = None,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2)
@@ -3545,7 +3546,9 @@ class Agent:
             try:
                 session_ctx = getattr(session, "context", None)
                 active_profile_id = (
-                    getattr(session_ctx, "agent_profile_id", "default") if session_ctx else "default"
+                    getattr(session_ctx, "agent_profile_id", "default")
+                    if session_ctx
+                    else "default"
                 ) or "default"
                 get_records_for_agent = (
                     getattr(session_ctx, "get_sub_agent_records_for_agent", None)
@@ -3620,6 +3623,28 @@ class Agent:
             except Exception:
                 pass
 
+        if ask_user_reply is not None:
+            try:
+                if hasattr(ask_user_reply, "to_prompt_context"):
+                    ask_reply_context = ask_user_reply.to_prompt_context()
+                elif isinstance(ask_user_reply, dict):
+                    ask_reply_context = ask_user_reply
+                else:
+                    ask_reply_context = {
+                        "answer": getattr(ask_user_reply, "answer", ""),
+                        "message_id": getattr(ask_user_reply, "message_id", ""),
+                    }
+                ask_reply_answer = str(ask_reply_context.get("answer") or "").strip()
+                if ask_reply_answer:
+                    if session_context is None:
+                        session_context = {}
+                    session_context["ask_user_reply"] = {
+                        "answer": ask_reply_answer,
+                        "message_id": str(ask_reply_context.get("message_id") or "").strip(),
+                    }
+            except Exception as exc:
+                logger.debug("[AskUserReply] failed to prepare prompt context: %s", exc)
+
         _effective_mode = mode or getattr(self.tool_executor, "_current_mode", "agent")
         _model_id = model_display or getattr(self.brain, "model", "")
         _has_image_atts = getattr(self, "_has_pending_image_attachments", False)
@@ -3663,6 +3688,15 @@ class Agent:
             )
         except Exception:
             _contradiction_cache_key = ""
+        try:
+            _ask_user_reply_cache_key = json.dumps(
+                (session_context or {}).get("ask_user_reply", None),
+                sort_keys=True,
+                ensure_ascii=False,
+                default=str,
+            )
+        except Exception:
+            _ask_user_reply_cache_key = ""
         _resolved_voice = self._resolve_agent_voice()
         _identity_dir = self._prepare_prompt_identity_dir()
         _cache_key = (
@@ -3684,6 +3718,7 @@ class Agent:
             _working_facts_cache_key,
             bool((session_context or {}).get("evidence_recommended", False)),
             _contradiction_cache_key,
+            _ask_user_reply_cache_key,
             _resolved_voice,
             str(_identity_dir),
         )
@@ -5131,8 +5166,7 @@ class Agent:
                 )
                 if len(session_messages) != before_filter_count:
                     logger.info(
-                        "[Session:%s] Agent profile history scoped: %d -> %d "
-                        "(profile=%s)",
+                        "[Session:%s] Agent profile history scoped: %d -> %d (profile=%s)",
                         session_id,
                         before_filter_count,
                         len(session_messages),
@@ -6111,6 +6145,7 @@ class Agent:
         endpoint_policy: str | None = None,
         thinking_mode: str | None = None,
         thinking_depth: str | None = None,
+        ask_user_reply: Any = None,
     ) -> str:
         """
         使用外部 Session 历史进行对话（用于 IM / CLI 通道）。
@@ -6302,9 +6337,12 @@ class Agent:
             _fast_usage = None
             _fast_handled = False
             _turn_has_media = bool(getattr(self, "_current_turn_has_media_attachments", False))
-            _allow_lightweight_fast_reply = _allows_lightweight_fast_reply(
-                endpoint_override=endpoint_override,
-                turn_has_media=_turn_has_media,
+            _allow_lightweight_fast_reply = (
+                _allows_lightweight_fast_reply(
+                    endpoint_override=endpoint_override,
+                    turn_has_media=_turn_has_media,
+                )
+                and ask_user_reply is None
             )
 
             _risk_intent = _classify_risk_intent(_intent, message) if _intent else None
@@ -6476,6 +6514,7 @@ class Agent:
                     endpoint_policy=endpoint_policy,
                     intent_result=_intent,
                     mode=mode,
+                    ask_user_reply=ask_user_reply,
                 )
 
             # === flush 残留的 IM 进度消息，确保思维链先于回答到达 ===
@@ -6547,6 +6586,7 @@ class Agent:
         thinking_depth: str | None = None,
         request_id: str = "",
         turn_id: str = "",
+        ask_user_reply: Any = None,
     ):
         """
         流式版 chat_with_session，yield SSE 事件字典。
@@ -6756,6 +6796,7 @@ class Agent:
                 session=session,
                 mode=mode,
                 conversation_id=conversation_id,
+                ask_user_reply=ask_user_reply,
             )
 
             # 注入 TaskDefinition
@@ -6904,9 +6945,12 @@ class Agent:
             _request_id = request_id or f"{conversation_id}:stream"
             _turn_id = turn_id or f"{conversation_id}:{int(time.time() * 1000)}"
             _turn_has_media = bool(getattr(self, "_current_turn_has_media_attachments", False))
-            _allow_lightweight_fast_reply = _allows_lightweight_fast_reply(
-                endpoint_override=endpoint_override,
-                turn_has_media=_turn_has_media,
+            _allow_lightweight_fast_reply = (
+                _allows_lightweight_fast_reply(
+                    endpoint_override=endpoint_override,
+                    turn_has_media=_turn_has_media,
+                )
+                and ask_user_reply is None
             )
 
             # 决定 fast-path 是否启用思考链：
@@ -7534,9 +7578,7 @@ class Agent:
             getattr(session_ctx, "agent_profile_id", "default") if session_ctx else "default"
         ) or "default"
         get_records_for_agent = (
-            getattr(session_ctx, "get_sub_agent_records_for_agent", None)
-            if session_ctx
-            else None
+            getattr(session_ctx, "get_sub_agent_records_for_agent", None) if session_ctx else None
         )
         if callable(get_records_for_agent):
             records = get_records_for_agent(active_profile_id)
@@ -8122,6 +8164,7 @@ class Agent:
         endpoint_policy: str = "prefer",
         intent_result: Any = None,
         mode: str = "agent",
+        ask_user_reply: Any = None,
     ) -> str:
         """
         使用指定的消息上下文进行对话（委托给 ReasoningEngine）
@@ -8179,6 +8222,7 @@ class Agent:
                 session=session or self._current_session,
                 mode=mode,
                 conversation_id=conversation_id,
+                ask_user_reply=ask_user_reply,
             )
         else:
             system_prompt = self._context.system

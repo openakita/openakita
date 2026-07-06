@@ -1,11 +1,12 @@
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from openakita.agent.core import Agent
-from openakita.core.agent_state import AgentState
 from openakita.core._context_manager_legacy import _CancelledError as _CtxCancelledError
+from openakita.core.agent_state import AgentState
 from openakita.core.errors import UserCancelledError
 
 
@@ -114,6 +115,7 @@ async def test_chat_with_session_returns_stop_ack_when_prepare_is_cancelled() ->
         message="继续推进",
         session_messages=[],
         session_id="session-1",
+        ask_user_reply=SimpleNamespace(answer="继续推进", message_id="ask-1"),
     )
 
     assert result == "✅ 好的，已停止当前任务。"
@@ -134,6 +136,7 @@ async def test_chat_with_session_stream_returns_stop_ack_when_prepare_is_cancell
             message="继续推进",
             session_messages=[],
             session_id="session-1",
+            ask_user_reply=SimpleNamespace(answer="继续推进", message_id="ask-1"),
         )
     ]
 
@@ -142,3 +145,55 @@ async def test_chat_with_session_stream_returns_stop_ack_when_prepare_is_cancell
         {"type": "text_delta", "content": "✅ 好的，已停止当前任务。"},
         {"type": "done"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_build_system_prompt_compiled_includes_ask_user_reply_context() -> None:
+    agent = Agent.__new__(Agent)
+    captured = {}
+
+    class _PromptAssembler:
+        async def build_system_prompt_compiled(self, *_args, **kwargs):
+            captured.update(kwargs)
+            return "system prompt"
+
+    agent.prompt_assembler = _PromptAssembler()
+    agent.brain = SimpleNamespace(
+        model="mock-model",
+        get_current_model_info=lambda conversation_id=None: {"model": "mock-model"},
+    )
+    agent.tool_executor = SimpleNamespace(_current_mode="agent")
+    agent._current_intent = None
+    agent._has_pending_image_attachments = False
+    agent._is_sub_agent_call = False
+    agent._system_prompt_cache = {}
+    agent._system_prompt_cache_dirty = True
+    agent._custom_prompt_suffix = ""
+    agent._org_context = None
+    agent._get_raw_context_window = lambda: 8192
+    agent._resolve_model_lookup_id = lambda session=None, conversation_id=None: (
+        conversation_id or ""
+    )
+    agent._resolve_prompt_strategy = lambda *_args, **_kwargs: SimpleNamespace(
+        profile="default",
+        skip_catalogs=False,
+        prompt_mode="default",
+        memory_scope="session",
+        catalog_scope=[],
+        include_project_guidelines=True,
+    )
+    agent._resolve_agent_voice = lambda: "default"
+    agent._prepare_prompt_identity_dir = lambda: Path("identity")
+    agent._build_runtime_env_prompt_section = lambda: ""
+    agent._build_multi_agent_prompt_section = lambda: ""
+
+    prompt = await agent._build_system_prompt_compiled(
+        task_description="继续",
+        ask_user_reply=SimpleNamespace(answer="选择方案 A", message_id="ask-msg-1"),
+    )
+
+    assert prompt == "system prompt"
+    assert captured["session_context"]["ask_user_reply"] == {
+        "answer": "选择方案 A",
+        "message_id": "ask-msg-1",
+    }
