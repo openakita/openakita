@@ -1,4 +1,4 @@
-﻿"""Tests for runtime/state_graph/guards/unbacked_action."""
+"""Tests for runtime/state_graph/guards/unbacked_action."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ def _legacy():
         _extract_unbacked_verbs,
         _guard_unbacked_action_claim,
     )
+
     return _extract_unbacked_verbs, _guard_unbacked_action_claim
 
 
@@ -48,6 +49,11 @@ def test_extract_passes_when_recap_window() -> None:
     assert "\u4fdd\u5b58" not in extract_unbacked_verbs(text, set())
 
 
+def test_extract_ignores_negated_quoted_action_phrase() -> None:
+    text = '报告如实说明了"无需删除，路径不存在"，而非声称"已删除"。'
+    assert extract_unbacked_verbs(text, set()) == []
+
+
 def test_extract_flags_claim_without_backing_tool() -> None:
     text = "\u5df2\u4fdd\u5b58\u4e86"  # "already saved"
     unbacked = extract_unbacked_verbs(text, set())
@@ -75,6 +81,11 @@ def test_guard_appends_banner_when_no_tools_at_all() -> None:
 
 def test_guard_returns_text_unchanged_when_recap_only() -> None:
     text = "[17:30] \u4e4b\u524d\u5df2\u4fdd\u5b58\u4e86"
+    assert guard_unbacked_action_claim(text, []) == text
+
+
+def test_guard_returns_text_unchanged_for_negated_action_mention() -> None:
+    text = '报告如实说明了"无需删除，路径不存在"，而非声称"已删除"。'
     assert guard_unbacked_action_claim(text, []) == text
 
 
@@ -120,7 +131,11 @@ def test_guard_silent_when_update_backed_by_profile_tool() -> None:
         ("", [], None),
         ("hello", [], None),
         ("\u5df2\u4fdd\u5b58\u4e86", [], None),
-        ("\u5df2\u5220\u9664\u4e86", ["get_tool_info"], [{"tool_name": "get_tool_info", "is_error": False}]),
+        (
+            "\u5df2\u5220\u9664\u4e86",
+            ["get_tool_info"],
+            [{"tool_name": "get_tool_info", "is_error": False}],
+        ),
         ("\u4e4b\u524d\u5df2\u4fdd\u5b58", [], None),
     ],
 )
