@@ -601,6 +601,9 @@ from openakita.runtime.state_graph.guards.conversation_state import (
 from openakita.runtime.state_graph.guards.conversation_state import (
     looks_like_waiting_for_user_response as _looks_like_waiting_for_user_response,
 )
+from openakita.runtime.state_graph.guards.recap_context import (  # noqa: E402
+    RECAP_NEAR_RE as _RECAP_NEAR_RE,
+)
 
 # Extracted to runtime/state_graph/guards/recap_context.py (P-RC-5 P5.4);
 # re-exported here under the legacy private name for backward compat.
@@ -678,6 +681,12 @@ _INLINE_TOOL_CALL_RE = re.compile(
     r"\b((?:" + "|".join(re.escape(p) for p in _TEXT_TOOL_CALL_PATTERNS) + r")[a-z0-9_]+)\s*\(",
 )
 
+_TEXTUAL_TOOL_EXECUTION_CLAIM_RE = re.compile(
+    r"(?:调用|执行)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]{0,600}\)"
+    r"\s*(?:\.{3}|…|，|,|\s)*(?:完成|成功|已完成)",
+    re.IGNORECASE,
+)
+
 
 def _detect_text_toolcall_block(text: str) -> list[str]:
     """返回以纯文本伪调用形式出现的工具名（去重、排序）。
@@ -724,6 +733,43 @@ def _guard_text_toolcall_block(
     if intent == "REPLY":
         return []
     return _detect_text_toolcall_block(text or "")
+
+
+def _looks_like_no_tool_completion_claim(
+    text: str,
+    action_claim_re: re.Pattern[str],
+) -> bool:
+    """Detect final-answer text that claims an external action already ran."""
+    if not text:
+        return False
+
+    def _is_recap_match(match: re.Match[str]) -> bool:
+        half = 48
+        start = max(0, match.start() - half)
+        end = min(len(text), match.end() + half)
+        return bool(_RECAP_NEAR_RE.search(text[start:end]))
+
+    def _is_negated_mention(match: re.Match[str]) -> bool:
+        before = text[max(0, match.start() - 18) : match.start()]
+        return bool(
+            re.search(
+                r"(?:并?不(?:是|代表|应|该|要|允许|能)?|不能|不应|不要|"
+                r"没有|未|并非|而非|非(?:声称|表示)?|避免(?:说|写|使用)?)"
+                r"[`\"'“”‘’\s：:，,。；;、-]{0,8}$",
+                before,
+            )
+        )
+
+    patterns = (
+        action_claim_re,
+        _get_action_done_re(),
+        _TEXTUAL_TOOL_EXECUTION_CLAIM_RE,
+    )
+    return any(
+        not _is_recap_match(match) and not _is_negated_mention(match)
+        for pattern in patterns
+        for match in pattern.finditer(text)
+    )
 
 
 class ReasoningEngine:
@@ -7961,11 +8007,19 @@ class ReasoningEngine:
                 max_no_tool_retries,
             )
 
+        _ACTION_CLAIM_RE = _get_action_claim_re()
+        _txt = (stripped_text or "").strip()
+        _has_no_tool_completion_claim = _looks_like_no_tool_completion_claim(
+            _txt,
+            _ACTION_CLAIM_RE,
+        )
+
         if (
             intent == "REPLY"
             and stripped_text
             and len(stripped_text.strip()) > 10
             and not tool_evidence_required
+            and not _has_no_tool_completion_claim
         ):
             logger.info(
                 "[IntentTag] REPLY intent with substantial text, "
@@ -7978,8 +8032,6 @@ class ReasoningEngine:
         # look like an action-claim hallucination (e.g. "已帮你保存/删除/发送…"
         # without any actual tool calls). This keeps tools available without
         # forcing them into pure explanation or creative-writing turns.
-        _ACTION_CLAIM_RE = _get_action_claim_re()
-        _txt = (stripped_text or "").strip()
 
         # P1 修复：拦截「伪 tool_call 文本块」。LLM 偶尔会把工具调用写成
         # ```tool_call\norg_accept_deliverable(...)\n``` 这样的 Markdown 文本，
@@ -8024,10 +8076,67 @@ class ReasoningEngine:
                 max_no_tool_retries,
             )
 
+        has_todo_pending = self._has_active_todo_pending(conversation_id)
+        should_force_no_tool_action = intent == "ACTION" or (
+            _has_no_tool_completion_claim
+            and (max_no_tool_retries > 0 or tool_evidence_required or has_todo_pending)
+        )
+        if should_force_no_tool_action:
+            effective_max_no_tool_retries = max_no_tool_retries
+            if has_todo_pending and effective_max_no_tool_retries < 1:
+                effective_max_no_tool_retries = 1
+
+            no_tool_call_count += 1
+            if no_tool_call_count <= effective_max_no_tool_retries:
+                reason = (
+                    "ACTION intent declared"
+                    if intent == "ACTION"
+                    else "action-completion claim emitted"
+                )
+                logger.warning(
+                    "[IntentTag] %s but no tool calls — forcing retry (%s/%s)",
+                    reason,
+                    no_tool_call_count,
+                    effective_max_no_tool_retries,
+                )
+                if stripped_text:
+                    working_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": stripped_text}],
+                            "reasoning_content": decision.thinking_content or None,
+                        }
+                    )
+                retry_msg = (
+                    "[系统] ⚠️ 你刚才声称已经执行/完成了外部操作，"
+                    "但本轮没有真正发起任何工具调用（tool_calls=0）。"
+                    "文字里的“调用 run_shell(... )...完成”或“已删除/已验证”不会被执行。\n"
+                    "请立即发起真实 tool_calls 完成用户请求；如果不需要执行工具，"
+                    "请明确说明这是历史回顾或建议，不要使用完成态措辞。"
+                )
+                working_messages.append({"role": "user", "content": retry_msg})
+                return (
+                    working_messages,
+                    no_tool_call_count,
+                    verify_incomplete_count,
+                    no_confirmation_text_count,
+                    effective_max_no_tool_retries,
+                )
+
+            logger.warning(
+                "[IntentTag] No-tool action claim retry budget exhausted — "
+                "returning non-deceptive failure instead of original text"
+            )
+            return (
+                "⚠️ 本轮没有检测到任何真实工具调用，因此我不能确认外部操作已经完成。"
+                "上一次回复中的完成态描述没有工具凭证支持，未作为执行结果采信。"
+                "请重新发送指令，或允许我调用对应工具后再继续。"
+            )
+
         if (
             intent is None
             and _txt
-            and not _ACTION_CLAIM_RE.search(_txt)
+            and not _has_no_tool_completion_claim
             and not tool_evidence_required
         ):
             logger.info(
@@ -8042,68 +8151,29 @@ class ReasoningEngine:
         # 旧逻辑：4 种触发条件（evidence_required / ACTION / REPLY 短文本 / 无 intent）
         #         全都走 ForceToolCall 重试，导致大量 token 浪费 + text_replace 抖动 +
         #         OrgRuntime 误判 task_failed。
-        # 新逻辑：只对"真幻觉"（LLM 显式声明 [ACTION] 意图但 tool_calls=0）做重试。
-        #         其他三种条件全部降级为 log-only，把 LLM 输出原样返回，由阶段 0 的
-        #         disclaimer 路径 + 阶段 3 的 _check_source_tag_consistency() 后置检测
-        #         给出柔性提示。
+        # 新逻辑：对显式 [ACTION] 或动作完成声明（含文本化工具执行轨迹）做重试。
+        #         其他条件仍降级为 log-only，由阶段 0 disclaimer + 阶段 3
+        #         _check_source_tag_consistency() 后置检测给出柔性提示。
         # ----------------------------------------------------------------
 
-        # 真幻觉：ACTION 意图被显式声明 + tool_calls=0 → 重试
-        if intent == "ACTION":
-            no_tool_call_count += 1
-            if no_tool_call_count <= max_no_tool_retries:
-                logger.warning(
-                    "[IntentTag] ACTION intent declared but no tool calls — "
-                    "true hallucination, forcing retry "
-                    f"({no_tool_call_count}/{max_no_tool_retries})"
-                )
-                if stripped_text:
-                    working_messages.append(
-                        {
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": stripped_text}],
-                            "reasoning_content": decision.thinking_content or None,
-                        }
-                    )
-                retry_msg = (
-                    "[系统] ⚠️ 你声明了 [ACTION] 意图但没有调用任何工具。"
-                    "请立即调用所需的工具来完成用户请求，不要只描述你会做什么。"
-                )
-                working_messages.append({"role": "user", "content": retry_msg})
-                return (
-                    working_messages,
-                    no_tool_call_count,
-                    verify_incomplete_count,
-                    no_confirmation_text_count,
-                    max_no_tool_retries,
-                )
-            # ACTION 重试用尽 → fall-through 到下方 disclaimer 路径
-            logger.warning(
-                "[IntentTag] ACTION retry budget exhausted, falling through to disclaimer path"
+        # No hard-action claim remained. Other no-tool cases stay on the soft
+        # source-disclaimer path to avoid reintroducing organization deadlocks.
+        if tool_evidence_required:
+            logger.info(
+                "[ToolEvidence] No tool calls but evidence recommended — "
+                "softly noted, not retrying (relying on 阶段 3 source-tag check)"
+            )
+        elif intent == "REPLY":
+            logger.info(
+                f"[IntentTag] REPLY intent with short text "
+                f"({len(stripped_text or '')} chars), "
+                f"tool_calls=0 — accepting as-is"
             )
         else:
-            # 三种"非真幻觉"情况：log-only 软提示，不重试，让原文返回
-            if tool_evidence_required:
-                logger.info(
-                    "[ToolEvidence] No tool calls but evidence recommended — "
-                    "softly noted, not retrying (relying on 阶段 3 source-tag check)"
-                )
-            elif intent == "REPLY":
-                logger.info(
-                    f"[IntentTag] REPLY intent with short text "
-                    f"({len(stripped_text or '')} chars), "
-                    f"tool_calls=0 — accepting as-is"
-                )
-            elif intent is None and _ACTION_CLAIM_RE.search(_txt or ""):
-                logger.info(
-                    "[IntentTag] No intent + action-claim text + tool_calls=0 — "
-                    "accepting (post-check will warn if claims are unbacked)"
-                )
-            else:
-                logger.info(
-                    f"[IntentTag] Edge case (intent={intent or 'NONE'}, "
-                    f"text_len={len(stripped_text or '')}) — accepting as-is"
-                )
+            logger.info(
+                f"[IntentTag] Edge case (intent={intent or 'NONE'}, "
+                f"text_len={len(stripped_text or '')}) — accepting as-is"
+            )
 
         # 追问次数用尽。
         # P0-2 阶段 0（修正版）：不再硬替换 LLM 文本、不再设 _last_exit_reason="tool_evidence_missing"

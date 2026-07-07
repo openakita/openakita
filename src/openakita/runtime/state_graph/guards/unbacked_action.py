@@ -79,6 +79,18 @@ VERB_TO_EFFECT_ACTIONS: dict[str, tuple[str, ...]] = {
 _TOOL_LIKE_IDENTIFIER = r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b"
 
 
+def _is_negated_action_mention(text: str, start: int) -> bool:
+    before = text[max(0, start - 18) : start]
+    return bool(
+        re.search(
+            r"(?:并?不(?:是|代表|应|该|要|允许|能)?|不能|不应|不要|"
+            r"没有|未|并非|而非|非(?:声称|表示)?|避免(?:说|写|使用)?)"
+            r"[`\"'“”‘’\s：:，,。；;、-]{0,8}$",
+            before,
+        )
+    )
+
+
 def action_claim_re() -> re.Pattern[str]:
     """Compiled regex that detects Chinese action-claim phrases.
 
@@ -129,6 +141,8 @@ def claimed_tool_names(text: str) -> list[str]:
     names: list[str] = []
     for pat in patterns:
         for match in pat.finditer(text):
+            if _is_negated_action_mention(text, match.start()):
+                continue
             name = str(match.group(1) or "").lower()
             if name and name not in names:
                 names.append(name)
@@ -143,6 +157,7 @@ def extract_unbacked_verbs(
 ) -> list[str]:
     """Return action verbs whose claim is not backed by any successful tool call."""
     prefix_pat = re.compile(r"(?:已[经]?|成功|顺利|我已经|我已)(?:帮你?|为你|给你)?")
+    successful_tools_lower = {t.lower() for t in successful_tools}
     effect_actions = set(successful_actions or successful_tool_effect_actions(tool_results))
     unbacked: list[str] = []
 
@@ -155,9 +170,17 @@ def extract_unbacked_verbs(
 
     for verb, actions in VERB_TO_EFFECT_ACTIONS.items():
         verb_pat = re.compile(rf"{prefix_pat.pattern}{re.escape(verb)}")
-        if not verb_pat.search(text):
+        match = verb_pat.search(text)
+        if not match:
             continue
-        if set(actions) & effect_actions:
+        if _is_negated_action_mention(text, match.start()):
+            continue
+        fragments = VERB_TO_TOOL_FRAGMENTS.get(verb, ())
+        backed_by_action = bool(set(actions) & effect_actions)
+        backed_by_tool_name = any(
+            any(frag in t for frag in fragments) for t in successful_tools_lower
+        )
+        if backed_by_action or backed_by_tool_name:
             continue
         if is_recap_context(text, verb):
             continue
@@ -176,9 +199,18 @@ def extract_unbacked_verbs(
                 rf"{re.escape(tool_name)}",
                 re.IGNORECASE,
             )
-            if not (tool_claim_pat.search(text) or reverse_claim_pat.search(text)):
+            tool_claim_match = tool_claim_pat.search(text)
+            reverse_claim_match = reverse_claim_pat.search(text)
+            if not (tool_claim_match or reverse_claim_match):
                 continue
-            if any(any(frag in t for frag in fragments) for t in successful_tools):
+            if (
+                tool_claim_match and _is_negated_action_mention(text, tool_claim_match.start())
+            ) or (
+                reverse_claim_match
+                and _is_negated_action_mention(text, reverse_claim_match.start())
+            ):
+                continue
+            if any(any(frag in t for frag in fragments) for t in successful_tools_lower):
                 continue
             if is_recap_context(text, tool_name):
                 continue
@@ -188,9 +220,12 @@ def extract_unbacked_verbs(
             if verb in unbacked:
                 continue
             verb_pat = re.compile(rf"{prefix_pat.pattern}{re.escape(verb)}")
-            if not verb_pat.search(text):
+            match = verb_pat.search(text)
+            if not match:
                 continue
-            if any(any(frag in t for frag in fragments) for t in successful_tools):
+            if _is_negated_action_mention(text, match.start()):
+                continue
+            if any(any(frag in t for frag in fragments) for t in successful_tools_lower):
                 continue
             if is_recap_context(text, verb):
                 continue
@@ -231,6 +266,8 @@ def guard_unbacked_action_claim(
             successful_actions=set(),
             tool_results=tool_results,
         )
+        if not unbacked:
+            return text
         verbs_str = "/".join(unbacked[:3]) if unbacked else "外部动作"
         memory_hint = (
             "当前没有检测到长期记忆写入凭证，所以请勿据此认定已写入长期记忆。"
@@ -263,5 +300,3 @@ def guard_unbacked_action_claim(
         "如需重试请明确告知。"
     )
     return text.rstrip() + warning
-
-
