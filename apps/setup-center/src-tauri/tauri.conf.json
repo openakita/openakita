@@ -20,6 +20,7 @@
       "resources/openakita-server/",
       "resources/bootstrap/"
     ],
+    "createUpdaterArtifacts": true,
     "macOS": {
       "entitlements": "Entitlements.plist",
       "signingIdentity": "-",

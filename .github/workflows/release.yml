@@ -215,23 +215,23 @@ jobs:
             target_platform: "win-x64"
           # Linux Ubuntu 22.04
           - platform: ubuntu-22.04
-            bundles: "deb"
+            bundles: "deb,appimage"
             args: ""
             suffix: "ubuntu22-amd64"
             target_platform: "linux-x64"
           - platform: ubuntu-22.04-arm
-            bundles: "deb"
+            bundles: "deb,appimage"
             args: ""
             suffix: "ubuntu22-arm64"
             target_platform: "linux-arm64"
           # Linux Ubuntu 24.04
           - platform: ubuntu-24.04
-            bundles: "deb"
+            bundles: "deb,appimage"
             args: ""
             suffix: "ubuntu24-amd64"
             target_platform: "linux-x64"
           - platform: ubuntu-24.04-arm
-            bundles: "deb"
+            bundles: "deb,appimage"
             args: ""
             suffix: "ubuntu24-arm64"
             target_platform: "linux-arm64"

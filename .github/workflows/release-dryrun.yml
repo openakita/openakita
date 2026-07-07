@@ -73,10 +73,10 @@ jobs:
           # 与 mac-x64 / linux-arm64，发版前必须切回 full 才能信任。
           FULL='{"include":[
             {"platform":"windows-latest","bundles":"nsis","suffix":"windows-x64","target_platform":"win-x64"},
-            {"platform":"ubuntu-22.04","bundles":"deb","suffix":"ubuntu22-amd64","target_platform":"linux-x64"},
-            {"platform":"ubuntu-22.04-arm","bundles":"deb","suffix":"ubuntu22-arm64","target_platform":"linux-arm64"},
-            {"platform":"ubuntu-24.04","bundles":"deb","suffix":"ubuntu24-amd64","target_platform":"linux-x64"},
-            {"platform":"ubuntu-24.04-arm","bundles":"deb","suffix":"ubuntu24-arm64","target_platform":"linux-arm64"},
+            {"platform":"ubuntu-22.04","bundles":"deb,appimage","suffix":"ubuntu22-amd64","target_platform":"linux-x64"},
+            {"platform":"ubuntu-22.04-arm","bundles":"deb,appimage","suffix":"ubuntu22-arm64","target_platform":"linux-arm64"},
+            {"platform":"ubuntu-24.04","bundles":"deb,appimage","suffix":"ubuntu24-amd64","target_platform":"linux-x64"},
+            {"platform":"ubuntu-24.04-arm","bundles":"deb,appimage","suffix":"ubuntu24-arm64","target_platform":"linux-arm64"},
             {"platform":"macos-latest","bundles":"app","args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin","suffix":"macos-arm64","target_platform":"mac-arm64"},
             {"platform":"macos-15-intel","bundles":"app","args":"--target x86_64-apple-darwin","rust_target":"x86_64-apple-darwin","suffix":"macos-x64","target_platform":"mac-x64"}
           ]}'
@@ -86,7 +86,7 @@ jobs:
           # full rationale.
           SMOKE='{"include":[
             {"platform":"windows-latest","bundles":"nsis","suffix":"windows-x64","target_platform":"win-x64"},
-            {"platform":"ubuntu-24.04","bundles":"deb","suffix":"ubuntu24-amd64","target_platform":"linux-x64"},
+            {"platform":"ubuntu-24.04","bundles":"deb,appimage","suffix":"ubuntu24-amd64","target_platform":"linux-x64"},
             {"platform":"macos-latest","bundles":"app","args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin","suffix":"macos-arm64","target_platform":"mac-arm64"}
           ]}'
 
