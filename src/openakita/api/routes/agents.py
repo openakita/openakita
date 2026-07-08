@@ -1,11 +1,13 @@
 """Agent profile API routes."""
 
 import asyncio
+import hashlib
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from openakita.agents.identity_files import PROFILE_IDENTITY_FILENAMES
@@ -16,6 +18,10 @@ router = APIRouter()
 
 _deleting_bot_ids: set[str] = set()
 _deleting_lock = asyncio.Lock()
+
+AGENT_ICON_MAX_SIZE = 4 * 1024 * 1024
+AGENT_ICON_MAX_FIELD_LENGTH = 1000
+AGENT_ICON_ALLOWED_LABEL = "BMP, GIF, JPG, PNG, WebP"
 
 # Valid IM bot types
 VALID_BOT_TYPES = frozenset(
@@ -90,6 +96,20 @@ def _invalidate_profile_runtime(request: Request, profile_id: str, reason: str) 
     _invalidate_profile_agents(request, profile_id)
 
 
+def _detect_agent_icon_extension(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return ".gif"
+    if data.startswith(b"BM"):
+        return ".bmp"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    return None
+
+
 # ─── Pydantic models ─────────────────────────────────────────────────────
 
 
@@ -118,7 +138,7 @@ class ProfileCreateRequest(BaseModel):
     id: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_-]+$")
     name: str = Field(..., min_length=1, max_length=100)
     description: str = Field("", max_length=500)
-    icon: str = Field("🤖", max_length=4)
+    icon: str = Field("🤖", max_length=AGENT_ICON_MAX_FIELD_LENGTH)
     color: str = Field("#6b7280", max_length=20)
     skills: list[str] = Field(default_factory=list)
     skills_mode: str = Field("all")
@@ -146,7 +166,7 @@ class ProfileCreateRequest(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
     description: str | None = Field(None, max_length=500)
-    icon: str | None = Field(None, max_length=4)
+    icon: str | None = Field(None, max_length=AGENT_ICON_MAX_FIELD_LENGTH)
     color: str | None = Field(None, max_length=20)
     skills: list[str] | None = None
     skills_mode: str | None = None
@@ -434,6 +454,36 @@ async def delete_category(category_id: str):
 
 
 # ─── Agent profile routes ───────────────────────────────────────────────
+
+
+@router.post("/api/agents/avatars/upload")
+@router.post("/api/agents/icons/upload")
+async def upload_agent_icon(file: UploadFile = File(...)):  # noqa: B008
+    """Upload a custom Agent icon into the backend data directory."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="File is empty")
+    if len(data) > AGENT_ICON_MAX_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large (max {AGENT_ICON_MAX_SIZE // 1024 // 1024}MB)",
+        )
+
+    ext = _detect_agent_icon_extension(data)
+    if ext is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Supported formats: {AGENT_ICON_ALLOWED_LABEL}",
+        )
+
+    from openakita.config import settings
+
+    avatar_dir = settings.data_dir / "avatars"
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(data).hexdigest()[:16]
+    filename = f"agent_{digest}_{int(time.time() * 1000)}{ext}"
+    (avatar_dir / filename).write_bytes(data)
+    return {"url": f"/api/avatars/{filename}", "filename": filename, "size": len(data)}
 
 
 @router.get("/api/agents/profiles")

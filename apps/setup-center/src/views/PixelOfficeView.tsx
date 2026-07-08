@@ -5,6 +5,7 @@ import { PixelOfficeEventLog, type EventLogEntry } from '../components/pixel-off
 import { PixelOfficeAgentList, type AgentListItem } from '../components/pixel-office/PixelOfficeAgentList';
 import { PixelOfficeThemeSelector } from '../components/pixel-office/PixelOfficeThemeSelector';
 import { EventBus } from '../components/pixel-office/EventBus';
+import { AgentIcon } from '../components/AgentIcon';
 import type { OrgData } from '../components/pixel-office/OfficeScene';
 import type { AgentSpriteConfig } from '../components/pixel-office/AgentSprite';
 import { safeFetch } from '../providers';
@@ -345,8 +346,8 @@ export function PixelOfficeView({
             borderRadius: 12, padding: 14, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
             color: 'var(--text, #e0e0e0)', fontSize: 13,
           }}>
-            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>
-              {agentDetail.config.icon && <span style={{ marginRight: 4 }}>{agentDetail.config.icon}</span>}
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <AgentIcon icon={agentDetail.config.icon} size={18} apiBaseUrl={apiBaseUrl} />
               {agentDetail.config.name}
             </div>
             <div style={{ opacity: 0.7, marginBottom: 4 }}>ID: {agentDetail.nodeId}</div>

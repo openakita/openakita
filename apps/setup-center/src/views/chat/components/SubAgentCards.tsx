@@ -1,20 +1,10 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { SubAgentTask } from "../utils/chatTypes";
-import { SVG_PATHS } from "../utils/chatHelpers";
+import { AgentIcon } from "../../../components/AgentIcon";
 
-export function RenderIcon({ icon, size = 14 }: { icon: string; size?: number }) {
-  if (icon.startsWith("svg:")) {
-    const d = SVG_PATHS[icon.slice(4)];
-    if (!d) return <span>{icon}</span>;
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-        <path d={d} />
-      </svg>
-    );
-  }
-  return <>{icon}</>;
+export function RenderIcon({ icon, size = 14, apiBaseUrl }: { icon: string; size?: number; apiBaseUrl?: string }) {
+  return <AgentIcon icon={icon} size={size} apiBaseUrl={apiBaseUrl} />;
 }
 
 const FADE_DELAY_MS = 30_000;
@@ -64,7 +54,7 @@ function buildForest(tasks: SubAgentTask[]): TaskNode[] {
   return roots;
 }
 
-export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
+export function SubAgentCards({ tasks, apiBaseUrl }: { tasks: SubAgentTask[]; apiBaseUrl?: string }) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(0);
@@ -251,7 +241,7 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
                 {collapsed ? "▸" : "▾"}
               </button>
             )}
-            <span className="sacIcon"><RenderIcon icon={task.icon} size={16} /></span>
+            <span className="sacIcon"><RenderIcon icon={task.icon} size={16} apiBaseUrl={apiBaseUrl} /></span>
             <span className="sacName">
               {task.name}
               {childCount > 0 && (

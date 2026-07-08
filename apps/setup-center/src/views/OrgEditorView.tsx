@@ -61,6 +61,7 @@ import { OrgInboxSidebar } from "../components/OrgInboxSidebar";
 import { WorkbenchNodePicker, type WorkbenchTemplate } from "../components/WorkbenchNodePicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { OrgAvatar, AVATAR_PRESETS } from "../components/OrgAvatars";
+import { AgentIcon } from "../components/AgentIcon";
 import { OrgChatPanel } from "../components/OrgChatPanel";
 import { TemplatePickerDialog } from "../components/TemplatePickerDialog";
 import type { OrgWire } from "../api/orgs";
@@ -3895,7 +3896,7 @@ export function OrgEditorView({
                             if (!ap) return t("org.editor.selectAgentPlaceholder");
                             return (
                               <>
-                                {ap.icon ? <span style={{ fontSize: 16, flexShrink: 0 }}>{ap.icon}</span> : <IconBot size={16} style={{ flexShrink: 0 }} />}
+                                <AgentIcon icon={ap.icon} size={16} apiBaseUrl={apiBaseUrl} fallback={<IconBot size={16} style={{ flexShrink: 0 }} />} />
                                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{ap.name}</span>
                               </>
                             );
@@ -3951,7 +3952,7 @@ export function OrgEditorView({
                                     onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover, rgba(0,0,0,0.04))")}
                                     onMouseLeave={(e) => (e.currentTarget.style.background = selectedNode.agent_profile_id === ap.id ? "rgba(14,165,233,0.08)" : "")}
                                   >
-                                    {ap.icon ? <span style={{ fontSize: 16, flexShrink: 0 }}>{ap.icon}</span> : <IconBot size={16} style={{ flexShrink: 0 }} />}
+                                    <AgentIcon icon={ap.icon} size={16} apiBaseUrl={apiBaseUrl} fallback={<IconBot size={16} style={{ flexShrink: 0 }} />} />
                                     <div style={{ minWidth: 0, flex: 1 }}>
                                       <div style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ap.name}</div>
                                       {ap.description && <div style={{ fontSize: 10, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ap.description}</div>}

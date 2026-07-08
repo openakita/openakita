@@ -20,6 +20,7 @@ import { QQBotQRModal } from "../components/QQBotQRModal";
 import { WecomQRModal } from "../components/WecomQRModal";
 import { WechatQRModal } from "../components/WechatQRModal";
 import { PluginOnboardModal } from "../components/PluginOnboardModal";
+import { AgentIcon } from "../components/AgentIcon";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -1521,7 +1522,7 @@ export function BotConfigTab({ apiBase, onRequestRestart, venvDir, apiBaseUrl }:
               </div>
               <div className="flex items-center gap-2.5 mb-1.5">
                 <span className="inline-flex items-center justify-center shrink-0 text-2xl leading-none">
-                  {agentProfile?.icon ? agentProfile.icon : <IconBot size={22} />}
+                  <AgentIcon icon={agentProfile?.icon} size={22} apiBaseUrl={apiBaseUrl ?? apiBase} fallback={<IconBot size={22} />} />
                 </span>
                 <div className="min-w-0">
                   <div className="font-bold text-sm truncate" title={bot.name || bot.id}>{bot.name || bot.id}</div>
@@ -1613,7 +1614,12 @@ export function BotConfigTab({ apiBase, onRequestRestart, venvDir, apiBaseUrl }:
                 <SelectContent position="popper" side="bottom" sideOffset={4}>
                   <SelectItem value="default">{t("im.botAgentDefault")}</SelectItem>
                 {profiles.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.icon} {p.name} ({p.id})</SelectItem>
+                    <SelectItem key={p.id} value={p.id}>
+                      <span className="inline-flex items-center gap-2">
+                        <AgentIcon icon={p.icon} size={16} apiBaseUrl={apiBaseUrl ?? apiBase} />
+                        <span>{p.name} ({p.id})</span>
+                      </span>
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -2355,7 +2361,12 @@ function BotCreationWizard({
                   <SelectContent position="popper" side="bottom" sideOffset={4}>
                     <SelectItem value="default">{t("im.botAgentDefault")}</SelectItem>
                     {profiles.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.icon} {p.name} ({p.id})</SelectItem>
+                      <SelectItem key={p.id} value={p.id}>
+                        <span className="inline-flex items-center gap-2">
+                          <AgentIcon icon={p.icon} size={16} apiBaseUrl={apiBaseUrl ?? apiBase} />
+                          <span>{p.name} ({p.id})</span>
+                        </span>
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

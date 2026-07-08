@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { setLanguage } from "../i18n";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProviderIcon } from "../components/ProviderIcon";
+import { AgentIcon, agentIconText } from "../components/AgentIcon";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -80,7 +81,7 @@ import { useSecurityPolicy } from "./chat/hooks/useSecurityPolicy";
 import {
   AttachmentPreview,
   FloatingPlanBar, PlanApprovalPanel,
-  SlashCommandPanel, RenderIcon, SubAgentCards,
+  SlashCommandPanel, SubAgentCards,
   SecurityConfirmModal, ContextMenuInner, LightboxOverlay,
   MessageList,
 } from "./chat/components";
@@ -2883,7 +2884,7 @@ export function ChatView({
       if (!trimmed) {
         const lines = agentProfiles.map((p) => {
           const marker = p.id === selectedAgent ? " ⬅️ 当前" : "";
-          return `- \`${p.id}\` — ${p.icon || "🤖"} ${p.name}: ${p.description}${marker}`;
+          return `- \`${p.id}\` — ${agentIconText(p.icon)} ${p.name}: ${p.description}${marker}`;
         });
         const body = lines.length
           ? `**可用 Agent**（共 ${agentProfiles.length} 个）：\n${lines.join("\n")}\n\n用法：\`/agent <agent_id>\``
@@ -2906,7 +2907,7 @@ export function ChatView({
         return;
       }
       if (candidates.length > 1) {
-        const lines = candidates.map((p) => `- \`${p.id}\` — ${p.icon || "🤖"} ${p.name}`);
+        const lines = candidates.map((p) => `- \`${p.id}\` — ${agentIconText(p.icon)} ${p.name}`);
         setMessages((prev) => [...prev, {
           id: genId(), role: "system",
           content: `🔍 匹配到 ${candidates.length} 个 Agent，请用更精确的 id：\n${lines.join("\n")}`,
@@ -2918,7 +2919,7 @@ export function ChatView({
       if (target.id === selectedAgent) {
         setMessages((prev) => [...prev, {
           id: genId(), role: "system",
-          content: `ℹ️ 当前已是 ${target.icon || "🤖"} **${target.name}**`,
+          content: `ℹ️ 当前已是 ${agentIconText(target.icon)} **${target.name}**`,
           timestamp: Date.now(),
         }]);
         return;
@@ -2926,7 +2927,7 @@ export function ChatView({
       setSelectedAgent(target.id);
       setMessages((prev) => [...prev, {
         id: genId(), role: "system",
-        content: `✅ 已切换到 ${target.icon || "🤖"} **${target.name}** (\`${target.id}\`)`,
+        content: `✅ 已切换到 ${agentIconText(target.icon)} **${target.name}** (\`${target.id}\`)`,
         timestamp: Date.now(),
       }]);
     }},
@@ -2937,7 +2938,7 @@ export function ChatView({
       }
       const lines = agentProfiles.map((p) => {
         const marker = p.id === selectedAgent ? " ⬅️ 当前" : "";
-        return `- \`${p.id}\` — ${p.icon || "🤖"} ${p.name}: ${p.description}${marker}`;
+        return `- \`${p.id}\` — ${agentIconText(p.icon)} ${p.name}: ${p.description}${marker}`;
       });
       setMessages((prev) => [...prev, {
         id: genId(), role: "system",
@@ -6428,7 +6429,9 @@ export function ChatView({
         onContextMenu={(e) => { e.preventDefault(); (e.nativeEvent as any)._handled = true; setCtxMenu({ x: e.clientX, y: e.clientY, convId: conv.id }); }}
       >
         <div className="convItemIcon">
-          <span title={agentProfile?.name || ""} style={{ fontSize: 16, display: "inline-flex", alignItems: "center" }}>{agentProfile?.icon || <IconMessageCircle size={16} />}</span>
+          <span title={agentProfile?.name || ""} style={{ display: "inline-flex", alignItems: "center" }}>
+            <AgentIcon icon={agentProfile?.icon} size={16} apiBaseUrl={apiBaseUrl} fallback={<IconMessageCircle size={16} />} />
+          </span>
         </div>
         <div className="convItemBody">
           {renamingId === conv.id ? (
@@ -6570,7 +6573,7 @@ export function ChatView({
                       onMouseLeave={() => setOrbitTip(null)}
                     >
                       <span className="agentOrbitIcon">
-                        {ap?.icon || <IconMessageCircle size={16} />}
+                        <AgentIcon icon={ap?.icon} size={16} apiBaseUrl={apiBaseUrl} fallback={<IconMessageCircle size={16} />} />
                       </span>
                       {isRunning && <span className="agentOrbitPulse" />}
                     </button>
@@ -6591,7 +6594,9 @@ export function ChatView({
                     className={`subAgentChip ${sub.status === "delegating" ? "subAgentActive" : sub.status === "error" ? "subAgentError" : "subAgentDone"}`}
                     title={sp?.name || sub.agentId}
                   >
-                    <span className="subAgentChipIcon">{sp?.icon ? <RenderIcon icon={sp.icon} size={14} /> : <IconBot size={14} />}</span>
+                    <span className="subAgentChipIcon">
+                      <AgentIcon icon={sp?.icon} size={14} apiBaseUrl={apiBaseUrl} fallback={<IconBot size={14} />} />
+                    </span>
                     <span className="subAgentChipName">{sp?.name || sub.agentId}</span>
                     {sub.status === "delegating" && <span className="subAgentSpinner" />}
                     {sub.status === "done" && <span className="subAgentCheck">✓</span>}
@@ -6785,7 +6790,7 @@ export function ChatView({
         {/* Sub-agent progress cards */}
         {displaySubAgentTasks.length > 0 && (
           <div style={{ flexShrink: 0, padding: "0 20px 8px" }}>
-            <SubAgentCards tasks={displaySubAgentTasks} />
+            <SubAgentCards tasks={displaySubAgentTasks} apiBaseUrl={apiBaseUrl} />
           </div>
         )}
 
@@ -7019,7 +7024,9 @@ export function ChatView({
                     onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(37,99,235,0.08)"; }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = i === atAgentIdx ? "rgba(37,99,235,0.08)" : "transparent"; }}
                   >
-                    <span style={{ fontSize: 16, display: "inline-flex", alignItems: "center" }}>{a.icon || <IconBot size={16} />}</span>
+                    <span style={{ display: "inline-flex", alignItems: "center" }}>
+                      <AgentIcon icon={a.icon} size={16} apiBaseUrl={apiBaseUrl} fallback={<IconBot size={16} />} />
+                    </span>
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 13 }}>{a.name}</div>
                       {a.description && <div style={{ fontSize: 11, opacity: 0.5 }}>{a.description}</div>}
@@ -7187,7 +7194,12 @@ export function ChatView({
                     <span style={{ fontSize: 13 }}>
                       {(() => {
                         const ap = agentProfiles.find(p => p.id === selectedAgent);
-                        return ap ? `${ap.icon} ${ap.name}` : t("chat.agentDefault");
+                        return ap ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <AgentIcon icon={ap.icon} size={14} apiBaseUrl={apiBaseUrl} />
+                            <span>{ap.name}</span>
+                          </span>
+                        ) : t("chat.agentDefault");
                       })()}
                     </span>
                     <IconChevronDown size={12} />
@@ -7210,7 +7222,7 @@ export function ChatView({
                           className={`chatModelMenuItem ${selectedAgent === ap.id ? "chatModelMenuItemActive" : ""}`}
                           onClick={() => { setSelectedAgent(ap.id); setAgentMenuOpen(false); }}
                         >
-                          <span style={{ marginRight: 6 }}>{ap.icon}</span>
+                          <AgentIcon icon={ap.icon} size={14} apiBaseUrl={apiBaseUrl} style={{ marginRight: 6 }} />
                           <span style={{ fontWeight: 600 }}>{ap.name}</span>
                           <span style={{ fontSize: 11, opacity: 0.5, marginLeft: 6 }}>{ap.description}</span>
                         </div>

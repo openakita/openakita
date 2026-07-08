@@ -9,6 +9,7 @@ import { safeFetch } from "../providers";
 import { encodePathSegment } from "../platform/apiUrl";
 import { IS_WEB, onWsEvent } from "../platform";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { AgentIcon } from "../components/AgentIcon";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -872,7 +873,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                 {agentProfiles.map(profile => (
                   <SelectItem key={profile.id} value={profile.id}>
                     <span className="flex items-center gap-1.5">
-                      {profile.icon && <span>{profile.icon}</span>}
+                      <AgentIcon icon={profile.icon} size={16} apiBaseUrl={API_BASE} />
                       <span>{profile.name || profile.id}</span>
                     </span>
                   </SelectItem>
