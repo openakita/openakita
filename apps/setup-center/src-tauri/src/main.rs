@@ -5431,6 +5431,7 @@ fn main() {
             http_proxy_request,
             backend_fetch,
             backend_fetch_cancel,
+            get_local_file_info,
             read_file_base64,
             download_file,
             copy_file_to_downloads,
@@ -8947,15 +8948,94 @@ async fn backend_fetch(
     }))
 }
 
-/// Read a file from disk and return its contents as a base64 data-URL.
-/// Used by the frontend to handle Tauri file-drop events (which provide paths, not File objects).
+const READ_FILE_BASE64_MAX_BYTES: u64 = 50 * 1024 * 1024;
+const READ_FILE_BASE64_CHUNK_SIZE: usize = 256 * 1024;
+
+#[derive(Serialize)]
+struct LocalFileInfo {
+    size: u64,
+    is_file: bool,
+    is_directory: bool,
+}
+
+#[derive(Serialize, Clone)]
+struct LocalFileReadProgress {
+    id: String,
+    loaded: u64,
+    total: u64,
+}
+
+/// Return local file metadata without reading the file contents.
+/// Used by drag/drop handling to reject or route large files before they can
+/// exhaust WebView memory.
 #[tauri::command]
-async fn read_file_base64(path: String) -> Result<String, String> {
+fn get_local_file_info(path: String) -> Result<LocalFileInfo, String> {
     let p = std::path::Path::new(&path);
-    if !p.exists() {
-        return Err(format!("File not found: {}", path));
+    let meta = std::fs::metadata(p).map_err(|e| format!("Failed to stat {}: {}", path, e))?;
+    Ok(LocalFileInfo {
+        size: meta.len(),
+        is_file: meta.is_file(),
+        is_directory: meta.is_dir(),
+    })
+}
+
+/// Read a file from disk and return its contents as a base64 data-URL.
+/// Used by the frontend to handle small Tauri media file-drop events.
+#[tauri::command]
+async fn read_file_base64(
+    app: tauri::AppHandle,
+    path: String,
+    progress_id: Option<String>,
+) -> Result<String, String> {
+    let p = std::path::Path::new(&path);
+    let meta = std::fs::metadata(p).map_err(|e| format!("Failed to stat {}: {}", path, e))?;
+    if !meta.is_file() {
+        return Err(format!("Not a file: {}", path));
     }
-    let data = std::fs::read(p).map_err(|e| format!("Failed to read {}: {}", path, e))?;
+    if meta.len() > READ_FILE_BASE64_MAX_BYTES {
+        return Err(format!(
+            "File too large for base64 preview: {:.1} MB (max 50 MB)",
+            meta.len() as f64 / 1024.0 / 1024.0
+        ));
+    }
+    let total = meta.len();
+    let mut file = std::fs::File::open(p).map_err(|e| format!("Failed to open {}: {}", path, e))?;
+    let mut data = Vec::with_capacity(total as usize);
+    let mut loaded = 0_u64;
+    let mut buf = vec![0_u8; READ_FILE_BASE64_CHUNK_SIZE];
+
+    if let Some(id) = progress_id.as_ref() {
+        let _ = app.emit(
+            "local_file_read_progress",
+            LocalFileReadProgress {
+                id: id.clone(),
+                loaded,
+                total,
+            },
+        );
+    }
+
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("Failed to read {}: {}", path, e))?;
+        if n == 0 {
+            break;
+        }
+        data.extend_from_slice(&buf[..n]);
+        loaded += n as u64;
+        if let Some(id) = progress_id.as_ref() {
+            let _ = app.emit(
+                "local_file_read_progress",
+                LocalFileReadProgress {
+                    id: id.clone(),
+                    loaded,
+                    total,
+                },
+            );
+            tokio::task::yield_now().await;
+        }
+    }
     let mime = match p
         .extension()
         .and_then(|e| e.to_str())

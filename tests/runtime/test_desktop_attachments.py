@@ -52,13 +52,8 @@ def test_local_upload_re_matches_local_urls_only() -> None:
 def test_maybe_inline_local_image_skips_remote_urls() -> None:
     """Non-local URLs short-circuit to None without IO."""
     assert attachments.maybe_inline_local_image("", "image/png") is None
-    assert attachments.maybe_inline_local_image(
-        "https://example.com/foo.png", "image/png"
-    ) is None
-    assert (
-        attachments.maybe_inline_local_image("data:image/png;base64,AAAA", "image/png")
-        is None
-    )
+    assert attachments.maybe_inline_local_image("https://example.com/foo.png", "image/png") is None
+    assert attachments.maybe_inline_local_image("data:image/png;base64,AAAA", "image/png") is None
 
 
 def test_maybe_inline_local_image_returns_data_url(tmp_path) -> None:
@@ -71,9 +66,7 @@ def test_maybe_inline_local_image_returns_data_url(tmp_path) -> None:
         "openakita.api.routes.upload.get_upload_dir",
         return_value=upload_dir,
     ):
-        out = attachments.maybe_inline_local_image(
-            "/api/uploads/tiny.png", "image/png"
-        )
+        out = attachments.maybe_inline_local_image("/api/uploads/tiny.png", "image/png")
     assert out is not None
     assert out.startswith("data:image/png;base64,")
     body = out.split(",", 1)[1]
@@ -90,9 +83,7 @@ def test_maybe_inline_local_image_skips_oversized(tmp_path) -> None:
         "openakita.api.routes.upload.get_upload_dir",
         return_value=upload_dir,
     ):
-        out = attachments.maybe_inline_local_image(
-            "/api/uploads/big.png", "image/png"
-        )
+        out = attachments.maybe_inline_local_image("/api/uploads/big.png", "image/png")
     assert out is None
 
 
@@ -122,6 +113,24 @@ def test_format_desktop_attachment_reference_audio_default() -> None:
     )
     assert "音频" in text  # audio label in Chinese
     assert "memo.mp3" in text
+
+
+def test_format_desktop_attachment_reference_local_path_without_url() -> None:
+    """A desktop drop can reference a large local file without an upload URL."""
+    text = attachments.format_desktop_attachment_reference(
+        att_type="file",
+        att_name="archive.zip",
+        att_mime="application/zip",
+        att_url="",
+        att_local_path="D:/tmp/archive.zip",
+        att_size=3_371_549_327,
+    )
+
+    assert "archive.zip" in text
+    assert "D:/tmp/archive.zip" in text
+    assert "URL: 无" in text
+    assert "3371549327 bytes" in text
+    assert "直接使用文件/音频处理工具打开该本地路径" in text
 
 
 def test_save_data_uri_attachment_rejects_non_data_uri() -> None:
@@ -181,4 +190,5 @@ def test_module_exports_are_stable() -> None:
         "save_data_uri_attachment",
     }
     from openakita.runtime.desktop import __all__ as pkg_all
+
     assert set(pkg_all) == expected

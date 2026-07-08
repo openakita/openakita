@@ -26,6 +26,15 @@ function resolvePreviewUrls(att: ChatAttachment, apiBaseUrl?: string): { display
   return { displayUrl: "", downloadUrl: "" };
 }
 
+function formatAttachmentSize(bytes: number | null | undefined): string {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n >= 1024 * 1024 * 1024) return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${Math.round(n)} B`;
+}
+
 export function AttachmentPreview({
   att,
   onRemove,
@@ -37,7 +46,11 @@ export function AttachmentPreview({
   apiBaseUrl?: string;
   onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
 }) {
-  const { displayUrl: previewUrl, downloadUrl } = att.type === "image"
+  const isUploading = att.uploadStatus === "uploading";
+  const rawProgress = Number(att.uploadProgress);
+  const hasProgress = Number.isFinite(rawProgress);
+  const progressValue = hasProgress ? Math.max(0, Math.min(100, Math.round(rawProgress * 100))) : undefined;
+  const { displayUrl: previewUrl, downloadUrl } = att.type === "image" && !isUploading
     ? resolvePreviewUrls(att, apiBaseUrl)
     : { displayUrl: "", downloadUrl: "" };
   if (att.type === "image" && previewUrl) {
@@ -74,11 +87,11 @@ export function AttachmentPreview({
     );
   }
   const icon = att.type === "voice" ? <IconMic size={14} /> : att.type === "video" ? <IconPlay size={14} /> : att.type === "image" ? <IconImage size={14} /> : <IconPaperclip size={14} />;
-  const sizeStr = att.size ? `${(att.size / 1024).toFixed(1)} KB` : "";
-  const statusText = att.uploadStatus === "uploading" ? "上传中" : att.uploadStatus === "failed" ? "上传失败" : "";
+  const sizeStr = formatAttachmentSize(att.size);
+  const statusText = isUploading ? "处理中" : att.uploadStatus === "failed" ? "处理失败" : "";
   const statusColor = att.uploadStatus === "failed" ? "var(--danger)" : "var(--muted)";
   return (
-    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 28px 6px 10px", borderRadius: 10, border: "1px solid var(--line)", fontSize: 12 }}>
+    <div style={{ position: "relative", display: "inline-flex", flexDirection: "column", gap: 4, padding: "6px 28px 6px 10px", borderRadius: 10, border: "1px solid var(--line)", fontSize: 12, minWidth: isUploading ? 180 : undefined }}>
       {onRemove && (
         <button
           onClick={(e) => { e.stopPropagation(); onRemove(); }}
@@ -93,10 +106,20 @@ export function AttachmentPreview({
           <IconX size={11} />
         </button>
       )}
-      <span style={{ display: "inline-flex", alignItems: "center" }}>{icon}</span>
-      <span style={{ fontWeight: 600 }}>{att.name}</span>
-      {sizeStr && <span style={{ opacity: 0.5 }}>{sizeStr}</span>}
-      {statusText && <span style={{ color: statusColor, fontSize: 11 }}>{statusText}</span>}
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}>{icon}</span>
+        <span style={{ fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{att.name}</span>
+        {sizeStr && <span style={{ opacity: 0.5, flexShrink: 0 }}>{sizeStr}</span>}
+        {statusText && <span style={{ color: statusColor, fontSize: 11, flexShrink: 0 }}>{statusText}</span>}
+      </div>
+      {isUploading && (
+        <progress
+          aria-label="附件处理进度"
+          max={100}
+          value={progressValue}
+          style={{ width: "100%", height: 4, display: "block", accentColor: "var(--brand)" }}
+        />
+      )}
     </div>
   );
 }

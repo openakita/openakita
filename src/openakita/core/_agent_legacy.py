@@ -4118,11 +4118,14 @@ class Agent:
                 att_name = getattr(att, "name", None) or "file"
                 att_url = getattr(att, "url", None) or ""
                 att_mime = getattr(att, "mime_type", None) or att_type
+                att_local_path = getattr(att, "local_path", None) or ""
                 self.memory_manager.record_attachment(
                     filename=att_name,
                     mime_type=att_mime,
+                    local_path=att_local_path,
                     url=att_url,
                     direction="inbound",
+                    file_size=getattr(att, "size", 0) or 0,
                 )
 
     @staticmethod
@@ -5630,7 +5633,7 @@ class Agent:
                         _degraded_notices.append(
                             f"[用户发送了视频 {att_name}，当前模型不支持视频输入]"
                         )
-                elif att_url:
+                elif att_url or att_local_path:
                     content_blocks.append(
                         {
                             "type": "text",

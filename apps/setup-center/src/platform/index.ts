@@ -150,11 +150,56 @@ export async function openFileWithDefault(path: string): Promise<void> {
 }
 
 /** Read a local file as a base64 data-URL. Only available in Tauri. */
-export async function readFileBase64(path: string): Promise<string> {
+export async function readFileBase64(
+  path: string,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<string> {
   if (!IS_TAURI)
     throw new Error("readFileBase64 is only available in Tauri");
   const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
-  return tauriInvoke<string>("read_file_base64", { path });
+  if (!onProgress) {
+    return tauriInvoke<string>("read_file_base64", { path });
+  }
+
+  const progressId = `file-read-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const { listen: tauriListen } = await import("@tauri-apps/api/event");
+  const unlisten = await tauriListen<{
+    id: string;
+    loaded: number;
+    total: number;
+  }>("local_file_read_progress", (event) => {
+    const payload = event.payload;
+    if (payload?.id !== progressId) return;
+    onProgress(payload.loaded, payload.total);
+  });
+  try {
+    return await tauriInvoke<string>("read_file_base64", { path, progressId });
+  } finally {
+    unlisten();
+  }
+}
+
+export type LocalFileInfo = {
+  size: number;
+  isFile: boolean;
+  isDirectory: boolean;
+};
+
+/** Read local file metadata without loading the file contents. Tauri only. */
+export async function getLocalFileInfo(path: string): Promise<LocalFileInfo> {
+  if (!IS_TAURI)
+    throw new Error("getLocalFileInfo is only available in Tauri");
+  const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
+  const info = await tauriInvoke<{
+    size: number;
+    is_file: boolean;
+    is_directory: boolean;
+  }>("get_local_file_info", { path });
+  return {
+    size: info.size,
+    isFile: info.is_file,
+    isDirectory: info.is_directory,
+  };
 }
 
 /** Write text content to a local file. Only available in Tauri. */

@@ -15,7 +15,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { toast } from "sonner";
 import { setThemePref } from "../theme";
 import type { Theme } from "../theme";
-import { downloadFile, showInFolder, readFileBase64, onDragDrop, IS_TAURI, IS_WEB, IS_MOBILE_BROWSER, onWsEvent, logger } from "../platform";
+import { downloadFile, showInFolder, readFileBase64, getLocalFileInfo, onDragDrop, IS_TAURI, IS_WEB, IS_MOBILE_BROWSER, onWsEvent, logger } from "../platform";
 import { safeFetch } from "../providers";
 import type {
   ChatMessage,
@@ -865,6 +865,23 @@ type HistoryPageState = {
   hasMoreBefore: boolean;
   loadingOlder: boolean;
 };
+
+const DESKTOP_DRAG_FILE_MAX_SIZE = 50 * 1024 * 1024;
+const DESKTOP_DRAG_VIDEO_MAX_SIZE = 7 * 1024 * 1024;
+
+function formatAttachmentSize(bytes: number | null | undefined): string {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n >= 1024 * 1024 * 1024) return `${(n / 1024 / 1024 / 1024).toFixed(2)}GB`;
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)}KB`;
+  return `${Math.round(n)}B`;
+}
+
+function isAttachmentStillPreparing(att: ChatAttachment): boolean {
+  if (att.uploadStatus === "uploading") return true;
+  return !att.url && !att.localPath;
+}
 
 // ─── 主组件 ───
 
@@ -3264,16 +3281,14 @@ export function ChatView({
     // When omitted we fall back to the composer's pending attachments.
     const attachmentsToSend = attachmentsOverride ?? pendingAttachments;
     if (!text && attachmentsToSend.length === 0 && !isResumeTransport) return;
-    const pendingUploads = attachmentsToSend.filter((a) =>
-      a.type !== "image" && a.type !== "video" && (!a.url || a.uploadStatus === "uploading")
-    );
+    const pendingUploads = attachmentsToSend.filter(isAttachmentStillPreparing);
     if (pendingUploads.length > 0) {
-      notifyError(t("chat.uploadStillRunning", "附件还在上传，请稍等一下"));
+      notifyError(t("chat.uploadStillRunning", "附件还在处理，请稍等一下"));
       return;
     }
     const failedUploads = attachmentsToSend.filter((a) => a.uploadStatus === "failed");
     if (failedUploads.length > 0) {
-      notifyError(t("chat.uploadFailedRetry", "有附件上传失败，请重新选择或稍后重试"));
+      notifyError(t("chat.uploadFailedRetry", "有附件处理失败，请重新选择或稍后重试"));
       return;
     }
     if (orgCommandPendingRef.current) return;
@@ -3334,7 +3349,7 @@ export function ChatView({
       id: genId(),
       role: "user",
       content: displayContent || text,
-      attachments: attachmentsToSend.length > 0 ? attachmentsToSend.map(({ _uploadId, ...rest }) => rest) : undefined,
+      attachments: attachmentsToSend.length > 0 ? attachmentsToSend.map(({ _uploadId, uploadProgress, ...rest }) => rest) : undefined,
       timestamp: Date.now(),
     };
 
@@ -5720,15 +5735,13 @@ export function ChatView({
     // Mirror sendMessage's upload guards: only fully-uploaded attachments may
     // enter the queue, otherwise the drain would reject them and drop the
     // message. Keeping them in the composer lets the user retry/wait.
-    const pendingUploads = attachments.filter((a) =>
-      a.type !== "image" && a.type !== "video" && (!a.url || a.uploadStatus === "uploading")
-    );
+    const pendingUploads = attachments.filter(isAttachmentStillPreparing);
     if (pendingUploads.length > 0) {
-      notifyError(t("chat.uploadStillRunning", "附件还在上传，请稍等一下"));
+      notifyError(t("chat.uploadStillRunning", "附件还在处理，请稍等一下"));
       return;
     }
     if (attachments.some((a) => a.uploadStatus === "failed")) {
-      notifyError(t("chat.uploadFailedRetry", "有附件上传失败，请重新选择或稍后重试"));
+      notifyError(t("chat.uploadFailedRetry", "有附件处理失败，请重新选择或稍后重试"));
       return;
     }
     setMessageQueue(prev => [...prev, {
@@ -5736,7 +5749,7 @@ export function ChatView({
       text,
       timestamp: Date.now(),
       convId: activeConvId,
-      attachments: attachments.length > 0 ? attachments.map(({ _uploadId, ...rest }) => rest) : undefined,
+      attachments: attachments.length > 0 ? attachments.map(({ _uploadId, uploadProgress, ...rest }) => rest) : undefined,
       mode: chatMode,
     }]);
     setInputValue("");
@@ -5899,26 +5912,50 @@ export function ChatView({
         name: file.name,
         size: file.size,
         mimeType: file.type,
-        uploadStatus: file.type.startsWith("image/") || file.type.startsWith("video/") ? "uploaded" : "uploading",
+        uploadStatus: "uploading",
+        uploadProgress: 0,
         _uploadId: uploadId,
       };
       if (att.type === "video" && file.size > 7 * 1024 * 1024) {
-        notifyError(`视频文件过大 (${(file.size / 1024 / 1024).toFixed(1)}MB)，桌面端最大支持 7MB（base64 编码后需 < 10MB）`);
+        notifyError(`视频文件过大 (${formatAttachmentSize(file.size)})，请压缩或截短后再添加。`);
         continue;
       }
       if (att.type === "image" || att.type === "video") {
+        setPendingAttachments((prev) => [...prev, att]);
         const reader = new FileReader();
+        reader.onprogress = (event) => {
+          if (!event.lengthComputable || event.total <= 0) return;
+          const progress = Math.max(0, Math.min(0.98, event.loaded / event.total));
+          setPendingAttachments((prev) => prev.map((a) =>
+            a._uploadId === uploadId ? { ...a, uploadProgress: progress } : a
+          ));
+        };
         reader.onload = () => {
-          att.previewUrl = att.type === "image" ? reader.result as string : undefined;
-          att.url = reader.result as string;
-          setPendingAttachments((prev) => [...prev, att]);
+          const dataUrl = reader.result as string;
+          setPendingAttachments((prev) => prev.map((a) =>
+            a._uploadId === uploadId
+              ? {
+                ...a,
+                previewUrl: a.type === "image" ? dataUrl : undefined,
+                url: dataUrl,
+                uploadStatus: "uploaded",
+                uploadProgress: undefined,
+                uploadError: undefined,
+              }
+              : a
+          ));
         };
         reader.onerror = () => {
           notifyError(`文件读取失败: ${file.name}`);
+          setPendingAttachments((prev) =>
+            prev.map((a) => a._uploadId === uploadId
+              ? { ...a, uploadStatus: "failed", uploadProgress: undefined, uploadError: "文件读取失败" }
+              : a)
+          );
         };
         reader.readAsDataURL(file);
       } else {
-        setPendingAttachments((prev) => [...prev, att]);
+        setPendingAttachments((prev) => [...prev, { ...att, uploadProgress: undefined }]);
         uploadFile(file, file.name)
           .then((uploaded) => {
             setPendingAttachments((prev) =>
@@ -5970,16 +6007,47 @@ export function ChatView({
         e.preventDefault();
         const file = item.getAsFile();
         if (!file) continue;
+        const uploadId = genId();
+        const name = `粘贴图片-${Date.now()}.png`;
+        setPendingAttachments((prev) => [...prev, {
+          type: "image",
+          name,
+          size: file.size,
+          mimeType: file.type,
+          uploadStatus: "uploading",
+          uploadProgress: 0,
+          _uploadId: uploadId,
+        }]);
         const reader = new FileReader();
+        reader.onprogress = (event) => {
+          if (!event.lengthComputable || event.total <= 0) return;
+          const progress = Math.max(0, Math.min(0.98, event.loaded / event.total));
+          setPendingAttachments((prev) => prev.map((a) =>
+            a._uploadId === uploadId ? { ...a, uploadProgress: progress } : a
+          ));
+        };
         reader.onload = () => {
-          setPendingAttachments((prev) => [...prev, {
-            type: "image",
-            name: `粘贴图片-${Date.now()}.png`,
-            previewUrl: reader.result as string,
-            url: reader.result as string,
-            size: file.size,
-            mimeType: file.type,
-          }]);
+          const dataUrl = reader.result as string;
+          setPendingAttachments((prev) => prev.map((a) =>
+            a._uploadId === uploadId
+              ? {
+                ...a,
+                previewUrl: dataUrl,
+                url: dataUrl,
+                uploadStatus: "uploaded",
+                uploadProgress: undefined,
+                uploadError: undefined,
+              }
+              : a
+          ));
+        };
+        reader.onerror = () => {
+          notifyError(`文件读取失败: ${name}`);
+          setPendingAttachments((prev) => prev.map((a) =>
+            a._uploadId === uploadId
+              ? { ...a, uploadStatus: "failed", uploadProgress: undefined, uploadError: "文件读取失败" }
+              : a
+          ));
         };
         reader.readAsDataURL(file);
       }
@@ -6002,109 +6070,109 @@ export function ChatView({
       aac: "audio/aac", flac: "audio/flac", ogg: "audio/ogg", opus: "audio/opus",
       pdf: "application/pdf", txt: "text/plain", md: "text/plain",
       json: "application/json", csv: "text/csv",
+      zip: "application/zip", rar: "application/vnd.rar", "7z": "application/x-7z-compressed",
+      tar: "application/x-tar", gz: "application/gzip",
     };
 
-    const FILE_MAX_SIZE = 50 * 1024 * 1024;
+    const imageExts = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
+    const videoExts = new Set(["mp4", "webm", "avi", "mov", "mkv"]);
+    const audioExts = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus", "weba", "wma", "amr"]);
 
-    const dataUrlToBlob = (dataUrl: string, mimeType: string): Blob | null => {
+    const handleDroppedPath = async (filePath: string) => {
+      const name = filePath.split(/[\\/]/).pop() || "file";
+      const ext = (name.split(".").pop() || "").toLowerCase();
+      const isImage = imageExts.has(ext);
+      const isVideo = videoExts.has(ext);
+      const isAudio = audioExts.has(ext);
+      const isPdf = ext === "pdf";
+      const mimeType = mimeMap[ext] || "application/octet-stream";
+
+      let info: { size: number; isFile: boolean; isDirectory: boolean };
       try {
-        const commaIdx = dataUrl.indexOf(",");
-        const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
-        const bin = atob(b64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        return new Blob([bytes], { type: mimeType });
-      } catch {
-        return null;
+        info = await getLocalFileInfo(filePath);
+      } catch (err) {
+        if (!cancelled) notifyError(`无法读取文件信息: ${name}`);
+        logger.error("Chat", "DragDrop getLocalFileInfo failed", { name, error: String(err) });
+        return;
       }
+      if (cancelled) return;
+      if (!info.isFile) {
+        notifyError(info.isDirectory ? `暂不支持拖拽文件夹: ${name}` : `不是可上传的文件: ${name}`);
+        return;
+      }
+
+      if (isImage || isVideo) {
+        if (info.size > DESKTOP_DRAG_FILE_MAX_SIZE) {
+          notifyError(`${isImage ? "图片" : "视频"}文件过大 (${formatAttachmentSize(info.size)})，请压缩后再添加。`);
+          return;
+        }
+        if (isVideo && info.size > DESKTOP_DRAG_VIDEO_MAX_SIZE) {
+          notifyError(`视频文件过大 (${formatAttachmentSize(info.size)})，请压缩或截短后再添加。`);
+          return;
+        }
+
+        const uploadId = genId();
+        setPendingAttachments((prev) => [...prev, {
+          type: isImage ? "image" : "video",
+          name,
+          localPath: filePath,
+          size: info.size,
+          mimeType,
+          uploadStatus: "uploading",
+          uploadProgress: 0,
+          _uploadId: uploadId,
+        }]);
+        try {
+          const dataUrl = await readFileBase64(filePath, (loaded, total) => {
+            if (total <= 0) return;
+            const progress = Math.max(0, Math.min(0.98, loaded / total));
+            setPendingAttachments((prev) => prev.map((a) =>
+              a._uploadId === uploadId ? { ...a, uploadProgress: progress } : a
+            ));
+          });
+          if (cancelled) return;
+          setPendingAttachments((prev) => prev.map((a) =>
+            a._uploadId === uploadId
+              ? {
+                ...a,
+                previewUrl: isImage ? dataUrl : undefined,
+                url: dataUrl,
+                uploadStatus: "uploaded",
+                uploadProgress: undefined,
+                uploadError: undefined,
+              }
+              : a
+          ));
+        } catch (err) {
+          if (!cancelled) notifyError(`文件读取失败: ${name}`);
+          logger.error("Chat", "DragDrop read_file_base64 failed", { name, error: String(err) });
+          setPendingAttachments((prev) => prev.map((a) =>
+            a._uploadId === uploadId
+              ? { ...a, uploadStatus: "failed", uploadProgress: undefined, uploadError: "文件读取失败" }
+              : a
+          ));
+        }
+        return;
+      }
+
+      const att: ChatAttachment = {
+        type: isAudio ? "voice" : isPdf ? "document" : "file",
+        name,
+        localPath: filePath,
+        size: info.size,
+        mimeType,
+        uploadStatus: "uploaded",
+      };
+      setPendingAttachments((prev) => [...prev, att]);
+      logger.info("Chat.Upload", "DragDrop staged local file attachment", {
+        name,
+        size: info.size,
+        localOnly: true,
+      });
     };
 
     const handleDroppedPaths = (paths: string[]) => {
-      for (const filePath of paths) {
-        const name = filePath.split(/[\\/]/).pop() || "file";
-        const ext = (name.split(".").pop() || "").toLowerCase();
-        const isImage = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext);
-        const isVideo = ["mp4", "webm", "avi", "mov", "mkv"].includes(ext);
-        const isAudio = ["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus", "weba", "wma", "amr"].includes(ext);
-        const mimeType = mimeMap[ext] || "application/octet-stream";
-        readFileBase64(filePath)
-          .then((dataUrl) => {
-            if (cancelled) return;
-            const commaIdx = dataUrl.indexOf(",");
-            const base64Len = commaIdx >= 0 ? dataUrl.length - commaIdx - 1 : dataUrl.length;
-            const estimatedSize = base64Len * 3 / 4;
-            if (estimatedSize > FILE_MAX_SIZE) {
-              notifyError(`文件过大 (${(estimatedSize / 1024 / 1024).toFixed(1)}MB)，最大支持 50MB`);
-              return;
-            }
-            if (isVideo) {
-              const VIDEO_MAX_SIZE = 7 * 1024 * 1024;
-              if (estimatedSize > VIDEO_MAX_SIZE) {
-                notifyError(`视频文件过大 (${(estimatedSize / 1024 / 1024).toFixed(1)}MB)，最大支持 7MB（base64 编码后需 < 10MB）`);
-                return;
-              }
-            }
-
-            // 图片 / 视频：保留 dataUrl，后端 multimodal 路径会直接消费（不会拼进文本 prompt）
-            if (isImage || isVideo) {
-              setPendingAttachments((prev) => [...prev, {
-                type: isImage ? "image" : "video",
-                name,
-                previewUrl: isImage ? dataUrl : undefined,
-                url: dataUrl,
-                size: estimatedSize,
-                mimeType,
-              }]);
-              return;
-            }
-
-            // 文档 / 其他文件：必须上传到后端拿短 URL，否则 base64 dataUrl 会被
-            // 拼进 LLM prompt 文本 → token 爆炸 + 被中间环节截断（→ "..."）
-            // → 模型反复说"找不到文件 / 内容被截断"。与 handleFileSelect 路径保持一致。
-            const blob = dataUrlToBlob(dataUrl, mimeType);
-            if (!blob) {
-              notifyError(`文件解码失败: ${name}`);
-              logger.error("Chat.Upload", "DragDrop dataUrl decode failed", { name });
-              return;
-            }
-            const uploadId = genId();
-            const isPdf = ext === "pdf" || mimeType === "application/pdf";
-            const att: ChatAttachment = {
-              type: isAudio ? "voice" : isPdf ? "document" : "file",
-              name,
-              size: estimatedSize,
-              mimeType,
-              uploadStatus: "uploading",
-              _uploadId: uploadId,
-            };
-            setPendingAttachments((prev) => [...prev, att]);
-            uploadFile(blob, name)
-              .then((uploaded) => {
-                if (cancelled) return;
-                setPendingAttachments((prev) => prev.map((a) =>
-                  a._uploadId === uploadId
-                    ? {
-                      ...a,
-                      url: `${apiBaseRef.current}${uploaded.url}`,
-                      localPath: uploaded.localPath,
-                      uploadId: uploaded.uploadId,
-                      size: uploaded.size ?? a.size,
-                      mimeType: uploaded.mimeType ?? a.mimeType,
-                      uploadStatus: "uploaded",
-                      uploadError: undefined,
-                    }
-                    : a,
-                ));
-              })
-              .catch((err) => {
-                notifyError(`文件上传失败: ${name}`);
-                logger.error("Chat.Upload", "DragDrop uploadFile failed", { name, error: String(err) });
-                setPendingAttachments((prev) => prev.map((a) =>
-                  a._uploadId === uploadId ? { ...a, uploadStatus: "failed", uploadError: String(err) } : a));
-              });
-          })
-          .catch((err) => logger.error("Chat", "DragDrop read_file_base64 failed", { name, error: String(err) }));
-      }
+      for (const filePath of paths) void handleDroppedPath(filePath);
     };
 
     onDragDrop({

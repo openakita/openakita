@@ -473,6 +473,7 @@ export type ChatAttachment = {
   size?: number;
   mimeType?: string;
   uploadStatus?: "uploading" | "uploaded" | "failed";
+  uploadProgress?: number;
   uploadError?: string;
   /** Transient upload tracking ID — not persisted to backend */
   _uploadId?: string;
