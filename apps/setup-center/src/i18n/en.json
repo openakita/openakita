@@ -2082,7 +2082,8 @@
     "systemInfo": "System Information (auto-collected)",
     "submit": "Submit Report",
     "submitting": "Submitting...",
-    "submitSuccess": "Report submitted successfully (ID: {{id}}). You can check progress in My Feedback."
+    "submitSuccess": "Report submitted successfully (ID: {{id}}). You can check progress in My Feedback.",
+    "removeImage": "Remove screenshot"
   },
   "featureRequest": {
     "title": "Feature Request",

@@ -2082,7 +2082,8 @@
     "systemInfo": "系统信息（自动采集）",
     "submit": "提交报告",
     "submitting": "提交中...",
-    "submitSuccess": "报告提交成功（ID: {{id}}）。您可以在「我的反馈」中查看处理进度。"
+    "submitSuccess": "报告提交成功（ID: {{id}}）。您可以在「我的反馈」中查看处理进度。",
+    "removeImage": "删除截图"
   },
   "featureRequest": {
     "title": "需求建议",

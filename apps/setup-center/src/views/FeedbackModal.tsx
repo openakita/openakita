@@ -740,14 +740,19 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
             {imagePreviews.length > 0 && (
               <div className="flex gap-1.5 flex-wrap mt-1.5">
                 {imagePreviews.map((src, i) => (
-                  <div key={i} className="relative w-14 h-14 rounded-md overflow-hidden border border-border">
+                  <div key={i} className="group relative w-14 h-14 rounded-md overflow-hidden border border-border">
                     <img src={src} alt="" className="w-full h-full object-cover" />
-                    <button
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={t("bugReport.removeImage")}
+                      title={t("bugReport.removeImage")}
                       onClick={(e) => { e.stopPropagation(); removeImage(i); }}
-                      className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full border-0 bg-black/60 text-white text-[9px] flex items-center justify-center cursor-pointer p-0"
+                      className="pointer-events-none absolute top-0.5 right-0.5 size-5 rounded-full border border-destructive/45 bg-transparent p-0 text-destructive opacity-0 shadow-none transition-[opacity,border-color] hover:border-destructive/70 hover:!bg-transparent hover:!text-destructive focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:ring-destructive/30 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 dark:hover:!bg-transparent [&_svg]:drop-shadow-[0_1px_1px_rgb(255_255_255_/_0.9)]"
                     >
-                      <IconX size={8} />
-                    </button>
+                      <IconX size={12} strokeWidth={2.5} />
+                    </Button>
                   </div>
                 ))}
               </div>
