@@ -26,6 +26,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from openakita.agents.identity_files import PROFILE_IDENTITY_FILENAMES
+from openakita.api.agent_events import (
+    emit_agent_categories_changed,
+    emit_agent_profiles_changed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -425,6 +429,10 @@ async def import_agent(
             imported.append(profile.to_dict())
 
         _reload_skills(request)
+        imported_ids = [str(p.get("id", "")) for p in imported if p.get("id")]
+        if imported_ids:
+            emit_agent_profiles_changed("imported", profile_ids=imported_ids)
+            emit_agent_categories_changed("profiles_imported", profile_ids=imported_ids)
         msg = f"导入成功: {len(imported)} 个 Agent"
         if skipped:
             msg += f"（{len(skipped)} 个 ID 冲突已重命名: {', '.join(skipped)}）"
@@ -454,6 +462,8 @@ async def import_agent(
 
     _reload_skills(request)
     _invalidate_imported_profile_runtime(request, profile.id)
+    emit_agent_profiles_changed("imported", profile_id=profile.id)
+    emit_agent_categories_changed("profile_imported", profile_id=profile.id)
 
     return {
         "message": "Agent imported successfully",
@@ -625,6 +635,8 @@ async def hub_install_agent(request: Request, agent_id: str, force: bool = False
     profile_store.save(profile)
 
     _reload_skills(request)
+    emit_agent_profiles_changed("installed", profile_id=profile.id)
+    emit_agent_categories_changed("profile_installed", profile_id=profile.id)
 
     return {
         "message": "Agent installed from Hub",

@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef, type ChangeEvent } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { IconBot, IconRefresh, IconPlus, IconEdit, IconTrash, IconDownload, IconUpload, IconImage } from "../icons";
 import { safeFetch } from "../providers";
-import { logger, saveFileDialog, IS_TAURI } from "../platform";
+import { logger, onWsEvent, saveFileDialog, IS_TAURI } from "../platform";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -100,6 +100,11 @@ type CategoryInfo = {
   color: string;
   builtin: boolean;
   agent_count: number;
+};
+
+type AgentManagerStateResponse = {
+  profiles?: AgentProfile[];
+  categories?: CategoryInfo[];
 };
 
 const SVG_ICONS = AGENT_SVG_ICONS;
@@ -249,26 +254,20 @@ export function AgentManagerView({
     } catch {}
   }, [apiBaseUrl]);
 
-  const fetchCategories = useCallback(async () => {
+  const fetchManagerState = useCallback(async (opts?: { showLoading?: boolean }) => {
+    const showLoading = opts?.showLoading !== false;
+    if (showLoading) setLoading(true);
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/agents/categories`);
+      const res = await safeFetch(`${apiBaseUrl}/api/agents/manager-state?include_hidden=true`);
       const data = await res.json();
-      setCategories(data.categories || []);
+      const state = data as AgentManagerStateResponse;
+      setProfiles(state.profiles || []);
+      setCategories(state.categories || []);
     } catch (e) {
-      logger.warn("AgentManager", "Failed to fetch categories", { error: String(e) });
+      logger.warn("AgentManager", "Failed to fetch manager state", { error: String(e) });
+    } finally {
+      if (showLoading) setLoading(false);
     }
-  }, [apiBaseUrl]);
-
-  const fetchProfiles = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await safeFetch(`${apiBaseUrl}/api/agents/profiles?include_hidden=true`);
-      const data = await res.json();
-      setProfiles(data.profiles || []);
-    } catch (e) {
-      logger.warn("AgentManager", "Failed to fetch profiles", { error: String(e) });
-    }
-    setLoading(false);
   }, [apiBaseUrl]);
 
   const fetchSkills = useCallback(async () => {
@@ -384,10 +383,10 @@ export function AgentManagerView({
       });
       const data = await res.json();
       showToast(data.message || `Agent「${data.profile?.name || ""}」导入成功`);
-      fetchProfiles();
+      fetchManagerState();
     } catch (err) { showToast(String(err), "err"); }
     if (importInputRef.current) importInputRef.current.value = "";
-  }, [apiBaseUrl, showToast, fetchProfiles]);
+  }, [apiBaseUrl, showToast, fetchManagerState]);
 
   const toggleBatchSelect = useCallback((id: string) => {
     setBatchSelected((prev) => {
@@ -435,22 +434,47 @@ export function AgentManagerView({
 
   useEffect(() => {
     if (visible) {
-      fetchProfiles();
+      fetchManagerState();
       fetchSkills();
       fetchToolCategories();
       fetchMcpServers();
-      fetchCategories();
       fetchModels();
     }
   }, [
     visible,
-    fetchProfiles,
+    fetchManagerState,
     fetchSkills,
     fetchToolCategories,
     fetchMcpServers,
-    fetchCategories,
     fetchModels,
   ]);
+
+  useEffect(() => {
+    if (!visible) return;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        fetchManagerState({ showLoading: false });
+      }, 50);
+    };
+    const unsubscribe = onWsEvent((event) => {
+      if (event === "agents:profiles_changed" || event === "agents:categories_changed") {
+        scheduleRefresh();
+      }
+    });
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      unsubscribe();
+    };
+  }, [visible, fetchManagerState]);
+
+  useEffect(() => {
+    if (activeCategory && !categories.some((cat) => cat.id === activeCategory)) {
+      setActiveCategory("");
+    }
+  }, [activeCategory, categories]);
 
   const openCreateEditor = () => {
     setEditingProfile({ ...EMPTY_PROFILE });
@@ -584,7 +608,7 @@ export function AgentManagerView({
       });
 
       closeEditor();
-      fetchProfiles();
+      fetchManagerState();
       showToast(t("agentManager.saveSuccess"), "ok");
     } catch (e) {
       showToast(String(e) || t("agentManager.saveFailed"), "err");
@@ -596,7 +620,7 @@ export function AgentManagerView({
     try {
       await safeFetch(`${apiBaseUrl}/api/agents/profiles/${profileId}`, { method: "DELETE" });
       setConfirmDeleteId(null);
-      fetchProfiles();
+      fetchManagerState();
       showToast(t("agentManager.deleteSuccess"), "ok");
     } catch (e) {
       showToast(String(e) || t("agentManager.deleteFailed"), "err");
@@ -637,7 +661,7 @@ export function AgentManagerView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ hidden }),
       });
-      fetchProfiles();
+      fetchManagerState();
       showToast(t(hidden ? "agentManager.hideSuccess" : "agentManager.restoreSuccess"), "ok");
     } catch (e) {
       showToast(String(e), "err");
@@ -649,7 +673,7 @@ export function AgentManagerView({
       await safeFetch(`${apiBaseUrl}/api/agents/profiles/${profileId}/reset`, {
         method: "POST",
       });
-      fetchProfiles();
+      fetchManagerState();
       showToast(t("agentManager.resetSuccess"), "ok");
     } catch (e) {
       showToast(String(e), "err");
@@ -698,12 +722,20 @@ export function AgentManagerView({
       setAddingCategory(false);
       setNewCatLabel("");
       setNewCatColor("#6b7280");
-      fetchCategories();
+      fetchManagerState();
     } catch (err) { showToast(String(err), "err"); }
   };
 
-  const visibleProfiles = profiles.filter((p) => !p.hidden);
-  const hiddenProfiles = profiles.filter((p) => p.hidden);
+  const visibleProfiles = useMemo(() => profiles.filter((p) => !p.hidden), [profiles]);
+  const hiddenProfiles = useMemo(() => profiles.filter((p) => p.hidden), [profiles]);
+  const categoryProfileCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const profile of visibleProfiles) {
+      if (!profile.category) continue;
+      counts.set(profile.category, (counts.get(profile.category) || 0) + 1);
+    }
+    return counts;
+  }, [visibleProfiles]);
   const filteredProfiles = activeCategory
     ? visibleProfiles.filter((p) => p.category === activeCategory)
     : visibleProfiles;
@@ -739,7 +771,7 @@ export function AgentManagerView({
         <div style={{ flex: 1, minWidth: 24 }} />
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <button
-            onClick={fetchProfiles}
+            onClick={() => fetchManagerState()}
             disabled={loading}
             style={{
               display: "flex", alignItems: "center", gap: 4,
@@ -827,7 +859,7 @@ export function AgentManagerView({
             }}
           >
             {cat.label}
-            <Badge variant="secondary" className={cn("ml-1 px-1.5 py-0 text-[11px] min-w-[1.25rem] justify-center rounded-full", activeCategory === cat.id ? "bg-white/25 text-primary-foreground" : "bg-foreground/10 text-foreground/60")}>{cat.agent_count ?? 0}</Badge>
+            <Badge variant="secondary" className={cn("ml-1 px-1.5 py-0 text-[11px] min-w-[1.25rem] justify-center rounded-full", activeCategory === cat.id ? "bg-white/25 text-primary-foreground" : "bg-foreground/10 text-foreground/60")}>{categoryProfileCounts.get(cat.id) || 0}</Badge>
             {!cat.builtin && (
               <span
                 onClick={async (e) => {
@@ -836,7 +868,7 @@ export function AgentManagerView({
                     await safeFetch(`${apiBaseUrl}/api/agents/categories/${cat.id}`, { method: "DELETE" });
                     showToast(`已删除分类「${cat.label}」`);
                     if (activeCategory === cat.id) setActiveCategory("");
-                    fetchCategories();
+                    fetchManagerState();
                   } catch (err) { showToast(String(err), "err"); }
                 }}
                 title="删除此分类"

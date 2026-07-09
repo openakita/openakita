@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -798,10 +799,13 @@ class ProfileStore:
     def _persist_categories(self) -> None:
         atomic_json_write(self._categories_file, self._custom_categories)
 
-    def list_categories(self) -> list[dict[str, Any]]:
+    def list_categories(self, profiles: Iterable[AgentProfile] | None = None) -> list[dict[str, Any]]:
         """返回所有分类（内置 + 自定义），每项含 agent_count。"""
-        with self._lock:
-            all_profiles = list(self._cache.values())
+        if profiles is None:
+            with self._lock:
+                all_profiles = list(self._cache.values())
+        else:
+            all_profiles = list(profiles)
 
         cat_counts: dict[str, int] = {}
         for p in all_profiles:

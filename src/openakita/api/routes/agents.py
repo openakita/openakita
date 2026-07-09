@@ -11,6 +11,10 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from openakita.agents.identity_files import PROFILE_IDENTITY_FILENAMES
+from openakita.api.agent_events import (
+    emit_agent_categories_changed,
+    emit_agent_profiles_changed,
+)
 from openakita.memory.json_utils import coerce_text
 
 logger = logging.getLogger(__name__)
@@ -118,6 +122,58 @@ def _detect_agent_icon_extension(data: bytes) -> str | None:
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return ".webp"
     return None
+
+
+def _list_agent_profiles_for_manager(store, *, include_hidden: bool) -> list:
+    """Return the authoritative Agent profile list used by manager views.
+
+    This is the same SYSTEM_PRESETS + stored-profile merge policy that backs
+    ``/api/agents/profiles``. Category counts are derived from this exact list
+    so the Agent Manager never combines profiles and counts from different
+    projections.
+    """
+    from openakita.agents.presets import SYSTEM_PRESETS
+
+    stored_profiles = store.list_all(include_hidden=True)
+    stored_map = {p.id: p for p in stored_profiles}
+
+    preset_order = [p.id for p in SYSTEM_PRESETS]
+    seen_ids: set[str] = set()
+    profiles = []
+
+    for pid in preset_order:
+        seen_ids.add(pid)
+        p = stored_map.get(pid)
+        if p is None:
+            preset = next((x for x in SYSTEM_PRESETS if x.id == pid), None)
+            if preset is None:
+                continue
+            p = preset
+        if not include_hidden and p.hidden:
+            continue
+        profiles.append(p)
+
+    for p in stored_profiles:
+        if p.id not in seen_ids:
+            if not include_hidden and p.hidden:
+                continue
+            profiles.append(p)
+
+    return profiles
+
+
+def _build_agent_manager_state(store=None, *, include_hidden: bool = True) -> dict:
+    """Build the single backend read model for Agent Manager clients."""
+    if store is None:
+        from openakita.agents.profile import get_profile_store
+
+        store = get_profile_store()
+    profiles = _list_agent_profiles_for_manager(store, include_hidden=include_hidden)
+    return {
+        "profiles": [p.to_dict() for p in profiles],
+        "categories": store.list_categories(profiles),
+        "multi_agent_enabled": True,
+    }
 
 
 # ─── Pydantic models ─────────────────────────────────────────────────────
@@ -425,7 +481,19 @@ async def list_categories():
     from openakita.agents.profile import get_profile_store
 
     store = get_profile_store()
-    return {"categories": store.list_categories()}
+    state = _build_agent_manager_state(store, include_hidden=True)
+    return {"categories": state["categories"]}
+
+
+@router.get("/api/agents/manager-state")
+async def get_agent_manager_state(include_hidden: bool = True):
+    """Return the authoritative Agent Manager read model.
+
+    The response intentionally combines profiles and category counts from the
+    same merged profile projection so desktop, web, and multi-window clients do
+    not compose stale or mismatched state from separate endpoints.
+    """
+    return _build_agent_manager_state(include_hidden=include_hidden)
 
 
 @router.post("/api/agents/categories")
@@ -440,6 +508,7 @@ async def create_category(body: CategoryCreateRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
     logger.info(f"[Agents API] Created category: {body.id}")
+    emit_agent_categories_changed("created", category_id=body.id)
     return {"status": "ok", "category": cat}
 
 
@@ -460,6 +529,7 @@ async def delete_category(category_id: str):
         raise HTTPException(status_code=404, detail=f"分类 '{category_id}' 不存在")
 
     logger.info(f"[Agents API] Deleted category: {category_id}")
+    emit_agent_categories_changed("deleted", category_id=category_id)
     return {"status": "ok"}
 
 
@@ -511,35 +581,11 @@ async def list_agent_profiles(include_hidden: bool = False):
     Query params:
         include_hidden: if True, also return hidden profiles (default False).
     """
-    from openakita.agents.presets import SYSTEM_PRESETS
     from openakita.agents.profile import get_profile_store
 
     store = get_profile_store()
-    stored_map = {p.id: p for p in store.list_all(include_hidden=True)}
-
-    preset_order = [p.id for p in SYSTEM_PRESETS]
-    seen_ids: set[str] = set()
-    profiles = []
-
-    for pid in preset_order:
-        seen_ids.add(pid)
-        p = stored_map.get(pid)
-        if p is None:
-            preset = next((x for x in SYSTEM_PRESETS if x.id == pid), None)
-            if preset is None:
-                continue
-            p = preset
-        if not include_hidden and p.hidden:
-            continue
-        profiles.append(p.to_dict())
-
-    for p in store.list_all(include_hidden=True):
-        if p.id not in seen_ids:
-            if not include_hidden and p.hidden:
-                continue
-            profiles.append(p.to_dict())
-
-    return {"profiles": profiles, "multi_agent_enabled": True}
+    state = _build_agent_manager_state(store, include_hidden=include_hidden)
+    return {"profiles": state["profiles"], "multi_agent_enabled": True}
 
 
 @router.post("/api/agents/profiles")
@@ -588,6 +634,8 @@ async def create_agent_profile(body: ProfileCreateRequest):
 
     store.save(profile)
     logger.info(f"[Agents API] Created profile: {body.id}")
+    emit_agent_profiles_changed("created", profile_id=body.id)
+    emit_agent_categories_changed("profile_created", profile_id=body.id)
     return {"status": "ok", "profile": profile.to_dict()}
 
 
@@ -611,6 +659,8 @@ async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest, requ
 
     _invalidate_profile_agents(request, profile_id)
     logger.info(f"[Agents API] Updated profile: {profile_id}")
+    emit_agent_profiles_changed("updated", profile_id=profile_id)
+    emit_agent_categories_changed("profile_updated", profile_id=profile_id)
     return {"status": "ok", "profile": updated.to_dict()}
 
 
@@ -630,6 +680,8 @@ async def delete_agent_profile(profile_id: str):
         raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
 
     logger.info(f"[Agents API] Deleted profile: {profile_id}")
+    emit_agent_profiles_changed("deleted", profile_id=profile_id)
+    emit_agent_categories_changed("profile_deleted", profile_id=profile_id)
     return {"status": "ok"}
 
 
@@ -662,6 +714,8 @@ async def reset_agent_profile(profile_id: str, request: Request):
     _invalidate_profile_agents(request, profile_id)
     logger.info(f"[Agents API] Reset profile to defaults: {profile_id}")
     result = store.get(profile_id)
+    emit_agent_profiles_changed("reset", profile_id=profile_id)
+    emit_agent_categories_changed("profile_reset", profile_id=profile_id)
     return {"status": "ok", "profile": result.to_dict() if result else {}}
 
 
@@ -677,6 +731,8 @@ async def update_profile_visibility(profile_id: str, body: ProfileVisibilityRequ
         raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
 
     logger.info(f"[Agents API] Visibility updated: {profile_id} hidden={body.hidden}")
+    emit_agent_profiles_changed("visibility_updated", profile_id=profile_id)
+    emit_agent_categories_changed("profile_visibility_updated", profile_id=profile_id)
     return {"status": "ok", "profile": updated.to_dict()}
 
 
