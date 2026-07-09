@@ -544,22 +544,12 @@ if providers_json.exists():
 # In bundled mode this path won't work, so we write a version file directly
 _pyproject_path = PROJECT_ROOT / "pyproject.toml"
 if _pyproject_path.exists():
-    import tomllib
-    import subprocess as _sp
-    with open(_pyproject_path, "rb") as _f:
-        _pyproject_version = tomllib.load(_f)["project"]["version"]
-    # Capture git short hash at build time
-    _git_hash = "unknown"
-    try:
-        _git_hash = _sp.check_output(
-            ["git", "-C", str(PROJECT_ROOT), "rev-parse", "--short=7", "HEAD"],
-            stderr=_sp.DEVNULL, text=True
-        ).strip()
-    except Exception:
-        pass
-    # Write version+hash to build dir (not source tree) so local builds don't dirty git
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from scripts.write_build_version import build_version_string
+
+    # Write version+hash to build dir (not source tree) so local builds don't dirty git.
     _version_file = PROJECT_ROOT / "build" / "_bundled_version.txt"
-    _version_file.write_text(f"{_pyproject_version}+{_git_hash}", encoding="utf-8")
+    _version_file.write_text(build_version_string(), encoding="utf-8")
     datas.append((str(_version_file), "openakita"))
 
 # lark_oapi (飞书 SDK): 10K+ 自动生成的 API 文件，PyInstaller hidden_imports 无法

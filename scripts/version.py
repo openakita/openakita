@@ -170,7 +170,10 @@ def _update_cargo_lock(version: str) -> bool:
 
 
 def _update_bundled_version(version: str) -> bool:
-    """Update _bundled_version.txt with clean version (no git hash; hash is appended at build time)."""
+    """Update _bundled_version.txt with the clean version.
+
+    Build artifacts get VERSION+git_hash from scripts/write_build_version.py.
+    """
     path = ROOT / "src" / "openakita" / "_bundled_version.txt"
     old = path.read_text(encoding="utf-8").strip() if path.exists() else ""
     if old == version:

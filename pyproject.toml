@@ -219,6 +219,8 @@ include = [
     "skills",
     "mcps",
     "identity",
+    "hatch_build.py",
+    "scripts/write_build_version.py",
     "VERSION",
     "pyproject.toml",
     "README.md",
@@ -227,6 +229,9 @@ include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/openakita"]
+exclude = [
+    "src/openakita/_bundled_version.txt",
+]
 artifacts = [
     # Optional release assets staged by `python scripts/stage_package_assets.py`.
     # They are intentionally package-local build outputs so default
@@ -234,6 +239,9 @@ artifacts = [
     "src/openakita/web/**",
     "src/openakita/docs_dist/**",
 ]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
 
 # 把仓库根目录的系统技能、外部技能、内置 MCP 配置一并打进 wheel，
 # 保证 `pip install openakita` 后可用。

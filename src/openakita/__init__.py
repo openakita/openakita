@@ -17,8 +17,23 @@ def _resolve_version_info() -> tuple[str, str]:
 
     version = "0.0.0-dev"
     git_hash = "unknown"
+    project_root = Path(__file__).parent.parent.parent
 
-    # 1. PyInstaller 打包模式：读取构建时写入的版本文件（格式: "1.22.7+abc1234"）
+    def _read_git_hash(fallback: str) -> str:
+        try:
+            import subprocess
+
+            return subprocess.check_output(
+                ["git", "-C", str(project_root), "rev-parse", "--short=7", "HEAD"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+            ).strip()
+        except Exception:
+            return fallback
+
+    # 1. 打包模式：读取构建时写入的版本文件（格式: "1.22.7+abc1234"）。
+    # 源码树里的同步文件只有干净版本号；这种情况下仍尝试从 git 获取 hash。
     bundled_ver = Path(__file__).parent / "_bundled_version.txt"
     if bundled_ver.exists():
         try:
@@ -27,12 +42,12 @@ def _resolve_version_info() -> tuple[str, str]:
                 version, git_hash = raw.split("+", 1)
             else:
                 version = raw
+                git_hash = _read_git_hash("unknown")
             return version, git_hash
         except Exception:
             pass
 
     # 2. 尝试读取源码根目录的 pyproject.toml（editable 安装时始终最新）
-    project_root = Path(__file__).parent.parent.parent
     pyproject_path = project_root / "pyproject.toml"
     if pyproject_path.exists():
         try:
@@ -53,17 +68,7 @@ def _resolve_version_info() -> tuple[str, str]:
             pass
 
     # 开发模式下从 git 获取当前哈希
-    try:
-        import subprocess
-
-        git_hash = subprocess.check_output(
-            ["git", "-C", str(project_root), "rev-parse", "--short=7", "HEAD"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-            encoding="utf-8",
-        ).strip()
-    except Exception:
-        git_hash = "dev"
+    git_hash = _read_git_hash("dev")
 
     return version, git_hash
 

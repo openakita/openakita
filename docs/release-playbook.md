@@ -47,6 +47,11 @@ python scripts/version.py check          # 校验所有文件版本是否一致
 
 同步范围：`VERSION` → `pyproject.toml` → `package.json` → `tauri.conf.json` → `Cargo.toml` → `Cargo.lock` → `_bundled_version.txt` → `build.gradle`
 
+`scripts/version.py` 只把源码里的 `_bundled_version.txt` 同步为干净版本号。
+构建 wheel / PyInstaller 产物时由 `scripts/write_build_version.py` 写入
+`VERSION+commit`；Tauri resources 继承 PyInstaller 输出，避免发布产物显示
+`1.27.26+unknown`。
+
 ### 工作流
 
 | 工作流 | 作用 |
