@@ -7913,12 +7913,24 @@ async fn pip_install(
             let tx1 = tx.clone();
             let h1 = thread::spawn(move || {
                 let mut buf = [0u8; 4096];
+                let mut pending = Vec::new();
                 loop {
                     match stdout.read(&mut buf) {
-                        Ok(0) => break,
+                        Ok(0) => {
+                            if !pending.is_empty() {
+                                let _ = tx1.send((
+                                    false,
+                                    String::from_utf8_lossy(&pending).into_owned(),
+                                ));
+                            }
+                            break;
+                        }
                         Ok(n) => {
-                            let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                            let _ = tx1.send((false, s));
+                            pending.extend_from_slice(&buf[..n]);
+                            let text = take_valid_utf8_prefix(&mut pending);
+                            if !text.is_empty() {
+                                let _ = tx1.send((false, text));
+                            }
                         }
                         Err(_) => break,
                     }
@@ -7927,12 +7939,24 @@ async fn pip_install(
             let tx2 = tx.clone();
             let h2 = thread::spawn(move || {
                 let mut buf = [0u8; 4096];
+                let mut pending = Vec::new();
                 loop {
                     match stderr.read(&mut buf) {
-                        Ok(0) => break,
+                        Ok(0) => {
+                            if !pending.is_empty() {
+                                let _ = tx2.send((
+                                    true,
+                                    String::from_utf8_lossy(&pending).into_owned(),
+                                ));
+                            }
+                            break;
+                        }
                         Ok(n) => {
-                            let s = String::from_utf8_lossy(&buf[..n]).to_string();
-                            let _ = tx2.send((true, s));
+                            pending.extend_from_slice(&buf[..n]);
+                            let text = take_valid_utf8_prefix(&mut pending);
+                            if !text.is_empty() {
+                                let _ = tx2.send((true, text));
+                            }
                         }
                         Err(_) => break,
                     }
@@ -8736,6 +8760,40 @@ enum BackendFetchEvent {
     Error { message: String },
 }
 
+/// Drain the longest decodable UTF-8 prefix, retaining an incomplete trailing
+/// character so the next stream chunk can complete it.
+fn take_valid_utf8_prefix(buf: &mut Vec<u8>) -> String {
+    let mut output = String::new();
+    loop {
+        match std::str::from_utf8(buf) {
+            Ok(text) => {
+                output.push_str(text);
+                buf.clear();
+                break;
+            }
+            Err(error) => {
+                let valid_up_to = error.valid_up_to();
+                if valid_up_to > 0 {
+                    if let Ok(text) = std::str::from_utf8(&buf[..valid_up_to]) {
+                        output.push_str(text);
+                    }
+                }
+                match error.error_len() {
+                    None => {
+                        buf.drain(..valid_up_to);
+                        break;
+                    }
+                    Some(invalid_len) => {
+                        output.push('\u{FFFD}');
+                        buf.drain(..valid_up_to + invalid_len);
+                    }
+                }
+            }
+        }
+    }
+    output
+}
+
 /// Active streaming fetches keyed by the frontend-supplied `fetch_id`.
 ///
 /// When the JS-side `ReadableStream.cancel()` fires (user closes a chat
@@ -8882,6 +8940,7 @@ async fn backend_fetch(
         // backend session history.
         const CHUNK_INACTIVITY_TIMEOUT: std::time::Duration =
             std::time::Duration::from_secs(90);
+        let mut pending = Vec::new();
         loop {
             if cancel.load(Ordering::SeqCst) {
                 // Drop happens implicitly on loop exit; explicit log here
@@ -8920,12 +8979,20 @@ async fn backend_fetch(
             };
             match chunk_res {
                 Ok(Some(chunk)) => {
-                    let text = String::from_utf8_lossy(&chunk).to_string();
-                    if on_event.send(BackendFetchEvent::Chunk { text }).is_err() {
+                    pending.extend_from_slice(&chunk);
+                    let text = take_valid_utf8_prefix(&mut pending);
+                    if !text.is_empty()
+                        && on_event.send(BackendFetchEvent::Chunk { text }).is_err()
+                    {
                         break;
                     }
                 }
                 Ok(None) => {
+                    if !pending.is_empty() {
+                        let text = String::from_utf8_lossy(&pending).into_owned();
+                        pending.clear();
+                        let _ = on_event.send(BackendFetchEvent::Chunk { text });
+                    }
                     let _ = on_event.send(BackendFetchEvent::Done);
                     break;
                 }
@@ -11211,5 +11278,54 @@ mod tests {
         } else {
             assert!(dir.to_string_lossy().contains("bin"));
         }
+    }
+
+    #[test]
+    fn test_utf8_prefix_passes_through_complete_text() {
+        let mut buf = "Hello, 你好!".as_bytes().to_vec();
+        assert_eq!(take_valid_utf8_prefix(&mut buf), "Hello, 你好!");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_utf8_prefix_holds_split_cjk_character() {
+        let bytes = "有什么".as_bytes();
+        let (first, second) = bytes.split_at(5);
+        let mut buf = first.to_vec();
+
+        let first_text = take_valid_utf8_prefix(&mut buf);
+        assert_eq!(first_text, "有");
+        assert_eq!(buf, bytes[3..5]);
+
+        buf.extend_from_slice(second);
+        let second_text = take_valid_utf8_prefix(&mut buf);
+        assert_eq!(format!("{first_text}{second_text}"), "有什么");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_utf8_prefix_holds_split_four_byte_character() {
+        let bytes = "\u{1F389}".as_bytes();
+        let mut buf = bytes[..1].to_vec();
+        assert_eq!(take_valid_utf8_prefix(&mut buf), "");
+        assert_eq!(buf, bytes[..1]);
+
+        buf.extend_from_slice(&bytes[1..]);
+        assert_eq!(take_valid_utf8_prefix(&mut buf), "\u{1F389}");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_utf8_prefix_replaces_invalid_bytes_without_stalling() {
+        let mut buf = vec![b'a', 0xFF, b'b'];
+        assert_eq!(take_valid_utf8_prefix(&mut buf), "a\u{FFFD}b");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_incomplete_utf8_tail_is_available_for_eof_flush() {
+        let mut buf = vec![0xE4, 0xBB];
+        assert_eq!(take_valid_utf8_prefix(&mut buf), "");
+        assert_eq!(String::from_utf8_lossy(&buf), "\u{FFFD}");
     }
 }
