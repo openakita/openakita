@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { SearchSelect } from "../components/SearchSelect";
 import { ProviderSearchSelect } from "../components/ProviderSearchSelect";
 import type { EnvMap, ProviderInfo, ListedModel, EndpointDraft } from "../types";
+import { ImageEndpointsSection } from "./ImageEndpointsSection";
 
 function friendlyConfigError(e: unknown): string {
   const msg = String((e as any)?.message || e);
@@ -44,7 +45,7 @@ function friendlyConfigError(e: unknown): string {
   return msg;
 }
 
-type EndpointType = "endpoints" | "compiler_endpoints" | "stt_endpoints";
+type EndpointType = "endpoints" | "compiler_endpoints" | "stt_endpoints" | "image_endpoints";
 
 type SaveEndpointConfigResult = {
   endpoint: any;
@@ -70,9 +71,11 @@ export interface LLMViewProps {
   savedEndpoints: EndpointDraft[];
   savedCompilerEndpoints: EndpointDraft[];
   savedSttEndpoints: EndpointDraft[];
+  savedImageEndpoints: EndpointDraft[];
   setSavedEndpoints: React.Dispatch<React.SetStateAction<EndpointDraft[]>>;
   setSavedCompilerEndpoints: React.Dispatch<React.SetStateAction<EndpointDraft[]>>;
   setSavedSttEndpoints: React.Dispatch<React.SetStateAction<EndpointDraft[]>>;
+  setSavedImageEndpoints: React.Dispatch<React.SetStateAction<EndpointDraft[]>>;
   envDraft: EnvMap;
   setEnvDraft: React.Dispatch<React.SetStateAction<EnvMap>>;
   secretShown: Record<string, boolean>;
@@ -96,7 +99,7 @@ export interface LLMViewProps {
 
 export function LLMView(props: LLMViewProps) {
   const {
-    savedEndpoints, savedCompilerEndpoints, savedSttEndpoints,
+    savedEndpoints, savedCompilerEndpoints, savedSttEndpoints, savedImageEndpoints,
     envDraft, setEnvDraft,
     secretShown, setSecretShown,
     busy, currentWorkspaceId, dataMode,
@@ -157,6 +160,7 @@ export function LLMView(props: LLMViewProps) {
     endpoints: new Set(),
     compiler_endpoints: new Set(),
     stt_endpoints: new Set(),
+    image_endpoints: new Set(),
   }));
 
   // Edit modal
@@ -280,12 +284,14 @@ export function LLMView(props: LLMViewProps) {
         endpoints: new Set(savedEndpoints.map((e) => e.name)),
         compiler_endpoints: new Set(savedCompilerEndpoints.map((e) => e.name)),
         stt_endpoints: new Set(savedSttEndpoints.map((e) => e.name)),
+        image_endpoints: new Set(savedImageEndpoints.map((e) => e.name)),
       };
       let changed = false;
       const next: Record<EndpointType, Set<string>> = {
         endpoints: new Set(),
         compiler_endpoints: new Set(),
         stt_endpoints: new Set(),
+        image_endpoints: new Set(),
       };
       (Object.keys(keepByType) as EndpointType[]).forEach((endpointType) => {
         for (const name of prev[endpointType]) {
@@ -296,7 +302,7 @@ export function LLMView(props: LLMViewProps) {
       });
       return changed ? next : prev;
     });
-  }, [savedEndpoints, savedCompilerEndpoints, savedSttEndpoints]);
+  }, [savedEndpoints, savedCompilerEndpoints, savedSttEndpoints, savedImageEndpoints]);
 
   useEffect(() => {
     if (!selectedProvider) return;
@@ -1553,6 +1559,20 @@ export function LLMView(props: LLMViewProps) {
           </>
         )}
       </div>
+
+      {/* ── Image generation endpoints ── */}
+      <ImageEndpointsSection
+        endpoints={savedImageEndpoints}
+        envDraft={envDraft}
+        disabled={endpointConfigDisabled}
+        disabledMessage={endpointConfigUnavailableMessage}
+        httpApiBase={httpApiBase}
+        reloadEndpoints={async () => {
+          await loadSavedEndpoints();
+          await onEndpointConfigChanged?.("image_endpoints");
+        }}
+        askConfirm={askConfirm}
+      />
 
       {/* ── Compiler endpoints ── */}
       <div className="card" style={{ marginTop: 10 }}>
