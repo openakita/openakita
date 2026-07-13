@@ -196,7 +196,7 @@
     "noData": "No skill usage data"
   },
   "chat": {
-    "placeholder": "Type a message... (Enter to send, Shift+Enter for newline)",
+    "placeholder": "Type a message...",
     "send": "Send",
     "newConversation": "New Conversation",
     "selectModel": "Auto",

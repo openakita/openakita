@@ -7179,11 +7179,14 @@ export function ChatView({
 
           <div className={`chatInputBox ${chatMode === "plan" ? "chatInputBoxPlan" : chatMode === "ask" ? "chatInputBoxAsk" : ""}`}>
             {/* Top row: compact model picker */}
-            <div className="chatInputTop" ref={modelMenuRef} style={{ position: "relative" }}>
-              <button
-                className="chatModelPickerBtn"
-                onClick={() => setModelMenuOpen((v) => !v)}
-              >
+            <div className="chatInputTop" data-testid="chat-input-pickers">
+              <div className="chatPickerGroup" ref={modelMenuRef}>
+                <button
+                  data-slot="chat-picker"
+                  type="button"
+                  className="chatModelPickerBtn"
+                  onClick={() => setModelMenuOpen((v) => !v)}
+                >
                 <span className="chatModelPickerLabel">
                   {selectedEndpoint === "auto"
                     ? (() => {
@@ -7197,10 +7200,10 @@ export function ChatView({
                       })()
                     : (() => { const ep = endpoints.find(e => e.name === selectedEndpoint); return ep ? ep.model : selectedEndpoint; })()}
                 </span>
-                <IconChevronDown size={12} />
-              </button>
-              {modelMenuOpen && (
-                <div className="chatModelMenu">
+                  <IconChevronDown size={12} />
+                </button>
+                {modelMenuOpen && (
+                  <div className="chatModelMenu">
                   <div
                     className={`chatModelMenuItem ${selectedEndpoint === "auto" ? "chatModelMenuItemActive" : ""}`}
                     onClick={() => { setSelectedEndpoint("auto"); setSelectedEndpointPolicy("prefer"); setModelMenuOpen(false); }}
@@ -7250,22 +7253,24 @@ export function ChatView({
                       </button>
                     </div>
                   )}
-                </div>
-              )}
+                  </div>
+                )}
+              </div>
               {agentProfiles.length > 0 && !orgMode && (
-                <div ref={agentMenuRef} style={{ position: "relative", marginLeft: 8 }}>
+                <div ref={agentMenuRef} className="chatPickerGroup chatPickerGroupAgent">
                   <button
+                    data-slot="chat-picker"
+                    type="button"
                     className="chatModelPickerBtn"
                     onClick={() => setAgentMenuOpen((v) => !v)}
-                    style={{ gap: 4 }}
                   >
-                    <span style={{ fontSize: 13 }}>
+                    <span className="chatPickerValue">
                       {(() => {
                         const ap = agentProfiles.find(p => p.id === selectedAgent);
                         return ap ? (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <span className="chatPickerValue">
                             <AgentIcon icon={ap.icon} size={14} apiBaseUrl={apiBaseUrl} />
-                            <span>{ap.name}</span>
+                            <span className="chatPickerText">{ap.name}</span>
                           </span>
                         ) : t("chat.agentDefault");
                       })()}
@@ -7301,8 +7306,11 @@ export function ChatView({
               )}
               {/* Org mode selector */}
               {orgList.length > 0 && (
-                <div ref={orgMenuRef} style={{ position: "relative", marginLeft: 8 }}>
+                <div ref={orgMenuRef} className="chatPickerGroup chatPickerGroupOrg">
                   <button
+                    data-slot="chat-picker"
+                    data-testid="chat-org-trigger"
+                    type="button"
                     className="chatModelPickerBtn"
                     onClick={() => {
                       if (orgMode) {
@@ -7315,21 +7323,22 @@ export function ChatView({
                       }
                     }}
                     style={{
-                      gap: 4,
                       background: orgMode ? "rgba(14,165,233,0.15)" : undefined,
                       borderColor: orgMode ? "var(--primary)" : undefined,
                     }}
                   >
-                    <span style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
+                    <span className="chatPickerValue">
                       <IconBuilding size={13} />
-                      {orgMode && selectedOrgId
-                        ? (() => { const o = orgList.find(x => x.id === selectedOrgId); return o ? o.name : "组织"; })()
-                        : "组织"}
+                      <span className="chatPickerText">
+                        {orgMode && selectedOrgId
+                          ? (() => { const o = orgList.find(x => x.id === selectedOrgId); return o ? o.name : "组织"; })()
+                          : "组织"}
+                      </span>
                     </span>
                     {orgMode ? <IconX size={10} /> : <IconChevronDown size={12} />}
                   </button>
                   {orgMenuOpen && (
-                    <div className="chatModelMenu" style={{ minWidth: 200 }}>
+                    <div className="chatModelMenu" data-testid="chat-org-menu" style={{ minWidth: 200 }}>
                       {orgList.map((o) => (
                         <div
                           key={o.id}
@@ -7380,12 +7389,14 @@ export function ChatView({
 
             {/* Textarea */}
             <textarea
+              data-slot="chat-input"
+              data-testid="chat-input-textarea"
               ref={inputRef}
               aria-label={t("chat.inputAriaLabel", "输入消息")}
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
               onPaste={handlePaste}
-              placeholder={orgCommandPending ? t("chat.orgProcessing", "组织正在处理中...") : orgMode ? (selectedOrgNodeId ? t("chat.orgSendToNode", "输入指令发送给 {{node}}...", { node: selectedOrgNodeId }) : t("chat.orgSendToOrg", "输入指令发送给组织...")) : isCurrentConvStreaming ? `Enter ${t("chat.queueHint")}${t("chat.commaEscStop", "，Esc 停止")}` : chatMode === "plan" ? t("chat.planModePlaceholder", { enterSend: t("chat.enterSend") }) : chatMode === "ask" ? t("chat.askModePlaceholder") : `${t("chat.placeholder")}  · ${t("chat.enterSendSlash", "Enter 发送，Shift+Enter 换行，/ 命令")}`}
+              placeholder={orgCommandPending ? t("chat.orgProcessing", "组织正在处理中...") : orgMode ? (selectedOrgNodeId ? t("chat.orgSendToNode", "输入指令发送给 {{node}}...", { node: selectedOrgNodeId }) : t("chat.orgSendToOrg", "输入指令发送给组织...")) : isCurrentConvStreaming ? `Enter ${t("chat.queueHint")}${t("chat.commaEscStop", "，Esc 停止")}` : chatMode === "plan" ? t("chat.planModePlaceholder", { enterSend: t("chat.enterSend") }) : chatMode === "ask" ? t("chat.askModePlaceholder") : t("chat.placeholder")}
               rows={1}
               className="chatInputTextarea"
               onInput={(e) => {
@@ -7396,11 +7407,11 @@ export function ChatView({
             />
 
             {/* Bottom toolbar */}
-            <div className="chatInputToolbar">
+            <div className="chatInputToolbar" data-testid="chat-input-toolbar">
               <div className="chatInputToolbarLeft">
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <button data-slot="toolbar" onClick={() => fileInputRef.current?.click()} className="chatInputIconBtn">
+                    <button data-slot="toolbar" type="button" aria-label={t("chat.attach")} onClick={() => fileInputRef.current?.click()} className="chatInputIconBtn">
                       <IconPaperclip size={16} />
                     </button>
                   </TooltipTrigger>
@@ -7410,7 +7421,7 @@ export function ChatView({
 
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <button data-slot="toolbar" onClick={toggleRecording} className={`chatInputIconBtn ${isRecording ? "chatInputIconBtnDanger" : ""}`} style={isRecording ? { animation: "pulse 1.5s ease-in-out infinite" } : undefined}>
+                    <button data-slot="toolbar" type="button" aria-label={isRecording ? t("chat.stopRecording") : t("chat.voice")} onClick={toggleRecording} className={`chatInputIconBtn ${isRecording ? "chatInputIconBtnDanger" : ""}`} style={isRecording ? { animation: "pulse 1.5s ease-in-out infinite" } : undefined}>
                       {isRecording ? <IconStopCircle size={16} /> : <IconMic size={16} />}
                       {isRecording && recordingDuration > 0 && (
                         <span style={{ fontSize: 10, marginLeft: 2, fontWeight: 600 }}>
@@ -7425,18 +7436,21 @@ export function ChatView({
                 <div ref={modeMenuRef} style={{ position: "relative", display: "inline-flex" }}>
                   <button
                     data-slot="toolbar"
+                    data-testid="chat-mode-trigger"
+                    type="button"
+                    aria-label={chatMode === "agent" ? t("chat.modeAgentTitle") : chatMode === "plan" ? t("chat.modePlanTitle") : t("chat.modeAskTitle")}
                     onClick={() => setModeMenuOpen((v) => !v)}
                     className={`chatInputIconBtn ${chatMode === "plan" ? "chatInputIconBtnPlan" : chatMode === "ask" ? "chatInputIconBtnAsk" : ""}`}
                     title={chatMode === "agent" ? t("chat.modeAgentTitle") : chatMode === "plan" ? t("chat.modePlanTitle") : t("chat.modeAskTitle")}
                   >
                     {{ agent: <IconBot size={16} />, plan: <IconPlan size={16} />, ask: <IconSearch size={16} /> }[chatMode]}
-                    <span style={{ fontSize: 11, marginLeft: 2 }}>
+                    <span className="chatInputIconLabel" style={{ fontSize: 11, marginLeft: 2 }}>
                       {chatMode === "agent" ? t("chat.modeAgent") : chatMode === "plan" ? t("chat.modePlan") : t("chat.modeAsk")}
                     </span>
                     <IconChevronDown size={10} style={{ marginLeft: 2, opacity: 0.5 }} />
                   </button>
                   {modeMenuOpen && (
-                    <div className="chatModeMenu">
+                    <div className="chatModeMenu" data-testid="chat-mode-menu">
                       <div className="chatModeMenuSection">{t("chat.executionMode")}</div>
                       {([
                         { key: "agent" as const, icon: <IconBot size={14} />, label: t("chat.modeAgent"), desc: t("chat.modeAgentDesc") },
@@ -7464,6 +7478,8 @@ export function ChatView({
                   <TooltipTrigger asChild>
                     <button
                       data-slot="toolbar"
+                      type="button"
+                      aria-label={thinkingMode === "on" ? t("chat.thinkingOn") : thinkingMode === "off" ? t("chat.thinkingOff") : t("chat.thinkingAuto")}
                       onMouseEnter={() => setThinkingModeTipOpen(true)}
                       onMouseLeave={() => setThinkingModeTipOpen(false)}
                       onClick={() => {
@@ -7478,7 +7494,7 @@ export function ChatView({
                       className={`chatInputIconBtn ${thinkingMode === "on" ? "chatInputIconBtnActive" : thinkingMode === "off" ? "chatInputIconBtnOff" : ""}`}
                     >
                       <IconZap size={16} />
-                      <span style={{ fontSize: 11, marginLeft: 2 }}>
+                      <span className="chatInputIconLabel" style={{ fontSize: 11, marginLeft: 2 }}>
                         {thinkingMode === "on" ? t("chat.thinkingBtnOn") : thinkingMode === "off" ? t("chat.thinkingBtnOff") : t("chat.thinkingBtnAuto")}
                       </span>
                     </button>
@@ -7492,6 +7508,8 @@ export function ChatView({
                     <TooltipTrigger asChild>
                       <button
                         data-slot="toolbar"
+                        type="button"
+                        aria-label={{ low: t("chat.depthTipLow"), medium: t("chat.depthTipMedium"), high: t("chat.depthTipHigh"), max: t("chat.depthTipMax") }[thinkingDepth]}
                         onMouseEnter={() => setThinkingDepthTipOpen(true)}
                         onMouseLeave={() => setThinkingDepthTipOpen(false)}
                         onClick={() => {
@@ -7505,7 +7523,7 @@ export function ChatView({
                           <rect x="10" y="2" width="3" height="11" rx="0.5" fill="currentColor" opacity={thinkingDepth === "high" || thinkingDepth === "max" ? 1 : 0.25} />
                           <rect x="14.5" y="0.5" width="2.5" height="12.5" rx="0.5" fill="currentColor" opacity={thinkingDepth === "max" ? 1 : 0.25} />
                         </svg>
-                        <span style={{ fontSize: 10 }}>{{ low: t("chat.depthLow"), medium: t("chat.depthMedium"), high: t("chat.depthHigh"), max: t("chat.depthMax") }[thinkingDepth]}</span>
+                        <span className="chatInputIconLabel" style={{ fontSize: 10 }}>{{ low: t("chat.depthLow"), medium: t("chat.depthMedium"), high: t("chat.depthHigh"), max: t("chat.depthMax") }[thinkingDepth]}</span>
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="top" className="text-xs" onPointerDownOutside={(e) => e.preventDefault()}>
@@ -7514,14 +7532,16 @@ export function ChatView({
                     </TooltipContent>
                   </Tooltip>
                 )}
-                {/* Context usage bar */}
-                {contextLimit > 0 && (() => {
+              </div>
+
+              {/* Context usage bar */}
+              {contextLimit > 0 && (() => {
                   const usagePercent = Math.min((contextTokens / contextLimit) * 100, 100);
                   const remaining = Math.max(0, contextLimit - contextTokens);
                   const toneClass = usagePercent > 80 ? "chatContextUsageDanger" : usagePercent > 60 ? "chatContextUsageWarn" : "";
                   const fillClass = usagePercent > 80 ? "chatContextBarFillDanger" : usagePercent > 60 ? "chatContextBarFillWarn" : "";
                   return (
-                    <div className="chatContextUsage">
+                    <div className="chatContextUsage" data-testid="chat-context-usage">
                       <span className={`chatContextUsageText ${toneClass}`}>
                         {formatContextTokens(contextTokens)} /
                         <Tooltip>
@@ -7547,14 +7567,15 @@ export function ChatView({
                       </div>
                     </div>
                   );
-                })()}
-              </div>
+              })()}
 
               <div className="chatInputToolbarRight">
                 {isCurrentConvStreaming || orgCommandPending ? (
                   (hasInputText || pendingAttachments.length > 0) && !orgCommandPending ? (
                     <button
                       data-slot="steer"
+                      type="button"
+                      aria-label={t("chat.steerHint", "注入到当前任务")}
                       onClick={() => submitWhileStreaming()}
                       className="chatInputSendBtn"
                       title={t("chat.steerHint", "注入到当前任务（不打断，回车发送 / Ctrl+Enter 排队）")}
@@ -7564,6 +7585,8 @@ export function ChatView({
                   ) : (
                     <button
                       data-slot="stop"
+                      type="button"
+                      aria-label={orgCommandPending ? "停止组织命令" : t("chat.stopGeneration")}
                       onClick={handleCancelTask}
                       className="chatInputSendBtn chatInputStopBtn"
                       title={orgCommandPending ? "停止组织命令" : t("chat.stopGeneration")}
@@ -7574,6 +7597,7 @@ export function ChatView({
                 ) : (
                   <button
                     data-slot="send"
+                    type="button"
                     onClick={() => sendMessage()}
                     className="chatInputSendBtn"
                     disabled={!hasInputText && pendingAttachments.length === 0}

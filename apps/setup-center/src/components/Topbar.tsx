@@ -119,12 +119,14 @@ export function Topbar({
     <div className="topbar">
       <div className="topbarStatusRow">
         {onToggleMobileSidebar && (
-          <button className="topbarHamburger mobileOnly" onClick={onToggleMobileSidebar} aria-label="Menu">
+          <button data-slot="topbar" type="button" className="topbarHamburger mobileOnly" onClick={onToggleMobileSidebar} aria-label="Menu">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
           </button>
         )}
         {onServerManager && serverName && (
           <button
+            data-slot="topbar"
+            type="button"
             className="topbarServerBtn"
             onClick={onServerManager}
             title={t("server.switchServer", { defaultValue: "切换服务器" })}
@@ -253,26 +255,29 @@ export function Topbar({
         {serviceRunning && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <span
+              <button
+                data-slot="topbar"
+                data-testid="topbar-remote-access"
+                type="button"
+                className="topbarRemoteAccess"
+                aria-label={t("topbar.copyRemoteUrl", "复制远程访问地址")}
                 title={t("topbar.copyRemoteUrl", "复制远程访问地址")}
                 style={{
-                  cursor: "pointer", fontSize: 11, display: "inline-flex", alignItems: "center", gap: 2,
                   color: remoteCopyState === "copied" ? "var(--ok, #10b981)"
                     : remoteCopyState === "no_ip" ? "var(--warning-text, #92400e)"
                     : "var(--accent, #5B8DEF)",
                   opacity: remoteCopyState !== "idle" ? 1 : 0.7,
-                  transition: "color 0.2s",
                 }}
                 onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
                 onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.opacity = remoteCopyState !== "idle" ? "1" : "0.7"; }}
               >
                 <IconClipboard size={11} />
-                <span>{
+                <span className="topbarRemoteLabel">{
                   remoteCopyState === "copied" ? t("common.copied", "已复制")
                   : remoteCopyState === "no_ip" ? t("topbar.ipNotFound")
                   : t("topbar.remoteUrl", "远程地址")
                 }</span>
-              </span>
+              </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="min-w-[180px]">
               <DropdownMenuItem onClick={copyRemoteUrl} className="gap-2 text-xs">
@@ -308,7 +313,7 @@ export function Topbar({
         )}
       </div>
       <TooltipProvider delayDuration={300}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+        <div className="topbarActions" data-testid="topbar-actions">
           {isWeb ? (
             onLogout && (
               <Tooltip>
@@ -352,7 +357,7 @@ export function Topbar({
             </>
           )}
 
-          <div className="h-4 w-px bg-border" />
+          <div className="topbarActionDivider h-4 w-px bg-border" />
 
           {onOpenInbox && (
             <Tooltip>
@@ -376,7 +381,7 @@ export function Topbar({
             </Tooltip>
           )}
 
-          {onOpenInbox && <div className="h-4 w-px bg-border" />}
+          {onOpenInbox && <div className="topbarActionDivider h-4 w-px bg-border" />}
 
           <Tooltip>
             <TooltipTrigger asChild>
@@ -387,7 +392,7 @@ export function Topbar({
             <TooltipContent side="bottom">{t("topbar.refresh")}</TooltipContent>
           </Tooltip>
 
-          <div className="h-4 w-px bg-border" />
+          <div className="topbarActionDivider h-4 w-px bg-border" />
 
           <DropdownMenu>
             {/* span 作为 Tooltip 触发层，避免 TooltipTrigger+DropdownMenuTrigger 双层 asChild 导致悬停/ ref 失效 */}
@@ -428,7 +433,7 @@ export function Topbar({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <div className="h-4 w-px bg-border" />
+          <div className="topbarActionDivider h-4 w-px bg-border" />
 
           <DropdownMenu>
             <Tooltip>

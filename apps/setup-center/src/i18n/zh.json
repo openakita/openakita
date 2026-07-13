@@ -196,7 +196,7 @@
     "noData": "暂无技能用量数据"
   },
   "chat": {
-    "placeholder": "输入消息... (Enter 发送, Shift+Enter 换行)",
+    "placeholder": "输入消息...",
     "send": "发送",
     "newConversation": "新对话",
     "selectModel": "自动选择",

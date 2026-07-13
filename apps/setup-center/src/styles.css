@@ -645,6 +645,36 @@ a:hover {
   gap: 14px;
   font-size: 12px;
   color: var(--muted);
+  min-width: 0;
+}
+
+.topbarActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.topbarRemoteAccess {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  transition: color 0.2s, opacity 0.2s;
+}
+
+.topbarRemoteAccess svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
 }
 
 .topbarWs {
@@ -3562,7 +3592,15 @@ button.btnApplyRestart:hover {
   padding: 8px 12px 0 12px;
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chatPickerGroup {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 220px;
 }
 
 .chatModelSelect {
@@ -3580,8 +3618,12 @@ button.btnApplyRestart:hover {
 .chatModelPickerBtn {
   display: inline-flex;
   align-items: center;
+  justify-content: space-between;
   gap: 4px;
   padding: 2px 8px;
+  width: 100%;
+  height: 32px;
+  min-width: 0;
   border-radius: 6px;
   border: 1px solid var(--line);
   background: var(--panel2);
@@ -3589,10 +3631,30 @@ button.btnApplyRestart:hover {
   font-size: 12px;
   cursor: pointer;
   max-width: 220px;
+  white-space: nowrap;
   transition: background 0.15s, border-color 0.15s;
+}
+.chatModelPickerBtn > svg,
+.chatPickerValue > svg,
+.chatPickerValue > img {
+  flex: 0 0 auto;
 }
 .chatModelPickerBtn:hover { background: var(--bg-app); border-color: var(--brand); }
 .chatModelPickerLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chatPickerValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.chatPickerText {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3649,6 +3711,7 @@ button.btnApplyRestart:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 4px;
   padding: 4px 8px 8px 8px;
 }
 
@@ -3657,12 +3720,14 @@ button.btnApplyRestart:hover {
   align-items: center;
   gap: 2px;
   min-width: 0;
+  flex: 0 1 auto;
 }
 
 .chatInputToolbarRight {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: 0 0 auto;
 }
 
 .chatContextUsage {
@@ -3675,6 +3740,8 @@ button.btnApplyRestart:hover {
   border-radius: 9px;
   background: rgba(148, 163, 184, 0.09);
   transition: background 0.2s ease, border-color 0.2s ease;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .chatContextUsage:hover {
@@ -3693,6 +3760,7 @@ button.btnApplyRestart:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
+  min-width: 0;
 }
 
 .chatContextUsageText.chatContextUsageWarn {
@@ -3768,19 +3836,24 @@ button.btnApplyRestart:hover {
 
 @media (max-width: 768px) {
   .chatContextUsage {
-    gap: 6px;
-    margin-left: 4px;
+    display: grid;
+    grid-template-columns: minmax(0, auto) minmax(48px, 1fr);
+    gap: 8px;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
     padding: 2px 6px;
   }
 
   .chatContextUsageText {
-    max-width: 155px;
+    max-width: none;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
   .chatContextBar {
-    width: 48px;
+    width: auto;
+    min-width: 48px;
   }
 }
 
@@ -3795,7 +3868,14 @@ button.btnApplyRestart:hover {
   color: var(--muted2) !important;
   cursor: pointer;
   font-size: 12px;
+  min-height: 28px;
+  flex: 0 0 auto;
+  white-space: nowrap;
   transition: color 0.15s, background 0.15s;
+}
+
+.chatInputIconBtn > svg {
+  flex: 0 0 auto;
 }
 
 .chatInputIconBtn:hover {
@@ -5773,6 +5853,26 @@ button.btnApplyRestart:hover {
     min-width: 0;
     overflow: hidden;
   }
+  .topbarActions {
+    gap: 2px !important;
+  }
+  .topbarActionDivider {
+    display: none !important;
+  }
+  .topbarRemoteAccess {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    flex: 0 0 32px;
+  }
+  .topbarRemoteAccess svg {
+    width: 16px;
+    height: 16px;
+    flex-basis: 16px;
+  }
+  .topbarRemoteLabel {
+    display: none;
+  }
   .topbarServerBtn { max-width: 64px !important; padding: 1px 5px !important; font-size: 10px !important; }
   .topbarWs { font-size: 11px !important; padding: 1px 5px !important; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .topbarEpCount { display: none !important; }
@@ -5791,14 +5891,67 @@ button.btnApplyRestart:hover {
     align-items: center;
     justify-content: center;
     border-radius: 6px;
+    width: 36px;
+    height: 36px;
+    flex: 0 0 36px;
     -webkit-tap-highlight-color: transparent;
   }
   .topbarHamburger:active { background: rgba(128,128,128,0.15); }
 
   /* chat input: larger touch target, prevent iOS zoom */
-  .chatInput { padding: 8px !important; }
   .chatInputBox textarea { font-size: 16px !important; }
   .chatInputBox { border-radius: 12px !important; }
+  .chatInputTop {
+    gap: 6px;
+    padding: 8px 8px 0;
+  }
+  .chatPickerGroup {
+    max-width: none;
+  }
+  .chatModelMenu {
+    max-width: calc(100vw - 32px);
+  }
+  .chatPickerGroupAgent .chatModelMenu {
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  .chatPickerGroupOrg .chatModelMenu {
+    right: 0;
+    left: auto;
+    transform: none;
+  }
+  .chatModelPickerBtn {
+    max-width: none;
+    height: 34px;
+    padding: 4px 7px;
+  }
+
+  .chatInputToolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "tools send"
+      "context context";
+    align-items: center;
+    column-gap: 6px;
+    row-gap: 4px;
+  }
+  .chatInputToolbarLeft {
+    grid-area: tools;
+    overflow: visible;
+  }
+  .chatInputToolbarRight {
+    grid-area: send;
+  }
+  .chatContextUsage {
+    grid-area: context;
+  }
+  .chatInputIconBtn {
+    padding: 5px 6px !important;
+  }
+  .chatInputTextarea {
+    max-height: min(120px, 30dvh);
+  }
 
   /* chat top bar: compact */
   .chatTopBar { padding: 6px 8px !important; gap: 4px !important; }
@@ -5890,6 +6043,29 @@ button.btnApplyRestart:hover {
     border-bottom: 1px solid var(--border, #e2e8f0);
     padding-right: 0 !important;
     padding-bottom: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .chatModeMenu {
+    left: 0;
+    transform: none;
+  }
+
+  .chatInputIconLabel {
+    display: none;
+  }
+
+  .chatInputToolbarLeft {
+    gap: 1px;
+  }
+
+  .topbarServerBtn {
+    max-width: 48px !important;
+  }
+
+  .topbarWs {
+    max-width: 58px;
   }
 }
 
