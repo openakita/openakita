@@ -95,6 +95,11 @@ type IMBot = {
   agent_profile_id: string;
   enabled: boolean;
   credentials: Record<string, unknown>;
+  configured?: boolean;
+  missing_credentials?: string[];
+  runtime_seen?: boolean;
+  runtime_status?: "online" | "offline" | "unknown";
+  runtime_error?: string | null;
 };
 
 type AgentProfile = {
@@ -1363,6 +1368,10 @@ export function BotConfigTab({ apiBase, onRequestRestart, venvDir, apiBaseUrl }:
 
   const handleSave = async () => {
     if (!editingBot.id.trim()) return;
+    if (editingBot.enabled && !areCredsFilled(editingBot.type, editingBot.credentials)) {
+      toast.error(t("im.wizardCredRequired"));
+      return;
+    }
     setSaving(true);
     try {
       const url = isCreating
@@ -1402,6 +1411,10 @@ export function BotConfigTab({ apiBase, onRequestRestart, venvDir, apiBaseUrl }:
 
   const handleSaveAndRestart = async () => {
     if (!editingBot.id.trim()) return;
+    if (editingBot.enabled && !areCredsFilled(editingBot.type, editingBot.credentials)) {
+      toast.error(t("im.wizardCredRequired"));
+      return;
+    }
     setSaving(true);
     try {
       const url = isCreating
@@ -1503,6 +1516,22 @@ export function BotConfigTab({ apiBase, onRequestRestart, venvDir, apiBaseUrl }:
       <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3.5">
         {bots.map((bot) => {
           const agentProfile = profiles.find((p) => p.id === bot.agent_profile_id);
+          const runtimeLabel = !bot.enabled
+            ? t("im.botDisabled")
+            : bot.runtime_error
+              ? t("im.botStartFailed")
+              : bot.configured === false
+                ? t("im.botConfigInvalid")
+                : bot.runtime_status === "online"
+                  ? t("im.botOnline")
+                  : bot.runtime_status === "offline"
+                    ? t("im.botOffline")
+                    : t("im.botPendingStart");
+          const runtimeVariant = !bot.enabled
+            ? "secondary"
+            : bot.runtime_error || bot.configured === false || bot.runtime_status === "offline"
+              ? "destructive"
+              : bot.runtime_status === "online" ? "default" : "outline";
           return (
             <div
               key={bot.id}
@@ -1516,8 +1545,8 @@ export function BotConfigTab({ apiBase, onRequestRestart, venvDir, apiBaseUrl }:
                   {IM_LOGO_MAP[bot.type]?.({ size: 12 })}
                   {t(BOT_TYPE_LABEL_KEYS[bot.type] || "", { defaultValue: bot.type })}
                 </Badge>
-                <Badge variant={bot.enabled ? "default" : "destructive"} className="text-[10px] px-1.5 py-0">
-                  {bot.enabled ? t("im.botEnabled") : t("im.botDisabled")}
+                <Badge variant={runtimeVariant} className="text-[10px] px-1.5 py-0">
+                  {runtimeLabel}
                 </Badge>
               </div>
               <div className="flex items-center gap-2.5 mb-1.5">
@@ -1532,6 +1561,11 @@ export function BotConfigTab({ apiBase, onRequestRestart, venvDir, apiBaseUrl }:
               <p className="text-xs text-muted-foreground mb-2.5">
                 {t("im.botAgent")}: {agentProfile?.name || bot.agent_profile_id}
               </p>
+              {(bot.runtime_error || (bot.missing_credentials?.length ?? 0) > 0) && (
+                <p className="text-[11px] text-destructive mb-2.5 break-words">
+                  {bot.runtime_error || t("im.botMissingCredentials", { fields: bot.missing_credentials?.join(", ") })}
+                </p>
+              )}
 
               <div className="flex gap-2">
                 <Button
@@ -2125,14 +2159,21 @@ function getActiveSteps(botType: string): WizardStep[] {
 }
 
 function getRequiredCredKeys(botType: string): string[] {
-  const fields = CREDENTIAL_FIELDS[botType] || [];
-  if (botType === "telegram") return fields.filter((f) => TG_CORE_FIELDS.includes(f.key)).map((f) => f.key);
-  return fields.map((f) => f.key);
+  const requiredByType: Record<string, string[]> = {
+    feishu: ["app_id", "app_secret"],
+    telegram: TG_CORE_FIELDS,
+    dingtalk: ["client_id", "client_secret"],
+    wework: ["corp_id", "token", "encoding_aes_key"],
+    wework_ws: ["bot_id", "secret"],
+    qqbot: ["app_id", "app_secret"],
+    wechat: ["token"],
+  };
+  return requiredByType[botType] || [];
 }
 
 function areCredsFilled(botType: string, creds: Record<string, unknown>): boolean {
   const keys = getRequiredCredKeys(botType);
-  return keys.length === 0 || keys.some((k) => {
+  return keys.length === 0 || keys.every((k) => {
     const v = creds[k];
     return typeof v === "string" ? v.trim().length > 0 : !!v;
   });

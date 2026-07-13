@@ -21,7 +21,7 @@ _ENV_CHANNELS: dict[str, tuple[str, list[str]]] = {
     "wechat": ("wechat_enabled", ["wechat_token"]),
 }
 
-_BOT_REQUIRED_CREDENTIALS: dict[str, list[str]] = {
+BOT_REQUIRED_CREDENTIALS: dict[str, list[str]] = {
     "telegram": ["bot_token"],
     "feishu": ["app_id", "app_secret"],
     "wework": ["corp_id", "token", "encoding_aes_key"],
@@ -32,6 +32,14 @@ _BOT_REQUIRED_CREDENTIALS: dict[str, list[str]] = {
     "qqbot": ["app_id", "app_secret"],
     "wechat": ["token"],
 }
+
+
+def missing_bot_credentials(bot_type: str, credentials: Any) -> list[str]:
+    """Return required credential keys that are absent for a bot config."""
+    creds = credentials if isinstance(credentials, dict) else {}
+    return [
+        key for key in BOT_REQUIRED_CREDENTIALS.get(bot_type, []) if not _present(creds.get(key))
+    ]
 
 
 def _truthy(value: Any) -> bool:
@@ -124,8 +132,7 @@ def collect_effective_im_status(settings: Any, gateway: Any | None = None) -> di
         credentials = (
             bot_cfg.get("credentials") if isinstance(bot_cfg.get("credentials"), dict) else {}
         )
-        required = _BOT_REQUIRED_CREDENTIALS.get(bot_type, [])
-        missing = [key for key in required if not _present(credentials.get(key))]
+        missing = missing_bot_credentials(bot_type, credentials)
         enabled = bot_cfg.get("enabled", True) is not False
         runtime_entry = runtime_by_channel.get(channel_name)
         configured = enabled and not missing

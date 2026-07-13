@@ -295,15 +295,56 @@ def _unmask_credentials(submitted: dict, stored: dict) -> dict:
     return result
 
 
+def _validate_bot_credentials(bot_type: str, credentials: dict) -> None:
+    from openakita.channels.status import missing_bot_credentials
+
+    missing = missing_bot_credentials(bot_type, credentials)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required credentials for {bot_type}: {', '.join(missing)}",
+        )
+
+
+def _runtime_bot_view(bot: dict, detail: dict | None) -> dict:
+    from openakita.main import get_im_bot_runtime_error
+
+    result = _mask_bot_credentials(bot)
+    channel = f"{bot.get('type', '')}:{bot.get('id', '')}"
+    if detail:
+        result.update(
+            configured=detail.get("configured", False),
+            missing_credentials=detail.get("missing", []),
+            runtime_seen=detail.get("runtime_seen", False),
+            runtime_status=detail.get("runtime_status", "unknown"),
+        )
+    result["runtime_error"] = get_im_bot_runtime_error(channel)
+    return result
+
+
 # ─── Bot CRUD routes ─────────────────────────────────────────────────────
 
 
 @router.get("/api/agents/bots")
 async def list_bots():
     """List all configured bots from settings.im_bots."""
+    from openakita.channels.status import collect_effective_im_status
     from openakita.config import settings
+    from openakita.main import get_message_gateway
 
-    return {"bots": [_mask_bot_credentials(b) for b in settings.im_bots if isinstance(b, dict)]}
+    status = collect_effective_im_status(settings, get_message_gateway())
+    details = {
+        detail.get("id"): detail
+        for detail in status["details"]
+        if detail.get("source") == "im_bots"
+    }
+    return {
+        "bots": [
+            _runtime_bot_view(bot, details.get(bot.get("id")))
+            for bot in settings.im_bots
+            if isinstance(bot, dict)
+        ]
+    }
 
 
 @router.post("/api/agents/bots")
@@ -320,6 +361,8 @@ async def create_bot(body: BotCreateRequest):
         )
     if not isinstance(body.credentials, dict):
         raise HTTPException(status_code=400, detail="credentials must be a dict")
+    if body.enabled:
+        _validate_bot_credentials(body.type, body.credentials)
 
     existing_ids = {b.get("id") for b in settings.im_bots if isinstance(b, dict)}
     if body.id in existing_ids:
@@ -333,14 +376,21 @@ async def create_bot(body: BotCreateRequest):
         "enabled": body.enabled,
         "credentials": body.credentials,
     }
-    settings.im_bots = list(settings.im_bots) + [bot]
+    previous_bots = list(settings.im_bots)
+    settings.im_bots = previous_bots + [bot]
     runtime_state.save()
-    logger.info(f"[Agents API] Created bot: {body.id}")
 
     if bot.get("enabled", True):
-        from openakita.main import apply_im_bot
+        from openakita.main import apply_im_bot, get_im_bot_runtime_error
 
-        await apply_im_bot(bot)
+        applied = await apply_im_bot(bot)
+        runtime_error = get_im_bot_runtime_error(f"{body.type}:{body.id}")
+        if not applied and runtime_error:
+            settings.im_bots = previous_bots
+            runtime_state.save()
+            raise HTTPException(status_code=502, detail=f"Failed to start bot: {runtime_error}")
+
+    logger.info(f"[Agents API] Created bot: {body.id}")
 
     return {"status": "ok", "bot": _mask_bot_credentials(bot)}
 
@@ -377,6 +427,10 @@ async def update_bot(bot_id: str, body: BotUpdateRequest):
         stored_creds = bot.get("credentials", {})
         bot["credentials"] = _unmask_credentials(body.credentials, stored_creds)
 
+    if bot.get("enabled", True):
+        _validate_bot_credentials(str(bot.get("type", "")), bot.get("credentials", {}))
+
+    old_bot = dict(bots[idx])
     bots[idx] = bot
     settings.im_bots = bots
     runtime_state.save()
@@ -386,10 +440,18 @@ async def update_bot(bot_id: str, body: BotUpdateRequest):
     if new_agent_profile != old_agent_profile:
         _invalidate_bot_agent_sessions(bot)
 
-    from openakita.main import apply_im_bot, remove_im_bot
+    from openakita.main import apply_im_bot, get_im_bot_runtime_error, remove_im_bot
 
     if bot.get("enabled", True):
-        await apply_im_bot(bot)
+        applied = await apply_im_bot(bot)
+        runtime_error = get_im_bot_runtime_error(f"{bot.get('type', '')}:{bot_id}")
+        if not applied and runtime_error:
+            bots[idx] = old_bot
+            settings.im_bots = bots
+            runtime_state.save()
+            if old_bot.get("enabled", True):
+                await apply_im_bot(old_bot)
+            raise HTTPException(status_code=502, detail=f"Failed to start bot: {runtime_error}")
     else:
         await remove_im_bot(bot)
 
@@ -450,16 +512,25 @@ async def toggle_bot(bot_id: str, body: BotToggleRequest):
         raise HTTPException(status_code=404, detail=f"bot '{bot_id}' not found")
 
     bot = dict(bots[idx])
+    if body.enabled:
+        _validate_bot_credentials(str(bot.get("type", "")), bot.get("credentials", {}))
+    old_bot = dict(bot)
     bot["enabled"] = body.enabled
     bots[idx] = bot
     settings.im_bots = bots
     runtime_state.save()
     logger.info(f"[Agents API] Toggled bot {bot_id}: enabled={body.enabled}")
 
-    from openakita.main import apply_im_bot, remove_im_bot
+    from openakita.main import apply_im_bot, get_im_bot_runtime_error, remove_im_bot
 
     if body.enabled:
-        await apply_im_bot(bot)
+        applied = await apply_im_bot(bot)
+        runtime_error = get_im_bot_runtime_error(f"{bot.get('type', '')}:{bot_id}")
+        if not applied and runtime_error:
+            bots[idx] = old_bot
+            settings.im_bots = bots
+            runtime_state.save()
+            raise HTTPException(status_code=502, detail=f"Failed to start bot: {runtime_error}")
     else:
         await remove_im_bot(bot)
 

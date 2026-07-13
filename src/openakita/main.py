@@ -193,6 +193,14 @@ def get_message_gateway():
     return _message_gateway
 
 
+_im_bot_runtime_errors: dict[str, str] = {}
+
+
+def get_im_bot_runtime_error(channel_name: str) -> str | None:
+    """Return the latest adapter startup error for a configured bot."""
+    return _im_bot_runtime_errors.get(channel_name)
+
+
 def _bot_channel_name(bot_cfg: dict) -> str:
     """根据 bot 配置计算 channel_name，与 start_im_channels 中的命名规则保持一致。"""
     bot_type = bot_cfg.get("type", "")
@@ -213,6 +221,7 @@ async def apply_im_bot(bot_cfg: dict) -> bool:
     agent_id = bot_cfg.get("agent_profile_id", "default")
     creds = bot_cfg.get("credentials", {})
     channel_name = _bot_channel_name(bot_cfg)
+    _im_bot_runtime_errors.pop(channel_name, None)
     try:
         adapter = _create_bot_adapter(
             bot_type,
@@ -226,6 +235,7 @@ async def apply_im_bot(bot_cfg: dict) -> bool:
             logger.info(f"[HotReload] Applied bot adapter: {channel_name}")
             return True
     except Exception as e:
+        _im_bot_runtime_errors[channel_name] = str(e)
         logger.error(f"[HotReload] Failed to apply bot {channel_name}: {e}")
     return False
 
@@ -238,6 +248,7 @@ async def remove_im_bot(bot_cfg: dict) -> bool:
     if _message_gateway is None:
         return False
     channel_name = _bot_channel_name(bot_cfg)
+    _im_bot_runtime_errors.pop(channel_name, None)
     try:
         result = await _message_gateway.unregister_adapter(channel_name)
         if result:
@@ -660,6 +671,7 @@ async def start_im_channels(agent_or_master):
             _channel_name = f"{bot_type}:{bot_id}" if bot_id else bot_type
 
             try:
+                _im_bot_runtime_errors.pop(_channel_name, None)
                 adapter = _create_bot_adapter(
                     bot_type,
                     creds,
@@ -672,6 +684,7 @@ async def start_im_channels(agent_or_master):
                     adapters_started.append(_channel_name)
                     logger.info(f"[MultiBot] Registered bot: {_channel_name} -> agent={agent_id}")
             except Exception as e:
+                _im_bot_runtime_errors[_channel_name] = str(e)
                 logger.error(f"Failed to create bot {bot_id}: {e}")
 
     # 设置 Agent 处理函数
