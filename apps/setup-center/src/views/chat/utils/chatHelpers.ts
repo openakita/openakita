@@ -17,7 +17,7 @@ import type {
   ChainSummaryItem,
   ChainTimelineGroup,
 } from "./chatTypes";
-import { IS_TAURI } from "../../../platform";
+import { IS_TAURI, logger, saveFileDialog, writeTextFile } from "../../../platform";
 import { getAccessToken } from "../../../platform/auth";
 
 // ── 持久化 Key 常量 ──
@@ -120,7 +120,11 @@ export const SVG_PATHS: Record<string, string> = {
 
 // ── 对话导出 ──
 
-export function exportConversation(msgs: ChatMessage[], title: string, format: "md" | "json") {
+export async function exportConversation(
+  msgs: ChatMessage[],
+  title: string,
+  format: "md" | "json",
+): Promise<boolean> {
   let content: string;
   let mimeType: string;
   let ext: string;
@@ -147,13 +151,40 @@ export function exportConversation(msgs: ChatMessage[], title: string, format: "
     mimeType = "text/markdown";
     ext = "md";
   }
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${title.replace(/[/\\?%*:|"<>]/g, "_").slice(0, 50)}.${ext}`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  const filename = `${title.replace(/[/\\?%*:|"<>]/g, "_").slice(0, 50)}.${ext}`;
+  logger.info("Chat.Export", "start", { format: ext, msgCount: msgs.length });
+
+  try {
+    if (IS_TAURI) {
+      const savePath = await saveFileDialog({
+        title: "导出会话",
+        defaultPath: filename,
+        filters: [{ name: format === "json" ? "JSON" : "Markdown", extensions: [ext] }],
+      });
+      if (!savePath) {
+        logger.info("Chat.Export", "cancelled", { format: ext });
+        return false;
+      }
+      await writeTextFile(savePath, content);
+      logger.info("Chat.Export", "success", { format: ext, path: savePath });
+      return true;
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    logger.info("Chat.Export", "success", { format: ext });
+    return true;
+  } catch (error) {
+    logger.error("Chat.Export", "error", { format: ext, error: String(error) });
+    throw error;
+  }
 }
 
 // ── Auth token helper ──

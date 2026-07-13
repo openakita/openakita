@@ -3007,11 +3007,17 @@ export function ChatView({
         setMessages((prev) => [...prev, { id: genId(), role: "system", content: `当前思考程度: ${currentLabel}\n用法: /thinking_depth low|medium|high|max`, timestamp: Date.now() }]);
       }
     }},
-    { id: "export", label: t("chat.exportLabel", "导出会话"), description: t("chat.exportDesc", "导出当前对话 (md/json)"), action: (args) => {
+    { id: "export", label: t("chat.exportLabel", "导出会话"), description: t("chat.exportDesc", "导出当前对话 (md/json)"), action: async (args) => {
       const fmt = args?.trim().toLowerCase() === "json" ? "json" : "md";
       const conv = conversations.find((c) => c.id === activeConvId);
-      exportConversation(messages, conv?.title || t("chat.conversation", "对话"), fmt as "md" | "json");
-      setMessages((prev) => [...prev, { id: genId(), role: "system", content: t("chat.exportDone", { format: fmt.toUpperCase(), defaultValue: `已导出为 ${fmt.toUpperCase()} 格式` }), timestamp: Date.now() }]);
+      try {
+        const saved = await exportConversation(messages, conv?.title || t("chat.conversation", "对话"), fmt);
+        if (saved) {
+          setMessages((prev) => [...prev, { id: genId(), role: "system", content: t("chat.exportDone", { format: fmt.toUpperCase(), defaultValue: `已导出为 ${fmt.toUpperCase()} 格式` }), timestamp: Date.now() }]);
+        }
+      } catch (error) {
+        toast.error(t("chat.exportFailed", "导出会话失败"), { description: String(error) });
+      }
     }},
     { id: "memory", label: t("chat.memoryCmd", "记忆管理"), description: t("chat.memoryCmdDesc", "查看/管理 AI 记忆条目"), action: (args) => {
       if (args === "list" || !args) {
@@ -6569,13 +6575,17 @@ export function ChatView({
                 label: t("chat.exportConversation", "导出会话"),
                 icon: <IconDownload size={13} />,
                 danger: false,
-                action: () => {
+                action: async () => {
                   const conv = conversations.find((c) => c.id === ctxMenu.convId);
                   const convMsgs = ctxMenu.convId === activeConvId
                     ? messages
                     : loadMessagesFromStorage(STORAGE_KEY_MSGS_PREFIX + ctxMenu.convId);
-                  exportConversation(convMsgs, conv?.title || t("chat.conversation", "对话"), "md");
                   setCtxMenu(null);
+                  try {
+                    await exportConversation(convMsgs, conv?.title || t("chat.conversation", "对话"), "md");
+                  } catch (error) {
+                    toast.error(t("chat.exportFailed", "导出会话失败"), { description: String(error) });
+                  }
                 },
               },
               {
