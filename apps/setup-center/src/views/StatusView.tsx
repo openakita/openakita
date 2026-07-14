@@ -91,6 +91,7 @@ export interface StatusViewProps {
   doStopService: (wsId?: string | null) => Promise<void>;
   restartService: () => Promise<void>;
   onOpenRuntimeEnvironment: () => void;
+  onRepairRuntime: () => Promise<void>;
   setView: (view: ViewId) => void;
 }
 
@@ -108,12 +109,13 @@ export function StatusView(props: StatusViewProps) {
     shouldUseHttpApi, httpApiBase,
     startLocalServiceWithConflictCheck, refreshStatus,
     doStopService, restartService,
-    onOpenRuntimeEnvironment,
+    onOpenRuntimeEnvironment, onRepairRuntime,
     setView,
   } = props;
 
   const [healthChecking, setHealthChecking] = useState<string | null>(null);
   const [imChecking, setImChecking] = useState(false);
+  const [repairingRuntime, setRepairingRuntime] = useState(false);
   // Structured runtime error surface (e.g. RUNTIME_PERMISSION_DENIED|...)
   // —— Rust 端 `ensure_runtime_layout` 等核心 IO 失败时会把带前缀的错误写到
   // runtime manifest.last_error，本组件读出后渲染指引 banner，让企业 AD /
@@ -389,14 +391,36 @@ export function StatusView(props: StatusViewProps) {
               ? <><Loader2 className="animate-spin mr-1" size={14} />{busy || t("topbar.starting")}</>
               : <><Play size={14} className="mr-1" />{t("topbar.start")}</>}
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onOpenRuntimeEnvironment}
-          >
-            <ArrowRight size={14} className="mr-1" />
-            查看运行环境
-          </Button>
+          {backendBootPhase === "error" ? (
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={!!busy || repairingRuntime}
+              title={t("status.runtimeRepairHint")}
+              onClick={async () => {
+                setRepairingRuntime(true);
+                try {
+                  await onRepairRuntime();
+                } finally {
+                  setRepairingRuntime(false);
+                }
+              }}
+            >
+              {repairingRuntime
+                ? <Loader2 className="mr-1 animate-spin" size={14} />
+                : <Wrench size={14} className="mr-1" />}
+              {t("status.runtimeRepairTitle")}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onOpenRuntimeEnvironment}
+            >
+              <ArrowRight size={14} className="mr-1" />
+              {t("status.runtimeEnvironmentTitle")}
+            </Button>
+          )}
           </CardContent>
         </Card>
       )}

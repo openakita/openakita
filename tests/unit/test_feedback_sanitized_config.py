@@ -74,3 +74,50 @@ async def test_bug_report_zip_includes_org_json_state(monkeypatch, tmp_path):
     assert "orgs/org_123/org.json" in names
     assert "orgs/org_123/state.json" in names
     assert "orgs/org_123/events/20260627.jsonl" in names
+
+
+@pytest.mark.asyncio
+async def test_bug_report_zip_includes_desktop_runtime_diagnostics(monkeypatch, tmp_path):
+    data_dir = tmp_path / "workspaces" / "default" / "data"
+    data_dir.mkdir(parents=True)
+    home_dir = tmp_path / "openakita-home"
+    global_logs = home_dir / "logs"
+    runtime_logs = home_dir / "runtime" / "logs"
+    global_logs.mkdir(parents=True)
+    runtime_logs.mkdir(parents=True)
+
+    (global_logs / "autostart.log").write_text("runtime rebuild started\n", encoding="utf-8")
+    (home_dir / "runtime" / "manifest.json").write_text(
+        json.dumps({"legacy_mode": True, "last_error": "install failed"}),
+        encoding="utf-8",
+    )
+    (runtime_logs / "app-venv.log").write_text("app install failed\n", encoding="utf-8")
+    (runtime_logs / "agent-venv.log").write_text("agent install pending\n", encoding="utf-8")
+
+    monkeypatch.setattr(bug_report, "_resolve_data_dir", lambda: data_dir)
+    monkeypatch.setattr(bug_report, "_resolve_global_logs_dir", lambda: global_logs)
+    monkeypatch.setattr(bug_report, "_resolve_openakita_home_dir", lambda: home_dir)
+    monkeypatch.setattr(bug_report, "_collect_sanitized_config", lambda: {})
+    monkeypatch.setattr(bug_report, "_add_windows_crash_artifacts", lambda zf: None)
+
+    zip_bytes = await bug_report._build_bug_zip(
+        report_id="runtime-failure",
+        title="runtime failure",
+        description="backend did not start",
+        steps="",
+        sys_info={},
+        contact_email="",
+        contact_wechat="",
+        images=None,
+        upload_logs=True,
+        upload_debug=False,
+    )
+
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as zf:
+        names = set(zf.namelist())
+        manifest = json.loads(zf.read("runtime/manifest.json"))
+
+    assert "global_logs/autostart.log" in names
+    assert "runtime/logs/app-venv.log" in names
+    assert "runtime/logs/agent-venv.log" in names
+    assert manifest["legacy_mode"] is True

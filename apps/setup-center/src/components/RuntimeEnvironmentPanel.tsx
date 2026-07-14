@@ -4,9 +4,7 @@ import { Activity, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { invoke } from "../platform";
 import { joinPath } from "../utils";
-import { dismissLoading, notifyError, notifyLoading, notifySuccess } from "../utils/notify";
 import type { PlatformInfo } from "../types";
 
 type ToolProbe = { available?: boolean; path?: string; version?: string };
@@ -66,8 +64,8 @@ export type RuntimeEnvironmentPanelProps = {
   busy: string | null;
   currentWorkspaceId: string | null;
   refreshRuntimeDiagnostics: () => Promise<void>;
-  doStopService: (wsId?: string | null) => Promise<void>;
   doStartLocalService: (wsId: string) => Promise<void>;
+  onRepairRuntime: () => Promise<void>;
 };
 
 export function RuntimeEnvironmentPanel({
@@ -83,8 +81,8 @@ export function RuntimeEnvironmentPanel({
   busy,
   currentWorkspaceId,
   refreshRuntimeDiagnostics,
-  doStopService,
   doStartLocalService,
+  onRepairRuntime,
 }: RuntimeEnvironmentPanelProps) {
   const { t } = useTranslation();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -141,21 +139,6 @@ export function RuntimeEnvironmentPanel({
     ...(nodeInfo?.workspace_cache ? [[t("status.workspaceCache"), nodeInfo.workspace_cache]] : []),
   ];
 
-  const onRepair = async () => {
-    if (!currentWorkspaceId) return;
-    const _b = notifyLoading(t("status.runtimeRepairing"));
-    try {
-      try { await doStopService(currentWorkspaceId); } catch { /* ignore */ }
-      const report = await invoke<string>("repair_runtime_env");
-      notifySuccess(report.split("\n").slice(0, 3).join("\n"));
-      await doStartLocalService(currentWorkspaceId);
-    } catch (e) {
-      notifyError(t("status.runtimeRepairFailed", { err: String(e) }));
-    } finally {
-      dismissLoading(_b);
-    }
-  };
-
   return (
     <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -195,7 +178,7 @@ export function RuntimeEnvironmentPanel({
             size="sm"
             variant="destructive"
             disabled={!!busy || !currentWorkspaceId}
-            onClick={onRepair}
+            onClick={() => void onRepairRuntime()}
             title={t("status.runtimeRepairHint")}
           >
             {t("status.runtimeRepairTitle")}

@@ -728,6 +728,7 @@
     "runtimePermissionDeniedFallbackToParent": "Directory does not exist yet; opened nearest existing ancestor: {{path}}",
     "runtimeRepairTitle": "Repair Runtime",
     "runtimeRepairHint": "Wipe stale venv & manifest and rebuild the runtime from scratch (use this when venv is corrupted causing repeated unresponsiveness).",
+    "runtimeEnvironmentTitle": "View Runtime",
     "runtimeRepairing": "Rebuilding runtime…",
     "runtimeRepairFailed": "Repair failed: {{err}}",
     "memoryDegradedTitle": "Memory database unavailable",
