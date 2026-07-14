@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md VERSION hatch_build.py ./
+COPY scripts/write_build_version.py scripts/write_build_version.py
 COPY src/ src/
 COPY skills/ skills/
 COPY mcps/ mcps/
@@ -35,6 +36,7 @@ RUN mkdir -p docs-site/.vitepress/dist
 #     docker build --build-arg INSTALL_FINANCE_AUTO=1 -t openakita:fa .
 # Docs: plugins/finance-auto/docs/DEPLOY_DOCKER.md §3.
 ARG INSTALL_FINANCE_AUTO=0
+ARG OPENAKITA_BUILD_GIT_HASH=dev
 
 RUN if [ "$INSTALL_FINANCE_AUTO" = "1" ]; then \
         pip install --no-cache-dir ".[finance-auto]"; \
