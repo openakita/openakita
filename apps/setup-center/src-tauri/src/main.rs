@@ -15,11 +15,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
 use tauri::Emitter;
 use tauri::Manager;
 #[cfg(desktop)]
@@ -47,6 +49,8 @@ static AUTO_START_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static AUTO_START_STARTED_AT_MS: AtomicU64 = AtomicU64::new(0);
 static DESKTOP_SESSION_TOKEN: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 const AUTO_START_TIMEOUT_MS: u64 = 180_000;
+const RUNTIME_SETUP_TIMEOUT: Duration = Duration::from_secs(180);
+const RUNTIME_PROXY_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
 
 /// 后端启动宽限期（秒）。Backend cold-start 在 dual-venv hack 下：
 ///   * Python 解释器 import 整个生态 ≈ 30s
@@ -1415,6 +1419,7 @@ fn apply_runtime_env_builder(
 
 fn apply_runtime_bootstrap_env(cmd: &mut Command, pip_index: Option<&RuntimePipIndex>) {
     apply_runtime_env_builder(cmd, RuntimeEnvPurpose::Bootstrap, pip_index);
+    bypass_unreachable_runtime_proxies(cmd);
 
     // 仅在 bootstrap 路径上钉死 uv 的 Python 发现策略。Core / Agent 子进程
     // 已经直接通过 venv 内 python 调用，不走 uv 解释器解析。
@@ -1437,6 +1442,70 @@ fn apply_runtime_bootstrap_env(cmd: &mut Command, pip_index: Option<&RuntimePipI
     cmd.env("UV_CACHE_DIR", runtime_uv_cache_dir());
 }
 
+fn runtime_proxy_endpoint(value: &str) -> Option<(String, u16)> {
+    let parsed = reqwest::Url::parse(value).ok()?;
+    let host = parsed.host_str()?.to_string();
+    let port = parsed.port_or_known_default().or_else(|| match parsed.scheme() {
+        "socks" | "socks4" | "socks5" | "socks5h" => Some(1080),
+        _ => None,
+    })?;
+    Some((host, port))
+}
+
+fn proxy_endpoint_is_reachable(host: &str, port: u16) -> bool {
+    let Ok(addresses) = (host, port).to_socket_addrs() else {
+        return false;
+    };
+    addresses
+        .take(4)
+        .any(|address| TcpStream::connect_timeout(&address, RUNTIME_PROXY_PROBE_TIMEOUT).is_ok())
+}
+
+/// uv and pip honor proxy environment variables, but a stale local proxy can
+/// turn every package operation into a long retry cascade. Only remove proxy
+/// variables from this child command after the configured endpoint has been
+/// positively identified as unreachable; the desktop process environment is
+/// left untouched.
+fn bypass_unreachable_runtime_proxies(cmd: &mut Command) {
+    let proxy_keys = [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ];
+    let mut reachability: HashMap<String, bool> = HashMap::new();
+
+    for key in proxy_keys {
+        let Ok(value) = std::env::var(key) else {
+            continue;
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let Some((host, port)) = runtime_proxy_endpoint(value) else {
+            log_to_file(&format!(
+                "[runtime] proxy preflight skipped malformed {} value",
+                key
+            ));
+            continue;
+        };
+        let endpoint = format!("{}:{}", host, port);
+        let reachable = *reachability
+            .entry(endpoint.clone())
+            .or_insert_with(|| proxy_endpoint_is_reachable(&host, port));
+        if !reachable {
+            cmd.env_remove(key);
+            log_to_file(&format!(
+                "[runtime] proxy preflight: {} endpoint {} is unreachable; bypassing it for runtime setup",
+                key, endpoint
+            ));
+        }
+    }
+}
+
 fn apply_runtime_core_env(cmd: &mut Command) {
     apply_runtime_env_builder(cmd, RuntimeEnvPurpose::Core, None);
     prepend_path(cmd, &runtime_venv_bin_dir(&agent_venv_dir()));
@@ -1456,26 +1525,78 @@ fn apply_runtime_core_env(cmd: &mut Command) {
     }
 }
 
-fn run_and_log(mut cmd: Command, log_path: &Path) -> Result<(), String> {
-    let output = cmd
-        .output()
-        .map_err(|e| format!("run command failed: {e}"))?;
+fn run_and_log(mut cmd: Command, log_path: &Path, deadline: Instant) -> Result<(), String> {
+    let command_debug = format!("{:?}", cmd);
+    if Instant::now() >= deadline {
+        return Err(format!(
+            "RUNTIME_INSTALL_TIMEOUT|runtime setup exceeded {} seconds before running {}",
+            RUNTIME_SETUP_TIMEOUT.as_secs(),
+            command_debug
+        ));
+    }
     let mut log = OpenOptions::new()
         .create(true)
         .append(true)
         .open(log_path)
         .map_err(|e| format!("open runtime log {} failed: {e}", log_path.display()))?;
-    let _ = writeln!(log, "\n$ {:?}", cmd);
-    let _ = log.write_all(&output.stdout);
-    let _ = log.write_all(&output.stderr);
-    if output.status.success() {
+    let _ = writeln!(log, "\n$ {}", command_debug);
+    let stdout_log = log
+        .try_clone()
+        .map_err(|e| format!("clone runtime stdout log failed: {e}"))?;
+    let stderr_log = log
+        .try_clone()
+        .map_err(|e| format!("clone runtime stderr log failed: {e}"))?;
+    cmd.stdout(Stdio::from(stdout_log));
+    cmd.stderr(Stdio::from(stderr_log));
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("run command failed: {e}"))?;
+
+    let mut timed_out = false;
+    let mut wait_error = None;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(100)),
+            Ok(None) => {
+                timed_out = true;
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Err(e) => {
+                wait_error = Some(e);
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+
+    if let Some(error) = wait_error {
+        Err(format!("wait for command failed: {error}"))
+    } else if timed_out {
+        let detail = format!(
+            "RUNTIME_INSTALL_TIMEOUT|runtime setup exceeded {} seconds while running {}",
+            RUNTIME_SETUP_TIMEOUT.as_secs(),
+            command_debug
+        );
+        let _ = writeln!(log, "\n{}", detail);
+        Err(detail)
+    } else if status.is_some_and(|status| status.success()) {
         Ok(())
     } else {
-        Err(format!("command failed with status {}", output.status))
+        Err(format!(
+            "command failed with status {}",
+            status
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        ))
     }
 }
 
-fn health_check_python(py: &Path, code: &str, log_path: &Path) -> bool {
+fn health_check_python(py: &Path, code: &str, log_path: &Path, deadline: Instant) -> bool {
     if !py.exists() {
         return false;
     }
@@ -1483,23 +1604,7 @@ fn health_check_python(py: &Path, code: &str, log_path: &Path) -> bool {
     cmd.args(["-c", code]);
     apply_runtime_bootstrap_env(&mut cmd, None);
     apply_no_window(&mut cmd);
-    match cmd.output() {
-        Ok(output) if output.status.success() => true,
-        Ok(output) => {
-            let mut log = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_path)
-                .ok();
-            if let Some(ref mut log) = log {
-                let _ = writeln!(log, "health check failed for {}", py.display());
-                let _ = log.write_all(&output.stdout);
-                let _ = log.write_all(&output.stderr);
-            }
-            false
-        }
-        Err(_) => false,
-    }
+    run_and_log(cmd, log_path, deadline).is_ok()
 }
 
 fn quarantine_runtime_uv_cache(report: &mut String) {
@@ -1679,7 +1784,12 @@ fn pyvenv_cfg_home_is_disallowed(venv_dir: &Path) -> Option<String> {
 /// 额外地：直接拒绝 `pyvenv.cfg::home` 指向 Anaconda/pyenv/Homebrew 等
 /// 受污染发行版的 venv（v1.27.10 启动失败的根因）。共享 `BAD_BASE_PYTHON_MARKERS`
 /// 让 Rust 与 Python 两侧的判定逻辑严格对齐。
-fn venv_is_real_isolated(venv_dir: &Path, py: &Path, log_path: &Path) -> bool {
+fn venv_is_real_isolated(
+    venv_dir: &Path,
+    py: &Path,
+    log_path: &Path,
+    deadline: Instant,
+) -> bool {
     if !py.exists() {
         return false;
     }
@@ -1705,6 +1815,7 @@ fn venv_is_real_isolated(venv_dir: &Path, py: &Path, log_path: &Path) -> bool {
         py,
         "import sys, pip; assert sys.prefix != sys.base_prefix, 'venv launcher fell back to base interpreter'",
         log_path,
+        deadline,
     )
 }
 
@@ -1845,9 +1956,14 @@ print(json.dumps(report, ensure_ascii=False, indent=2))
     )
 }
 
-fn ensure_venv(venv_dir: &Path, python_version: &str, log_path: &Path) -> Result<PathBuf, String> {
+fn ensure_venv(
+    venv_dir: &Path,
+    python_version: &str,
+    log_path: &Path,
+    deadline: Instant,
+) -> Result<PathBuf, String> {
     let py = runtime_venv_python_path(venv_dir);
-    if venv_is_real_isolated(venv_dir, &py, log_path) {
+    if venv_is_real_isolated(venv_dir, &py, log_path, deadline) {
         return Ok(py);
     }
 
@@ -1911,8 +2027,8 @@ fn ensure_venv(venv_dir: &Path, python_version: &str, log_path: &Path) -> Result
     cmd.arg(venv_dir);
     apply_runtime_bootstrap_env(&mut cmd, None);
     apply_no_window(&mut cmd);
-    run_and_log(cmd, log_path)?;
-    if venv_is_real_isolated(venv_dir, &py, log_path) {
+    run_and_log(cmd, log_path, deadline)?;
+    if venv_is_real_isolated(venv_dir, &py, log_path, deadline) {
         Ok(py)
     } else {
         let has_cfg = venv_dir.join("pyvenv.cfg").exists();
@@ -1928,6 +2044,7 @@ fn ensure_venv(venv_dir: &Path, python_version: &str, log_path: &Path) -> Result
 fn ensure_app_venv(
     bootstrap: &BootstrapManifest,
     pip_index: &RuntimePipIndex,
+    deadline: Instant,
 ) -> Result<PathBuf, String> {
     let started = Instant::now();
     let log_path = runtime_logs_dir().join("app-venv.log");
@@ -1937,7 +2054,14 @@ fn ensure_app_venv(
         .as_ref()
         .map(|m| runtime_manifest_mismatch(m, bootstrap, pip_index).is_none())
         .unwrap_or(false);
-    if manifest_ok && health_check_python(&app_py, &app_runtime_health_code(&app_venv_dir()), &log_path) {
+    if manifest_ok
+        && health_check_python(
+            &app_py,
+            &app_runtime_health_code(&app_venv_dir()),
+            &log_path,
+            deadline,
+        )
+    {
         log_to_file(&format!(
             "[runtime] ensure_app_venv reused existing env in {}ms",
             started.elapsed().as_millis()
@@ -1955,7 +2079,12 @@ fn ensure_app_venv(
     } else {
         log_to_file("[runtime] ensure_app_venv rebuilding app runtime: missing manifest");
     }
-    let app_py = ensure_venv(&app_venv_dir(), &bootstrap.python_version, &log_path)?;
+    let app_py = ensure_venv(
+        &app_venv_dir(),
+        &bootstrap.python_version,
+        &log_path,
+        deadline,
+    )?;
     let wheel_path = bootstrap_resource_dir().join(&bootstrap.wheel.name);
     if !wheel_path.exists() {
         return Err(format!(
@@ -2008,12 +2137,17 @@ fn ensure_app_venv(
     apply_runtime_bootstrap_env(&mut cmd, Some(pip_index));
     apply_no_window(&mut cmd);
     let install_started = Instant::now();
-    run_and_log(cmd, &log_path)?;
+    run_and_log(cmd, &log_path, deadline)?;
     log_to_file(&format!(
         "[runtime] app wheel install finished in {}ms",
         install_started.elapsed().as_millis()
     ));
-    if health_check_python(&app_py, &app_runtime_health_code(&app_venv_dir()), &log_path) {
+    if health_check_python(
+        &app_py,
+        &app_runtime_health_code(&app_venv_dir()),
+        &log_path,
+        deadline,
+    ) {
         log_to_file(&format!(
             "[runtime] ensure_app_venv ready in {}ms",
             started.elapsed().as_millis()
@@ -2047,10 +2181,16 @@ fn ensure_app_venv(
 fn ensure_agent_venv(
     bootstrap: &BootstrapManifest,
     _pip_index: &RuntimePipIndex,
+    deadline: Instant,
 ) -> Result<PathBuf, String> {
     let started = Instant::now();
     let log_path = runtime_logs_dir().join("agent-venv.log");
-    let result = ensure_venv(&agent_venv_dir(), &bootstrap.python_version, &log_path);
+    let result = ensure_venv(
+        &agent_venv_dir(),
+        &bootstrap.python_version,
+        &log_path,
+        deadline,
+    );
     log_to_file(&format!(
         "[runtime] ensure_agent_venv finished in {}ms status={}",
         started.elapsed().as_millis(),
@@ -2169,6 +2309,7 @@ fn write_runtime_failure_manifest(error: &str) {
 
 fn ensure_dual_runtime_env() -> Result<RuntimeEnvInfo, String> {
     let started = Instant::now();
+    let deadline = started + RUNTIME_SETUP_TIMEOUT;
     log_to_file("[runtime] phase=prepare-runtime-layout");
     ensure_runtime_layout()?;
     let bootstrap = read_bootstrap_manifest()?;
@@ -2179,9 +2320,9 @@ fn ensure_dual_runtime_env() -> Result<RuntimeEnvInfo, String> {
         app_runtime_extras(),
         pip_index.url
     ));
-    let app_python = ensure_app_venv(&bootstrap, &pip_index)?;
+    let app_python = ensure_app_venv(&bootstrap, &pip_index, deadline)?;
     log_to_file("[runtime] phase=ensure-agent-venv");
-    let agent_python = ensure_agent_venv(&bootstrap, &pip_index)?;
+    let agent_python = ensure_agent_venv(&bootstrap, &pip_index, deadline)?;
     let info = RuntimeEnvInfo {
         app_python,
         agent_python,
@@ -9614,6 +9755,12 @@ fn export_diagnostic_bundle(
         "global_logs/crash.log",
         options,
     )?;
+    add_file_to_zip(
+        &mut zip_writer,
+        &global_logs.join("autostart.log"),
+        "global_logs/autostart.log",
+        options,
+    )?;
     for entry in fs::read_dir(&global_logs).into_iter().flatten().flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
@@ -10077,6 +10224,27 @@ fn build_feedback_zip(
             );
         }
     }
+
+    zip_add_file(
+        &mut zw,
+        &runtime_manifest_path(),
+        "runtime/manifest.json",
+        opts,
+    );
+    zip_add_dir_capped(
+        &mut zw,
+        &runtime_logs_dir(),
+        "runtime/logs",
+        opts,
+        5 * 1024 * 1024,
+    );
+    zip_add_dir_capped(
+        &mut zw,
+        &runtime_root_dir().join("reports"),
+        "runtime/reports",
+        opts,
+        5 * 1024 * 1024,
+    );
 
     // ── Native crash dumps ──
     // Our SetUnhandledExceptionFilter-based crash handler writes
@@ -11217,6 +11385,63 @@ mod tests {
         assert!(should_cleanup_stale_heartbeat(Some(true), false));
         assert!(!should_cleanup_stale_heartbeat(Some(false), false));
         assert!(!should_cleanup_stale_heartbeat(None, false));
+    }
+
+    #[test]
+    fn test_runtime_proxy_endpoint_parses_http_and_socks_defaults() {
+        assert_eq!(
+            runtime_proxy_endpoint("http://127.0.0.1:9001"),
+            Some(("127.0.0.1".to_string(), 9001))
+        );
+        assert_eq!(
+            runtime_proxy_endpoint("https://proxy.example.test"),
+            Some(("proxy.example.test".to_string(), 443))
+        );
+        assert_eq!(
+            runtime_proxy_endpoint("socks5://localhost"),
+            Some(("localhost".to_string(), 1080))
+        );
+    }
+
+    #[test]
+    fn test_runtime_proxy_endpoint_rejects_malformed_values() {
+        assert_eq!(runtime_proxy_endpoint("127.0.0.1:9001"), None);
+        assert_eq!(runtime_proxy_endpoint("http://"), None);
+    }
+
+    #[test]
+    fn test_runtime_command_timeout_terminates_the_child() {
+        let command = if cfg!(windows) {
+            let mut command = Command::new("ping");
+            command.args(["-n", "30", "127.0.0.1"]);
+            command
+        } else {
+            let mut command = Command::new("sleep");
+            command.arg("30");
+            command
+        };
+        let log_path = std::env::temp_dir().join(format!(
+            "openakita-runtime-timeout-test-{}-{}.log",
+            std::process::id(),
+            now_ms()
+        ));
+        let started = Instant::now();
+
+        let result = run_and_log(
+            command,
+            &log_path,
+            started + Duration::from_millis(200),
+        );
+
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|error| error.starts_with("RUNTIME_INSTALL_TIMEOUT|")),
+            "unexpected timeout result: {:?}",
+            result
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+        let _ = fs::remove_file(log_path);
     }
 
     #[test]

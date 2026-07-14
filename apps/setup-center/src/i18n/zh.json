@@ -744,6 +744,7 @@
     "runtimePermissionDeniedFallbackToParent": "目录尚未创建，已打开最近一级存在的目录：{{path}}",
     "runtimeRepairTitle": "修复运行时",
     "runtimeRepairHint": "删除残骸 venv 与 manifest 后从零重建运行时（用于解决 venv 损坏导致的反复无响应）",
+    "runtimeEnvironmentTitle": "查看运行环境",
     "runtimeRepairing": "正在重建运行环境…",
     "runtimeRepairFailed": "修复失败：{{err}}",
     "memoryDegradedTitle": "记忆数据库不可用",

@@ -1048,6 +1048,24 @@ async def _build_bug_zip(
             if crash_data:
                 zf.writestr("logs/crash.log", crash_data)
 
+            # Runtime creation happens in the Tauri shell before the Python
+            # backend starts. These files are therefore the primary evidence
+            # when an upgrade cannot rebuild app-venv and the normal backend
+            # logs never receive the failure.
+            autostart_data = _tail_file(global_logs / "autostart.log", LOG_TAIL_BYTES)
+            if autostart_data:
+                zf.writestr("global_logs/autostart.log", autostart_data)
+
+            runtime_dir = _resolve_openakita_home_dir() / "runtime"
+            _add_file(zf, runtime_dir / "manifest.json", "runtime/manifest.json")
+            for runtime_log_name in ("app-venv.log", "agent-venv.log", "bootstrap.log"):
+                runtime_log_data = _tail_file(
+                    runtime_dir / "logs" / runtime_log_name,
+                    LOG_TAIL_BYTES,
+                )
+                if runtime_log_data:
+                    zf.writestr(f"runtime/logs/{runtime_log_name}", runtime_log_data)
+
             data_dir = _resolve_data_dir()
             _add_dir_recent(
                 zf,

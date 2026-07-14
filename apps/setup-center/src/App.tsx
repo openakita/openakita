@@ -2977,6 +2977,21 @@ function MainApp() {
     }
   }
 
+  async function repairRuntimeAndRestart() {
+    if (!currentWorkspaceId) return;
+    const repairToast = notifyLoading(t("status.runtimeRepairing"));
+    try {
+      try { await doStopService(currentWorkspaceId); } catch { /* best effort */ }
+      const report = await invoke<string>("repair_runtime_env");
+      notifySuccess(report.split("\n").slice(0, 3).join("\n"));
+      await doStartLocalService(currentWorkspaceId);
+    } catch (e) {
+      notifyError(t("status.runtimeRepairFailed", { err: String(e) }));
+    } finally {
+      dismissLoading(repairToast);
+    }
+  }
+
   /**
    * 连接到已有本地服务（冲突对话框的"连接已有"选项）。
    */
@@ -3220,6 +3235,7 @@ function MainApp() {
           doStopService={doStopService}
           restartService={restartService}
           onOpenRuntimeEnvironment={() => setRuntimeDialogOpen(true)}
+          onRepairRuntime={repairRuntimeAndRestart}
           setView={navigateToView}
         />
       </div>
@@ -5304,8 +5320,8 @@ function MainApp() {
           busy={busy}
           currentWorkspaceId={currentWorkspaceId}
           refreshRuntimeDiagnostics={refreshRuntimeDiagnostics}
-          doStopService={doStopService}
           doStartLocalService={doStartLocalService}
+          onRepairRuntime={repairRuntimeAndRestart}
         />
         <Toaster position="top-right" richColors closeButton />
 
