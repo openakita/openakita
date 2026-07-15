@@ -2045,6 +2045,12 @@ export function LLMView(props: LLMViewProps) {
               />
             </div>
 
+            {/* Endpoint name */}
+            <div className="space-y-1.5">
+              <Label>{t("llm.endpointName")}</Label>
+              <Input value={editDraft.name} onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })} />
+            </div>
+
             {editEndpointType === "endpoints" && <>
             {/* Capabilities */}
             <div className="space-y-1.5">
@@ -2180,13 +2186,6 @@ export function LLMView(props: LLMViewProps) {
             </details>
             </>}
 
-            {/* Endpoint name (for compiler/STT) */}
-            {editEndpointType !== "endpoints" && (
-            <div className="space-y-1.5">
-              <Label>{t("llm.endpointName")}</Label>
-              <Input value={editDraft.name} onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })} />
-            </div>
-            )}
           </div>}
 
           {connTestResult && (
