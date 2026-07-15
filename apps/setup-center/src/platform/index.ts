@@ -156,27 +156,15 @@ export async function readFileBase64(
 ): Promise<string> {
   if (!IS_TAURI)
     throw new Error("readFileBase64 is only available in Tauri");
-  const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
-  if (!onProgress) {
-    return tauriInvoke<string>("read_file_base64", { path });
-  }
-
-  const progressId = `file-read-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const { listen: tauriListen } = await import("@tauri-apps/api/event");
-  const unlisten = await tauriListen<{
-    id: string;
+  const { Channel, invoke: tauriInvoke } = await import("@tauri-apps/api/core");
+  const progress = new Channel<{
     loaded: number;
     total: number;
-  }>("local_file_read_progress", (event) => {
-    const payload = event.payload;
-    if (payload?.id !== progressId) return;
-    onProgress(payload.loaded, payload.total);
-  });
-  try {
-    return await tauriInvoke<string>("read_file_base64", { path, progressId });
-  } finally {
-    unlisten();
-  }
+  }>();
+  progress.onmessage = onProgress
+    ? (payload) => onProgress(payload.loaded, payload.total)
+    : () => {};
+  return tauriInvoke<string>("read_file_base64", { path, onProgress: progress });
 }
 
 export type LocalFileInfo = {

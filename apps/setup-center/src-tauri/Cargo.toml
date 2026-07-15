@@ -12,10 +12,10 @@ base64 = "0.22.1"
 flate2 = "1.0.35"
 
 [dependencies]
-# TODO(tao#1180): Tauri 2.10.x 锁死 tao 0.34.x，仍存在 Windows 事件循环
-# "cannot move state from Destroyed" panic（详见 https://github.com/tauri-apps/tao/issues/1180）。
-# 上游 tao 修复后请升级 Tauri/tao 验证 panic 不再出现，
-# 然后移除 src/main.rs 中的 try_self_heal_relaunch / restart.marker 自愈逻辑。
+# tao#1180: upstream PR tauri-apps/tao#1188 replaces the panic in
+# move_state_to(Destroyed -> *) with a debug log. Until that PR is merged
+# and released, patch tao from the branch carrying the complete guard.
+# The self-heal logic in main.rs remains as a defence-in-depth fallback.
 tauri = { version = "2.10.1", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -43,14 +43,12 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
-tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
 # Used by src/crash_handler.rs to install SetUnhandledExceptionFilter +
 # MiniDumpWriteDump for native crashes (0xc0000005 / 0xc0000374 / 0xc000001d).
 # Dumps land in ~/.openakita/crashdumps/openakita-{pid}-{ts}.dmp and are
@@ -59,6 +57,9 @@ winreg = "0.55"
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Storage_FileSystem",
+  # CreateFileW is gated by Win32_Security because its signature contains
+  # SECURITY_ATTRIBUTES, even though crash_handler always passes NULL.
+  "Win32_Security",
   "Win32_System_Diagnostics_Debug",
   "Win32_System_Kernel",
   "Win32_System_Memory",
@@ -66,3 +67,8 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_Threading",
 ] }
 
+[patch.crates-io]
+tao = { git = "https://github.com/SimYng/tao.git", branch = "fix/no-panic-destroyed-0.34.8" }
+
+[profile.release]
+debug = "line-tables-only"

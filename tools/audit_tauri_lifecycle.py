@@ -4,7 +4,6 @@ import re
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_RS = ROOT / "apps" / "setup-center" / "src-tauri" / "src" / "main.rs"
 
@@ -39,7 +38,6 @@ BACKGROUND_TAURI_PATTERNS = (
     ("app_handle", "captured Tauri app handle"),
     ("app_for_ui", "captured Tauri app handle"),
 )
-
 
 def line_number(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
@@ -176,6 +174,16 @@ def background_tauri_reasons(call_text: str) -> list[str]:
     return sorted(set(reasons))
 
 
+def enclosing_function_name(clean_text: str, offset: int) -> str | None:
+    matches = list(
+        re.finditer(
+            r"(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(",
+            clean_text[:offset],
+        )
+    )
+    return matches[-1].group(1) if matches else None
+
+
 def main() -> int:
     text = MAIN_RS.read_text(encoding="utf-8")
     clean_text = mask_rust_non_code(text)
@@ -197,6 +205,13 @@ def main() -> int:
         for offset, call_text in iter_calls(clean_text, call_name):
             reasons = background_tauri_reasons(call_text)
             if not reasons:
+                continue
+            is_marshaled_window_activation = (
+                enclosing_function_name(clean_text, offset) == "show_main_window"
+                and "run_on_main_thread" in call_text
+                and "show_main_window_now" in call_text
+            )
+            if is_marshaled_window_activation:
                 continue
             snippet = " ".join(text[offset : offset + 220].split())
             issues.append(
