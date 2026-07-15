@@ -1422,6 +1422,52 @@ button.btnApplyRestart:hover {
   color: var(--text);
 }
 
+.markdownCodeBlock {
+  position: relative;
+  margin: 8px 0;
+}
+
+.chatMdContent .markdownCodeBlock pre {
+  margin: 0;
+  padding-right: 44px;
+}
+
+.markdownCodeCopyBtn {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.markdownCodeBlock:hover .markdownCodeCopyBtn,
+.markdownCodeCopyBtn:focus-visible {
+  opacity: 1;
+}
+
+.markdownCodeCopyBtn:hover,
+.markdownCodeCopyBtn:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+@media (hover: none) {
+  .markdownCodeCopyBtn {
+    opacity: 1;
+  }
+}
+
 .chatMdContent code {
   background: var(--bg-app);
   padding: 2px 5px;

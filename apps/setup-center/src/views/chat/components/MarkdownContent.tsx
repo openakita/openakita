@@ -1,4 +1,8 @@
-import { useDeferredValue, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { toText } from "hast-util-to-text";
+import { IconCheck, IconClipboard } from "../../../icons";
+import { copyToClipboard } from "../../../utils/clipboard";
 import { useSmoothReveal } from "../hooks/useSmoothReveal";
 import type { MdModules } from "../utils/chatTypes";
 import { appendAuthToken } from "../utils/chatHelpers";
@@ -11,6 +15,45 @@ function resolveMarkdownImageUrl(src: string, apiBaseUrl?: string): string {
   if (src.startsWith("http")) return appendAuthToken(src);
   if (src.startsWith("/")) return appendAuthToken(`${apiBaseUrl || ""}${src}`);
   return src;
+}
+
+function MarkdownCodeBlock({ node, children, ...props }: any) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  const feedbackTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+  }, []);
+
+  const handleCopy = async () => {
+    const code = node ? toText(node) : "";
+    if (!await copyToClipboard(code)) return;
+
+    setCopied(true);
+    if (feedbackTimerRef.current !== null) window.clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      feedbackTimerRef.current = null;
+    }, 1500);
+  };
+
+  const label = copied ? t("common.copied", "Copied") : t("common.copy", "Copy");
+
+  return (
+    <div className="markdownCodeBlock">
+      <pre {...props}>{children}</pre>
+      <button
+        type="button"
+        className="markdownCodeCopyBtn"
+        onClick={handleCopy}
+        aria-label={label}
+        title={label}
+      >
+        {copied ? <IconCheck size={15} /> : <IconClipboard size={15} />}
+      </button>
+    </div>
+  );
 }
 
 export function MarkdownContent({
@@ -53,9 +96,11 @@ export function MarkdownContent({
   // 从根上压平"逐 token 重解析重提交"的卡顿（记忆化只治 KaTeX，这个治整棵树）。
   const renderContent = useDeferredValue(revealed);
   const markdownComponents = useMemo(() => {
-    if (!onImagePreview) return undefined;
-    return {
-      img: ({ node: _node, src, alt, title, ...props }: any) => {
+    const components: Record<string, any> = {
+      pre: MarkdownCodeBlock,
+    };
+    if (onImagePreview) {
+      components.img = ({ node: _node, src, alt, title, ...props }: any) => {
         const imageUrl = resolveMarkdownImageUrl(String(src || ""), apiBaseUrl);
         return (
           <img
@@ -79,8 +124,9 @@ export function MarkdownContent({
             }}
           />
         );
-      },
-    };
+      };
+    }
+    return components;
   }, [apiBaseUrl, onImagePreview]);
 
   return (
