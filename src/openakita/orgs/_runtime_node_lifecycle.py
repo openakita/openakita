@@ -12,7 +12,7 @@ routing / status machine / pending-drain plumbing out of v1
   post-task hook orchestration.
 * :class:`NodeMessageRouter` -- inbound message routing
   (clone, format, deliver to the agent pipeline) +
-  per-channel inbox handlers + stop-intent detection.
+  per-channel inbox handlers.
 
 Both compose against :class:`AgentPipelineExecutor` (P9.6f)
 + :class:`CommandDispatchManager` (P9.6e) + the
@@ -40,28 +40,7 @@ _LOGGER = logging.getLogger(__name__)
 # pipeline + the cancel paths.
 STATUS_IDLE = "idle"
 STATUS_BUSY = "busy"
-STATUS_STOPPED = "stopped"
 STATUS_ERROR = "error"
-
-# Stop-intent phrases v1 ``_is_stop_intent`` checked.
-_STOP_PHRASES: tuple[str, ...] = (
-    "/stop",
-    "/cancel",
-    "stop",
-    "cancel",
-    "abort",
-    "停止",  # zh: tingzhi (stop)
-    "取消",  # zh: quxiao (cancel)
-)
-
-
-def is_stop_intent(content: str) -> bool:
-    """v1 ``_is_stop_intent`` parity -- best-effort phrase match."""
-
-    if not content:
-        return False
-    lowered = content.strip().lower()
-    return any(p in lowered for p in _STOP_PHRASES)
 
 
 def format_incoming_message(
@@ -265,15 +244,12 @@ class NodeMessageRouter:
         """v1 ``_on_inbound_for_node`` + ``_on_node_message`` happy path.
 
         Returns a v1-shaped dict:
-            {"status": "queued" | "delivered" | "stop_intent",
+            {"status": "queued" | "delivered",
              "node_id": str,
              "depth": int,
              "result": dict | None}
         """
 
-        if is_stop_intent(content):
-            self._status.set_status(org_id, node_id, STATUS_STOPPED)
-            return {"status": "stop_intent", "node_id": node_id, "depth": 0, "result": None}
         framed = format_incoming_message(
             source=source, sender=sender, content=content, metadata=metadata
         )
@@ -323,9 +299,7 @@ __all__ = [
     "STATUS_BUSY",
     "STATUS_ERROR",
     "STATUS_IDLE",
-    "STATUS_STOPPED",
     "NodeMessageRouter",
     "NodeStatusController",
     "format_incoming_message",
-    "is_stop_intent",
 ]
