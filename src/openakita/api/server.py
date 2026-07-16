@@ -1288,24 +1288,53 @@ def create_app(
 
     @app.on_event("startup")
     async def _wire_pending_approvals_sse():
-        """C9c-2: bridge PendingApprovalsStore events to WebSocket broadcast.
+        """Bridge PendingApprovalsStore events to WebSocket and owner IM delivery.
 
-        The Store is policy-loop-agnostic; we install a sync hook that does
-        ``asyncio.ensure_future(broadcast_event(...))`` on the API loop. The
-        broadcast helper itself is cross-loop safe (engine_bridge), so this
-        works regardless of which loop the Store mutation happens on.
+        The Store is policy-loop-agnostic and may call its synchronous hook from
+        another thread. WebSocket broadcast is already cross-loop safe; IM
+        delivery is scheduled onto the API loop captured during startup.
         """
         try:
+            from openakita.agent.pending_approval_notifications import (
+                build_pending_approval_event_hook,
+                notify_pending_approval_im,
+            )
             from openakita.api.routes.websocket import fire_event
             from openakita.core.pending_approvals import get_pending_approvals_store
 
-            def _hook(event_type: str, payload: dict) -> None:
-                fire_event(event_type, payload)
+            api_loop = asyncio.get_running_loop()
 
-            get_pending_approvals_store().set_event_hook(_hook)
-            logger.info("[Startup] PendingApprovals SSE hook wired")
+            async def _notify_owner(payload: dict) -> None:
+                try:
+                    from openakita.scheduler import get_active_scheduler
+
+                    active_scheduler = get_active_scheduler()
+                    if active_scheduler is None:
+                        active_scheduler = getattr(
+                            getattr(app.state, "agent", None), "task_scheduler", None
+                        )
+                    await notify_pending_approval_im(
+                        payload,
+                        scheduler=active_scheduler,
+                        gateway=getattr(app.state, "gateway", None),
+                    )
+                except Exception:
+                    logger.warning(
+                        "[PendingApprovals] unexpected IM notification failure for %s",
+                        payload.get("id"),
+                        exc_info=True,
+                    )
+
+            event_hook = build_pending_approval_event_hook(
+                loop=api_loop,
+                fire_event=fire_event,
+                notify_owner=_notify_owner,
+            )
+
+            get_pending_approvals_store().set_event_hook(event_hook)
+            logger.info("[Startup] PendingApprovals WebSocket/IM hook wired")
         except Exception as e:
-            logger.warning("[Startup] PendingApprovals SSE wire failed: %s", e)
+            logger.warning("[Startup] PendingApprovals event wire failed: %s", e)
 
         # C17 Phase B.4：把 UIConfirmBus 的 confirm_initiated /
         # confirm_revoked 广播绑到同一条 fire_event 通道，让多端 UI 共享
