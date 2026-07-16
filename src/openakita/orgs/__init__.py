@@ -97,19 +97,19 @@
   ``llm_usage`` events through the bus.
 - P9.6g ships :class:`NodeStatusController` +
   :class:`NodeMessageRouter` + ``format_incoming_message``
-  + ``is_stop_intent`` in ``_runtime_node_lifecycle.py``
+  in ``_runtime_node_lifecycle.py``
   (~330 LOC). Lifts v1 ``_on_node_message`` (175 LOC) +
   ``_format_incoming_message`` (96 LOC) +
   ``_drain_node_pending`` (86 LOC) + ``_post_task_hook``
   (81 LOC) + ``_set_node_status`` / ``set_node_status`` /
   ``_mark_effective_action`` / ``_try_route_to_clone`` /
   ``_make_message_handler`` / ``_register_clone_in_messenger``
-  / ``_on_inbound_for_node`` / ``_is_stop_intent``
+  / ``_on_inbound_for_node``
   / ``evict_node_agent`` / ``_connect_node_mcp_servers``
-  (~600 v1 LOC) into two focused classes + 4
+  (~600 v1 LOC) into two focused classes + 3
   ``STATUS_*`` constants. Routes inbound messages through
-  stop-intent detection, busy-queueing, agent pipeline
-  delivery, and post-task hook orchestration.
+  busy-queueing, agent pipeline delivery, and post-task hook
+  orchestration. Cancellation uses the explicit command API.
 - P9.6h1 ships :class:`PluginAssetRecorder` +
   :class:`ToolHandlerBridge` + :class:`PluginAsset`
   dataclass + helpers (``safe_asset_filename`` /
@@ -187,11 +187,9 @@ from ._runtime_node_lifecycle import (
     STATUS_BUSY,
     STATUS_ERROR,
     STATUS_IDLE,
-    STATUS_STOPPED,
     NodeMessageRouter,
     NodeStatusController,
     format_incoming_message,
-    is_stop_intent,
 )
 from ._runtime_plugin_assets import (
     FileOutput,
@@ -403,7 +401,6 @@ __all__ = [
     "STATUS_BUSY",
     "STATUS_ERROR",
     "STATUS_IDLE",
-    "STATUS_STOPPED",
     "ScheduleStore",
     "ScheduleType",
     "SchedulerRuntimeProbe",
@@ -441,7 +438,6 @@ __all__ = [
     "get_runtime",
     "infer_agent_profile_id_for_node",
     "is_plugin_tool",
-    "is_stop_intent",
     "list_avatar_presets",
     "new_command_id",
     "new_org_id",

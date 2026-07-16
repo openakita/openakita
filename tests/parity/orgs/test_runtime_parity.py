@@ -1,7 +1,7 @@
 """Parity fixtures for v2 OrgRuntime (P-RC-9 P9.6gamma).
 
-20 parametrised cases pinning the v1 ``OrgRuntime`` observable
-contract on the v2 rewrite (``runtime/orgs/runtime.py`` +
+20 contract cases pinning retained v1 ``OrgRuntime`` behavior and deliberate
+v2 safety changes (``runtime/orgs/runtime.py`` +
 the seven sibling managers shipped across P9.6alpha-beta).
 
 Per P-RC-9-PLAN section 5.2 OrgRuntime contract: *assert
@@ -26,7 +26,7 @@ Case axes per the P9.6gamma brief:
 * 5 agent pipeline (activate_and_run happy / missing /
   paused / quota -> pause / other-error)
 * 5 node lifecycle (on_inbound delivered / queued /
-  stop_intent / format_incoming_message / drain replay)
+  control text delivery / format_incoming_message / drain replay)
 * 5 plugin assets (record_url for plugin / record_file
   digest / file_output_registered event / react_trace stats
   / TaskDeliverySynthesizer default summary)
@@ -58,7 +58,6 @@ from openakita.orgs._runtime_dispatch import (
 from openakita.orgs._runtime_node_lifecycle import (
     STATUS_BUSY,
     STATUS_IDLE,
-    STATUS_STOPPED,
     NodeMessageRouter,
     NodeStatusController,
     format_incoming_message,
@@ -365,17 +364,21 @@ def test_parity_node_on_inbound_queued_when_busy() -> None:
     assert status.pending_depth("o1", "n1") == 1
 
 
-def test_parity_node_stop_intent_short_circuits() -> None:
-    """fixture id: node.on_inbound.stop_intent"""
+def test_node_control_text_is_delivered_as_regular_content() -> None:
+    """Text cannot cancel work; callers must use the explicit command cancel API."""
     router, status, calls = _make_router()
-    out = asyncio.run(router.on_inbound(org_id="o1", node_id="n1", source="im", content="/stop"))
-    assert out == {"status": "stop_intent", "node_id": "n1", "depth": 0, "result": None}
-    # v1 parity: stop intent transitions the node to STOPPED, no delivery.
-    assert status.get_status("o1", "n1") == STATUS_STOPPED
-    assert calls == []
-    # CN parity: ``停止`` (zh: stop) also short-circuits.
-    out2 = asyncio.run(router.on_inbound(org_id="o1", node_id="n2", source="im", content="请停止"))
-    assert out2["status"] == "stop_intent"
+    first = asyncio.run(
+        router.on_inbound(org_id="o1", node_id="n1", source="im", content="/stop")
+    )
+    second = asyncio.run(
+        router.on_inbound(org_id="o1", node_id="n2", source="im", content="请停止当前任务")
+    )
+
+    assert first["status"] == "delivered"
+    assert second["status"] == "delivered"
+    assert status.get_status("o1", "n1") == STATUS_IDLE
+    assert status.get_status("o1", "n2") == STATUS_IDLE
+    assert [call[2] for call in calls] == ["[im]/stop", "[im]请停止当前任务"]
 
 
 def test_parity_node_format_incoming_message_shape() -> None:
