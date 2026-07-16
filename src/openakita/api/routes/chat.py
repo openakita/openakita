@@ -2297,6 +2297,32 @@ async def _stream_org_command_chat(
     _BUSY_REFRESH_INTERVAL = 60.0
     _last_busy_refresh_ts = 0.0
 
+    def _persist_org_error(message: str, *, error_code: str, org_status: str | None) -> None:
+        if session_manager is None:
+            return
+        try:
+            session = session_manager.get_session(
+                channel="desktop",
+                chat_id=conversation_id,
+                user_id="desktop_user",
+                create_if_missing=True,
+            )
+            if session is None:
+                return
+            session.add_message(
+                "assistant",
+                "",
+                error_info={
+                    "message": message,
+                    "raw": message,
+                    "error_code": error_code,
+                    "org_status": org_status,
+                },
+            )
+            session_manager.persist()
+        except Exception:
+            logger.warning("[Chat API] failed to persist org command error", exc_info=True)
+
     async def _refresh_busy_lease(*, force: bool = False) -> None:
         nonlocal _last_busy_refresh_ts
         if not conversation_id or not busy_generation:
@@ -2344,7 +2370,13 @@ async def _stream_org_command_chat(
                 session_manager.mark_dirty()
 
         if svc is None:
-            yield _sse("error", {"message": "OrgCommandService not initialized"})
+            message = "OrgCommandService not initialized"
+            _persist_org_error(
+                message,
+                error_code="org_command_service_unavailable",
+                org_status=None,
+            )
+            yield _sse("error", {"message": message})
             yield _sse("done")
             return
 
@@ -2364,7 +2396,7 @@ async def _stream_org_command_chat(
             )
 
         try:
-            started = svc.submit(
+            started = await svc.submit(
                 OrgCommandRequest(
                     org_id=org_id,
                     content=org_content,
@@ -2377,11 +2409,40 @@ async def _stream_org_command_chat(
                     ),
                     origin_surface=OrgCommandSurface.DESKTOP_CHAT,
                     output_scope=default_scope_for_surface(OrgCommandSurface.DESKTOP_CHAT),
-                    attachments=_history_attachments_from_request(chat_request.attachments),
+                    input_attachments=_history_attachments_from_request(chat_request.attachments),
                 )
             )
         except OrgCommandError as exc:
-            yield _sse("error", {"message": str(exc), "org_id": org_id})
+            error_code = getattr(exc, "error_code", "org_command_error")
+            org_status = getattr(exc, "org_status", None)
+            _persist_org_error(
+                str(exc),
+                error_code=error_code,
+                org_status=org_status,
+            )
+            yield _sse(
+                "error",
+                {
+                    "message": str(exc),
+                    "org_id": org_id,
+                    "error_code": error_code,
+                    "org_status": org_status,
+                },
+            )
+            yield _sse("done")
+            return
+        except Exception:
+            logger.exception("[Chat API] failed to submit org command (org=%s)", org_id)
+            message = "组织命令提交失败，请重试。"
+            _persist_org_error(
+                message,
+                error_code="org_command_submit_failed",
+                org_status=None,
+            )
+            yield _sse(
+                "error",
+                {"message": message, "org_id": org_id},
+            )
             yield _sse("done")
             return
 
@@ -2433,7 +2494,13 @@ async def _stream_org_command_chat(
                 error = item.get("error")
                 attachments: list[dict] = []
                 if isinstance(result, dict):
-                    final_text = str(result.get("result") or result.get("error") or "")
+                    final_text = str(
+                        result.get("result")
+                        or result.get("deliverable")
+                        or result.get("final_message")
+                        or result.get("error")
+                        or ""
+                    )
                     raw_attachments = result.get("file_attachments") or []
                     if isinstance(raw_attachments, list):
                         attachments = [a for a in raw_attachments if isinstance(a, dict)]

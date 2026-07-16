@@ -3116,10 +3116,14 @@
     },
     "orgStatus": {
       "dormant": "Dormant",
+      "created": "Not Started",
       "active": "Running",
       "running": "Running",
       "paused": "Paused",
-      "archived": "Archived"
+      "stopped": "Stopped",
+      "archived": "Archived",
+      "deleted": "Deleted",
+      "unknown": "Unknown"
     },
     "bbType": {
       "fact": "Fact",
@@ -3386,6 +3390,7 @@
       "taskCompleted": "Task completed",
       "longRunning": "Execution is taking long, org is still processing (elapsed {{duration}})...",
       "sendFailed": "Send failed: {{error}}",
+      "commandUnavailableStatus": "Cannot send instructions to this organization. Current status: {{status}}",
       "conversationTitle": "Chat · {{name}}",
       "commandCenter": "Org Command Center",
       "clearHistory": "Clear history",

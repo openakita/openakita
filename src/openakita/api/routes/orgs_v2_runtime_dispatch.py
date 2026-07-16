@@ -293,9 +293,10 @@ async def send_command(request: Request, org_id: str, body: CommandSubmit) -> di
         raise HTTPException(
             getattr(exc, "status_code", 409),
             {
-                "code": "org_command_conflict",
+                "code": getattr(exc, "error_code", "org_command_conflict"),
                 "message": str(exc),
                 "command_id": getattr(exc, "command_id", None),
+                "org_status": getattr(exc, "org_status", None),
             },
         ) from exc
     except OrgCommandError as exc:

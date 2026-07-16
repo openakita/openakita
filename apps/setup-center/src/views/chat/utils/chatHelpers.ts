@@ -408,6 +408,22 @@ export function chooseHydratedMessages(localMsgs: ChatMessage[], backendMsgs: Ch
   return backendLast && backendLast !== localLast ? backendWithLocalAttachments : cleanLocal;
 }
 
+export function messageHistoryRichness(msgs: ChatMessage[]): number {
+  return msgs.reduce((score, msg) =>
+    score +
+    (msg.todo?.steps?.length ? 1000 + msg.todo.steps.length : 0) +
+    (msg.parts?.length ? 100 + msg.parts.length : 0) +
+    (msg.progressEvents?.length ? 10 + msg.progressEvents.length : 0) +
+    (msg.thinkingChain?.length ? 50 + msg.thinkingChain.length : 0) +
+    (msg.artifacts?.length ? 20 + msg.artifacts.length : 0) +
+    (msg.attachments?.length ? 20 + msg.attachments.length : 0) +
+    (msg.errorInfo ? 20 : 0) +
+    (msg.askUser ? 10 : 0) +
+    (msg.streaming ? 5 : 0) +
+    Math.min(msg.content.length, 2000) / 2000,
+  0);
+}
+
 // ── 思维链 ──
 
 export function buildChainFromSummary(summary: ChainSummaryItem[]): ChainGroup[] {
@@ -682,6 +698,7 @@ type BackendHistoryMessage = {
   usage?: ChatMessage["usage"];
   todo?: ChatTodo | null;
   ask_user?: ChatAskUser | null;
+  errorInfo?: ChatErrorInfo | null;
   parts?: MessagePart[] | null;
 };
 
@@ -861,6 +878,10 @@ export function patchMessagesWithBackendDetailed(
       patches.askUser = m.askUser
         ? { ...m.askUser, ...backend.ask_user, answered: true, answer: backend.ask_user.answer }
         : backend.ask_user;
+    }
+
+    if (backend.errorInfo && !m.errorInfo) {
+      patches.errorInfo = backend.errorInfo;
     }
 
     // Authoritative ordered parts projection from the backend.

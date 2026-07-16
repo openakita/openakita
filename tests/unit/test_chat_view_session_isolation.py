@@ -102,7 +102,9 @@ def test_hydration_treats_attachments_as_structured_history():
     chat_source = CHAT_VIEW.read_text(encoding="utf-8")
     helper_source = CHAT_HELPERS.read_text(encoding="utf-8")
 
-    assert "msg.attachments?.length ? 20 + msg.attachments.length : 0" in chat_source
+    assert "export function messageHistoryRichness" in helper_source
+    assert "msg.attachments?.length ? 20 + msg.attachments.length : 0" in helper_source
+    assert "messageHistoryRichness(candidate) > messageHistoryRichness(best)" in chat_source
     assert "function attachmentSignature" in helper_source
     assert "attachmentSignature(msg.attachments)" in helper_source
     assert "attachmentSignature(prev.attachments) === attachmentSignature(msg.attachments)" in helper_source

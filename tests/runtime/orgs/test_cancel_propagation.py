@@ -624,6 +624,9 @@ async def test_cancel_emits_terminal_command_done_event() -> None:
     svc = OrgCommandService(rt, supervisor_factory=_factory)
     res = await svc.submit(OrgCommandRequest(org_id="o1", content="cancel done"))
     cid = res["command_id"]
+    summary_queue = svc.subscribe_summary(
+        cid, surface="desktop_chat", target="conversation-1"
+    )
     await asyncio.wait_for(deliver.entered.wait(), timeout=2.0)
 
     cancel_res = await svc.cancel(org_id="o1", command_id=cid, reason="user_cancel")
@@ -635,6 +638,9 @@ async def test_cancel_emits_terminal_command_done_event() -> None:
     assert call.args[0] == "o1"
     assert call.args[1] == cid
     assert call.kwargs.get("status") == "cancelled"
+    terminal = await asyncio.wait_for(summary_queue.get(), timeout=0.5)
+    assert terminal["type"] == "org_command_done"
+    assert terminal["error"] == "组织命令已取消。"
 
     task = svc._inflight_tasks.get(cid)
     if task is not None:

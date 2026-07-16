@@ -232,13 +232,20 @@ async def test_hard_ceiling_disabled_when_setting_is_zero(monkeypatch) -> None:
     svc = OrgCommandService(_make_runtime(), supervisor_factory=_factory)
     res = await svc.submit(OrgCommandRequest(org_id="o1", content="hi"))
     cid = res["command_id"]
+    summary_queue = svc.subscribe_summary(
+        cid, surface="desktop_chat", target="conversation_1"
+    )
     task = svc._inflight_tasks.get(cid)
     assert task is not None
     await asyncio.wait_for(task, timeout=2.0)
+    terminal = await asyncio.wait_for(summary_queue.get(), timeout=0.5)
 
     status = svc.get_status("o1", cid)
     assert status is not None
     assert status["status"] == "done"
+    assert terminal["type"] == "org_command_done"
+    assert terminal["command_id"] == cid
+    assert terminal["result"]["final_message"] == "ok"
     # The cancel token must NOT have been touched on the happy path.
     assert not quick.cancel_token.is_cancelled()
 

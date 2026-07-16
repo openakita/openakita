@@ -41,6 +41,7 @@ from openakita.orgs.command_models import (
     OrgCommandConflict,
     OrgCommandError,
     OrgCommandRequest,
+    OrgCommandSource,
     OrgCommandSurface,
     OrgOutputScope,
 )
@@ -163,11 +164,16 @@ async def test_submit_rejects_missing_target_node() -> None:
         await svc.submit(OrgCommandRequest(org_id="o1", content="x", target_node_id="nope"))
 
 
+@pytest.mark.parametrize(
+    "status", ["dormant", "created", "paused", "stopped", "archived", "deleted"]
+)
 @pytest.mark.asyncio
-async def test_submit_rejects_paused_org() -> None:
-    svc = _make_service(_make_runtime(org=_Org(status="paused")))
-    with pytest.raises(OrgCommandConflict):
+async def test_submit_rejects_non_runnable_org_with_structured_status(status: str) -> None:
+    svc = _make_service(_make_runtime(org=_Org(status=status)))
+    with pytest.raises(OrgCommandConflict) as exc_info:
         await svc.submit(OrgCommandRequest(org_id="o1", content="x"))
+    assert exc_info.value.error_code == "org_not_runnable"
+    assert exc_info.value.org_status == status
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +311,98 @@ async def test_subscribe_then_publish_delivers_event_and_records_target() -> Non
         "event": "org_progress",
         "ts": delivered[-1]["ts"],
     }
+
+
+@pytest.mark.asyncio
+async def test_runtime_events_publish_progress_to_waiting_chat_subscriber() -> None:
+    subscriptions: dict[str, list[Any]] = {}
+    event_bus = MagicMock()
+    event_bus.subscribe.side_effect = (
+        lambda name, handler: subscriptions.setdefault(name, []).append(handler)
+    )
+    svc = _make_service(_make_runtime(send_hang=True), event_bus=event_bus)
+    res = await svc.submit(
+        OrgCommandRequest(
+            org_id="o1",
+            content="x",
+            source=OrgCommandSource(chat_id="conversation_1"),
+            origin_surface=OrgCommandSurface.DESKTOP_CHAT,
+            output_scope=OrgOutputScope.CHAT_SUMMARY,
+        )
+    )
+    q = svc.subscribe_summary(
+        res["command_id"], surface="desktop_chat", target="conversation_1"
+    )
+
+    handler = subscriptions["subtask_assigned"][0]
+    await handler(
+        {
+            "org_id": "o1",
+            "command_id": res["command_id"],
+            "parent_node_id": "root1",
+            "child_node_id": "child1",
+        }
+    )
+
+    event = await asyncio.wait_for(q.get(), timeout=0.1)
+    assert event["type"] == "org_progress"
+    assert event["node_id"] == "child1"
+    assert event["category"] == "subtask_assigned"
+    assert event["summary"] == "root1 已将任务分派给 child1"
+
+
+@pytest.mark.asyncio
+async def test_terminal_publish_reaches_waiting_desktop_chat_subscriber() -> None:
+    rt = _make_runtime(send_hang=True)
+    svc = _make_service(rt)
+    res = await svc.submit(
+        OrgCommandRequest(
+            org_id="o1",
+            content="x",
+            source=OrgCommandSource(chat_id="conversation_1"),
+            origin_surface=OrgCommandSurface.DESKTOP_CHAT,
+            output_scope=OrgOutputScope.CHAT_SUMMARY,
+        )
+    )
+    q = svc.subscribe_summary(
+        res["command_id"], surface="desktop_chat", target="conversation_1"
+    )
+    svc._update_command_state(
+        res["command_id"],
+        status="done",
+        phase="done",
+        result={"deliverable": "final answer"},
+    )
+
+    await svc._publish_terminal_events(res["command_id"])
+
+    event = await asyncio.wait_for(q.get(), timeout=0.1)
+    assert event == {
+        "type": "org_command_done",
+        "org_id": "o1",
+        "command_id": res["command_id"],
+        "result": {"deliverable": "final answer"},
+    }
+
+
+def test_desktop_chat_result_persists_to_source_conversation() -> None:
+    session = MagicMock()
+    manager = MagicMock()
+    manager.get_session.return_value = session
+    manager.persist = MagicMock()
+    svc = _make_service(session_manager=manager)
+
+    svc._bridge_persist_result(
+        "o1",
+        None,
+        {"result": "final answer"},
+        source={"channel": "desktop", "chat_id": "conversation_1"},
+        origin_surface="desktop_chat",
+    )
+
+    assert manager.get_session.call_args.kwargs["chat_id"] == "conversation_1"
+    session.add_message.assert_called_once_with("assistant", "final answer")
+    manager.persist.assert_called_once_with()
 
 
 @pytest.mark.asyncio

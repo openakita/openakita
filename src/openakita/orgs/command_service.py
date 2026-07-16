@@ -399,6 +399,7 @@ class OrgCommandService:
                 ]
             ],
         ] = {}
+        self._summary_terminal_published: set[str] = set()
         # Per-command outcome cache populated by event-bus subscriptions
         # so ``get_status`` and the background supervisor finaliser can
         # reflect the real ``agent_run_failed`` / ``agent_run_finished``
@@ -464,6 +465,13 @@ class OrgCommandService:
         "agent_run_failed",
         "agent_run_cancelled",
     )
+    _SUMMARY_PROGRESS_EVENT_NAMES: tuple[str, ...] = (
+        "agent_run_started",
+        "subtask_assigned",
+        "agent_run_finished",
+        "node_review_passed",
+        "node_review_failed",
+    )
 
     def _wire_event_bus(self, event_bus: Any) -> None:
         """Subscribe :meth:`_handle_agent_event` to the executor's events.
@@ -497,6 +505,75 @@ class OrgCommandService:
                     "[OrgCmd] failed to subscribe to event %r; reconciliation degraded",
                     name,
                 )
+        for name in self._SUMMARY_PROGRESS_EVENT_NAMES:
+            try:
+                subscribe(name, self._make_summary_progress_handler(name))
+            except Exception:  # noqa: BLE001 -- progress is best-effort
+                logger.exception(
+                    "[OrgCmd] failed to subscribe to progress event %r",
+                    name,
+                )
+
+    def _make_summary_progress_handler(self, event_name: str) -> Any:
+        async def _h(payload: dict[str, Any]) -> None:
+            await self._publish_summary_progress(event_name, payload)
+
+        return _h
+
+    def _summary_node_label(self, org_id: str, node_id: str) -> str:
+        if not node_id:
+            return "组织节点"
+        try:
+            org = self._lookup.get_org(org_id)
+            node = org.get_node(node_id) if org is not None else None
+            role = str(getattr(node, "role_title", "") or "").strip()
+            if role:
+                return role
+        except Exception:  # noqa: BLE001 -- labels must not block progress
+            pass
+        return node_id
+
+    async def _publish_summary_progress(
+        self, event_name: str, payload: dict[str, Any]
+    ) -> None:
+        if not isinstance(payload, dict):
+            return
+        command_id = str(payload.get("command_id") or "")
+        cmd = self._commands.get(command_id)
+        if not cmd or cmd.get("status") != "running":
+            return
+        org_id = str(cmd.get("org_id") or payload.get("org_id") or "")
+        node_id = str(payload.get("node_id") or "")
+        parent_id = str(payload.get("parent_node_id") or "")
+        child_id = str(payload.get("child_node_id") or "")
+        node_label = self._summary_node_label(org_id, node_id)
+        summaries = {
+            "agent_run_started": f"{node_label} 开始处理任务",
+            "agent_run_finished": f"{node_label} 已完成阶段性工作",
+            "node_review_passed": f"{node_label} 的阶段产出已通过审核",
+            "node_review_failed": f"{node_label} 的阶段产出需要返工",
+        }
+        if event_name == "subtask_assigned":
+            parent_label = self._summary_node_label(org_id, parent_id)
+            child_label = self._summary_node_label(org_id, child_id)
+            summary = f"{parent_label} 已将任务分派给 {child_label}"
+            progress_node_id = child_id
+        else:
+            summary = summaries.get(event_name)
+            progress_node_id = node_id
+        if not summary:
+            return
+        await self.publish_summary(
+            command_id,
+            {
+                "type": "org_progress",
+                "org_id": org_id,
+                "command_id": command_id,
+                "node_id": progress_node_id,
+                "category": event_name,
+                "summary": summary,
+            },
+        )
 
     def _make_event_handler(self, event_name: str) -> Any:
         """Return a sync ``(payload) -> None`` closure that forwards
@@ -1098,19 +1175,7 @@ class OrgCommandService:
         # here as an idempotent fallback: when the cooperative drain DID reflect
         # the outcome, ``emit_command_done``'s per-command guard dedupes this to
         # a no-op; otherwise this is the only terminal event the cancel produces.
-        emit_done = getattr(self._runtime, "emit_command_done", None)
-        if callable(emit_done):
-            try:
-                await emit_done(
-                    org_id,
-                    command_id,
-                    status="cancelled",
-                    result=(self._commands.get(command_id) or {}).get("result"),
-                )
-            except Exception:  # noqa: BLE001 -- terminal emit must not break cancel
-                logger.debug(
-                    "[OrgCmd] emit_command_done on cancel failed", exc_info=True
-                )
+        await self._publish_terminal_events(command_id)
         return {
             "ok": True,
             "command_id": command_id,
@@ -1309,6 +1374,10 @@ class OrgCommandService:
                     cid,
                     exc_info=True,
                 )
+        await asyncio.gather(
+            *(self._publish_terminal_events(cid) for cid in cids),
+            return_exceptions=True,
+        )
         return cids
 
     # ------------------------------------------------------------------
@@ -1668,15 +1737,21 @@ class OrgCommandService:
             raise OrgCommandConflict(
                 "组织当前已暂停，请先恢复组织后再下发指令。",
                 command_id="",
+                error_code="org_not_runnable",
+                org_status=status_value,
             )
         if status_value == "archived":
             raise OrgCommandConflict(
                 "组织已归档，无法下发指令。",
                 command_id="",
+                error_code="org_not_runnable",
+                org_status=status_value,
             )
         raise OrgCommandConflict(
             f"组织尚未启动。当前状态: {status_value}",
             command_id="",
+            error_code="org_not_runnable",
+            org_status=status_value,
         )
 
     def _resolve_command_root_id(self, org, target_node_id: str | None) -> str:  # noqa: ANN001
@@ -2076,6 +2151,7 @@ class OrgCommandService:
                     supervisor_n_replans=cancel_n_replans,
                     supervisor_last_checkpoint_id=cancel_cp,
                 )
+                await asyncio.shield(self._publish_terminal_events(command_id))
                 raise
             except TimeoutError:
                 # test16 clobber fix: the hard ceiling fired.
@@ -2099,6 +2175,7 @@ class OrgCommandService:
                         error="supervisor hard ceiling exceeded",
                         finished_at=time.time(),
                     )
+                    await self._publish_terminal_events(command_id)
             except Exception as exc:  # noqa: BLE001 -- last-resort guardrail
                 logger.exception(
                     "[OrgCmd] supervisor.run raised for cid=%s", command_id
@@ -2115,7 +2192,10 @@ class OrgCommandService:
                     str(cmd_for_bridge.get("org_id") or request.org_id),
                     cmd_for_bridge.get("target_node_id") or request.target_node_id,
                     {"error": str(exc)},
+                    source=cmd_for_bridge.get("source"),
+                    origin_surface=cmd_for_bridge.get("origin_surface"),
                 )
+                await self._publish_terminal_events(command_id)
             finally:
                 self._active_supervisors.pop(command_id, None)
                 root_key = (request.org_id, root_node_id)
@@ -2857,36 +2937,18 @@ class OrgCommandService:
         except Exception:  # noqa: BLE001
             pass
 
-        # Item 2: route the terminal state through the event bus so a
-        # ``command_done`` event is persisted (events.jsonl) + streamed (SSE) +
-        # WS-broadcast, instead of only being discoverable by polling. Best
-        # effort + idempotent (the runtime dedupes per command_id). We schedule
-        # it because ``_reflect_supervisor_outcome`` is sync but always runs
-        # inside the supervisor task's event loop.
+        # Route the terminal state to both consumers: the runtime event bus
+        # powers the organization workspace, while the summary queue powers
+        # desktop chat and IM request streams. These are intentionally separate
+        # transports, so completing only the runtime side leaves chat waiting
+        # forever on ``subscribe_summary``.
         try:
-            emit_done = getattr(self._runtime, "emit_command_done", None)
-            if callable(emit_done) and oid_for_done:
-                cmd_final = self._commands.get(command_id) or {}
-                done_result = cmd_final.get("result")
-                done_error = cmd_final.get("error")
-                done_status = cmd_final.get("status") or status
-                import asyncio as _asyncio
-
-                try:
-                    loop = _asyncio.get_running_loop()
-                    loop.create_task(
-                        emit_done(
-                            oid_for_done,
-                            command_id,
-                            status=done_status,
-                            result=done_result,
-                            error=done_error,
-                        )
-                    )
-                except RuntimeError:
-                    # No running loop (sync test context): skip live emit; the
-                    # polling fallback still surfaces the terminal state.
-                    pass
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._publish_terminal_events(command_id))
+        except RuntimeError:
+            # No running loop (sync test context): polling and late-subscriber
+            # replay still expose the terminal command state.
+            pass
         except Exception:  # noqa: BLE001
             pass
 
@@ -2898,6 +2960,8 @@ class OrgCommandService:
                 "result": deliverable or final_msg,
                 "error": error,
             },
+            source=cmd_for_bridge.get("source"),
+            origin_surface=cmd_for_bridge.get("origin_surface"),
         )
 
     # ------------------------------------------------------------------
@@ -2937,11 +3001,19 @@ class OrgCommandService:
         org_id: str,
         target_node_id: str | None,
         result: dict[str, Any],
+        *,
+        source: dict[str, Any] | None = None,
+        origin_surface: str | None = None,
     ) -> None:
         sm = self._session_manager
         if not sm or not org_id:
             return
-        chat_id = self.bridge_session_chat_id(org_id, target_node_id)
+        source = source if isinstance(source, dict) else {}
+        source_chat_id = str(source.get("chat_id") or "").strip()
+        if origin_surface == "desktop_chat" and source_chat_id:
+            chat_id = source_chat_id
+        else:
+            chat_id = self.bridge_session_chat_id(org_id, target_node_id)
         try:
             session = sm.get_session(
                 channel="desktop",
@@ -2958,7 +3030,11 @@ class OrgCommandService:
                 if isinstance(text, dict):
                     text = text.get("result") or text.get("error") or str(text)
                 session.add_message("assistant", str(text))
-            sm.mark_dirty()
+            persist = getattr(sm, "persist", None)
+            if callable(persist):
+                persist()
+            else:
+                sm.mark_dirty()
         except Exception as exc:
             logger.warning("[OrgCmd] failed to persist result to session: %s", exc)
 
@@ -3017,6 +3093,57 @@ class OrgCommandService:
     # ------------------------------------------------------------------
     # Fan-out / observability
     # ------------------------------------------------------------------
+
+    async def _publish_terminal_events(self, command_id: str) -> None:
+        """Publish one command terminal to runtime and waiting summary streams."""
+        cmd = self._commands.get(command_id)
+        if not cmd:
+            return
+        status = str(cmd.get("status") or "")
+        if status not in {"done", "partial", "error", "cancelled"}:
+            return
+
+        org_id = str(cmd.get("org_id") or "")
+        emit_done = getattr(self._runtime, "emit_command_done", None)
+        if callable(emit_done) and org_id:
+            try:
+                await emit_done(
+                    org_id,
+                    command_id,
+                    status=status,
+                    result=cmd.get("result"),
+                    error=cmd.get("error"),
+                )
+            except Exception:  # noqa: BLE001 -- one transport must not block the other
+                logger.debug(
+                    "[OrgCmd] runtime terminal emit failed for cid=%s",
+                    command_id,
+                    exc_info=True,
+                )
+
+        if command_id in self._summary_terminal_published:
+            return
+        self._summary_terminal_published.add(command_id)
+        event: dict[str, Any] = {
+            "type": "org_command_done",
+            "org_id": org_id,
+            "command_id": command_id,
+        }
+        if status in {"done", "partial"}:
+            event["result"] = cmd.get("result")
+        else:
+            if status == "cancelled":
+                cancelled_by = (self._command_outcomes.get(command_id) or {}).get(
+                    "cancelled_by"
+                )
+                event["error"] = (
+                    "组织已停止，当前任务已取消。"
+                    if cancelled_by == "stop_org"
+                    else "组织命令已取消。"
+                )
+            else:
+                event["error"] = cmd.get("error") or "Command failed"
+        await self.publish_summary(command_id, event)
 
     def subscribe_summary(
         self,

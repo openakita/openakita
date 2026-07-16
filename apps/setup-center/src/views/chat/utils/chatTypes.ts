@@ -243,7 +243,12 @@ export type StreamEvent =
       messages_offset: number;
       protocol_version?: number;
     }
-  | { type: "error"; message: string }
+  | {
+      type: "error";
+      message: string;
+      error_code?: string;
+      org_status?: string | null;
+    }
   | { type: "done"; reason?: string; usage?: {
       input_tokens: number;
       output_tokens: number;

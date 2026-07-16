@@ -94,9 +94,18 @@ class OrgCommandConflict(OrgCommandError):
 
     status_code: int = 409
 
-    def __init__(self, message: str, *, command_id: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        command_id: str,
+        error_code: str = "org_command_conflict",
+        org_status: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.command_id = command_id
+        self.error_code = error_code
+        self.org_status = org_status
 
 
 # ---------------------------------------------------------------------------

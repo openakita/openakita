@@ -45,7 +45,6 @@ from openakita.orgs.command_service import OrgCommandService
 from openakita.runtime.cancel_token import CancellationToken
 from openakita.runtime.supervisor import FinalOutcome, SupervisorOutcome
 
-
 # ---------------------------------------------------------------------------
 # Test doubles
 # ---------------------------------------------------------------------------
@@ -123,7 +122,7 @@ class _FakeSupervisor:
             reason="",
         )
 
-    async def resume_from_checkpoint(self, checkpoint_id: str) -> "_FakeSupervisor":
+    async def resume_from_checkpoint(self, checkpoint_id: str) -> _FakeSupervisor:
         self.resume_calls.append(checkpoint_id)
         return self
 
@@ -315,6 +314,10 @@ async def test_cancel_all_for_org_cancels_every_supervisor() -> None:
     await asyncio.sleep(0.05)
     cid1, cid2 = r1["command_id"], r2["command_id"]
     assert {cid1, cid2} <= set(svc._inflight_by_org.get("o1", set()))
+    queues = {
+        cid: svc.subscribe_summary(cid, surface="desktop_chat", target=f"chat-{cid}")
+        for cid in (cid1, cid2)
+    }
 
     cancelled = await svc.cancel_all_for_org("o1", reason="stop_org")
     assert set(cancelled) == {cid1, cid2}
@@ -333,3 +336,6 @@ async def test_cancel_all_for_org_cancels_every_supervisor() -> None:
     for cid in (cid1, cid2):
         outcome = svc._command_outcomes.get(cid) or {}
         assert outcome.get("cancelled_by") == "stop_org"
+        terminal = await asyncio.wait_for(queues[cid].get(), timeout=0.5)
+        assert terminal["type"] == "org_command_done"
+        assert terminal["error"] == "组织已停止，当前任务已取消。"

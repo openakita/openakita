@@ -276,18 +276,24 @@ export const STATUS_COLORS: Record<string, string> = {
   offline: "var(--muted)",
   frozen: "#93c5fd",
   dormant: "var(--muted)",
+  created: "var(--muted)",
   active: "var(--ok)",
   running: "var(--primary)",
   paused: "#f59e0b",
+  stopped: "var(--muted)",
   archived: "var(--muted)",
+  deleted: "var(--danger)",
 };
 
 export const ORG_STATUS_LABELS: Record<string, string> = {
   dormant: "org.orgStatus.dormant",
+  created: "org.orgStatus.created",
   active: "org.orgStatus.active",
   running: "org.orgStatus.running",
   paused: "org.orgStatus.paused",
+  stopped: "org.orgStatus.stopped",
   archived: "org.orgStatus.archived",
+  deleted: "org.orgStatus.deleted",
 };
 
 export const EDGE_COLORS: Record<string, string> = {

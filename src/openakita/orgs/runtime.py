@@ -1564,6 +1564,7 @@ class OrgRuntime:
         # 图3 final-PDF: schedule the render of the FINAL root deliverable (only
         # on a successful convergence) before the project-store guard below, so
         # the pdf is produced even in setups without a project store wired.
+        rec = None
         if command_id:
             store = getattr(self, "_root_final_artifact", None)
             # Always pop (cleanup) so a cancelled/errored command can't leak the
@@ -1607,14 +1608,25 @@ class OrgRuntime:
                 return
             from .project_models import TaskStatus
 
-            ps.update_task(
-                pid,
-                tid,
-                {
-                    "status": TaskStatus.DELIVERED if ok else TaskStatus.REJECTED,
-                    "progress_pct": 100 if ok else 0,
-                },
-            )
+            updates: dict[str, Any] = {
+                "status": TaskStatus.DELIVERED if ok else TaskStatus.REJECTED,
+                "progress_pct": 100 if ok else 0,
+            }
+            if ok and rec:
+                _, final_path = rec
+                final_file = Path(str(final_path))
+                try:
+                    final_size = final_file.stat().st_size
+                except OSError:
+                    final_size = 0
+                updates["file_attachments"] = [
+                    {
+                        "filename": final_file.name,
+                        "file_path": str(final_file),
+                        "file_size": final_size,
+                    }
+                ]
+            ps.update_task(pid, tid, updates)
         except Exception:  # noqa: BLE001
             _LOGGER.debug("contract: finalize_command_project failed", exc_info=True)
 
@@ -1876,6 +1888,7 @@ class OrgRuntime:
         # to the flat node-based mapping below.
         chain_id = payload.get("chain_id") or None
         parent_chain_id = payload.get("parent_chain_id") or None
+        command_id = str(payload.get("command_id") or "")
         ev_depth = int(payload.get("depth") or 0)
         try:
             # P3 (黑板=全组织实时分级日志): publish a live, tier-aware process
@@ -1993,6 +2006,15 @@ class OrgRuntime:
                                 t
                                 for t in ps.all_tasks(assignee=node_id)
                                 if t.get("status") == "in_progress"
+                                # The submit-time command task is closed only by
+                                # finalize_command_project(). A root node can
+                                # finish several supervisor turns before the
+                                # command converges, so node-based fallback must
+                                # not mistake a stage result for final delivery.
+                                and (
+                                    not command_id
+                                    or str(t.get("chain_id") or "") != command_id
+                                )
                             ]
                         if open_tasks:
                             t = open_tasks[-1]

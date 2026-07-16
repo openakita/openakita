@@ -17,9 +17,7 @@ from unittest.mock import MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-
-from tests.api.contracts.conftest import _async_return, _async_raise
-
+from tests.api.contracts.conftest import _async_raise, _async_return
 
 # ---------------------------------------------------------------------------
 # B34-B37: lifecycle verbs
@@ -141,6 +139,28 @@ def test_b38_submit_command_409_on_conflict(mint_app: FastAPI, mint_client: Test
     assert resp.status_code == 409
     detail = resp.json()["detail"]
     assert detail["code"] == "org_command_conflict"
+
+
+def test_b38_submit_command_preserves_non_runnable_status(
+    mint_app: FastAPI, mint_client: TestClient
+) -> None:
+    from openakita.orgs import OrgCommandConflict
+
+    err = OrgCommandConflict(
+        "not started",
+        command_id="",
+        error_code="org_not_runnable",
+        org_status="dormant",
+    )
+    mint_app.state.org_command_service.submit = _async_raise(err)
+    resp = mint_client.post("/api/v2/orgs/o1/command", json={"content": "hi"})
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == {
+        "code": "org_not_runnable",
+        "message": "not started",
+        "command_id": "",
+        "org_status": "dormant",
+    }
 
 
 def test_b38_submit_command_400_on_command_error(

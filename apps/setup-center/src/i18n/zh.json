@@ -3124,10 +3124,14 @@
     },
     "orgStatus": {
       "dormant": "休眠",
+      "created": "待启动",
       "active": "运行中",
       "running": "运行中",
       "paused": "已暂停",
-      "archived": "已归档"
+      "stopped": "已停止",
+      "archived": "已归档",
+      "deleted": "已删除",
+      "unknown": "未知"
     },
     "bbType": {
       "fact": "事实",
@@ -3401,6 +3405,7 @@
       "continuePreviousTitle": "读取上一轮终止任务、黑板和未完成任务，作为新命令继续推进",
       "continuePreviousPrompt": "请基于刚才被中断的任务继续推进，优先复用已有脚本、图片、asset_ids、视频 URL 和未完成任务，不要重复已经完成的步骤。",
       "sendFailed": "发送失败: {{error}}",
+      "commandUnavailableStatus": "无法下发组织指令。当前状态：{{status}}",
       "conversationTitle": "对话 · {{name}}",
       "commandCenter": "组织指挥台",
       "clearHistory": "清空历史",

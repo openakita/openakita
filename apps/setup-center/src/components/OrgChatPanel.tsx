@@ -9,6 +9,7 @@ import { Loader2, ShieldAlert, Copy as IconCopy } from "lucide-react";
 import { toast } from "sonner";
 import { safeFetch } from "../providers";
 import { copyToClipboard } from "../utils/clipboard";
+import { localizeOrgCommandStateError } from "../utils/orgStatus";
 import { onWsEvent } from "../platform";
 import { useMdModules } from "../views/chat/hooks/useMdModules";
 import { createV2Stream, type V2StreamEvent } from "../api/v2Stream";
@@ -2375,6 +2376,12 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       // toast.
       if (res.status === 409) {
         const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        const localizedStateError = localizeOrgCommandStateError(t, data);
+        if (localizedStateError) {
+          finalContent = `> ${localizedStateError}`;
+          finalizeResult(finalContent, undefined, "system");
+          return;
+        }
         const existingId =
           (typeof data.command_id === "string" && data.command_id) ||
           (typeof (data.detail as Record<string, unknown> | undefined)?.command_id === "string"

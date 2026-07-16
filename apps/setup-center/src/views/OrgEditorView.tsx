@@ -73,6 +73,7 @@ import { ZoomIn, ZoomOut, Maximize, X as XIcon, Copy as IconCopy } from "lucide-
 import { copyToClipboard } from "../utils/clipboard";
 import {
   ORG_STRUCTURE_CHANGED_EVENT,
+  dispatchOrgStructureChanged,
   normalizeOrgStructureChange,
   type OrgStructureChangeDetail,
 } from "../utils/orgStructureEvents";
@@ -937,6 +938,7 @@ export function OrgEditorView({
         (event as CustomEvent<OrgStructureChangeDetail>).detail,
       );
       if (!detail) return;
+      if (detail.toolUseId === "__org_editor_lifecycle__") return;
 
       void (async () => {
         await fetchOrgList();
@@ -1113,6 +1115,13 @@ export function OrgEditorView({
       await safeFetch(`${apiBaseUrl}/api/v2/orgs/${currentOrg.id}/start`, { method: "POST" });
       setCurrentOrg({ ...currentOrg, status: "active" });
       setOrgList((prev) => prev.map((o) => o.id === currentOrg.id ? { ...o, status: "active" } : o));
+      dispatchOrgStructureChanged({
+        action: "updated",
+        org_id: currentOrg.id,
+        org_name: currentOrg.name,
+        status: "active",
+        tool_use_id: "__org_editor_lifecycle__",
+      });
       const mode = (currentOrg as any).operation_mode || "command";
       showToast(
         mode === "autonomous"
@@ -1136,6 +1145,13 @@ export function OrgEditorView({
       await safeFetch(`${apiBaseUrl}/api/v2/orgs/${currentOrg.id}/stop`, { method: "POST" });
       setCurrentOrg((prev) => prev ? { ...prev, status: "dormant" } : prev);
       setOrgList((prev) => prev.map((o) => o.id === currentOrg.id ? { ...o, status: "dormant" } : o));
+      dispatchOrgStructureChanged({
+        action: "updated",
+        org_id: currentOrg.id,
+        org_name: currentOrg.name,
+        status: "dormant",
+        tool_use_id: "__org_editor_lifecycle__",
+      });
       // 不再依赖 WS：HTTP 成功立即把所有节点视觉状态清零，避免装机版 WS 被
       // CSP 拦掉时残留 CPO/PM 等"执行中"状态。
       setNodes((prev) => prev.map((n) => ({

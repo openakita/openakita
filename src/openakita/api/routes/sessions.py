@@ -441,6 +441,9 @@ def _history_entry(session, conversation_id: str, original_idx: int, msg: dict) 
     ask_user = msg.get("ask_user")
     if ask_user:
         entry["ask_user"] = ask_user
+    error_info = msg.get("error_info")
+    if isinstance(error_info, dict):
+        entry["error_info"] = error_info
     usage = msg.get("usage")
     if isinstance(usage, dict) and (usage.get("input_tokens") or usage.get("output_tokens")):
         entry["usage"] = usage

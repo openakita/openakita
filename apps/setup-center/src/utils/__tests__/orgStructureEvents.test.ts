@@ -14,6 +14,7 @@ describe("orgStructureEvents", () => {
       org_name: "测试组织",
       node_count: 3,
       edge_count: 2,
+      status: "dormant",
       tool_use_id: "call_1",
     })).toEqual({
       action: "created",
@@ -22,7 +23,7 @@ describe("orgStructureEvents", () => {
       templateId: undefined,
       nodeCount: 3,
       edgeCount: 2,
-      status: undefined,
+      status: "dormant",
       toolUseId: "call_1",
     });
   });
@@ -32,11 +33,16 @@ describe("orgStructureEvents", () => {
     window.addEventListener(ORG_STRUCTURE_CHANGED_EVENT, listener);
     try {
       expect(dispatchOrgStructureChanged({ action: "updated" })).toBe(false);
-      expect(dispatchOrgStructureChanged({ action: "updated", org_id: "org_abc" })).toBe(true);
+      expect(dispatchOrgStructureChanged({
+        action: "updated",
+        org_id: "org_abc",
+        status: "dormant",
+      })).toBe(true);
       expect(listener).toHaveBeenCalledTimes(1);
       expect(listener.mock.calls[0][0].detail).toMatchObject({
         action: "updated",
         orgId: "org_abc",
+        status: "dormant",
       });
     } finally {
       window.removeEventListener(ORG_STRUCTURE_CHANGED_EVENT, listener);

@@ -47,7 +47,13 @@ import type {
 import { genId, timeAgo } from "../utils";
 import { SseStateMachine, type SseFrame } from "../utils/sseStateMachine";
 import { notifyError, notifyInfo } from "../utils/notify";
-import { dispatchOrgStructureChanged } from "../utils/orgStructureEvents";
+import {
+  ORG_STRUCTURE_CHANGED_EVENT,
+  dispatchOrgStructureChanged,
+  normalizeOrgStructureChange,
+  type OrgStructureChangeDetail,
+} from "../utils/orgStructureEvents";
+import { localizeOrgCommandStateError, localizeOrgStatus } from "../utils/orgStatus";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import {
   IconSend, IconPaperclip, IconMic, IconStopCircle,
@@ -73,6 +79,7 @@ import {
   loadMessagesFromStorage, saveMessagesToStorage, STORED_MESSAGE_WINDOW,
   buildChainFromSummary, buildChainFromTimeline, formatAskUserAnswer, patchMessagesWithBackend, patchMessagesWithBackendDetailed,
   chooseHydratedMessages, classifyError, formatToolDescription,
+  messageHistoryRichness,
   shouldRenderConversationMessages,
 } from "./chat/utils/chatHelpers";
 import { useMdModules } from "./chat/hooks/useMdModules";
@@ -1709,7 +1716,7 @@ export function ChatView({
   const hydrateSeqRef = useRef(0);
 
   const mapBackendHistoryToMessages = useCallback(
-    (rows: { id: string; index?: number; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[]; chain_timeline?: ChainTimelineGroup[]; artifacts?: ChatArtifact[]; sources?: ChatSource[]; mcp_calls?: ChatMcpCall[]; attachments?: ChatAttachment[]; org_timeline?: OrgTimelineEntry[]; ask_user?: ChatAskUser; todo?: ChatTodo; progress_events?: ChatProgressEvent[]; parts?: MessagePart[]; usage?: ChatMessage["usage"] }[]): ChatMessage[] => {
+    (rows: { id: string; index?: number; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[]; chain_timeline?: ChainTimelineGroup[]; artifacts?: ChatArtifact[]; sources?: ChatSource[]; mcp_calls?: ChatMcpCall[]; attachments?: ChatAttachment[]; org_timeline?: OrgTimelineEntry[]; ask_user?: ChatAskUser; error_info?: { message?: string; raw?: string; error_code?: string; org_status?: string | null }; todo?: ChatTodo; progress_events?: ChatProgressEvent[]; parts?: MessagePart[]; usage?: ChatMessage["usage"] }[]): ChatMessage[] => {
       return rows.map((m) => ({
         id: m.id,
         ...(typeof m.index === "number" ? { historyIndex: m.index } : {}),
@@ -1731,11 +1738,24 @@ export function ChatView({
         ...(m.todo?.steps?.length ? { todo: m.todo } : {}),
         ...(m.progress_events?.length ? { progressEvents: m.progress_events } : {}),
         ...(m.ask_user ? { askUser: m.ask_user, content: "" } : {}),
+        ...(m.error_info ? {
+          errorInfo: (() => {
+            const message = localizeOrgCommandStateError(t, m.error_info)
+              || m.error_info?.message
+              || "";
+            return {
+              message,
+              category: classifyError(message),
+              raw: m.error_info?.raw || m.error_info?.message,
+            } as ChatErrorInfo;
+          })(),
+          content: "",
+        } : {}),
         ...(m.parts?.length ? { parts: m.parts } : {}),
         ...(m.usage ? { usage: m.usage } : {}),
       }));
     },
-    [],
+    [t],
   );
 
   // Re-attach a still-executing plan (not yet finalized into history) to the
@@ -1787,23 +1807,11 @@ export function ChatView({
     const activeMsgs = canUseActiveMsgs
       ? latestMessagesRef.current.slice(-STORED_MESSAGE_WINDOW)
       : [];
-    const localRichness = (msgs: ChatMessage[]) => msgs.reduce((score, msg) =>
-      score +
-      (msg.todo?.steps?.length ? 1000 + msg.todo.steps.length : 0) +
-      (msg.parts?.length ? 100 + msg.parts.length : 0) +
-      (msg.progressEvents?.length ? 10 + msg.progressEvents.length : 0) +
-      (msg.thinkingChain?.length ? 50 + msg.thinkingChain.length : 0) +
-      (msg.artifacts?.length ? 20 + msg.artifacts.length : 0) +
-      (msg.attachments?.length ? 20 + msg.attachments.length : 0) +
-      (msg.askUser ? 10 : 0) +
-      (msg.streaming ? 5 : 0) +
-      Math.min(msg.content.length, 2000) / 2000,
-    0);
     const localMsgs = [storedMsgs, liveMsgs, activeMsgs].reduce((best, candidate) => {
       if (candidate.length !== best.length) {
         return candidate.length > best.length ? candidate : best;
       }
-      return localRichness(candidate) > localRichness(best) ? candidate : best;
+      return messageHistoryRichness(candidate) > messageHistoryRichness(best) ? candidate : best;
     }, [] as ChatMessage[]);
 
     // Always ask the backend when available.  A completed answer may be saved
@@ -2168,17 +2176,41 @@ export function ChatView({
     fetchProfiles();
   }, [apiBaseUrl, serviceRunning, visible]);
 
+  const fetchOrgs = useCallback(async () => {
+    try {
+      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs`);
+      const data = await res.json();
+      if (!Array.isArray(data)) return;
+      setOrgList(data.map((o: any) => ({
+        id: o.id,
+        name: o.name,
+        icon: o.icon || "",
+        status: o.status,
+      })));
+    } catch { /* ignore */ }
+  }, [apiBaseUrl]);
+
   useEffect(() => {
     if (!visible || !serviceRunning) return;
-    const fetchOrgs = async () => {
-      try {
-        const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs`);
-        const data = await res.json();
-        setOrgList(data.map((o: any) => ({ id: o.id, name: o.name, icon: o.icon || "", status: o.status })));
-      } catch { /* ignore */ }
+    void fetchOrgs();
+  }, [fetchOrgs, serviceRunning, visible]);
+
+  useEffect(() => {
+    const onOrgStructureChanged = (event: Event) => {
+      const detail = normalizeOrgStructureChange(
+        (event as CustomEvent<OrgStructureChangeDetail>).detail,
+      );
+      if (!detail) return;
+      if (detail.status) {
+        setOrgList((prev) => prev.map((org) =>
+          org.id === detail.orgId ? { ...org, status: detail.status! } : org
+        ));
+      }
+      if (serviceRunning) void fetchOrgs();
     };
-    fetchOrgs();
-  }, [apiBaseUrl, serviceRunning, visible]);
+    window.addEventListener(ORG_STRUCTURE_CHANGED_EVENT, onOrgStructureChanged);
+    return () => window.removeEventListener(ORG_STRUCTURE_CHANGED_EVENT, onOrgStructureChanged);
+  }, [fetchOrgs, serviceRunning]);
 
   // Sync selectedAgent → current conversation's agentProfileId
   // Only react to selectedAgent changes (not activeConvId) to avoid overwriting
@@ -5096,13 +5128,15 @@ export function ChatView({
                 ]);
                 continue;
               }
-              case "error":
+              case "error": {
+                const localizedError = localizeOrgCommandStateError(t, event) || event.message;
                 currentError = {
-                  message: event.message,
-                  category: classifyError(event.message),
+                  message: localizedError,
+                  category: classifyError(localizedError),
                   raw: event.message,
                 };
                 break;
+              }
               case "done":
                 gracefulDone = true;
                 // Crash diagnostics: backend signalled end-of-stream. Only metadata,
@@ -7892,7 +7926,9 @@ export function ChatView({
                         >
                           <IconBuilding size={13} style={{ marginRight: 4, flexShrink: 0 }} />
                           <span style={{ fontWeight: 600 }}>{o.name}</span>
-                          <span style={{ fontSize: 11, opacity: 0.5, marginLeft: 6 }}>{o.status}</span>
+                          <span style={{ fontSize: 11, opacity: 0.5, marginLeft: 6 }}>
+                            {localizeOrgStatus(t, o.status)}
+                          </span>
                         </div>
                       ))}
                     </div>
