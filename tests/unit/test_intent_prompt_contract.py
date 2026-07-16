@@ -306,6 +306,19 @@ def test_previous_answer_replay_request_does_not_match_reanalysis_requests():
     assert not _looks_like_previous_answer_replay_request("你的完整报告并没有展示完全", [])
 
 
+def test_previous_answer_replay_request_does_not_match_turn_with_new_attachments():
+    history = [
+        {"role": "user", "content": "分析上一批图片"},
+        {"role": "assistant", "content": "上一批图片的分析结果"},
+    ]
+
+    assert not _looks_like_previous_answer_replay_request(
+        "请读取我新上传的图片并输出完整内容",
+        history,
+        has_new_objects=True,
+    )
+
+
 def test_previous_answer_replay_hint_preserves_original_user_request():
     prompted = _apply_previous_answer_replay_hint("你的完整报告并没有展示完全")
 

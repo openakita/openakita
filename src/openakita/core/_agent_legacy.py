@@ -389,10 +389,19 @@ _PREVIOUS_ANSWER_REPLAY_HINT = (
 )
 
 
-def _looks_like_previous_answer_replay_request(message: str, history_messages: list[dict]) -> bool:
+def _looks_like_previous_answer_replay_request(
+    message: str,
+    history_messages: list[dict],
+    *,
+    has_new_objects: bool = False,
+) -> bool:
     """Whether a follow-up asks to show the previous answer fully, not redo the task."""
     text = (message or "").strip()
-    if not text or not any(msg.get("role") == "assistant" for msg in history_messages):
+    if (
+        not text
+        or has_new_objects
+        or not any(msg.get("role") == "assistant" for msg in history_messages)
+    ):
         return False
 
     normalized = re.sub(r"\s+", "", text).lower()
@@ -5431,15 +5440,6 @@ class Agent:
             f"{len(messages)} history msgs, has_history={_has_history}"
         )
 
-        if isinstance(compiled_message, str) and _looks_like_previous_answer_replay_request(
-            message, messages
-        ):
-            compiled_message = _apply_previous_answer_replay_hint(compiled_message)
-            logger.info(
-                "[Session:%s] Previous-answer replay hint applied for follow-up request",
-                session_id,
-            )
-
         # 当前用户消息（支持多模态）
         pending_images = session.get_metadata("pending_images") if session else None
         pending_videos = session.get_metadata("pending_videos") if session else None
@@ -5453,6 +5453,18 @@ class Agent:
             attachments=attachments,
         )
         self._current_turn_has_media_attachments = turn_has_media
+
+        if isinstance(compiled_message, str) and _looks_like_previous_answer_replay_request(
+            message,
+            messages,
+            has_new_objects=turn_has_media,
+        ):
+            compiled_message = _apply_previous_answer_replay_hint(compiled_message)
+            logger.info(
+                "[Session:%s] Previous-answer replay hint applied for follow-up request",
+                session_id,
+            )
+
         from .current_turn import CurrentTurnInput, SessionObjectRegistry
 
         current_turn = CurrentTurnInput.from_inputs(

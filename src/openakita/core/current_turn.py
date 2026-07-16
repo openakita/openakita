@@ -111,10 +111,11 @@ class SessionObjectRegistry:
 
         self.turn_index += 1
         for obj in turn.iter_current_objects():
+            value = _registry_value(obj)
             stamped = TurnObject(
                 kind=obj.kind,
-                value=obj.value,
-                label=obj.label,
+                value=value,
+                label=obj.label or value,
                 mime_type=obj.mime_type,
                 source_turn=self.turn_index,
             )
@@ -136,8 +137,8 @@ class SessionObjectRegistry:
             "objects": [
                 {
                     "kind": obj.kind,
-                    "value": obj.value,
-                    "label": obj.label,
+                    "value": _registry_value(obj),
+                    "label": obj.label or _registry_value(obj),
                     "mime_type": obj.mime_type,
                     "source_turn": obj.source_turn,
                 }
@@ -161,11 +162,14 @@ class SessionObjectRegistry:
             kind = str(raw.get("kind") or "")
             if not value or not kind:
                 continue
+            label = str(raw.get("label") or "")
+            if _is_data_uri(value):
+                value = label or f"inline {kind}"
             objects.append(
                 TurnObject(
                     kind=kind,
                     value=value,
-                    label=str(raw.get("label") or ""),
+                    label=label or value,
                     mime_type=str(raw.get("mime_type") or ""),
                     source_turn=_safe_int(raw.get("source_turn")),
                 )
@@ -652,6 +656,8 @@ def _normalize_url(url: str) -> str:
 
 def _normalize_ref(value: str) -> str:
     raw = (value or "").strip()
+    if _is_data_uri(raw):
+        return raw
     if raw.startswith(("http://", "https://")):
         return _normalize_url(raw)
     try:
@@ -661,9 +667,22 @@ def _normalize_ref(value: str) -> str:
 
 
 def _display_obj(obj: TurnObject) -> str:
+    if _is_data_uri(obj.value):
+        return obj.label or f"inline {obj.kind}"
     if obj.label and obj.label != obj.value:
         return f"{obj.label} ({obj.value})"
     return obj.value
+
+
+def _registry_value(obj: TurnObject) -> str:
+    """Keep inline payloads out of session metadata and follow-up prompts."""
+    if _is_data_uri(obj.value):
+        return obj.label or f"inline {obj.kind}"
+    return obj.value
+
+
+def _is_data_uri(value: str) -> bool:
+    return (value or "").lstrip().lower().startswith("data:")
 
 
 def _is_error_result(result: Any) -> bool:

@@ -1,8 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from openakita.core.current_turn import CurrentTurnInput, SessionObjectRegistry
 from openakita.agent.tools import ToolExecutor
+from openakita.core.current_turn import CurrentTurnInput, SessionObjectRegistry
 from openakita.tools.handlers import SystemHandlerRegistry
 
 
@@ -160,6 +160,73 @@ def test_prompt_block_lists_current_objects(tmp_path: Path):
     assert "当前轮输入对象" in prompt
     assert "https://example.com/a" in prompt
     assert "current.png" in prompt
+
+
+def test_prompt_block_omits_inline_image_data_uri():
+    encoded = "a" * 100_000
+    data_uri = f"data:image/png;base64,{encoded}"
+    turn = CurrentTurnInput.from_inputs(
+        "分析这张图",
+        pending_images=[
+            {
+                "url": data_uri,
+                "filename": "current.png",
+                "mime_type": "image/png",
+            }
+        ],
+    )
+
+    prompt = turn.prompt_block()
+
+    assert turn.images[0].value == data_uri
+    assert "current.png" in prompt
+    assert "data:image" not in prompt
+    assert encoded not in prompt
+    assert len(prompt) < 1_000
+
+
+def test_registry_does_not_serialize_inline_image_data_uri():
+    encoded = "a" * 100_000
+    registry = SessionObjectRegistry()
+    registry.register_turn(
+        CurrentTurnInput.from_inputs(
+            "分析这张图",
+            pending_images=[
+                {
+                    "url": f"data:image/png;base64,{encoded}",
+                    "filename": "current.png",
+                    "mime_type": "image/png",
+                }
+            ],
+        )
+    )
+
+    state = registry.to_dict()
+
+    assert state["objects"][0]["value"] == "current.png"
+    assert "data:image" not in str(state)
+    assert encoded not in str(state)
+
+
+def test_registry_sanitizes_legacy_inline_image_data_uri_on_restore():
+    encoded = "a" * 100_000
+
+    registry = SessionObjectRegistry.from_dict(
+        {
+            "objects": [
+                {
+                    "kind": "image",
+                    "value": f"data:image/png;base64,{encoded}",
+                    "label": "legacy.png",
+                    "mime_type": "image/png",
+                }
+            ]
+        }
+    )
+
+    assert registry.objects[0].value == "legacy.png"
+    assert "data:image" not in str(registry.to_dict())
+    assert encoded not in str(registry.to_dict())
 
 
 def test_inject_preserves_latest_message_marker():
