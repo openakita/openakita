@@ -1,7 +1,5 @@
 """L1 Unit Tests: Tool catalog generation and progressive disclosure."""
 
-import pytest
-
 from openakita.tools.catalog import ToolCatalog, create_tool_catalog
 
 
@@ -127,6 +125,15 @@ class TestCatalogGeneration:
         text = catalog.generate_catalog()
         assert len(text) > 0
         assert "web_search" in text or "search" in text
+
+    def test_non_core_tool_remains_visible_when_deferred(self):
+        catalog = ToolCatalog(_sample_tools())
+        catalog.set_deferred_tools({"web_search"})
+
+        text = catalog.generate_catalog()
+
+        assert "web_search" in text
+        assert "[deferred] Search the web" in text
 
     def test_get_direct_tool_schemas(self):
         catalog = ToolCatalog(_sample_tools())

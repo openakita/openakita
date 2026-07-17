@@ -273,15 +273,60 @@ class ContextManager:
 
         return microcompact(messages)
 
-    def estimate_tools_tokens(self, tools: list | None) -> int:
-        """Estimate tool schema/catalog token footprint."""
+    def project_tools_for_request(self, tools: list | None) -> list:
+        """Project registered definitions to the tools the provider will receive.
+
+        Brain owns defer filtering, schema budgeting, normalization, and stable
+        ordering. Reusing that projection keeps context estimates aligned with
+        the actual request instead of serializing internal catalog metadata.
+        """
         if not tools:
+            return []
+
+        if all(hasattr(tool, "to_dict") for tool in tools):
+            return list(tools)
+
+        converter = getattr(self._brain, "_convert_tools_to_llm", None)
+        if callable(converter):
+            try:
+                return list(converter(tools) or [])
+            except Exception as exc:
+                logger.debug("Provider tool projection failed; using fallback: %s", exc)
+
+        projected: list[dict] = []
+        for tool in tools:
+            if not isinstance(tool, dict) or tool.get("_deferred"):
+                continue
+            name = tool.get("name", "")
+            description = tool.get("detail") or tool.get("description", "")
+            schema = tool.get("input_schema", {})
+            if not name:
+                function = tool.get("function")
+                if isinstance(function, dict):
+                    name = function.get("name", "")
+                    description = description or function.get("description", "")
+                    schema = schema or function.get("parameters", {})
+            if name:
+                projected.append(
+                    {
+                        "name": name,
+                        "description": description,
+                        "input_schema": schema,
+                    }
+                )
+        return projected
+
+    def estimate_tools_tokens(self, tools: list | None) -> int:
+        """Estimate the exact provider-visible tool payload footprint."""
+        projected = self.project_tools_for_request(tools)
+        if not projected:
             return 0
         try:
-            tools_text = json.dumps(tools, ensure_ascii=False, default=str)
+            payload = [tool.to_dict() if hasattr(tool, "to_dict") else tool for tool in projected]
+            tools_text = json.dumps(payload, ensure_ascii=False, default=str)
             return self.estimate_tokens(tools_text)
         except Exception:
-            return len(tools) * 200
+            return len(projected) * 200
 
     def calculate_context_pressure(
         self,

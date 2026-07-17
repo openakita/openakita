@@ -221,6 +221,9 @@
     "voice": "Voice input",
     "stopRecording": "Stop recording",
     "thinking": "Thinking...",
+    "preparingIntent": "Analyzing your request...",
+    "preparingContext": "Retrieving memory and preparing context...",
+    "preparationReady": "Preparation complete. Starting the model...",
     "recovering": "Recovering reply...",
     "thinkingBlock": "Thinking Process",
     "sourceTag": {

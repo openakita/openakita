@@ -1575,7 +1575,7 @@ export function LLMView(props: LLMViewProps) {
       />
 
       {/* ── Compiler endpoints ── */}
-      <div className="card" style={{ marginTop: 10 }}>
+      <div id="prompt-compiler" className="card" style={{ marginTop: 10 }}>
         <div className="mb-2 flex items-start justify-between gap-3">
           <div>
             <div className="cardTitle">{t("llm.compiler")}</div>

@@ -32,6 +32,7 @@ import difflib
 import logging
 from collections import OrderedDict
 
+from .defer_config import STABLE_MAIN_CHAT_CORE_TOOLS
 from .definitions.base import infer_category
 
 logger = logging.getLogger(__name__)
@@ -40,25 +41,7 @@ logger = logging.getLogger(__name__)
 # Catalog-excluded tools — these are always loaded with full schema via LLM
 # tools parameter, so they are excluded from the textual catalog to save tokens.
 # Sorted tuple for stable iteration order (prompt cache friendly).
-CATALOG_EXCLUDED_TOOLS = tuple(
-    sorted(
-        {
-            "run_shell",
-            "read_file",
-            "write_file",
-            "edit_file",
-            "list_directory",
-            "move_file",
-            "ask_user",
-            "glob",
-            "web_search",
-            "web_fetch",
-            "delete_file",
-            "read_lints",
-            "semantic_search",
-        }
-    )
-)
+CATALOG_EXCLUDED_TOOLS = tuple(sorted(STABLE_MAIN_CHAT_CORE_TOOLS))
 _CATALOG_EXCLUDED_SET = frozenset(CATALOG_EXCLUDED_TOOLS)
 
 # Backwards compat alias
@@ -74,8 +57,8 @@ class ToolCatalog:
     - Level 1: 工具清单 (name + short_description)
     - Level 2: 完整定义 (description + input_schema)
 
-    高频工具 (run_shell, read_file, write_file, list_directory) 直接以完整
-    schema 注入 LLM tools 参数，无需经过 get_tool_info 中间步骤。
+    稳定核心工具直接以完整 schema 注入 LLM tools 参数，无需经过
+    get_tool_info 中间步骤。
     """
 
     # 工具清单模板
@@ -308,10 +291,10 @@ but with full schema you'll fill arguments more reliably.
 
     def get_direct_tool_schemas(self) -> list[dict]:
         """
-        获取高频工具的完整 schema，用于直接注入 LLM tools 参数。
+        获取稳定核心工具的完整 schema，用于直接注入 LLM tools 参数。
 
-        这些工具（run_shell, read_file, write_file, list_directory）
-        跳过渐进式披露，直接以 {name, description, input_schema} 提供给 LLM。
+        这些工具跳过渐进式披露，直接以
+        {name, description, input_schema} 提供给 LLM。
 
         Returns:
             高频工具的完整 schema 列表

@@ -43,6 +43,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _should_replace_context_usage(
+    previous: dict[str, Any] | None,
+    incoming: dict[str, Any],
+) -> bool:
+    """Keep provider usage authoritative within the same request iteration."""
+    if not isinstance(previous, dict):
+        return True
+    previous_scope = str(previous.get("context_scope_id") or "")
+    incoming_scope = str(incoming.get("context_scope_id") or "")
+    if previous_scope and incoming_scope and previous_scope != incoming_scope:
+        return True
+    previous_provider = (
+        previous.get("source") == "provider" and previous.get("usage_estimated") is not True
+    )
+    incoming_provider = (
+        incoming.get("source") == "provider" and incoming.get("usage_estimated") is not True
+    )
+    if previous_provider and not incoming_provider:
+        return False
+    previous_updated = float(previous.get("updated_at") or 0)
+    incoming_updated = float(incoming.get("updated_at") or 0)
+    return incoming_provider or incoming_updated >= previous_updated
+
+
 def _bootstrap_working_directory(
     request: Request,
     body: ChatRequest,
@@ -1372,6 +1396,8 @@ async def _stream_chat(
     _agent_queue: asyncio.Queue = asyncio.Queue()
     _save_done = False
     _latest_context_snapshot: dict | None = None
+    _stream_started_at = time.perf_counter()
+    _first_context_usage_logged = False
     _pending_approval = False
     _plan_ready_for_approval = False
     session = None
@@ -1717,15 +1743,35 @@ async def _stream_chat(
                 _collected_mcp_calls.append(_mcp_call)
 
             if event_type == "context_usage":
+                if not _first_context_usage_logged:
+                    _first_context_usage_logged = True
+                    logger.info(
+                        "[ChatTiming] stage=first_context_usage request=%s conv=%s "
+                        "elapsed_ms=%.1f source=%s estimated=%s context_tokens=%s",
+                        request_id,
+                        conversation_id,
+                        (time.perf_counter() - _stream_started_at) * 1000,
+                        event.get("source") or "unknown",
+                        event.get("usage_estimated"),
+                        event.get("history_context_tokens", event.get("context_tokens")),
+                    )
                 event_conversation_id = str(event.get("conversation_id") or conversation_id)
                 if not conversation_id or event_conversation_id == conversation_id:
-                    _latest_context_snapshot = {
+                    incoming_context_snapshot = {
                         key: value for key, value in event.items() if key != "type"
                     }
+                    previous_context_snapshot = _latest_context_snapshot
                     if session is not None:
-                        session.set_metadata("context_usage", _latest_context_snapshot)
-                        if session_manager is not None:
-                            session_manager.mark_dirty()
+                        previous_context_snapshot = session.get_metadata("context_usage")
+                    if _should_replace_context_usage(
+                        previous_context_snapshot,
+                        incoming_context_snapshot,
+                    ):
+                        _latest_context_snapshot = incoming_context_snapshot
+                        if session is not None:
+                            session.set_metadata("context_usage", _latest_context_snapshot)
+                            if session_manager is not None:
+                                session_manager.mark_dirty()
 
             if event_type == "__agent_error__":
                 _agent_errored = True
@@ -2561,7 +2607,7 @@ async def chat(request: Request, body: ChatRequest):
 
     Returns Server-Sent Events with the following event types
     (canonical definitions in openakita.events.StreamEventType):
-    - heartbeat / iteration_start
+    - heartbeat / preparation_stage / iteration_start
     - thinking_start / thinking_delta / thinking_end / chain_text
     - text_delta
     - tool_call_start / tool_call_end
@@ -2574,6 +2620,21 @@ async def chat(request: Request, body: ChatRequest):
     - done (with optional usage payload)
     """
     import uuid as _uuid
+
+    _route_started_at = time.perf_counter()
+    _http_started_at = getattr(request.state, "chat_http_started_at", _route_started_at)
+    request_id = getattr(
+        request.state,
+        "chat_http_request_id",
+        f"chat_{_uuid.uuid4().hex[:12]}",
+    )
+    logger.info(
+        "[ChatTiming] stage=route_enter request=%s conv=%s client=%s http_to_route_ms=%.1f",
+        request_id,
+        body.conversation_id or "",
+        body.client_id or "",
+        (_route_started_at - _http_started_at) * 1000,
+    )
 
     pool = getattr(request.app.state, "agent_pool", None)
     if not body.conversation_id:
@@ -2601,7 +2662,6 @@ async def chat(request: Request, body: ChatRequest):
     # because body.client_id is always truthy there.
     if not client_id:
         client_id = f"__server_fallback__::{conversation_id}"
-    request_id = f"chat_{_uuid.uuid4().hex[:12]}"
     session_manager = getattr(request.app.state, "session_manager", None)
     try:
         _bootstrap_working_directory(request, body, session_manager)
@@ -3130,6 +3190,7 @@ async def chat(request: Request, body: ChatRequest):
                 },
             )
 
+    _agent_init_started_at = time.perf_counter()
     try:
         agent = await _get_agent_for_session(request, conversation_id, body.agent_profile_id)
     except Exception as exc:
@@ -3141,6 +3202,13 @@ async def chat(request: Request, body: ChatRequest):
             request_id=request_id,
             stage="agent_init",
         )
+    logger.info(
+        "[ChatTiming] stage=agent_ready request=%s conv=%s duration_ms=%.1f elapsed_ms=%.1f",
+        request_id,
+        conversation_id,
+        (time.perf_counter() - _agent_init_started_at) * 1000,
+        (time.perf_counter() - _route_started_at) * 1000,
+    )
 
     # Resolve effective mode: backward compat plan_mode=true -> mode="plan"
     effective_mode = body.mode
@@ -3200,6 +3268,12 @@ async def chat(request: Request, body: ChatRequest):
         + (f" | depth={body.thinking_depth}" if body.thinking_depth else "")
         + (f" | conv={conversation_id}")
         + (f" | client={client_id}" if client_id else "")
+    )
+    logger.info(
+        "[ChatTiming] stage=stream_response_ready request=%s conv=%s elapsed_ms=%.1f",
+        request_id,
+        conversation_id,
+        (time.perf_counter() - _route_started_at) * 1000,
     )
 
     # Pass pre-resolved conversation_id so _stream_chat doesn't generate a new one

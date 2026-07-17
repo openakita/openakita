@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from openakita.agent.core import Agent
 from openakita.core._agent_legacy import (
     MINIMAL_PROMPT_TOOLS,
@@ -6,7 +8,17 @@ from openakita.core._agent_legacy import (
     _looks_like_previous_answer_replay_request,
     _resolve_force_tool_policy,
 )
+from openakita.core._brain_legacy import (
+    Brain,
+    Response,
+    _classify_compiler_access_error,
+    _compiler_configuration_fallback_reason,
+    _sanitize_compiler_error,
+)
 from openakita.core.intent_analyzer import (
+    INTENT_ANALYZER_MAX_TOKENS,
+    INTENT_ANALYZER_SYSTEM,
+    CapabilityScope,
     IntentAnalyzer,
     IntentResult,
     IntentType,
@@ -21,11 +33,76 @@ from openakita.llm.types import (
     EndpointConfig,
 )
 from openakita.prompt.builder import PromptMode, PromptProfile, build_system_prompt
+from openakita.runtime.llm import CompilerCircuitBreaker
 
 
 class _FailingCompilerBrain:
     async def compiler_think(self, *args, **kwargs):
         raise AssertionError("fast chat must not call the LLM intent analyzer")
+
+
+class _StaticCompilerBrain:
+    def __init__(self, content: str):
+        self.content = content
+        self.calls = 0
+
+    async def compiler_think(self, *args, **kwargs):
+        self.calls += 1
+        return SimpleNamespace(content=self.content)
+
+
+def test_intent_analyzer_prompt_is_compact_and_sparse():
+    assert len(INTENT_ANALYZER_SYSTEM) < 1800
+    assert "每次必须输出" in INTENT_ANALYZER_SYSTEM
+    assert "仅当值为 true/broad" in INTENT_ANALYZER_SYSTEM
+    assert "risk_level_hint:" not in INTENT_ANALYZER_SYSTEM
+
+
+async def test_intent_analyzer_uses_bounded_output_budget():
+    class _CapturingBrain:
+        def __init__(self):
+            self.kwargs = {}
+
+        async def compiler_think(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(
+                content=(
+                    "intent: task\n"
+                    "task_type: action\n"
+                    "goal: inspect current logs\n"
+                    "tool_hints: [File System]\n"
+                    "memory_keywords: [logs]\n"
+                    "capability_scope: [files, code]\n"
+                    "evidence_required: true"
+                )
+            )
+
+    brain = _CapturingBrain()
+    result = await IntentAnalyzer(brain).analyze("检查当前后端日志")
+
+    assert result.intent == IntentType.TASK
+    assert brain.kwargs["max_tokens"] == INTENT_ANALYZER_MAX_TOKENS == 384
+
+
+def test_sparse_compound_output_derives_default_routing_fields():
+    result = _parse_intent_output(
+        """intent: task
+task_type: compound
+goal: query weather and write query.py
+tool_hints: [Web Search, File System]
+memory_keywords: [福州, 明天天气, query.py]
+capability_scope: [web, files, code]
+evidence_required: true
+scope: broad""",
+        "帮我查福州明天天气并写 query.py",
+    )
+
+    assert result.requires_tools is True
+    assert result.force_tool is True
+    assert result.requires_project_context is True
+    assert result.prompt_depth == PromptDepth.STANDARD
+    assert result.memory_scope == MemoryScope.RELEVANT
+    assert result.todo_required is True
 
 
 class _FakeToolCatalog:
@@ -82,14 +159,174 @@ async def test_direct_identity_question_uses_fast_query_without_tools():
     assert result.evidence_required is False
 
 
-async def test_desktop_screenshot_request_promotes_desktop_tools_without_llm():
-    result = await IntentAnalyzer(_FailingCompilerBrain()).analyze("帮我把桌面截图发我")
+async def test_intent_analyzer_preserves_compiler_fallback_diagnostics():
+    class _FallbackBrain:
+        async def compiler_think(self, *args, **kwargs):
+            return SimpleNamespace(
+                content="intent: query\ngoal: explain tuples",
+                compiler_source="main_fallback",
+                compiler_fallback_reason="all_disabled",
+                compiler_fallback_detail="提示词编译模型全部被禁用",
+            )
 
+    result = await IntentAnalyzer(_FallbackBrain()).analyze("福州明天会下雨吗")
+
+    assert result.compiler_source == "main_fallback"
+    assert result.compiler_fallback_reason == "all_disabled"
+    assert result.compiler_fallback_detail == "提示词编译模型全部被禁用"
+
+
+def test_slow_compiler_fallback_builds_one_shot_actionable_hint():
+    agent = Agent.__new__(Agent)
+    agent._compiler_fallback_hint_emitted = False
+    agent._last_intent_analysis_duration_ms = 6123.4
+    agent._current_intent = IntentResult(
+        intent=IntentType.TASK,
+        compiler_source="main_fallback",
+        compiler_fallback_reason="network_unreachable",
+        compiler_fallback_detail="All endpoints failed: compiler-a connection timed out",
+    )
+
+    hint = agent._build_slow_compiler_hint("session-1")
+
+    assert hint is not None
+    assert hint["type"] == "config_hint"
+    assert hint["error_code"] == "compiler_unavailable"
+    assert hint["reason_code"] == "network_unreachable"
+    assert hint["duration_ms"] == 6123.4
+    assert "网络访问失败" in hint["message"]
+    assert "connection timed out" in hint["message"]
+    assert hint["actions"][0]["section"] == "llm"
+    assert hint["actions"][0]["anchor"] == "prompt-compiler"
+
+    agent._compiler_fallback_hint_emitted = True
+    assert agent._build_slow_compiler_hint("session-1") is None
+
+
+def test_compiler_hint_requires_slow_main_fallback():
+    agent = Agent.__new__(Agent)
+    agent._compiler_fallback_hint_emitted = False
+    agent._current_intent = IntentResult(
+        intent=IntentType.QUERY,
+        compiler_source="main_fallback",
+        compiler_fallback_reason="not_configured",
+    )
+    agent._last_intent_analysis_duration_ms = 5000
+    assert agent._build_slow_compiler_hint("session-1") is None
+
+    agent._last_intent_analysis_duration_ms = 6000
+    agent._current_intent.compiler_source = "compiler"
+    assert agent._build_slow_compiler_hint("session-1") is None
+
+
+def test_compiler_configuration_reason_distinguishes_missing_and_disabled(tmp_path, monkeypatch):
+    config_path = tmp_path / "llm_endpoints.json"
+    monkeypatch.setattr("openakita.core._brain_legacy.get_default_config_path", lambda: config_path)
+
+    config_path.write_text('{"compiler_endpoints": []}', encoding="utf-8")
+    assert _compiler_configuration_fallback_reason()[0] == "not_configured"
+
+    config_path.write_text(
+        '{"compiler_endpoints": [{"name": "compiler-a", "enabled": false}]}',
+        encoding="utf-8",
+    )
+    reason, detail = _compiler_configuration_fallback_reason()
+    assert reason == "all_disabled"
+    assert "全部被禁用" in detail
+
+
+def test_compiler_access_error_classification_and_redaction():
+    assert _classify_compiler_access_error("401 invalid API key") == "authentication_failed"
+    assert _classify_compiler_access_error("connection timed out") == "network_unreachable"
+    assert _classify_compiler_access_error("429 rate limit exceeded") == "rate_limited"
+    assert _classify_compiler_access_error("404 model_not_found") == "model_unavailable"
+
+    sanitized = _sanitize_compiler_error("api_key=sk-secret-value connection failed")
+    assert "sk-secret-value" not in sanitized
+
+
+async def test_compiler_think_reports_actual_endpoint_failure_before_main_fallback():
+    class _FailingCompilerClient:
+        async def chat(self, **_kwargs):
+            raise TimeoutError("compiler-a connection timed out with api_key=sk-secret")
+
+    class _MainClient:
+        async def chat(self, **_kwargs):
+            return object()
+
+    brain = Brain.__new__(Brain)
+    brain._compiler_client = _FailingCompilerClient()
+    brain._llm_client = _MainClient()
+    brain._compiler_breaker = CompilerCircuitBreaker()
+    brain._compiler_last_error = ""
+    brain._record_usage = lambda _response: None
+    brain._dump_llm_request = lambda *_args, **_kwargs: "request-1"
+    brain._dump_llm_response = lambda *_args, **_kwargs: None
+    brain._llm_response_to_response = lambda _response: Response(content="intent: query")
+
+    result = await brain.compiler_think("福州明天会下雨吗")
+
+    assert result.compiler_source == "main_fallback"
+    assert result.compiler_fallback_reason == "network_unreachable"
+    assert "compiler-a connection timed out" in result.compiler_fallback_detail
+    assert "sk-secret" not in result.compiler_fallback_detail
+
+
+async def test_desktop_screenshot_request_uses_structured_intent_analysis():
+    brain = _StaticCompilerBrain(
+        """intent: task
+task_type: action
+goal: capture the desktop
+tool_hints: [Desktop]
+capability_scope: [desktop]
+prompt_depth: standard
+memory_scope: none
+requires_tools: true
+evidence_required: true
+requires_project_context: false
+destructive: false
+scope: narrow
+suggest_plan: false"""
+    )
+
+    result = await IntentAnalyzer(brain).analyze("帮我把桌面截图发我")
+
+    assert brain.calls == 1
     assert result.intent == IntentType.TASK
     assert result.force_tool is True
     assert result.requires_tools is True
     assert result.tool_hints == ["Desktop"]
     assert result.requires_project_context is False
+
+
+async def test_compound_web_and_file_request_does_not_degrade_in_fast_path():
+    brain = _StaticCompilerBrain(
+        """intent: task
+task_type: compound
+goal: query the weather and create query.py
+tool_hints: [Web Search, File System]
+capability_scope: [web, files]
+prompt_depth: standard
+memory_scope: relevant
+catalog_scope: [tools]
+requires_tools: true
+evidence_required: true
+requires_project_context: true
+destructive: false
+scope: narrow
+suggest_plan: false"""
+    )
+
+    result = await IntentAnalyzer(brain).analyze(
+        "帮我查一下福州明天的温度，并且把查询温度的代码写成query.py"
+    )
+
+    assert brain.calls == 1
+    assert result.intent == IntentType.TASK
+    assert result.task_type == "compound"
+    assert result.tool_hints == ["Web Search", "File System"]
+    assert result.capability_scope == [CapabilityScope.WEB, CapabilityScope.FILES]
+    assert result.requires_project_context is True
 
 
 async def test_one_sentence_explanation_skips_tools_without_blocking_model_answer():
@@ -120,8 +357,66 @@ def test_chat_prompt_strategy_uses_lightweight_consumer_profile():
     assert strategy.profile == PromptProfile.CONSUMER_CHAT
     assert strategy.prompt_mode == PromptMode.MINIMAL
     assert strategy.memory_scope == MemoryScope.PINNED_ONLY
-    assert strategy.catalog_scope == ["index"]
+    assert strategy.skip_catalogs is True
+    assert strategy.catalog_scope == []
     assert strategy.include_project_guidelines is False
+    assert strategy.include_runtime_env_policy is False
+    assert strategy.include_multi_agent is False
+
+
+def test_prompt_strategy_uses_structured_intent_not_user_text():
+    agent = Agent.__new__(Agent)
+    agent._is_sub_agent_call = False
+    query = IntentResult(
+        intent=IntentType.QUERY,
+        prompt_depth=PromptDepth.MINIMAL,
+        memory_scope=MemoryScope.PINNED_ONLY,
+        requires_tools=False,
+    )
+
+    first = agent._resolve_prompt_strategy(query, session_type="cli", mode="agent")
+    query.task_definition = "contains words that could look like file or shell operations"
+    query.raw_output = "arbitrary analyzer explanation"
+    second = agent._resolve_prompt_strategy(query, session_type="cli", mode="agent")
+
+    assert first == second
+    assert first.skip_catalogs is True
+
+
+def test_tool_backed_query_keeps_structured_catalog_scope():
+    agent = Agent.__new__(Agent)
+    agent._is_sub_agent_call = False
+    intent = IntentResult(
+        intent=IntentType.QUERY,
+        prompt_depth=PromptDepth.MINIMAL,
+        memory_scope=MemoryScope.RELEVANT,
+        requires_tools=True,
+        tool_hints=["Web Search"],
+        catalog_scope=["skills", "mcp"],
+    )
+
+    strategy = agent._resolve_prompt_strategy(intent, session_type="cli", mode="agent")
+
+    assert strategy.skip_catalogs is False
+    assert strategy.catalog_scope == ["skills", "mcp"]
+    assert strategy.include_runtime_env_policy is True
+    assert strategy.include_multi_agent is False
+
+
+def test_full_im_task_keeps_multi_agent_context():
+    agent = Agent.__new__(Agent)
+    agent._is_sub_agent_call = False
+    intent = IntentResult(
+        intent=IntentType.TASK,
+        prompt_depth=PromptDepth.STANDARD,
+        requires_tools=True,
+    )
+
+    strategy = agent._resolve_prompt_strategy(intent, session_type="im", mode="agent")
+
+    assert strategy.profile == PromptProfile.IM_ASSISTANT
+    assert strategy.prompt_mode == PromptMode.FULL
+    assert strategy.include_multi_agent is True
 
 
 def test_minimal_pinned_only_prompt_still_includes_light_memory(tmp_path):
@@ -157,6 +452,25 @@ def test_minimal_prompt_preserves_working_facts(tmp_path):
 
     assert "## Session Working Facts" in prompt
     assert "temporary_name: alpha" in prompt
+
+
+def test_minimal_consumer_prompt_uses_compact_nonduplicated_rules(tmp_path):
+    prompt = build_system_prompt(
+        identity_dir=tmp_path,
+        tools_enabled=False,
+        prompt_mode=PromptMode.MINIMAL,
+        prompt_profile=PromptProfile.CONSUMER_CHAT,
+        memory_scope=MemoryScope.PINNED_ONLY,
+        skip_catalogs=True,
+    )
+
+    assert "## 安全约束" in prompt
+    assert "## 运行环境" in prompt
+    assert "当前时间:" in prompt
+    assert "## 任务管理" not in prompt
+    assert "### Python 环境" not in prompt
+    assert "### 工具执行域" not in prompt
+    assert "### 每轮自检" not in prompt
 
 
 def test_fast_chat_effective_tools_use_minimal_schema_set(monkeypatch):
@@ -202,17 +516,8 @@ def test_fast_chat_effective_tools_use_minimal_schema_set(monkeypatch):
     assert agent._last_minimal_toolset is True
 
 
-def test_main_chat_stable_mode_keeps_full_toolset_across_intents():
-    """Fix-G4 (RCA v11 §1.5): the default stable mode must keep the
-    main-chat tool set deterministic across intents.
-
-    With ``effective_tools_main_chat_stable=True`` (the default), the
-    intent-driven minimal-prompt filter is bypassed, so a FAST/CHAT
-    intent no longer drops Browser / Scheduled / non-minimal File System
-    tools. ``delegate_to_agent`` is in ``ALWAYS_LOAD_TOOLS`` and therefore
-    gets ``_promoted=True``.
-    """
-    from openakita.tools.defer_config import DEFER_INDIVIDUAL_TOOLS
+def test_main_chat_stable_mode_keeps_small_direct_toolset_across_intents():
+    """Stable mode exposes the explicit core and defers other schemas."""
 
     agent = Agent.__new__(Agent)
     agent._tools = [
@@ -240,24 +545,136 @@ def test_main_chat_stable_mode_keeps_full_toolset_across_intents():
 
     effective = agent._effective_tools
     tool_names = {tool["name"] for tool in effective}
+    direct = [t["name"] for t in effective if not t.get("_deferred")]
+    deferred = {t["name"] for t in effective if t.get("_deferred")}
 
-    expected = {
-        name
-        for name in {
-            "read_file",
-            "web_search",
-            "browser_navigate",
-            "run_shell",
-            "schedule_task",
-            "delegate_to_agent",
-        }
-        if name not in DEFER_INDIVIDUAL_TOOLS
+    assert tool_names == {
+        "read_file",
+        "web_search",
+        "browser_navigate",
+        "run_shell",
+        "schedule_task",
+        "delegate_to_agent",
     }
-    assert tool_names == expected
-    promoted = {t["name"] for t in effective if t.get("_promoted")}
-    assert "delegate_to_agent" in promoted
-    assert "run_shell" in promoted
+    assert direct == ["read_file", "run_shell", "delegate_to_agent"]
+    assert deferred == {"web_search", "browser_navigate", "schedule_task"}
     assert agent._last_minimal_toolset is False
+
+
+def test_stable_main_chat_core_has_8_to_15_tools_in_fixed_order():
+    from openakita.tools.defer_config import STABLE_MAIN_CHAT_CORE_TOOLS
+
+    assert 8 <= len(STABLE_MAIN_CHAT_CORE_TOOLS) <= 15
+    assert STABLE_MAIN_CHAT_CORE_TOOLS == (
+        "run_shell",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "list_directory",
+        "grep",
+        "ask_user",
+        "tool_search",
+        "get_tool_info",
+        "delegate_to_agent",
+        "delegate_parallel",
+        "search_memory",
+        "add_memory",
+        "get_skill_info",
+    )
+
+
+def test_stable_main_chat_promotes_discovered_and_user_pinned_tools(monkeypatch):
+    from openakita.config import settings as _settings
+
+    monkeypatch.setattr(_settings, "always_load_tools", ["schedule_task"])
+    monkeypatch.setattr(_settings, "always_load_categories", [])
+
+    agent = Agent.__new__(Agent)
+    tools = [
+        {"name": "run_shell", "category": "File System"},
+        {"name": "web_search", "category": "Web Search"},
+        {"name": "schedule_task", "category": "Scheduled"},
+        {"name": "browser_navigate", "category": "Browser"},
+    ]
+    agent._discovered_tools = {"web_search"}
+
+    first = agent._stable_main_chat_tool_set(tools)
+    second = agent._stable_main_chat_tool_set(tools)
+
+    assert [t["name"] for t in first] == [t["name"] for t in second]
+    assert [t["name"] for t in first if not t.get("_deferred")] == [
+        "run_shell",
+        "web_search",
+        "schedule_task",
+    ]
+    assert first[-1]["_deferred"] is True
+    assert all("_deferred" not in tool and "_promoted" not in tool for tool in tools)
+
+
+def test_structured_web_search_hint_promotes_only_web_search_for_current_request():
+    agent = Agent.__new__(Agent)
+    tools = [
+        {"name": "run_shell", "category": "File System"},
+        {"name": "web_search", "category": "Web Search"},
+        {"name": "news_search", "category": "Web Search"},
+        {"name": "web_fetch", "category": "Web Search"},
+        {"name": "browser_navigate", "category": "Browser"},
+        {"name": "browser_click", "category": "Browser"},
+    ]
+    intent = IntentResult(
+        intent=IntentType.TASK,
+        tool_hints=["Web Search", "Browser", "File System"],
+        requires_tools=True,
+        force_tool=True,
+    )
+
+    promoted = agent._resolve_intent_schema_promotions(intent, tools)
+    agent._intent_promoted_tools = promoted
+    agent._discovered_tools = set()
+    effective = agent._stable_main_chat_tool_set(tools)
+
+    assert promoted == {"web_search"}
+    assert [tool["name"] for tool in effective if not tool.get("_deferred")] == [
+        "run_shell",
+        "web_search",
+    ]
+    assert {tool["name"] for tool in effective if tool.get("_deferred")} == {
+        "news_search",
+        "web_fetch",
+        "browser_navigate",
+        "browser_click",
+    }
+
+
+def test_structured_hint_promotion_is_bounded_and_requires_tool_intent():
+    agent = Agent.__new__(Agent)
+    tools = [
+        {"name": "web_search", "category": "Web Search"},
+        {"name": "browser_navigate", "category": "Browser"},
+    ]
+
+    no_tool_intent = IntentResult(
+        intent=IntentType.QUERY,
+        tool_hints=["web_search"],
+        requires_tools=False,
+        force_tool=False,
+    )
+    broad_category_intent = IntentResult(
+        intent=IntentType.TASK,
+        tool_hints=["Browser"],
+        requires_tools=True,
+        force_tool=True,
+    )
+    exact_tool_intent = IntentResult(
+        intent=IntentType.TASK,
+        tool_hints=["browser_navigate", "web_search"],
+        requires_tools=True,
+        force_tool=True,
+    )
+
+    assert agent._resolve_intent_schema_promotions(no_tool_intent, tools) == set()
+    assert agent._resolve_intent_schema_promotions(broad_category_intent, tools) == set()
+    assert agent._resolve_intent_schema_promotions(exact_tool_intent, tools) == {"browser_navigate"}
 
 
 def test_selfcheck_fix_policy_limits_exposed_tools():
@@ -283,6 +700,25 @@ def test_selfcheck_fix_policy_limits_exposed_tools():
     assert tool_names == {"read_file", "grep"}
     assert "delegate_to_agent" not in tool_names
     assert "browser_open" not in tool_names
+
+
+def test_sub_agent_still_excludes_delegation_tools():
+    agent = Agent.__new__(Agent)
+    agent._tools = [
+        {"name": "read_file", "category": "File System"},
+        {"name": "delegate_to_agent", "category": "Agent"},
+        {"name": "delegate_parallel", "category": "Agent"},
+    ]
+    agent._current_intent = None
+    agent._is_sub_agent_call = True
+    agent._agent_tool_names = frozenset({"delegate_to_agent", "delegate_parallel"})
+    agent._cron_disabled_tools = set()
+    agent._current_session_type = "cli"
+    agent._discovered_tools = set()
+    agent.tool_catalog = _FakeToolCatalog()
+    agent._get_raw_context_window = lambda: 0
+
+    assert [tool["name"] for tool in agent._effective_tools] == ["read_file"]
 
 
 def test_previous_answer_replay_request_detects_incomplete_display_followup():
@@ -404,27 +840,17 @@ def test_default_intent_is_minimal_non_tool_query():
     assert result.force_tool is False
 
 
-def test_log_investigation_query_is_guarded_as_tool_task():
-    result = _try_fast_query_shortcut(
-        "我看你的运行日志有很多报错和警告的内容，都是关于skills技能的，你排查一下是什么原因导致的"
+def test_log_investigation_is_excluded_from_query_fast_path():
+    assert (
+        _try_fast_query_shortcut(
+            "我看你的运行日志有很多报错和警告的内容，都是关于skills技能的，你排查一下是什么原因导致的"
+        )
+        is None
     )
 
-    assert result is not None
-    assert result.intent == IntentType.TASK
-    assert result.requires_tools is True
-    assert result.evidence_required is True
-    assert result.force_tool is True
-    assert result.fast_reply is False
 
-
-def test_daily_record_content_is_guarded_as_tool_task():
-    result = _try_fast_query_shortcut("3月18日工作：邹总问了下是否有交付确认邮件")
-
-    assert result is not None
-    assert result.intent == IntentType.TASK
-    assert result.requires_tools is True
-    assert result.evidence_required is True
-    assert result.force_tool is True
+def test_daily_record_content_is_excluded_from_query_fast_path():
+    assert _try_fast_query_shortcut("3月18日工作：邹总问了下是否有交付确认邮件") is None
 
 
 def test_write_confirmation_followup_requires_evidence_without_overprompting():

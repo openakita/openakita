@@ -2,11 +2,31 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from openakita.api.routes.chat import _should_replace_context_usage
 from openakita.core.context_stats import (
     get_context_snapshot,
     merge_context_snapshot_into_usage,
     update_context_snapshot,
 )
+
+
+def test_provider_context_usage_wins_within_same_iteration():
+    provider = {
+        "context_scope_id": "task-1:2",
+        "source": "provider",
+        "usage_estimated": False,
+        "updated_at": 10,
+    }
+    later_estimate = {
+        "context_scope_id": "task-1:2",
+        "source": "stream_estimate",
+        "usage_estimated": True,
+        "updated_at": 11,
+    }
+    next_iteration = {**later_estimate, "context_scope_id": "task-1:3"}
+
+    assert not _should_replace_context_usage(provider, later_estimate)
+    assert _should_replace_context_usage(provider, next_iteration)
 
 
 class _StubContextManager:

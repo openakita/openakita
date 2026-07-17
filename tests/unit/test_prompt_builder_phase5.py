@@ -179,7 +179,9 @@ def test_normal_query_still_triggers_active_retrieval(tmp_path: Path, monkeypatc
 
     called: list[str] = []
 
-    def fake_retrieve_by_query(memory_manager, query, max_tokens=500):
+    def fake_retrieve_by_query(
+        memory_manager, query, max_tokens=500, precomputed_keywords=None
+    ):
         called.append(query)
         return "FAKE-RETRIEVED-CONTENT"
 
@@ -207,10 +209,12 @@ def test_explicit_memory_keywords_force_retrieval_even_for_short_input(tmp_path:
     md.write_text("# core\n", encoding="utf-8")
     mm = _FakeMemoryManager(md)
 
-    called: list[str] = []
+    called: list[tuple[str, list[str] | None]] = []
 
-    def fake_retrieve_by_query(memory_manager, query, max_tokens=500):
-        called.append(query)
+    def fake_retrieve_by_query(
+        memory_manager, query, max_tokens=500, precomputed_keywords=None
+    ):
+        called.append((query, precomputed_keywords))
         return "FAKE"
 
     monkeypatch.setattr(prompt_builder, "_retrieve_by_query", fake_retrieve_by_query)
@@ -226,4 +230,4 @@ def test_explicit_memory_keywords_force_retrieval_even_for_short_input(tmp_path:
         memory_keywords=["数据库", "SQLite"],
         use_compact_guide=True,
     )
-    assert called and "数据库" in called[0]
+    assert called == [("数据库 SQLite", ["数据库", "SQLite"])]

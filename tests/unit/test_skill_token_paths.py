@@ -7,8 +7,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from openakita.core.prompt_assembler import PromptAssembler
-from openakita.prompt.builder import _build_catalogs_section
-from openakita.skills.catalog import SKILL_INSTRUCTION_ADVISORY, SkillCatalog
+from openakita.prompt.builder import PromptProfile, _build_catalogs_section
+from openakita.skills.catalog import (
+    SKILL_INSTRUCTION_ADVISORY,
+    SKILL_METADATA_ADVISORY,
+    SkillCatalog,
+)
 from openakita.skills.registry import SkillEntry
 from openakita.tools.handlers.skills import SkillsHandler
 
@@ -65,22 +69,139 @@ def test_generate_catalog_legacy_path_is_index_only():
 
 
 def test_catalog_scope_index_uses_skill_index_without_grouped_expansion():
-    class _IndexOnlyCatalog:
-        def get_index_catalog(self, *, exposure_filter=None):
-            return "## Skills Index\n\n**External skills (1)**: compact-only"
-
-        def get_grouped_compact_catalog(self, **kwargs):
-            raise AssertionError("index-only prompt must not expand grouped skills")
+    class _MetadataOnlyCatalog:
+        def get_metadata_catalog(self, **kwargs):
+            return "## Available Skills\n\n- compact-only: compact metadata"
 
     output = _build_catalogs_section(
         tool_catalog=None,
-        skill_catalog=_IndexOnlyCatalog(),
+        skill_catalog=_MetadataOnlyCatalog(),
         mcp_catalog=None,
         catalog_scope={"index"},
     )
 
     assert "compact-only" in output
-    assert "技能使用规则" in output
+    assert "技能使用规则" not in output
+
+
+def test_index_catalog_does_not_repeat_full_tools_guide():
+    class _MetadataOnlyCatalog:
+        def get_metadata_catalog(self, **kwargs):
+            return "## Available Skills\n\n- compact-only: compact metadata"
+
+    output = _build_catalogs_section(
+        tool_catalog=None,
+        skill_catalog=_MetadataOnlyCatalog(),
+        mcp_catalog=None,
+        include_tools_guide=True,
+        catalog_scope={"index"},
+    )
+
+    assert "compact-only" in output
+    assert "## 工具体系" not in output
+
+
+def test_metadata_catalog_exposes_description_and_source_without_full_instructions():
+    catalog = _make_catalog(
+        [
+            _FakeSkill(
+                "document-review",
+                "Review Word documents and preserve layout.",
+                category="documents",
+                skill_path="C:/skills/document-review/SKILL.md",
+                when_to_use="MANDATORY internal workflow that must not be injected up front",
+            )
+        ]
+    )
+
+    output = catalog.get_metadata_catalog(context_window=32_000)
+
+    assert "document-review" in output
+    assert "Review Word documents and preserve layout." in output
+    assert "skill://document-review" in output
+    assert "MANDATORY internal workflow" not in output
+    assert "get_skill_info(skill_name)" in output
+
+
+def test_metadata_catalog_is_bounded_to_two_percent_of_context_window():
+    skills = [
+        _FakeSkill(
+            f"skill-{index:03d}",
+            "Detailed discovery description " * 30,
+            category="external",
+            skill_path=f"C:/skills/skill-{index:03d}/SKILL.md",
+        )
+        for index in range(80)
+    ]
+    catalog = _make_catalog(skills)
+
+    output = catalog.get_metadata_catalog(context_window=8_000)
+
+    assert SkillCatalog._estimate_metadata_tokens(output) <= 160
+    assert "additional skill(s) were omitted" in output
+    assert "skill-000" in output
+    assert "skill-079" not in output
+
+
+def test_metadata_catalog_has_absolute_ceiling_for_large_context_windows():
+    skills = [
+        _FakeSkill(
+            f"skill-{index:03d}",
+            "Detailed discovery description " * 20,
+            category="external",
+            skill_path=f"C:/skills/skill-{index:03d}/SKILL.md",
+        )
+        for index in range(100)
+    ]
+    catalog = _make_catalog(skills)
+
+    output = catalog.get_metadata_catalog(context_window=200_000)
+
+    assert SkillCatalog._estimate_metadata_tokens(output) <= 1_000
+    assert "additional skill(s) were omitted" in output
+
+
+def test_metadata_catalog_shortens_descriptions_before_omitting_skills():
+    skills = [
+        _FakeSkill(
+            f"skill-{index}",
+            "long description segment " * 50,
+            category="external",
+            skill_path=f"C:/skills/skill-{index}/SKILL.md",
+        )
+        for index in range(3)
+    ]
+    catalog = _make_catalog(skills)
+
+    output = catalog.get_metadata_catalog(context_window=32_000)
+
+    assert all(f"skill-{index}" in output for index in range(3))
+    assert "additional skill(s) were omitted" not in output
+    assert "long description segment " * 50 not in output
+    assert "..." in output
+
+
+def test_catalog_builder_passes_context_window_to_stable_skill_metadata_catalog():
+    captured = {}
+
+    class _CapturingCatalog:
+        def get_metadata_catalog(self, **kwargs):
+            captured.update(kwargs)
+            return "## Available Skills\n\n- compact"
+
+    output = _build_catalogs_section(
+        tool_catalog=None,
+        skill_catalog=_CapturingCatalog(),
+        mcp_catalog=None,
+        context_window=65_536,
+        prompt_profile=PromptProfile.CONSUMER_CHAT,
+        intent_tool_hints=["File System"],
+    )
+
+    assert "compact" in output
+    assert captured["context_window"] == 65_536
+    assert captured["max_tokens"] == 600
+    assert captured["priority_categories"] == ("file-tools", "filesystem", "file")
 
 
 def test_skill_catalog_marks_instructions_as_guidance():
@@ -106,7 +227,8 @@ def test_skill_guidance_advisory_is_not_duplicated_in_prompt_rules():
         mcp_catalog=None,
     )
 
-    assert output.count(SKILL_INSTRUCTION_ADVISORY) == 1
+    assert output.count(SKILL_METADATA_ADVISORY) == 1
+    assert SKILL_INSTRUCTION_ADVISORY not in output
 
 
 @pytest.mark.asyncio

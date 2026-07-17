@@ -10,6 +10,16 @@ def test_tool_event_normalization_adds_stable_aliases():
     assert event["call_id"] == "abc"
 
 
+def test_preparation_stage_is_part_of_canonical_stream_protocol():
+    event = normalize_stream_event(
+        {"type": StreamEventType.PREPARATION_STAGE.value, "stage": "building_context"}
+    )
+
+    assert event["type"] == "preparation_stage"
+    assert event["stage"] == "building_context"
+    assert event["protocol_version"] == 1
+
+
 def test_security_confirm_normalization_adds_confirm_aliases():
     event = normalize_stream_event(
         {
@@ -87,6 +97,24 @@ def test_config_hint_normalization_adds_stable_fields():
     assert event["title"] == "搜索源未配置"
     assert event["message"] == ""
     assert event["actions"] == []
+
+
+def test_compiler_unavailable_config_hint_preserves_diagnostics():
+    event = normalize_stream_event(
+        {
+            "type": StreamEventType.CONFIG_HINT.value,
+            "tool_use_id": "intent-analyzer:session-1",
+            "scope": "prompt_compiler",
+            "error_code": "compiler_unavailable",
+            "title": "提示词编译模型访问失效",
+            "reason_code": "all_disabled",
+            "duration_ms": 6123.4,
+        }
+    )
+
+    assert event["error_code"] == "compiler_unavailable"
+    assert event["reason_code"] == "all_disabled"
+    assert event["duration_ms"] == 6123.4
 
 
 def test_python_stream_events_include_frontend_known_enrichments():

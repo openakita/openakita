@@ -26,6 +26,7 @@ import re
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -601,6 +602,8 @@ MEDIUM_CTX_EXTRA_TOOLS = {
     "enable_thinking",
     "glob",
     "delete_file",
+    "delegate_to_agent",
+    "delegate_parallel",
 }
 
 MINIMAL_PROMPT_TOOLS = {
@@ -625,6 +628,8 @@ class PromptStrategy:
     memory_scope: Any = None
     catalog_scope: list[str] = field(default_factory=list)
     include_project_guidelines: bool = False
+    include_runtime_env_policy: bool = True
+    include_multi_agent: bool = True
 
 
 # Pre-LLM destructive-intent / risk-authorization gate -- helpers moved
@@ -991,6 +996,8 @@ class Agent:
 
         # 偏好挖掘引擎（传入 brain，由 LLM 分析偏好而非关键词匹配）
         self.trait_miner = TraitMiner(persona_manager=self.persona_manager, brain=self.brain)
+        self._trait_mining_tasks: set[asyncio.Task] = set()
+        self._compiler_fallback_hint_emitted = False
 
         # 活人感引擎
         proactive_config = ProactiveConfig(
@@ -1073,6 +1080,9 @@ class Agent:
         # Discovered tools — populated by tool_search handler; tools in this set
         # are promoted from deferred to full-schema in _effective_tools.
         self._discovered_tools: set[str] = set()
+        # Request-scoped promotions derived from structured IntentAnalyzer
+        # output. Unlike discovered tools, these are cleared after every turn.
+        self._intent_promoted_tools: set[str] = set()
 
         # Per-session system prompt cache (hermes-style).
         # Key = (conv_id, mode, skip_catalogs); value = prompt string.
@@ -1283,11 +1293,12 @@ class Agent:
         if selfcheck_allowed:
             tools = [t for t in tools if t.get("name") in selfcheck_allowed]
 
-        # RCA v11 §1.5 (Fix-G4): in stable main-chat mode, skip the
-        # intent-driven promote/defer pipeline entirely so the tool set
-        # is deterministic across turns. Sub-agents, cron-disabled, and
-        # selfcheck-allowed contexts still run the legacy intent path
-        # because they already have other strong filters above. The
+        # RCA v11 §1.5 (Fix-G4): stable main-chat mode keeps the fixed core
+        # and skips broad intent-category churn. A separately resolved,
+        # request-scoped set may add at most one primary tool from structured
+        # IntentAnalyzer hints. Sub-agents, cron-disabled, and selfcheck-allowed
+        # contexts still run the legacy intent path because they already have
+        # other strong filters above. The
         # feature flag ``effective_tools_main_chat_stable`` defaults to
         # True; flipping it to False restores the original churn for
         # rollback (see config.py).
@@ -1374,6 +1385,7 @@ class Agent:
                 hint_names |= tool_groups.get(hint, set())
 
         deferred_count = 0
+        tools = [dict(tool) for tool in tools]
         for tool in tools:
             name = tool.get("name", "")
             cat = tool.get("category", "")
@@ -1427,51 +1439,84 @@ class Agent:
 
         return tools
 
+    @staticmethod
+    def _normalize_tool_hint(value: str) -> str:
+        """Normalize a structured intent hint for registered-tool matching."""
+        return re.sub(r"[^a-z0-9]+", "_", str(value).casefold()).strip("_")
+
+    def _resolve_intent_schema_promotions(self, intent: Any, tools: list[dict]) -> set[str]:
+        """Resolve at most one concrete schema from structured intent hints.
+
+        A hint can name a registered tool directly. Category hints are accepted
+        only when their normalized category name equals a tool name in that
+        category (for example ``Web Search`` -> ``web_search``). This avoids
+        expanding broad groups such as Browser into many provider schemas.
+        """
+        if not intent or not (
+            getattr(intent, "requires_tools", False) or getattr(intent, "force_tool", False)
+        ):
+            return set()
+
+        hints = [str(hint) for hint in (getattr(intent, "tool_hints", None) or []) if hint]
+        if not hints:
+            return set()
+
+        by_normalized_name: dict[str, str] = {}
+        category_primary: dict[str, str] = {}
+        for tool in tools:
+            name = str(tool.get("name") or "")
+            if not name:
+                continue
+            normalized_name = self._normalize_tool_hint(name)
+            by_normalized_name.setdefault(normalized_name, name)
+            category = str(tool.get("category") or "")
+            normalized_category = self._normalize_tool_hint(category)
+            if normalized_category and normalized_category == normalized_name:
+                category_primary.setdefault(normalized_category, name)
+
+        for hint in hints:
+            normalized_hint = self._normalize_tool_hint(hint)
+            promoted = by_normalized_name.get(normalized_hint) or category_primary.get(
+                normalized_hint
+            )
+            if promoted:
+                logger.info(
+                    "[Agent] intent schema promotion: hints=%s promoted=%s cap=1",
+                    hints,
+                    promoted,
+                )
+                return {promoted}
+        return set()
+
     def _stable_main_chat_tool_set(self, tools: list[dict]) -> list[dict]:
-        """Return main-chat tools without intent-driven defer/promote churn.
+        """Return a stable, progressively disclosed main-chat tool set.
 
         Body of ``Fix-G4`` (RCA v11 §1.5). The legacy ``_effective_tools``
-        path mixes intent hints, minimal-prompt filtering, user
-        overrides, hint_names lookup and per-category defer; the result
-        is a tool list that swings by 8-12 entries from one turn to the
-        next, which destabilises tool ordering and pushes high-value
-        tools like ``delegate_to_agent`` out of the API budget in the
-        next stage.
+        path mixes broad intent categories, minimal-prompt filtering, user
+        overrides, hint_names lookup and per-category defer; the result is a
+        tool list that swings by 8-12 entries from one turn to the next. This
+        stable path permits only the bounded primary-tool promotion resolved
+        above, preserving tool ordering and the provider schema budget.
 
-        Stable behaviour:
-
-        - Tools in ``ALWAYS_LOAD_TOOLS`` are marked ``_promoted=True`` so
-          ``Brain._convert_tools_to_llm`` reserves schema budget for
-          them first (see Fix-G3).
-        - User-pinned tools (``settings.always_load_tools``) and
-          categories (``settings.always_load_categories`` plus the
-          built-in ``System`` / ``Memory`` always-keep set) are also
-          marked ``_promoted=True``.
-        - Tools in ``DEFER_INDIVIDUAL_TOOLS`` are dropped from the
-          effective set. These are the low-frequency utilities that
-          the static defer config already flagged as opt-in; removing
-          them from the API tool list keeps the per-turn set stable
-          across all conversations.
-        - Every other tool passes through unchanged (no per-turn
-          ``_deferred`` / ``_promoted`` churn).
+        The ordinary direct-schema surface is the explicit 14-tool core.
+        User-pinned and previously discovered tools can extend it. A structured
+        IntentAnalyzer hint may add at most one request-scoped primary tool.
+        Every other registered tool remains in the effective list with
+        ``_deferred=True`` so the Brain omits its API schema while the catalog
+        and ``tool_search`` can still expose and promote it.
         """
-        from ..tools.defer_config import (
-            ALWAYS_LOAD_TOOLS,
-            DEFER_INDIVIDUAL_TOOLS,
-        )
+        from ..tools.defer_config import STABLE_MAIN_CHAT_CORE_TOOL_SET
 
         user_always_tools = frozenset(settings.always_load_tools)
-        user_always_cats = frozenset(
-            list(settings.always_load_categories) + list(self._ALWAYS_KEEP_CATEGORIES)
-        )
+        user_always_cats = frozenset(settings.always_load_categories)
+        discovered = getattr(self, "_discovered_tools", set())
+        intent_promoted = getattr(self, "_intent_promoted_tools", set())
 
         out: list[dict] = []
-        for tool in tools:
+        for registered_tool in tools:
+            tool = dict(registered_tool)
             name = tool.get("name", "")
             cat = tool.get("category", "")
-
-            if name in DEFER_INDIVIDUAL_TOOLS:
-                continue
 
             # Reset any per-turn markers left over from a previous pass
             # so the snapshot we return reflects only the stable rules.
@@ -1480,11 +1525,15 @@ class Agent:
             tool.pop("_promoted", None)
 
             if (
-                name in ALWAYS_LOAD_TOOLS
+                name in STABLE_MAIN_CHAT_CORE_TOOL_SET
+                or name in discovered
+                or name in intent_promoted
                 or name in user_always_tools
                 or (cat and cat in user_always_cats)
             ):
                 tool["_promoted"] = True
+            else:
+                tool["_deferred"] = True
 
             out.append(tool)
 
@@ -3757,6 +3806,8 @@ class Agent:
             _strategy.memory_scope,
             tuple(sorted(_strategy.catalog_scope)),
             _strategy.include_project_guidelines,
+            getattr(_strategy, "include_runtime_env_policy", True),
+            getattr(_strategy, "include_multi_agent", True),
             model_info.get("name", "") if isinstance(model_info, dict) else "",
             model_display,
             model_info.get("provider", "") if isinstance(model_info, dict) else "",
@@ -3806,8 +3857,10 @@ class Agent:
         self._last_tool_policy_source = "prompt_build"
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
-        prompt += self._build_runtime_env_prompt_section()
-        prompt += self._build_multi_agent_prompt_section()
+        if getattr(_strategy, "include_runtime_env_policy", True):
+            prompt += self._build_runtime_env_prompt_section()
+        if getattr(_strategy, "include_multi_agent", True):
+            prompt += self._build_multi_agent_prompt_section()
         return prompt
 
     def _invalidate_system_prompt_cache(self, reason: str = "") -> None:
@@ -3862,13 +3915,16 @@ class Agent:
             else PromptDepth.STANDARD
         )
         requires_tools = bool(getattr(intent, "requires_tools", False))
+        requires_project_context = bool(getattr(intent, "requires_project_context", False))
 
         if intent and intent.intent in (IntentType.CHAT, IntentType.QUERY):
             profile = PromptProfile.CONSUMER_CHAT
             prompt_mode = PromptMode.MINIMAL
             memory_scope = MemoryScope.PINNED_ONLY
             if not requires_tools:
-                skip_catalogs = False
+                skip_catalogs = True
+                catalog_scope = []
+            elif not catalog_scope:
                 catalog_scope = ["index"]
             if intent.intent == IntentType.CHAT and not has_image_attachments and mode == "agent":
                 mode = "ask"
@@ -3878,11 +3934,18 @@ class Agent:
             if memory_scope == MemoryScope.FULL:
                 memory_scope = MemoryScope.RELEVANT
 
-        if mode in ("ask", "plan") and not requires_tools:
+        if mode in ("ask", "plan") and not requires_tools and not skip_catalogs:
             catalog_scope = ["index"]
 
         if session_type == "im":
             profile = PromptProfile.IM_ASSISTANT
+
+        include_runtime_env_policy = (
+            prompt_mode == PromptMode.FULL or requires_tools or requires_project_context
+        )
+        include_multi_agent = getattr(self, "_is_sub_agent_call", False) or (
+            prompt_mode == PromptMode.FULL and profile != PromptProfile.CONSUMER_CHAT
+        )
 
         return PromptStrategy(
             profile=profile,
@@ -3891,6 +3954,8 @@ class Agent:
             memory_scope=memory_scope,
             catalog_scope=catalog_scope,
             include_project_guidelines=include_project_guidelines,
+            include_runtime_env_policy=include_runtime_env_policy,
+            include_multi_agent=include_multi_agent,
         )
 
     def _build_multi_agent_prompt_section(self) -> str:
@@ -4263,7 +4328,7 @@ class Agent:
     ) -> list[dict]:
         """委托给统一的 context_manager.compress_if_needed()。"""
         _sp = system_prompt or getattr(self._context, "system", "")
-        _tools = getattr(self, "_tools", None)
+        _tools = self._effective_tools
         _conv_id = conversation_id or getattr(self, "_current_session_id", None)
         _msg_count_before = len(messages)
         result = await self.context_manager.compress_if_needed(
@@ -4289,6 +4354,7 @@ class Agent:
         *,
         session_id: str,
         conversation_id: str | None = None,
+        system_prompt: str | None = None,
     ) -> list[dict]:
         """Compress session history during prepare without reusing stale cancel signals."""
         active_task = None
@@ -4300,7 +4366,11 @@ class Agent:
             self.context_manager.set_cancel_event(None)
 
         try:
-            return await self._compress_context(messages, conversation_id=conversation_id)
+            return await self._compress_context(
+                messages,
+                system_prompt=system_prompt,
+                conversation_id=conversation_id,
+            )
         except _CtxCancelledError:
             active_task = (
                 self.agent_state.get_task_for_session(session_id) if self.agent_state else None
@@ -4931,6 +5001,108 @@ class Agent:
 
         return resolve_memory_workspace_id(session)
 
+    async def _mine_traits_in_background(self, message: str, session_id: str) -> None:
+        """Mine and persist user traits without blocking the active turn."""
+        started_at = time.perf_counter()
+        status = "ok"
+        trait_count = 0
+        try:
+            mined_traits = await asyncio.wait_for(
+                self.trait_miner.mine_from_message(message, role="user"),
+                timeout=10,
+            )
+            from .persona import persist_trait_to_memory
+
+            for trait in mined_traits:
+                persist_trait_to_memory(self.memory_manager, trait)
+            trait_count = len(mined_traits)
+        except asyncio.CancelledError:
+            status = "cancelled"
+            raise
+        except Exception as exc:
+            status = type(exc).__name__
+            logger.debug("[TraitMiner] Background mining failed (non-critical): %s", exc)
+        finally:
+            logger.info(
+                "[ChatTiming] stage=trait_mining_background session=%s duration_ms=%.1f "
+                "status=%s traits=%d",
+                session_id,
+                (time.perf_counter() - started_at) * 1000,
+                status,
+                trait_count,
+            )
+
+    def _schedule_trait_mining_background(self, message: str, session_id: str) -> None:
+        """Start a managed post-turn TraitMiner task when the feature is available."""
+        trait_miner = getattr(self, "trait_miner", None)
+        if not message or not trait_miner or not getattr(trait_miner, "brain", None):
+            return
+
+        tasks = getattr(self, "_trait_mining_tasks", None)
+        if tasks is None:
+            tasks = set()
+            self._trait_mining_tasks = tasks
+
+        task = asyncio.create_task(
+            self._mine_traits_in_background(message, session_id),
+            name=f"trait-mining:{session_id}",
+        )
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+        logger.info(
+            "[ChatTiming] stage=trait_mining_scheduled session=%s active_tasks=%d",
+            session_id,
+            len(tasks),
+        )
+
+    def _build_slow_compiler_hint(self, session_id: str) -> dict | None:
+        """Build a one-shot UI hint when slow intent analysis used the main model fallback."""
+        if getattr(self, "_compiler_fallback_hint_emitted", False):
+            return None
+
+        duration_ms = float(getattr(self, "_last_intent_analysis_duration_ms", 0.0) or 0.0)
+        intent = getattr(self, "_current_intent", None)
+        if duration_ms <= 5000 or getattr(intent, "compiler_source", "") != "main_fallback":
+            return None
+
+        reason_code = getattr(intent, "compiler_fallback_reason", "") or "all_endpoints_failed"
+        reason_labels = {
+            "not_configured": "没有配置提示词编译模型",
+            "all_disabled": "提示词编译模型全部被禁用",
+            "invalid_configuration": "提示词编译模型配置无效",
+            "authentication_failed": "提示词编译模型鉴权失败或熔断",
+            "rate_limited": "提示词编译模型触发限流",
+            "network_unreachable": "提示词编译模型网络访问失败",
+            "model_unavailable": "提示词编译模型不可用或不存在",
+            "circuit_open": "提示词编译模型连续失败，熔断器暂时阻止访问",
+            "all_endpoints_failed": "所有提示词编译模型均访问失败",
+        }
+        reason = reason_labels.get(reason_code, "所有提示词编译模型均访问失败")
+        detail = str(getattr(intent, "compiler_fallback_detail", "") or "").strip()
+        message = f"实际原因：{reason}。本轮意图分析耗时 {duration_ms / 1000:.1f} 秒，已回退到主模型。"
+        if detail and detail not in reason:
+            message += f" 错误摘要：{detail}"
+
+        return {
+            "type": "config_hint",
+            "tool_use_id": f"intent-analyzer:{session_id}",
+            "scope": "prompt_compiler",
+            "error_code": "compiler_unavailable",
+            "title": "提示词编译模型访问失效",
+            "message": message,
+            "actions": [
+                {
+                    "id": "open_prompt_compiler_settings",
+                    "label": "前往提示词编译模型设置",
+                    "view": "config",
+                    "section": "llm",
+                    "anchor": "prompt-compiler",
+                }
+            ],
+            "reason_code": reason_code,
+            "duration_ms": round(duration_ms, 1),
+        }
+
     async def _prepare_session_context(
         self,
         message: str,
@@ -4942,6 +5114,7 @@ class Agent:
         *,
         attachments: list | None = None,
         mode: str = "agent",
+        progress_callback: Callable[[str], None] | None = None,
     ) -> tuple[list[dict], str, TaskMonitor, str, Any]:
         """
         会话流水线 - 共享准备阶段。
@@ -4955,8 +5128,7 @@ class Agent:
         3. Agent state / log session setup
         4. Proactive engine update
         5. User turn memory record
-        6. Trait mining
-        7. Prompt Compiler (两段式第一阶段)
+        6. Prompt Compiler (两段式第一阶段)
         8. Plan 模式自动检测
         9. Task definition setup
         10. Message history build (含上下文边界标记、多模态/附件)
@@ -4971,10 +5143,13 @@ class Agent:
             gateway: MessageGateway 对象
             conversation_id: 稳定对话线程 ID
             attachments: Desktop Chat 附件列表 (可选)
+            progress_callback: 流式调用方用于转发准备阶段事件的回调
 
         Returns:
             (messages, session_type, task_monitor, conversation_id, im_tokens)
         """
+        _prepare_started_at = time.perf_counter()
+
         # 1. 对齐 MemoryManager 会话
         # memory safe_id 统一用 session.session_key 派生，与 im_channel fallback
         # 和 sessions/manager backfill 的查询逻辑保持一致。
@@ -5070,28 +5245,15 @@ class Agent:
             except Exception as exc:
                 logger.debug("[Session:%s] Working facts extraction failed: %s", session_id, exc)
 
-        # 6. Trait mining
-        if hasattr(self, "trait_miner") and self.trait_miner and self.trait_miner.brain:
-            try:
-                mined_traits = await asyncio.wait_for(
-                    self.trait_miner.mine_from_message(message, role="user"),
-                    timeout=10,
-                )
-                from .persona import persist_trait_to_memory
-
-                for trait in mined_traits:
-                    persist_trait_to_memory(self.memory_manager, trait)
-                if mined_traits:
-                    logger.debug(f"[TraitMiner] Mined {len(mined_traits)} traits from user message")
-            except Exception as e:
-                logger.debug(f"[TraitMiner] Mining failed (non-critical): {e}")
-
-        # 7. IntentAnalyzer (unified intent analysis — all messages go through LLM)
+        # 6. IntentAnalyzer (unified intent analysis — all messages go through LLM)
         #    Sub-agents skip the full analyzer for latency, but they are not
         #    automatically forced into tools: many delegated jobs are pure writing
         #    or analysis tasks where a direct text answer is the correct output.
         from .intent_analyzer import IntentAnalyzer, IntentResult, IntentType
 
+        self._last_intent_analysis_duration_ms = 0.0
+        _intent_started_at = time.perf_counter()
+        _intent_status = "ok"
         if self._is_sub_agent_call:
             _profile_hints = self._derive_tool_hints_from_profile()
             _requires_tools = _looks_like_external_tool_request(message)
@@ -5133,6 +5295,7 @@ class Agent:
                 f"is_org_coordinator={_is_org_coord}, "
                 f"profile_tool_hints={_profile_hints}"
             )
+            _intent_status = "skipped_sub_agent"
         else:
             if not hasattr(self, "_intent_analyzer"):
                 self._intent_analyzer = IntentAnalyzer(self.brain)
@@ -5149,12 +5312,30 @@ class Agent:
                     timeout=30,
                 )
             except (TimeoutError, Exception) as e:
+                _intent_status = type(e).__name__
                 logger.warning(f"[Session:{session_id}] Intent analysis failed/timed out: {e}")
                 from .intent_analyzer import _make_default
 
                 intent_result = _make_default(message)
 
+        logger.info(
+            "[ChatTiming] stage=intent_analysis session=%s duration_ms=%.1f "
+            "elapsed_ms=%.1f status=%s intent=%s",
+            session_id,
+            (time.perf_counter() - _intent_started_at) * 1000,
+            (time.perf_counter() - _prepare_started_at) * 1000,
+            _intent_status,
+            getattr(intent_result.intent, "value", intent_result.intent),
+        )
+        self._last_intent_analysis_duration_ms = (
+            time.perf_counter() - _intent_started_at
+        ) * 1000
+
         self._current_intent = intent_result
+        self._intent_promoted_tools = self._resolve_intent_schema_promotions(
+            intent_result,
+            self._tools,
+        )
         self._current_user_message = message
         # BUG-EFF-4 守卫：本轮是否带图片附件。CHAT 意图通常被强制降级为 ask
         # （省 token 设计），但带附件时降级会砍掉 vision 工具，导致用户看到
@@ -5861,11 +6042,52 @@ class Agent:
             attachments,
         )
 
+        # Build the turn-specific prompt before pressure calculation. Reusing
+        # the startup FULL prompt here overstates lightweight turns.
+        _channel = getattr(session, "channel", None) if session else None
+        session_type = "im" if _channel and _channel not in ("cli", "desktop") else "cli"
+        self._current_session_type = session_type
+        if progress_callback is not None:
+            try:
+                progress_callback("building_context")
+            except Exception as exc:
+                logger.debug("[PrepareProgress] callback failed: %s", exc)
+            # Let the streaming wrapper flush the stage event before prompt
+            # assembly performs any synchronous retrieval work.
+            await asyncio.sleep(0)
+        _ = self._effective_tools
+        _prompt_started_at = time.perf_counter()
+        compression_system_prompt = await self._build_system_prompt_compiled(
+            task_description=self._current_task_query,
+            session_type=session_type,
+            session=session,
+            mode=mode,
+            conversation_id=conversation_id,
+        )
+        logger.info(
+            "[ChatTiming] stage=prompt_ready session=%s duration_ms=%.1f "
+            "elapsed_ms=%.1f prompt_chars=%d",
+            session_id,
+            (time.perf_counter() - _prompt_started_at) * 1000,
+            (time.perf_counter() - _prepare_started_at) * 1000,
+            len(compression_system_prompt),
+        )
+
         # 11. Context compression
+        _compression_started_at = time.perf_counter()
         messages = await self._compress_context_for_prepare(
             messages,
             session_id=session_id,
             conversation_id=conversation_id,
+            system_prompt=compression_system_prompt,
+        )
+        logger.info(
+            "[ChatTiming] stage=context_ready session=%s duration_ms=%.1f "
+            "elapsed_ms=%.1f messages=%d",
+            session_id,
+            (time.perf_counter() - _compression_started_at) * 1000,
+            (time.perf_counter() - _prepare_started_at) * 1000,
+            len(messages),
         )
 
         # 12. TaskMonitor creation
@@ -5884,10 +6106,6 @@ class Agent:
         # session_type 检测
         # desktop 聊天面板与 CLI 同属本地交互，应启用 ForceToolCall 验收
         # 仅真正的 IM 通道（telegram/wechat/feishu 等）使用 im 模式
-        _channel = getattr(session, "channel", None) if session else None
-        session_type = "im" if _channel and _channel not in ("cli", "desktop") else "cli"
-        self._current_session_type = session_type
-
         extra_context = await self._dispatch_agent_run_start(
             session_id=session_id,
             conversation_id=conversation_id,
@@ -6113,6 +6331,11 @@ class Agent:
             status="completed",
         )
 
+        # Trait learning is post-turn enrichment. Schedule it only after the
+        # active run has completed so it cannot delay intent routing or the
+        # first provider request for this turn.
+        self._schedule_trait_mining_background(self._current_user_message, session_id)
+
         # 5. Cleanup（总是执行，放在 finally 中由调用方保证）
         # 注意：此方法不做 cleanup，cleanup 统一在 _cleanup_session_state() 中
 
@@ -6126,6 +6349,7 @@ class Agent:
         self._current_task_definition = ""
         self._current_task_query = ""
         self._current_user_message = ""
+        self._intent_promoted_tools = set()
         self._current_turn_has_media_attachments = False
         self._current_session_type = "cli"
         if im_tokens is not None:
@@ -6794,14 +7018,14 @@ class Agent:
                 return
 
             # === 共享准备 ===
-            try:
-                (
-                    messages,
-                    session_type,
-                    task_monitor,
-                    conversation_id,
-                    im_tokens,
-                ) = await self._prepare_session_context(
+            yield {"type": "preparation_stage", "stage": "analyzing_intent"}
+            _prepare_events: asyncio.Queue[dict] = asyncio.Queue()
+
+            def _queue_prepare_stage(stage: str) -> None:
+                _prepare_events.put_nowait({"type": "preparation_stage", "stage": stage})
+
+            _prepare_task = asyncio.create_task(
+                self._prepare_session_context(
                     message=message,
                     session_messages=session_messages,
                     session_id=session_id,
@@ -6810,7 +7034,39 @@ class Agent:
                     conversation_id=conversation_id,
                     attachments=attachments,
                     mode=mode,
+                    progress_callback=_queue_prepare_stage,
                 )
+            )
+            try:
+                while not _prepare_task.done():
+                    _next_stage = asyncio.create_task(_prepare_events.get())
+                    try:
+                        _done, _ = await asyncio.wait(
+                            {_prepare_task, _next_stage},
+                            timeout=2.0,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    finally:
+                        if not _next_stage.done():
+                            _next_stage.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await _next_stage
+
+                    if _next_stage.done() and not _next_stage.cancelled():
+                        yield _next_stage.result()
+                    if not _done:
+                        yield {"type": "heartbeat"}
+
+                while not _prepare_events.empty():
+                    yield _prepare_events.get_nowait()
+
+                (
+                    messages,
+                    session_type,
+                    task_monitor,
+                    conversation_id,
+                    im_tokens,
+                ) = await _prepare_task
             except UserCancelledError:
                 logger.info(
                     f"[Session:{session_id}] Cancelled during prepare compression, "
@@ -6819,8 +7075,18 @@ class Agent:
                 yield {"type": "text_delta", "content": "✅ 好的，已停止当前任务。"}
                 yield {"type": "done"}
                 return
+            finally:
+                if not _prepare_task.done():
+                    _prepare_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await _prepare_task
 
-            yield {"type": "heartbeat"}
+            yield {"type": "preparation_stage", "stage": "ready"}
+
+            _compiler_hint = self._build_slow_compiler_hint(session_id)
+            if _compiler_hint is not None:
+                self._compiler_fallback_hint_emitted = True
+                yield _compiler_hint
 
             # 准备阶段后检查：如果准备期间收到了取消信号（含 pending cancel）
             _conv_cancel_id = conversation_id or session_id
@@ -7079,6 +7345,8 @@ class Agent:
                         return None
                     event = snapshot.to_dict()
                     event["type"] = "context_usage"
+                    event["context_scope_id"] = _turn_id
+                    event["iteration"] = 1
                     event["usage_estimated"] = usage_estimated
                     return event
 
@@ -10280,6 +10548,13 @@ class Agent:
                 "(plugins owned by parent agent).",
                 self.name,
             )
+
+        trait_tasks = list(getattr(self, "_trait_mining_tasks", set()))
+        for task in trait_tasks:
+            if not task.done():
+                task.cancel()
+        if trait_tasks:
+            await asyncio.gather(*trait_tasks, return_exceptions=True)
 
         # F9: 清理技能相关资源
         self._cleanup_skill_resources()

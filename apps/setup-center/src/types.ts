@@ -319,6 +319,7 @@ export type ConfigHintPayload = {
     | "rate_limited"
     | "network_unreachable"
     | "content_filter"
+    | "compiler_unavailable"
     | "unknown";
   title: string;
   message?: string;

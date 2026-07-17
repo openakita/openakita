@@ -26,7 +26,6 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..skills.catalog import SKILL_INSTRUCTION_ADVISORY
 from .budget import BudgetConfig, apply_budget, estimate_tokens
 from .compiler import check_compiled_outdated, compile_all, get_compiled_content
 from .retriever import retrieve_memory
@@ -581,8 +580,9 @@ def build_system_prompt(
     system_parts.append(_ALWAYS_ON_RULES)
     system_parts.append(_SAFETY_SECTION)
     system_parts.append(_INFO_SOURCE_HONESTY_SECTION)
-    if _profile == PromptProfile.LOCAL_AGENT or (
-        _profile != PromptProfile.CONSUMER_CHAT and _tier != PromptTier.SMALL
+    if prompt_mode == PromptMode.FULL and (
+        _profile == PromptProfile.LOCAL_AGENT
+        or (_profile != PromptProfile.CONSUMER_CHAT and _tier != PromptTier.SMALL)
     ):
         system_parts.append(_EXTENDED_RULES)
 
@@ -612,6 +612,7 @@ def build_system_prompt(
                     prompt_mode == PromptMode.FULL
                     and (tools_enabled or bool(_catalog_scope - {"index"}))
                 ),
+                include_behavior=prompt_mode == PromptMode.FULL,
                 agent_voice=agent_voice,
             ),
             force_recompute=True,
@@ -641,7 +642,10 @@ def build_system_prompt(
     working_directory = None
     if isinstance(session_context, dict):
         working_directory = session_context.get("working_directory")
-    runtime_section = _build_runtime_section(working_directory)
+    if prompt_mode == PromptMode.MINIMAL:
+        runtime_section = _build_runtime_section_compact(working_directory)
+    else:
+        runtime_section = _build_runtime_section(working_directory)
     system_parts.append(runtime_section)
 
     # 6.5 会话元数据（session_context 和 model_display_name）
@@ -741,30 +745,10 @@ def build_system_prompt(
             prompt_tier=_tier,
             catalog_scope=_catalog_scope,
             intent_tool_hints=intent_tool_hints,
+            context_window=context_window,
         )
         if catalogs_section:
             tool_parts.append(catalogs_section)
-
-    # 9.5 Skill Recommendation Hint（CONSUMER_CHAT / IM_ASSISTANT 时注入动态 hint）
-    if (
-        _profile in (PromptProfile.CONSUMER_CHAT, PromptProfile.IM_ASSISTANT)
-        and skill_catalog
-        and task_description
-    ):
-        try:
-            _hint_exp: str | None = None
-            if _profile == PromptProfile.CONSUMER_CHAT:
-                _hint_exp = "core"
-            elif _profile == PromptProfile.IM_ASSISTANT:
-                _hint_exp = "core+recommended"
-            rec_hint = skill_catalog.generate_recommendation_hint(
-                task_description,
-                exposure_filter=_hint_exp,
-            )
-            if rec_hint:
-                tool_parts.append(rec_hint)
-        except Exception:
-            pass
 
     # 9.6 Working facts 层：当前会话短期事实，优先于长期记忆。
     # 即使 MINIMAL prompt 也保留这块很小的会话状态，避免轻量问答丢失刚刚确认的事实。
@@ -1171,6 +1155,7 @@ def _build_identity_section(
     tools_enabled: bool,
     budget_tokens: int,
     include_tooling: bool = False,
+    include_behavior: bool = True,
     agent_voice: str = "",
 ) -> str:
     """构建 Identity 层。
@@ -1227,16 +1212,19 @@ def _build_identity_section(
         parts.append("")
         _register_seen(result.content)
 
-    agent_behavior = (
-        compiled.get("agent_behavior")
-        or compiled.get("agent_core")
-        or _BUILT_IN_DEFAULTS.get("agent_core", "")
-    )
-    if agent_behavior:
-        result = apply_budget(agent_behavior.strip(), budget_tokens * 40 // 100, "agent_behavior")
-        parts.append(result.content)
-        parts.append("")
-        _register_seen(result.content)
+    if include_behavior:
+        agent_behavior = (
+            compiled.get("agent_behavior")
+            or compiled.get("agent_core")
+            or _BUILT_IN_DEFAULTS.get("agent_core", "")
+        )
+        if agent_behavior:
+            result = apply_budget(
+                agent_behavior.strip(), budget_tokens * 40 // 100, "agent_behavior"
+            )
+            parts.append(result.content)
+            parts.append("")
+            _register_seen(result.content)
 
     if tools_enabled and include_tooling:
         agent_tooling = compiled.get("agent_tooling", "")
@@ -1300,6 +1288,23 @@ def _build_runtime_section(working_directory: str | None = None) -> str:
     result = _build_runtime_section_uncached(cwd)
     _runtime_section_cache = (now, cwd, result)
     return result
+
+
+def _build_runtime_section_compact(working_directory: str | None = None) -> str:
+    """Return only runtime facts needed by lightweight conversational turns."""
+    if working_directory:
+        cwd = str(Path(working_directory).expanduser().resolve(strict=False))
+    else:
+        from ..core.working_directory import current_working_directory
+
+        cwd = str(current_working_directory())
+    shell_type = "PowerShell" if platform.system() == "Windows" else "bash"
+    return (
+        "## 运行环境\n\n"
+        f"- 当前时间: {_get_current_time()}\n"
+        f"- 平台: {platform.system()} ({shell_type})\n"
+        f"- 当前工作目录: {cwd}"
+    )
 
 
 def _build_runtime_section_uncached(working_directory: str | None = None) -> str:
@@ -1885,13 +1890,13 @@ def _build_catalogs_section(
     prompt_tier: "PromptTier | None" = None,
     catalog_scope: set[str] | None = None,
     intent_tool_hints: list[str] | None = None,
+    context_window: int | None = None,
 ) -> str:
     """构建 Catalogs 层（工具/技能/插件/MCP 清单）
 
     Progressive disclosure:
-    - CONSUMER_CHAT profile 或 SMALL tier → 仅索引（index-only）
-    - 对话前 4 轮或非 agent 模式 → 仅索引
-    - 其他 → 完整清单
+    - 工具目录按 profile / tier / conversation stage 选择索引或完整清单
+    - Skill 始终只注入有硬预算的元数据；完整 SKILL.md 通过 get_skill_info 按需加载
 
     每个 catalog 用 try/except 隔离，确保单个 catalog 构建失败不会击穿整个系统提示。
     """
@@ -1943,45 +1948,17 @@ def _build_catalogs_section(
             elif _profile == PromptProfile.IM_ASSISTANT:
                 _exp_filter = "core+recommended"
 
-            # Fix-4：当 IntentAnalyzer 给出 tool_hints 时，把对应分类提为
-            # priority — 该分类详细展开 (Level B)，其余分类降级为 (index)
-            # 仅名字。LLM 仍能通过 get_skill_info 拉详情，但首轮 prompt
-            # 显著瘦身。priority_categories=() 时退化为旧行为。
             from .budget import intent_to_priority_categories
 
-            _priority_cats = intent_to_priority_categories(intent_tool_hints)
-
-            if _index_only:
-                skills_grouped = skill_catalog.get_index_catalog(exposure_filter=_exp_filter)
-            else:
-                # 零丢失 + 自适应压缩：所有技能名字始终保留，
-                # 描述文本根据 catalogs_budget 的 55% 分配自动分级压缩。
-                # 若 IntentAnalyzer 命中相关分类，只展开主线分类，其余保持目录索引。
-                _skills_budget = budget_tokens * 55 // 100
-                skills_grouped = skill_catalog.get_grouped_compact_catalog(
-                    exposure_filter=_exp_filter,
-                    max_tokens=_skills_budget,
-                    priority_categories=_priority_cats or None,
-                )
-
-            advisory_rule = (
-                ""
-                if SKILL_INSTRUCTION_ADVISORY in skills_grouped
-                else f"- {SKILL_INSTRUCTION_ADVISORY}\n"
+            _priority_categories = intent_to_priority_categories(intent_tool_hints)
+            _skills_budget = 600 if _index_only else 1_000
+            skills_metadata = skill_catalog.get_metadata_catalog(
+                context_window=context_window,
+                max_tokens=_skills_budget,
+                exposure_filter=_exp_filter,
+                priority_categories=_priority_categories or None,
             )
-            skills_rule = (
-                "### 技能使用规则\n"
-                "- 执行**具体操作任务**前先检查已有技能清单，有匹配的技能时优先使用\n"
-                "- **纯知识问答**（日期、定义、常识、数学计算）**不需要调用任何工具**，直接回答即可\n"
-                "- 没有合适技能时，搜索安装或使用 skill-creator 创建\n"
-                "- 同类操作重复出现时，建议封装为永久技能\n"
-                "- Shell 命令仅用于一次性简单操作\n"
-                "- 根据技能的 `when_to_use` 描述判断是否匹配当前任务\n"
-                f"{advisory_rule}"
-                "- **重要**：当前日期时间已写在「运行环境」里，禁止为了查日期而调用技能脚本\n"
-            )
-
-            parts.append("\n\n".join([skills_grouped, skills_rule]).strip())
+            parts.append(skills_metadata)
         except Exception as e:
             logger.error(
                 "[PromptBuilder] skill catalog build failed, skipping: %s",
@@ -2034,7 +2011,7 @@ def _build_catalogs_section(
             "## MCP\n\nMCP 外部服务按需披露；需要时先用 `tool_search` 或 MCP catalog 查询。"
         )
 
-    if include_tools_guide:
+    if include_tools_guide and not _index_only:
         parts.append(_get_tools_guide_short())
 
     return "\n\n".join(parts)
@@ -2270,7 +2247,12 @@ def _build_memory_section(
     retrieval_query = " ".join(memory_keywords or []) or task_description
     has_explicit_keywords = bool(memory_keywords)
     if retrieval_query and (has_explicit_keywords or not _is_short_chitchat(task_description)):
-        retrieved = _retrieve_by_query(memory_manager, retrieval_query, max_tokens=500)
+        retrieved = _retrieve_by_query(
+            memory_manager,
+            retrieval_query,
+            max_tokens=500,
+            precomputed_keywords=memory_keywords,
+        )
         if retrieved:
             parts.append(f"## 相关记忆（自动检索）\n\n{retrieved}")
 
@@ -2287,6 +2269,7 @@ def _retrieve_by_query(
     memory_manager: Optional["MemoryManager"],
     query: str,
     max_tokens: int = 500,
+    precomputed_keywords: list[str] | None = None,
 ) -> str:
     """Retrieve relevant memories for the current turn, including external providers."""
     if not memory_manager or not query:
@@ -2296,7 +2279,10 @@ def _retrieve_by_query(
         get_context = getattr(memory_manager, "get_injection_context", None)
         if get_context is None:
             return ""
-        result = get_context(task_description=query, max_related=5)
+        kwargs = {"task_description": query, "max_related": 5}
+        if precomputed_keywords:
+            kwargs["precomputed_keywords"] = precomputed_keywords
+        result = get_context(**kwargs)
         return result if result else ""
     except Exception as e:
         logger.debug(f"[MemoryRetrieval] Active retrieval failed: {e}")

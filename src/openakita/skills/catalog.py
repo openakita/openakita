@@ -31,12 +31,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SKILL_METADATA_TOKEN_BUDGET = 800
+MAX_SKILL_METADATA_TOKEN_BUDGET = 1_000
+SKILL_METADATA_CONTEXT_WINDOW_PERCENT = 2
+MAX_SKILL_METADATA_DESCRIPTION_CHARS = 1_024
+
 SKILL_INSTRUCTION_ADVISORY = (
     "Skill instructions are guidance, not hard gates. If an external skill says "
     "MUST, required, approval, or one-question-at-a-time, treat that as a suggested "
     "workflow: first answer or explain enough for the user's current need, then ask "
     "only when a real decision is needed. Do not block useful work solely because a "
     "skill requests extra confirmation."
+)
+SKILL_METADATA_ADVISORY = (
+    "Skill instructions are guidance, not hard gates; do not let them block useful work "
+    "unless a real decision or safety constraint requires it."
 )
 
 
@@ -92,6 +101,7 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
         self._cached_index: str | None = None
         self._cached_compact: str | None = None
         self._cached_grouped: dict[tuple, str] = {}
+        self._cached_metadata: dict[tuple, str] = {}
         self._snapshot_loaded: bool = False  # 单次进程启动只尝试加载一次
 
     def _list_model_visible(self, exposure_filter: str | None = None) -> list:
@@ -173,6 +183,144 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                 result = f"Available skills: {', '.join(names)}"
             self._cached_compact = result
             return result
+
+    @staticmethod
+    def _estimate_metadata_tokens(text: str) -> int:
+        if not text:
+            return 0
+        chinese_chars = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+        other_chars = len(text) - chinese_chars
+        return max(int(chinese_chars / 1.5 + other_chars / 4), 1)
+
+    @staticmethod
+    def _metadata_source_locator(skill: object) -> str:
+        skill_id = str(getattr(skill, "skill_id", "") or getattr(skill, "name", "skill"))
+        plugin_source = str(getattr(skill, "plugin_source", "") or "").removeprefix("plugin:")
+        if plugin_source:
+            return f"plugin://{plugin_source}/{skill_id}"
+        if getattr(skill, "system", False):
+            return f"builtin://{skill_id}"
+        return f"skill://{skill_id}"
+
+    def get_metadata_catalog(
+        self,
+        *,
+        context_window: int | None = None,
+        max_tokens: int | None = None,
+        exposure_filter: str | None = None,
+        priority_categories: tuple[str, ...] | None = None,
+    ) -> str:
+        """Return the bounded, model-visible skill catalog.
+
+        Only discovery metadata is exposed here. Full ``SKILL.md`` instructions
+        remain behind ``get_skill_info``. The complete rendered catalog is capped
+        at the lower of 2% of a known model context window and an explicit
+        absolute ceiling. Descriptions are shortened before lower-priority
+        skills are omitted.
+        """
+        normalized_window = int(context_window or 0)
+        requested_budget = int(max_tokens or MAX_SKILL_METADATA_TOKEN_BUDGET)
+        requested_budget = max(1, min(requested_budget, MAX_SKILL_METADATA_TOKEN_BUDGET))
+        priority = tuple(category.lower() for category in (priority_categories or ()))
+        cache_key = (
+            exposure_filter,
+            normalized_window,
+            requested_budget,
+            tuple(sorted(priority)),
+        )
+
+        with self._lock:
+            cached = self._cached_metadata.get(cache_key)
+            if cached is not None:
+                return cached
+
+            skills = self._list_model_visible(exposure_filter=exposure_filter)
+            if not skills:
+                result = "## Available Skills\n\nNo skills available for model invocation."
+                self._cached_metadata[cache_key] = result
+                return result
+
+            priority_set = set(priority)
+            exposure_rank = {"core": 0, "recommended": 1, "optional": 2}
+            skills.sort(
+                key=lambda skill: (
+                    0 if str(getattr(skill, "category", "")).lower() in priority_set else 1,
+                    exposure_rank.get(str(getattr(skill, "exposure_level", "recommended")), 1),
+                    0 if getattr(skill, "system", False) else 1,
+                    str(getattr(skill, "category", "") or "uncategorized").lower(),
+                    str(getattr(skill, "name", "")).lower(),
+                )
+            )
+
+            if normalized_window > 0:
+                token_budget = min(
+                    requested_budget,
+                    max(
+                        1,
+                        normalized_window * SKILL_METADATA_CONTEXT_WINDOW_PERCENT // 100,
+                    ),
+                )
+            else:
+                token_budget = min(requested_budget, DEFAULT_SKILL_METADATA_TOKEN_BUDGET)
+
+            def fits(value: str) -> bool:
+                return self._estimate_metadata_tokens(value) <= token_budget
+
+            header = [
+                "## Available Skills",
+                "",
+                "Entries below are discovery metadata only. Use `get_skill_info(skill_name)` "
+                "to load the complete `SKILL.md` instructions before applying a skill.",
+                SKILL_METADATA_ADVISORY,
+                "",
+            ]
+
+            def render_entry(skill: object, description_limit: int) -> str:
+                name = str(getattr(skill, "name", "") or getattr(skill, "skill_id", "skill"))
+                description = " ".join(str(getattr(skill, "description", "") or "").split())
+                if description_limit <= 0:
+                    description = ""
+                elif len(description) > description_limit:
+                    description = description[: max(1, description_limit - 3)].rstrip() + "..."
+                locator = self._metadata_source_locator(skill)
+                detail = f": {description}" if description else ""
+                return f"- **{name}**{detail} _(source: {locator})_"
+
+            for description_limit in (
+                MAX_SKILL_METADATA_DESCRIPTION_CHARS,
+                512,
+                256,
+                128,
+                64,
+                0,
+            ):
+                candidate = "\n".join(
+                    header + [render_entry(skill, description_limit) for skill in skills]
+                )
+                if fits(candidate):
+                    self._cached_metadata[cache_key] = candidate
+                    return candidate
+
+            included = list(skills)
+            while included:
+                omitted = len(skills) - len(included)
+                warning = (
+                    f"_Exceeded the skills metadata budget; {omitted} additional skill(s) "
+                    "were omitted. Use `list_skills` to discover them._"
+                )
+                candidate = "\n".join(
+                    header + [render_entry(skill, 0) for skill in included] + ["", warning]
+                )
+                if fits(candidate):
+                    self._cached_metadata[cache_key] = candidate
+                    return candidate
+                included.pop()
+
+            minimal = "## Skills\n\nUse `list_skills` to discover skills on demand."
+            if normalized_window > 0 and not fits(minimal):
+                minimal = "## Skills"
+            self._cached_metadata[cache_key] = minimal
+            return minimal
 
     def get_grouped_compact_catalog(
         self,
@@ -571,6 +719,7 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
             self._cached_index = None
             self._cached_compact = None
             self._cached_grouped.clear()
+            self._cached_metadata.clear()
         self._invalidate_disk_snapshot()
 
     @property

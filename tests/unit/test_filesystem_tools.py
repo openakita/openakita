@@ -526,7 +526,8 @@ class TestToolDefinitions:
     def test_high_freq_tools(self):
         from openakita.tools.catalog import HIGH_FREQ_TOOLS
         assert "edit_file" in HIGH_FREQ_TOOLS
-        assert "grep" not in HIGH_FREQ_TOOLS
+        assert "grep" in HIGH_FREQ_TOOLS
+        assert "glob" not in HIGH_FREQ_TOOLS
 
     def test_small_ctx_core_tools(self):
         from openakita.core._agent_legacy import SMALL_CTX_CORE_TOOLS
@@ -572,4 +573,3 @@ class TestIgnoreDirs:
     def test_common_dirs_present(self):
         for d in [".git", "node_modules", "__pycache__", ".venv"]:
             assert d in DEFAULT_IGNORE_DIRS
-

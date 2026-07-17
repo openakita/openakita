@@ -38,6 +38,7 @@ ConfigHintErrorCode = Literal[
     "rate_limited",
     "network_unreachable",
     "content_filter",
+    "compiler_unavailable",
     "unknown",
 ]
 

@@ -221,6 +221,9 @@
     "voice": "语音输入",
     "stopRecording": "停止录音",
     "thinking": "思考中...",
+    "preparingIntent": "正在分析需求...",
+    "preparingContext": "正在检索记忆并准备上下文...",
+    "preparationReady": "准备完成，正在启动模型...",
     "recovering": "正在恢复回复...",
     "thinkingBlock": "思考过程",
     "sourceTag": {

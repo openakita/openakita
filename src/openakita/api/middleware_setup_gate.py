@@ -19,6 +19,8 @@ otherwise issue a 401 first, hiding the actionable 428 from the frontend.
 from __future__ import annotations
 
 import logging
+import time
+import uuid
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -89,19 +91,40 @@ def create_setup_gate_middleware(web_access: WebAccessConfig):
     """
 
     async def setup_gate_middleware(request: Request, call_next):
+        _trace_chat = request.method == "POST" and request.url.path == "/api/chat"
+        if _trace_chat:
+            request.state.chat_http_started_at = time.perf_counter()
+            request.state.chat_http_request_id = f"chat_{uuid.uuid4().hex[:12]}"
+            logger.info(
+                "[ChatTiming] stage=http_received request=%s client=%s",
+                request.state.chat_http_request_id,
+                request.client.host if request.client else "unknown",
+            )
+
+        async def _continue_request():
+            response = await call_next(request)
+            if _trace_chat:
+                logger.info(
+                    "[ChatTiming] stage=http_response_start request=%s status=%s elapsed_ms=%.1f",
+                    request.state.chat_http_request_id,
+                    response.status_code,
+                    (time.perf_counter() - request.state.chat_http_started_at) * 1000,
+                )
+            return response
+
         # CORS preflight: pass through unconditionally.
         if request.method == "OPTIONS":
-            return await call_next(request)
+            return await _continue_request()
 
         path = request.url.path
 
         # Allowlist for SPA shell + setup endpoints + health probes.
         if _is_allowed_path(path):
-            return await call_next(request)
+            return await _continue_request()
 
         # No setup needed? Continue down the chain.
         if not should_require_setup(request, web_access):
-            return await call_next(request)
+            return await _continue_request()
 
         # At this point, a non-trusted-local caller hit a non-allowlisted
         # endpoint while the system has no password set.
@@ -128,6 +151,6 @@ def create_setup_gate_middleware(web_access: WebAccessConfig):
         # For non-API paths (SPA navigation, image fetches that slipped past
         # the allowlist, etc.) fall through to the normal handler — the SPA
         # will see its own ``/api/auth/setup-status`` call and route the user.
-        return await call_next(request)
+        return await _continue_request()
 
     return setup_gate_middleware

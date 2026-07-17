@@ -111,6 +111,7 @@ type SecurityDecisionChainStep = {
 /** SSE stream event union — synced with Python openakita.events / src/streamEvents.ts */
 export type StreamEvent =
   | { type: "heartbeat"; ts?: number }
+  | { type: "preparation_stage"; stage: "analyzing_intent" | "building_context" | "ready" }
   | { type: "org_command_started"; org_id: string; command_id: string; root_node_id?: string }
   | { type: "org_progress"; org_id: string; command_id: string; event?: string; summary: string; node_id?: string; category?: string; label?: string; data?: Record<string, unknown> }
   | { type: "org_command_done"; org_id: string; command_id: string; result?: Record<string, unknown>; error?: string }
@@ -119,6 +120,8 @@ export type StreamEvent =
   | {
       type: "context_usage";
       conversation_id?: string;
+      context_scope_id?: string;
+      iteration?: number;
       context_tokens: number;
       context_limit: number;
       history_context_tokens?: number;
@@ -159,6 +162,7 @@ export type StreamEvent =
         | "rate_limited"
         | "network_unreachable"
         | "content_filter"
+        | "compiler_unavailable"
         | "unknown";
       title: string;
       message?: string;

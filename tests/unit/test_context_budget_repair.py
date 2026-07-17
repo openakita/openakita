@@ -1,7 +1,9 @@
 import inspect
+import json
 
 import pytest
 
+from openakita.agent.brain import Brain
 from openakita.agent.context import ContextManager
 from openakita.agent.reasoning import ReasoningEngine
 from openakita.core.loop_budget_guard import LoopBudgetGuard
@@ -16,6 +18,34 @@ class DummyBrain:
 class DummyPluginCatalog:
     def get_catalog(self) -> str:
         return "PLUGIN-CATALOG\n" + ("插件描述 " * 5000)
+
+
+def test_tool_estimate_uses_provider_projection_not_registered_catalog():
+    brain = Brain.__new__(Brain)
+    brain._resolve_api_tools_schema_budget = lambda: 12000
+    cm = ContextManager(brain)
+    tools = [
+        {
+            "name": f"tool_{index}",
+            "description": "provider description",
+            "detail": "provider detail",
+            "input_schema": {
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+            },
+            "examples": ["internal metadata " * 500],
+            **({"_promoted": True} if index < 14 else {"_deferred": True}),
+        }
+        for index in range(126)
+    ]
+
+    projected = cm.project_tools_for_request(tools)
+    estimated = cm.estimate_tools_tokens(tools)
+    raw_internal = cm.estimate_tokens(json.dumps(tools, default=str))
+
+    assert len(projected) == 14
+    assert estimated > 0
+    assert estimated < raw_internal // 10
 
 
 def test_context_pressure_includes_system_tools_and_real_usage():

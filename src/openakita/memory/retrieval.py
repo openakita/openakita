@@ -231,6 +231,8 @@ class RetrievalEngine:
         recent_messages: list[dict] | None = None,
         active_persona: str | None = None,
         max_tokens: int = 700,
+        *,
+        precomputed_keywords: list[str] | None = None,
     ) -> str:
         """
         检索并格式化要注入的记忆上下文
@@ -245,9 +247,19 @@ class RetrievalEngine:
 
         query = prepared.query
         recent_messages = prepared.recent_messages
-        decomposed = self._decompose_query(query, recent_messages)
-        search_keywords = decomposed.get("keywords", [])
-        intent = decomposed.get("intent", "general")
+        search_keywords = [
+            str(keyword).strip() for keyword in (precomputed_keywords or []) if str(keyword).strip()
+        ][:6]
+        if search_keywords:
+            # IntentAnalyzer already paid the model cost to produce these
+            # keywords. Keep them structured instead of asking the compiler
+            # model to decompose their joined string a second time.
+            intent = "general"
+            logger.debug("[Retrieval] using precomputed keywords: %s", search_keywords)
+        else:
+            decomposed = self._decompose_query(query, recent_messages)
+            search_keywords = decomposed.get("keywords", [])
+            intent = decomposed.get("intent", "general")
 
         enhanced_query = self._build_enhanced_query(query, recent_messages, search_keywords)
 

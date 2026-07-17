@@ -2331,6 +2331,7 @@ class MemoryManager:
         max_related: int = 5,
         scope: str = "global",
         scope_owner: str = "",
+        precomputed_keywords: list[str] | None = None,
     ) -> str:
         """v1 compat — prefer using builder.py's three-layer injection"""
         replace = self._get_replace_backend()
@@ -2349,11 +2350,14 @@ class MemoryManager:
                     "Replace-mode memory backend failed, falling back to built-in",
                     exc_info=True,
                 )
-        return self.retrieval_engine.retrieve(
-            query=task_description,
-            recent_messages=self._recent_messages,
-            max_tokens=700,
-        )
+        retrieve_kwargs = {
+            "query": task_description,
+            "recent_messages": self._recent_messages,
+            "max_tokens": 700,
+        }
+        if precomputed_keywords:
+            retrieve_kwargs["precomputed_keywords"] = precomputed_keywords
+        return self.retrieval_engine.retrieve(**retrieve_kwargs)
 
     def save_precompact_snapshot(self, snapshot: dict) -> None:
         """Store the latest session-scoped compaction snapshot."""
@@ -2386,7 +2390,11 @@ class MemoryManager:
         return "\n".join(f"- {fact}" for fact in facts)[:max_chars]
 
     async def get_injection_context_async(
-        self, task_description: str = "", scope: str = "global", scope_owner: str = ""
+        self,
+        task_description: str = "",
+        scope: str = "global",
+        scope_owner: str = "",
+        precomputed_keywords: list[str] | None = None,
     ) -> str:
         replace = self._get_replace_backend()
         if replace is not None:
@@ -2400,12 +2408,16 @@ class MemoryManager:
                     "Replace-mode memory backend failed, falling back to built-in",
                     exc_info=True,
                 )
+        retrieve_kwargs = {}
+        if precomputed_keywords:
+            retrieve_kwargs["precomputed_keywords"] = precomputed_keywords
         return await asyncio.to_thread(
             self.retrieval_engine.retrieve,
             task_description,
             self._recent_messages,
             None,
             700,
+            **retrieve_kwargs,
         )
 
     # Phase 1B：明确"绝不可从缓存直接返回给上层"的隔离桶。

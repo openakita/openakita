@@ -68,6 +68,26 @@ class TestRetrievalEngine:
         result = engine.retrieve("Python 版本")
         assert isinstance(result, str)
 
+    def test_retrieve_reuses_precomputed_keywords_without_llm(self, populated_store):
+        class Brain:
+            def __init__(self):
+                self.calls = 0
+
+            async def think_lightweight(self, prompt, **kwargs):
+                self.calls += 1
+                raise AssertionError("precomputed keywords must bypass query decomposition")
+
+        brain = Brain()
+        engine = RetrievalEngine(populated_store, brain=brain)
+
+        result = engine.retrieve(
+            "Python 版本",
+            precomputed_keywords=["Python", "3.12"],
+        )
+
+        assert isinstance(result, str)
+        assert brain.calls == 0
+
     def test_retrieve_candidates(self, populated_store):
         engine = RetrievalEngine(populated_store)
         candidates = engine.retrieve_candidates("Python", limit=10)

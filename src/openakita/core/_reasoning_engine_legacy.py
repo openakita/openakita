@@ -4099,6 +4099,7 @@ class ReasoningEngine:
                     usage_estimated: bool,
                     context_limit: int = _stream_context_limit,
                     model: str = current_model,
+                    iteration: int = _iteration + 1,
                 ) -> dict:
                     _tokens = max(int(tokens or 0), 0)
                     _limit = max(int(context_limit or 0), 0)
@@ -4106,6 +4107,8 @@ class ReasoningEngine:
                     return {
                         "type": "context_usage",
                         "conversation_id": conversation_id,
+                        "context_scope_id": f"{state.task_id}:{iteration}",
+                        "iteration": iteration,
                         "context_tokens": _tokens,
                         "history_context_tokens": _tokens,
                         "context_limit": _limit,

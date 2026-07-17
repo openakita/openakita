@@ -13,6 +13,7 @@ import logging
 import mimetypes
 import os
 import re
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -55,6 +56,24 @@ async def _broadcast_session_event(event: str, data: dict) -> None:
         await broadcast_event(event, data)
     except Exception:
         pass
+
+
+async def _prewarm_session_agent(
+    request: Request,
+    conversation_id: str,
+    agent_profile_id: str | None,
+) -> bool:
+    """Create the pooled Agent early so the first message does not pay its startup cost."""
+    pool = getattr(request.app.state, "agent_pool", None)
+    if pool is None:
+        return False
+
+    from ...core.engine_bridge import to_engine
+    from .chat import _resolve_profile
+
+    profile = _resolve_profile(agent_profile_id)
+    await to_engine(pool.get_or_create(conversation_id, profile))
+    return True
 
 
 class GenerateTitleRequest(BaseModel):
@@ -773,6 +792,33 @@ async def create_session(
     except Exception as exc:
         logger.warning("[Sessions API] Failed to persist created session: %s", exc)
 
+    agent_prewarmed = False
+    if existing is None and channel == "desktop" and not body.org_mode:
+        prewarm_started = time.perf_counter()
+        try:
+            agent_prewarmed = await _prewarm_session_agent(
+                request,
+                conversation_id,
+                agent_profile_id or None,
+            )
+            if agent_prewarmed:
+                logger.info(
+                    "[Sessions API] agent prewarmed conversation_id=%s profile_id=%s "
+                    "duration_ms=%.1f",
+                    conversation_id,
+                    agent_profile_id or "default",
+                    (time.perf_counter() - prewarm_started) * 1000,
+                )
+        except Exception:
+            logger.warning(
+                "[Sessions API] Agent prewarm failed conversation_id=%s profile_id=%s "
+                "duration_ms=%.1f",
+                conversation_id,
+                agent_profile_id or "default",
+                (time.perf_counter() - prewarm_started) * 1000,
+                exc_info=True,
+            )
+
     summary = _session_list_item(session)
     logger.info(
         "[Sessions API] session upserted conversation_id=%s title=%r message_count=%s pinned=%s",
@@ -788,7 +834,12 @@ async def create_session(
             **summary,
         },
     )
-    return {"ok": True, "created": existing is None, **summary}
+    return {
+        "ok": True,
+        "created": existing is None,
+        "agentPrewarmed": agent_prewarmed,
+        **summary,
+    }
 
 
 @router.post("/api/sessions/{conversation_id}/ui-state")

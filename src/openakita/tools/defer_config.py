@@ -8,7 +8,31 @@
 自动提升为完整加载。
 """
 
-# 核心工具 — 始终加载完整 schema（参考 CC 的 alwaysLoad: true）
+# Stable main-chat direct schemas. Keep this deliberately small: every other
+# registered tool remains discoverable through the textual catalog and
+# ``tool_search`` and can be promoted on a later turn.
+STABLE_MAIN_CHAT_CORE_TOOLS: tuple[str, ...] = (
+    "run_shell",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_directory",
+    "grep",
+    "ask_user",
+    "tool_search",
+    "get_tool_info",
+    "delegate_to_agent",
+    "delegate_parallel",
+    "search_memory",
+    "add_memory",
+    "get_skill_info",
+)
+STABLE_MAIN_CHAT_CORE_TOOL_SET: frozenset[str] = frozenset(STABLE_MAIN_CHAT_CORE_TOOLS)
+
+
+# Legacy intent-driven core. The stable main-chat path above no longer exposes
+# this whole set directly, but rollback mode and defer classification still use
+# it as their compatibility baseline.
 ALWAYS_LOAD_TOOLS: frozenset[str] = frozenset(
     {
         # 文件系统（最基础的 I/O 操作）

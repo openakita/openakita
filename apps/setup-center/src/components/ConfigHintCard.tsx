@@ -54,6 +54,7 @@ const SEVERITY_BY_CODE: Record<ConfigHintPayload["error_code"], "info" | "warnin
   rate_limited: "warning",
   network_unreachable: "warning",
   content_filter: "info",
+  compiler_unavailable: "warning",
   unknown: "error",
 };
 
@@ -76,6 +77,10 @@ function navigateAndExpand(action: ConfigHintAction): void {
   if (action.anchor) {
     window.setTimeout(() => {
       dispatchExpandPanel(action.anchor!);
+      document.getElementById(action.anchor!)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
     }, 80);
   }
 }

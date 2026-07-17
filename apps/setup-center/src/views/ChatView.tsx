@@ -1500,6 +1500,7 @@ export function ChatView({
   // ── 上下文占用追踪 ──
   const [contextTokens, setContextTokens] = useState(0);
   const [contextLimit, setContextLimit] = useState(0);
+  const [contextUsageEstimated, setContextUsageEstimated] = useState(false);
   const [contextEditOpen, setContextEditOpen] = useState(false);
   const [editingContextLimit, setEditingContextLimit] = useState("");
   const [contextSaving, setContextSaving] = useState(false);
@@ -1509,6 +1510,10 @@ export function ChatView({
   const [browsingWorkingDirectory, setBrowsingWorkingDirectory] = useState<string | null>(null);
   const [workingDirectoryParent, setWorkingDirectoryParent] = useState<string | null>(null);
   const contextStatsReqSeqRef = useRef(0);
+  const contextUsageSourceRef = useRef<{ scopeId: string; provider: boolean }>({
+    scopeId: "",
+    provider: false,
+  });
 
   // ── 长闲置回归检测 (6.7) ──
   const lastActivityRef = useRef(Date.now());
@@ -2081,6 +2086,7 @@ export function ChatView({
       if (reqSeq !== contextStatsReqSeqRef.current) return;
       if (typeof data.context_tokens === "number" && Number.isFinite(data.context_tokens)) {
         setContextTokens(Math.max(0, data.context_tokens));
+        setContextUsageEstimated(data.source !== "provider");
       }
       if (typeof data.context_limit === "number" && Number.isFinite(data.context_limit) && data.context_limit > 0) {
         setContextLimit(data.context_limit);
@@ -3429,6 +3435,8 @@ export function ChatView({
     askUserReply?: AskUserReplyBody,
     options?: SendMessageOptions,
   ) => {
+    const sendTimingStartedAt = performance.now();
+    const sendTraceId = genId();
     const text = (overrideText ?? inputTextRef.current).trim();
     const streamTransport = options?.streamTransport;
     const isResumeTransport = streamTransport?.kind === "resume";
@@ -3437,6 +3445,13 @@ export function ChatView({
     // previously-captured attachment set instead of the live composer state.
     // When omitted we fall back to the composer's pending attachments.
     const attachmentsToSend = attachmentsOverride ?? pendingAttachments;
+    logger.info("ChatTiming", "send_clicked", {
+      traceId: sendTraceId,
+      convId: targetConvId || activeConvIdRef.current || "",
+      textLen: text.length,
+      attachments: attachmentsToSend.length,
+      transport: isResumeTransport ? "resume" : "new_turn",
+    });
     if (!text && attachmentsToSend.length === 0 && !isResumeTransport) return;
     const pendingUploads = attachmentsToSend.filter(isAttachmentStillPreparing);
     if (pendingUploads.length > 0) {
@@ -3837,6 +3852,7 @@ export function ChatView({
       // leaves this breadcrumb on disk; logger.flush is internally re-entrant
       // safe and swallows IPC errors.
       logger.info("Chat", "task_started", {
+        traceId: sendTraceId,
         convId,
         mode: effectiveMode,
         endpoint: typeof selectedEndpoint === "string" ? selectedEndpoint : "auto",
@@ -3845,6 +3861,7 @@ export function ChatView({
         attachments: attachmentsToSend.length,
         textLen: text.length,
         orgMode: Boolean(orgMode && selectedOrgId),
+        elapsedMs: Math.round(performance.now() - sendTimingStartedAt),
       });
       void logger.flush();
 
@@ -3867,6 +3884,15 @@ export function ChatView({
       // /api/chat/resume（用 since_seq，仅在**同一** turn 内 replay）。POST
       // /api/chat 永远是开新 turn，因此这里固定不带 Last-Event-ID。
       const _headers: Record<string, string> = { "Content-Type": "application/json" };
+      const requestBody = JSON.stringify(body);
+      const fetchStartedAt = performance.now();
+      logger.info("ChatTiming", "before_fetch", {
+        traceId: sendTraceId,
+        convId,
+        transport: isResumeTransport ? "resume" : "new_turn",
+        elapsedMs: Math.round(fetchStartedAt - sendTimingStartedAt),
+        bodyBytes: isResumeTransport ? 0 : new Blob([requestBody]).size,
+      });
       let response = isResumeTransport
         ? await safeFetch(streamTransport!.url, {
             method: "GET",
@@ -3875,9 +3901,18 @@ export function ChatView({
         : await safeFetch(`${apiBase}/api/chat`, {
             method: "POST",
             headers: _headers,
-            body: JSON.stringify(body),
+            body: requestBody,
             signal: abort.signal,
           });
+      const responseHeadersAt = performance.now();
+      logger.info("ChatTiming", "response_headers", {
+        traceId: sendTraceId,
+        convId,
+        status: response.status,
+        fetchMs: Math.round(responseHeadersAt - fetchStartedAt),
+        elapsedMs: Math.round(responseHeadersAt - sendTimingStartedAt),
+        contentType: response.headers.get("content-type") || "",
+      });
 
       // 方案3 STEER: desktop 默认策略是 steer。当前端以为会话空闲、但后端
       // 的上一轮 turn 其实还在跑时（典型场景：SSE 断连或页面重载后丢了流），
@@ -3928,12 +3963,12 @@ export function ChatView({
           // response 现在是 resume 的 SSE 流 → 落入下方 reader 循环正常处理续写。
         } else {
           // steer_failed：作为全新消息重发一次（此时旧任务已结束，应能正常开流）。
-          response = await safeFetch(`${apiBase}/api/chat`, {
-            method: "POST",
-            headers: _headers,
-            body: JSON.stringify(body),
-            signal: abort.signal,
-          });
+           response = await safeFetch(`${apiBase}/api/chat`, {
+             method: "POST",
+             headers: _headers,
+             body: requestBody,
+             signal: abort.signal,
+           });
         }
       }
 
@@ -4077,6 +4112,8 @@ export function ChatView({
       let currentThinkingContent = "";
       let pendingCompressedInfo: { beforeTokens: number; afterTokens: number } | null = null;
       let sseParseFailures = 0;
+      let firstSseLogged = false;
+      let firstContextUsageLogged = false;
       let sawSecurityConfirm = false;
       const hasAssistantMessagePayload = () =>
         Boolean(
@@ -4187,6 +4224,16 @@ export function ChatView({
           try {
             const event: StreamEvent = JSON.parse(data);
             sseParseFailures = 0;
+            if (!firstSseLogged) {
+              firstSseLogged = true;
+              logger.info("ChatTiming", "first_sse", {
+                traceId: sendTraceId,
+                convId,
+                eventType: event.type,
+                afterHeadersMs: Math.round(performance.now() - responseHeadersAt),
+                elapsedMs: Math.round(performance.now() - sendTimingStartedAt),
+              });
+            }
             if (frameSeq > 0 && thisConvId) {
               rememberSeq(thisConvId, frameSeq);
             }
@@ -4203,6 +4250,15 @@ export function ChatView({
                   ));
                 }
                 continue;
+              case "preparation_stage": {
+                const preparationLabels = {
+                  analyzing_intent: t("chat.preparingIntent", "正在分析需求..."),
+                  building_context: t("chat.preparingContext", "正在检索记忆并准备上下文..."),
+                  ready: t("chat.preparationReady", "准备完成，正在启动模型..."),
+                };
+                currentStreamStatus = preparationLabels[event.stage];
+                break;
+              }
               case "org_command_started": {
                 const orgId = (event as any).org_id as string | undefined;
                 const commandId = (event as any).command_id as string | undefined;
@@ -4309,6 +4365,7 @@ export function ChatView({
                 break;
               }
               case "thinking_start":
+                currentStreamStatus = t("chat.thinking", "思考中...");
                 thinkingStartTime = Date.now();
                 currentThinkingContent = "";
                 if (!currentChainGroup) {
@@ -4367,10 +4424,29 @@ export function ChatView({
               case "context_usage": {
                 const eventConversationId: string = event.conversation_id || convId;
                 if (eventConversationId === convId && isTargetConversationActive()) {
+                  const scopeId = event.context_scope_id || `${eventConversationId}:legacy`;
+                  const isProvider = event.source === "provider" && event.usage_estimated !== true;
+                  const previousSource = contextUsageSourceRef.current;
+                  if (previousSource.scopeId === scopeId && previousSource.provider && !isProvider) {
+                    break;
+                  }
+                  if (!firstContextUsageLogged) {
+                    firstContextUsageLogged = true;
+                    logger.info("ChatTiming", "first_context_usage", {
+                      traceId: sendTraceId,
+                      convId,
+                      source: event.source || "unknown",
+                      estimated: !isProvider,
+                      contextTokens: event.history_context_tokens ?? event.context_tokens,
+                      elapsedMs: Math.round(performance.now() - sendTimingStartedAt),
+                    });
+                  }
+                  contextUsageSourceRef.current = { scopeId, provider: isProvider };
                   const ctxTokens = event.history_context_tokens ?? event.context_tokens;
                   const ctxLimit = event.history_context_limit ?? event.context_limit;
                   if (typeof ctxTokens === "number" && Number.isFinite(ctxTokens)) {
                     setContextTokens(Math.max(0, ctxTokens));
+                    setContextUsageEstimated(!isProvider);
                   }
                   if (typeof ctxLimit === "number" && Number.isFinite(ctxLimit) && ctxLimit > 0) {
                     setContextLimit(ctxLimit);
@@ -5161,6 +5237,7 @@ export function ChatView({
                   if (isTargetConversationActive()) {
                     if (typeof ctxTokens === "number") setContextTokens(Math.max(0, ctxTokens));
                     if (typeof ctxLimit === "number" && ctxLimit > 0) setContextLimit(ctxLimit);
+                    setContextUsageEstimated(Boolean(event.usage.usage_estimated));
                   }
                   const isEstimatedUsage = Boolean(event.usage.usage_estimated);
                   const inTokens = isEstimatedUsage ? event.usage.input_tokens : (event.usage.billable_input_tokens ?? event.usage.input_tokens);
@@ -8119,7 +8196,7 @@ export function ChatView({
                   return (
                     <div className="chatContextUsage" data-testid="chat-context-usage">
                       <span className={`chatContextUsageText ${toneClass}`}>
-                        {formatContextTokens(contextTokens)} /
+                        {contextUsageEstimated ? "~" : ""}{formatContextTokens(contextTokens)} /
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button

@@ -10,6 +10,7 @@ export const STREAM_PROTOCOL_VERSION = 1;
 export const StreamEventType = {
   // ── Lifecycle ──
   HEARTBEAT: "heartbeat",
+  PREPARATION_STAGE: "preparation_stage",
   ITERATION_START: "iteration_start",
   DONE: "done",
   ERROR: "error",

@@ -123,6 +123,9 @@ class IntentResult:
     evidence_recommended: bool = False
     requires_project_context: bool = False
     risk_level_hint: RiskLevelHint = RiskLevelHint.NONE
+    compiler_source: str = ""
+    compiler_fallback_reason: str = ""
+    compiler_fallback_detail: str = ""
 
 
 # Default fallback: behaves identically to the pre-optimization flow
@@ -136,64 +139,71 @@ _DEFAULT_RESULT = IntentResult(
     evidence_required=False,
 )
 
+INTENT_ANALYZER_MAX_TOKENS = 384
+
 INTENT_ANALYZER_SYSTEM = """\
-你是 Intent Analyzer。根据用户消息判断意图和复杂度，只输出 YAML，不要解释。
+你是 Intent Analyzer。分析用户的实际请求，只输出紧凑 YAML（无代码块、无解释）。
 
-意图类型：
-- task: 需要执行操作（写文件、搜索、查看目录、创建、发送消息、运行命令等）
-- query: 知识问答，不需要工具就能回答
-- chat: 纯闲聊、寒暄、感谢、告别
-- follow_up: 追问或修改上一轮结果
-- command: 以 / 开头的系统指令
+intent: task=需实际操作外部系统；query=无工具知识问答；chat=闲聊；follow_up=追问/修改上轮结果；command=/指令。
+task_type: question|action|creation|analysis|reminder|compound|other。
+tool_hints: File System|Browser|Web Search|IM Channel|Desktop|Agent|Organization|Config。
+capability_scope: none|files|web|browser|plugin|skill|mcp|im|desktop|org|code。
 
-task_type 可选值: question/action/creation/analysis/reminder/compound/other
+每次必须输出：
+intent: <intent>
+task_type: <task_type>
+goal: <最多80字>
+tool_hints: [<必需的工具类别>]
+memory_keywords: [<最多5个检索词>]
+capability_scope: [<所需能力>]
 
-tool_hints 可选值: File System, Browser, Web Search, IM Channel, Desktop, Agent, Organization, Config（空列表=仅基础工具）
-
-complexity 字段说明（仅 intent=task 时需要填写，其他意图可省略）：
-- destructive: 操作是否不可逆或影响系统关键资源。true 的典型场景：删除文件/数据、格式化磁盘、DROP TABLE、force push、修改系统配置文件（如 hosts）、终止进程、覆盖重要数据等
-- scope: narrow=仅影响单个文件或局部区域，broad=影响多文件/多模块/全局/整个项目
-- suggest_plan: 是否建议先制定计划再执行。当 destructive=true 或 scope=broad 时通常为 true
-
-输出格式（严格遵循）：
-```yaml
-intent: <类型>
-task_type: <类型>
-goal: <一句话描述>
-tool_hints: [<工具分类>]
-memory_keywords: [<记忆关键词>]
-capability_scope: [none|files|web|browser|plugin|skill|mcp|im|desktop|org|code]
-prompt_depth: <fast|minimal|standard|full>
-memory_scope: <none|pinned_only|relevant|full>
+仅当值为 true/broad 或需要覆盖默认值时输出：
+evidence_required: true
+destructive: true
+scope: broad
+prompt_depth: fast|minimal|standard|full
+memory_scope: none|pinned_only|relevant|full
 catalog_scope: [tools|skills|plugins|mcp|memory|project]
-requires_tools: <true/false>
-evidence_required: <true/false>
-requires_project_context: <true/false>
-risk_level_hint: <none|low|medium|high>
-destructive: <true/false>
-scope: <narrow/broad>
-suggest_plan: <true/false>
-```
+requires_tools: true
+requires_project_context: true
+suggest_plan: true
 
-示例：
-用户: "帮我查看项目里有哪些Python文件" → intent: task, task_type: action, goal: 列出项目中的Python文件, tool_hints: [File System], destructive: false, scope: narrow, suggest_plan: false
-用户: "帮我把所有 .bak 文件删掉" → intent: task, task_type: action, goal: 删除所有.bak文件, tool_hints: [File System], destructive: true, scope: broad, suggest_plan: true
-用户: "帮我修改 /etc/hosts" → intent: task, task_type: action, goal: 修改hosts文件, tool_hints: [File System], destructive: true, scope: narrow, suggest_plan: true
-用户: "git push --force origin main" → intent: task, task_type: action, goal: 强制推送到main分支, tool_hints: [File System], destructive: true, scope: broad, suggest_plan: true
-用户: "Python的GIL是什么" → intent: query, task_type: question, goal: 解释Python GIL机制, tool_hints: []
-用户: "你好" → intent: chat, task_type: other, goal: 用户打招呼, tool_hints: []
-用户: "改成UTF-8编码" → intent: follow_up, task_type: action, goal: 修改编码为UTF-8, tool_hints: [File System], destructive: false, scope: narrow, suggest_plan: false
+默认：query/chat 用 minimal+pinned_only，其他用 standard+relevant；requires_tools 由 task 且存在
+tool_hints/capability_scope 推导；destructive=false；scope=narrow。
 
-关键判断原则：
-- 数学计算、日期时间、概念解释、常识问答 → 一律是 query，不是 task
-- 只有需要**实际操作外部系统**（读写文件、执行命令、搜索网络、发送消息）的请求才是 task
-- 不确定时，如果不需要工具就能回答，选 query
-- destructive 判断要基于语义分析，理解操作的实际后果，而不是简单匹配关键词
-- prompt_depth 只表示需要注入多少系统上下文；简单问答用 minimal，真实项目/文件/插件任务才用 standard/full
-- 只要回答需要核对外部事实（GitHub/issue/网页/技能仓库/日志/当前代码/配置/API 状态/下载/排查/验证），evidence_required 必须为 true；这不是限制任务，而是防止无证据结论
-- add/remove/delete 等词只有在语义上要求修改外部系统时才表示风险；算术、事实修正、假设性安全讨论不是风险任务
+原则：
+- 数学/日期/概念/常识是 query；只有实际读写、执行、搜索、发送等外部操作才是 task。
+- 需查 GitHub/issue/网页/日志/当前代码/配置/API/下载/验证时，evidence_required=true。
+- 风险必须按实际后果判断，不得只匹配 add/remove/delete 字样。
 
-重要：你必须分析用户的实际消息内容来判断意图，不要复制上面的示例。"""
+示例（只演示格式，必须重新分析实际消息）：
+问：Python的GIL是什么
+intent: query
+task_type: question
+goal: 解释Python GIL
+tool_hints: []
+memory_keywords: [Python, GIL]
+capability_scope: [none]
+
+问：查福州明天温度并写query.py
+intent: task
+task_type: compound
+goal: 查天气并写代码
+tool_hints: [Web Search, File System]
+memory_keywords: [福州, 明天天气, query.py]
+capability_scope: [web, files, code]
+evidence_required: true
+
+问：删除项目内所有.bak
+intent: task
+task_type: action
+goal: 删除.bak文件
+tool_hints: [File System]
+memory_keywords: [.bak]
+capability_scope: [files, code]
+destructive: true
+scope: broad
+"""
 
 
 def _strip_thinking_tags(text: str) -> str:
@@ -478,7 +488,11 @@ def _try_fast_query_shortcut(message: str) -> IntentResult | None:
     if _CONTEXT_DEPENDENT_RE.search(stripped):
         return None
     if _looks_like_tool_action_request(stripped):
-        return _make_tool_action_result(stripped)
+        # Action requests need the structured analyzer because even short text
+        # can span multiple capability domains (for example web research plus
+        # writing a file). The rule is only an exclusion guard for the QUERY
+        # shortcut; it must not synthesize a reduced intent on the LLM's behalf.
+        return None
     if (
         _QUERY_PATTERNS.match(stripped)
         or _DIRECT_SHORT_ANSWER_RE.match(stripped)
@@ -604,6 +618,7 @@ class IntentAnalyzer:
             response = await self.brain.compiler_think(
                 prompt=message,
                 system=INTENT_ANALYZER_SYSTEM,
+                max_tokens=INTENT_ANALYZER_MAX_TOKENS,
             )
 
             raw_output = _strip_thinking_tags(response.content).strip() if response.content else ""
@@ -612,7 +627,11 @@ class IntentAnalyzer:
                 return _make_default(message)
 
             logger.info(f"[IntentAnalyzer] Raw output: {raw_output[:200]}")
-            return _parse_intent_output(raw_output, message)
+            result = _parse_intent_output(raw_output, message)
+            result.compiler_source = getattr(response, "compiler_source", "")
+            result.compiler_fallback_reason = getattr(response, "compiler_fallback_reason", "")
+            result.compiler_fallback_detail = getattr(response, "compiler_fallback_detail", "")
+            return result
 
         except Exception as e:
             logger.warning(f"[IntentAnalyzer] LLM analysis failed: {e}, using default")

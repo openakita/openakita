@@ -18,6 +18,7 @@ class StreamEventType(StrEnum):
 
     # ── Lifecycle ──
     HEARTBEAT = "heartbeat"
+    PREPARATION_STAGE = "preparation_stage"
     ITERATION_START = "iteration_start"
     DONE = "done"
     ERROR = "error"
@@ -79,6 +80,9 @@ def normalize_stream_event(event: dict | None) -> dict:
     payload = dict(event or {})
     event_type = str(payload.get("type", ""))
     payload.setdefault("protocol_version", STREAM_PROTOCOL_VERSION)
+
+    if event_type == StreamEventType.PREPARATION_STAGE.value:
+        payload.setdefault("stage", "analyzing_intent")
 
     if event_type in (StreamEventType.TOOL_CALL_START.value, StreamEventType.TOOL_CALL_END.value):
         payload.setdefault("tool_name", payload.get("tool", ""))

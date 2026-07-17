@@ -53,6 +53,54 @@ from .token_tracking import (
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_compiler_error(error: str, max_chars: int = 300) -> str:
+    """Return a single-line, secret-redacted compiler failure summary for the UI."""
+    from ..utils.redaction import redact_text
+
+    sanitized = redact_text(str(error or ""))
+    return " ".join(sanitized.split())[:max_chars]
+
+
+def _classify_compiler_access_error(error: str) -> str:
+    text = str(error or "").lower()
+    if any(marker in text for marker in ("401", "403", "unauthorized", "authentication", "api key")):
+        return "authentication_failed"
+    if any(marker in text for marker in ("429", "rate limit", "rate_limit", "quota")):
+        return "rate_limited"
+    if any(marker in text for marker in ("timeout", "timed out", "connection", "network", "dns")):
+        return "network_unreachable"
+    if any(marker in text for marker in ("model_not_found", "model not found", "unknown model", "404")):
+        return "model_unavailable"
+    return "all_endpoints_failed"
+
+
+def _compiler_configuration_fallback_reason() -> tuple[str, str]:
+    """Explain why no compiler client could be constructed from saved configuration."""
+    config_path = get_default_config_path()
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        configured = data.get("compiler_endpoints", [])
+        if not isinstance(configured, list) or not configured:
+            return "not_configured", "没有配置提示词编译模型"
+        enabled = [row for row in configured if isinstance(row, dict) and row.get("enabled", True)]
+        if not enabled:
+            names = ", ".join(
+                _sanitize_compiler_error(str(row.get("name") or row.get("model") or "未命名"), 60)
+                for row in configured
+                if isinstance(row, dict)
+            )
+            detail = "已配置的提示词编译模型全部被禁用"
+            return "all_disabled", f"{detail}：{names}" if names else detail
+        names = ", ".join(
+            _sanitize_compiler_error(str(row.get("name") or row.get("model") or "未命名"), 60)
+            for row in enabled
+        )
+        detail = "已启用的提示词编译模型配置无效，未能创建访问客户端"
+        return "invalid_configuration", f"{detail}：{names}" if names else detail
+    except Exception as exc:
+        return "invalid_configuration", _sanitize_compiler_error(str(exc))
+
+
 @dataclass
 class Response:
     """LLM 响应（向后兼容）"""
@@ -61,6 +109,9 @@ class Response:
     tool_calls: list[dict] = field(default_factory=list)
     stop_reason: str = ""
     usage: dict = field(default_factory=dict)
+    compiler_source: str = ""
+    compiler_fallback_reason: str = ""
+    compiler_fallback_detail: str = ""
 
 
 @dataclass
@@ -94,6 +145,7 @@ class Brain:
         )
         # Compiler circuit breaker (P-RC-4 extraction).
         self._compiler_breaker = CompilerCircuitBreaker()
+        self._compiler_last_error = ""
 
         # max_tokens=0 表示"使用合理默认值"：
         # - 对 OpenAI 兼容 API：使用端点配置值或兜底 16384（部分 API 如 NVIDIA NIM 默认极低）
@@ -189,10 +241,12 @@ class Brain:
 
     def _compiler_on_success(self) -> None:
         """Record a compiler success on the breaker."""
+        self._compiler_last_error = ""
         self._compiler_breaker.on_success()
 
     def _compiler_on_failure(self, error_str: str = "") -> None:
         """Record a compiler failure on the breaker."""
+        self._compiler_last_error = _sanitize_compiler_error(error_str)
         self._compiler_breaker.on_failure(error_str)
 
     def reload_compiler_client(self) -> bool:
@@ -215,6 +269,7 @@ class Brain:
                 logger.info("Compiler endpoints cleared (none configured)")
             # Reset breaker on config reload so a fixed API key recovers.
             self._compiler_breaker.force_reset()
+            self._compiler_last_error = ""
             return True
         except Exception as e:
             logger.warning(f"Failed to reload compiler client: {e}")
@@ -244,6 +299,8 @@ class Brain:
         messages = [Message(role="user", content=[TextBlock(text=prompt)])]
 
         _source = "compiler"
+        _fallback_reason = ""
+        _fallback_detail = ""
         if self._compiler_available():
             try:
                 response = await self._compiler_client.chat(
@@ -255,6 +312,7 @@ class Brain:
                 self._compiler_on_success()
                 self._record_usage(response)
                 result = self._llm_response_to_response(response)
+                result.compiler_source = _source
                 self._dump_llm_request(system, messages, [], caller="compiler_think")
                 self._dump_llm_response(
                     response,
@@ -264,7 +322,18 @@ class Brain:
                 return result
             except Exception as e:
                 self._compiler_on_failure(str(e))
+                _fallback_reason = _classify_compiler_access_error(str(e))
+                _fallback_detail = self._compiler_last_error
                 logger.warning(f"Compiler LLM failed, falling back to main model: {e}")
+        elif self._compiler_client is None:
+            _fallback_reason, _fallback_detail = _compiler_configuration_fallback_reason()
+        else:
+            _fallback_reason = (
+                "authentication_failed"
+                if self._compiler_breaker.auth_failed
+                else "circuit_open"
+            )
+            _fallback_detail = self._compiler_last_error
 
         # 回退到主模型
         # 主模型可能是 reasoning 模型（如 mimo-v2-pro），即使 enable_thinking=False
@@ -290,7 +359,11 @@ class Brain:
             caller=f"compiler_think({_source})",
             request_id=req_id,
         )
-        return self._llm_response_to_response(response)
+        result = self._llm_response_to_response(response)
+        result.compiler_source = _source
+        result.compiler_fallback_reason = _fallback_reason or "all_endpoints_failed"
+        result.compiler_fallback_detail = _fallback_detail
+        return result
 
     async def think_lightweight(
         self,

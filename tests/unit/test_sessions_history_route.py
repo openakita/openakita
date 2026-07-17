@@ -5,6 +5,18 @@ from openakita.api.routes.sessions import router
 from openakita.sessions import SessionManager
 
 
+class _RecordingAgentPool:
+    def __init__(self, *, error: Exception | None = None):
+        self.calls: list[tuple[str, str]] = []
+        self.error = error
+
+    async def get_or_create(self, session_id, profile):
+        self.calls.append((session_id, profile.id))
+        if self.error is not None:
+            raise self.error
+        return object()
+
+
 def _stale_todo() -> dict:
     return {
         "id": "plan_703",
@@ -318,6 +330,7 @@ def test_create_session_persists_empty_conversation_as_list_item(tmp_path):
     body = resp.json()
     assert body["ok"] is True
     assert body["created"] is True
+    assert body["agentPrewarmed"] is False
     assert body["id"] == "draft1"
     assert body["title"] == "新对话"
     assert body["titleGenerated"] is False
@@ -353,6 +366,44 @@ def test_create_session_persists_empty_conversation_as_list_item(tmp_path):
     assert persisted is not None
     assert persisted.get_metadata("conversation_title") == "新对话"
     assert persisted.context.agent_profile_id == "research"
+
+
+def test_create_session_prewarms_agent_once_for_new_desktop_conversation(tmp_path):
+    app = FastAPI()
+    app.include_router(router)
+    app.state.session_manager = SessionManager(storage_path=tmp_path)
+    pool = _RecordingAgentPool()
+    app.state.agent_pool = pool
+    client = TestClient(app)
+
+    first = client.post("/api/sessions", json={"conversationId": "draft-prewarm"})
+    second = client.post("/api/sessions", json={"conversationId": "draft-prewarm"})
+
+    assert first.status_code == 200
+    assert first.json()["agentPrewarmed"] is True
+    assert second.status_code == 200
+    assert second.json()["created"] is False
+    assert second.json()["agentPrewarmed"] is False
+    assert pool.calls == [("draft-prewarm", "default")]
+
+
+def test_create_session_succeeds_when_agent_prewarm_fails(tmp_path):
+    app = FastAPI()
+    app.include_router(router)
+    app.state.session_manager = SessionManager(storage_path=tmp_path)
+    pool = _RecordingAgentPool(error=RuntimeError("prewarm failed"))
+    app.state.agent_pool = pool
+
+    response = TestClient(app).post(
+        "/api/sessions",
+        json={"conversationId": "draft-prewarm-failure"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["created"] is True
+    assert response.json()["agentPrewarmed"] is False
+    assert pool.calls == [("draft-prewarm-failure", "default")]
 
 
 def test_update_session_title_does_not_create_missing_session_with_legacy_query(tmp_path):
