@@ -167,7 +167,10 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
 
   const useMediaTile = (mediaKind === "image" || mediaKind === "video") && !mediaError;
 
-  const contextMenu = menuOpen && (
+  // Keep viewport coordinates and the positioning containing block aligned.
+  // Drawer animations use transforms, which otherwise make an inline fixed
+  // descendant relative to the drawer instead of the viewport.
+  const contextMenu = menuOpen && createPortal(
     <div
       ref={menuRef}
       style={{
@@ -234,7 +237,8 @@ export function FileAttachmentCard({ file, apiBaseUrl, inline = false }: FileAtt
           </button>
         </>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 
   // test17 item 2: render the preview to a body-level portal. A plain
