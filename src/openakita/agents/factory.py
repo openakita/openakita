@@ -541,7 +541,13 @@ class AgentFactory:
                 _GlobalStoreSource(global_store, isolated_mm._current_owner)
             )
 
-        agent.memory_manager = isolated_mm
+        rebind_memory_manager = getattr(agent, "rebind_memory_manager", None)
+        if callable(rebind_memory_manager):
+            rebind_memory_manager(isolated_mm)
+        else:
+            # Compatibility for third-party Agent implementations that have
+            # not adopted the unified rebinding hook yet.
+            agent.memory_manager = isolated_mm
 
         logger.info(
             f"Memory isolation applied: profile={profile.id}, "

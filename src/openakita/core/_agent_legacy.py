@@ -1240,6 +1240,66 @@ class Agent:
 
         logger.info(f"Agent '{self.name}' created (with refactored sub-modules)")
 
+    def rebind_memory_manager(self, memory_manager: Any) -> None:
+        """Replace the memory manager across every long-lived Agent subsystem.
+
+        AgentFactory applies profile memory isolation after ``initialize()``.
+        Several subsystems retain the manager they received during ``__init__``,
+        so assigning only ``agent.memory_manager`` leaves prompt retrieval and
+        reasoning on the old shared store.
+        """
+        if memory_manager is None:
+            raise ValueError("memory_manager must not be None")
+
+        self.memory_manager = memory_manager
+
+        profile_manager = getattr(self, "profile_manager", None)
+        if profile_manager is not None:
+            memory_manager.profile_manager = profile_manager
+
+        memory_backends = getattr(self, "_memory_backends", None)
+        if memory_backends is not None and hasattr(memory_manager, "set_plugin_backends"):
+            memory_manager.set_plugin_backends(memory_backends)
+
+        plugin_manager = getattr(self, "_plugin_manager", None)
+        hook_registry = getattr(plugin_manager, "hook_registry", None)
+        retrieval_engine = getattr(memory_manager, "retrieval_engine", None)
+        if retrieval_engine is not None and hook_registry is not None:
+            retrieval_engine._plugin_hooks = hook_registry
+
+        prompt_assembler = getattr(self, "prompt_assembler", None)
+        if prompt_assembler is not None:
+            prompt_assembler._memory_manager = memory_manager
+
+        reasoning_engine = getattr(self, "reasoning_engine", None)
+        if reasoning_engine is not None:
+            reasoning_engine._memory_manager = memory_manager
+
+        response_handler = getattr(self, "response_handler", None)
+        if response_handler is not None:
+            response_handler._memory_manager = memory_manager
+
+        proactive_engine = getattr(self, "proactive_engine", None)
+        if proactive_engine is not None:
+            proactive_engine.memory_manager = memory_manager
+
+        task_executor = getattr(self, "_task_executor", None)
+        if task_executor is not None:
+            task_executor.memory_manager = memory_manager
+
+        plugin_host_refs = getattr(plugin_manager, "_external_host_refs", None)
+        if isinstance(plugin_host_refs, dict):
+            plugin_host_refs["memory_manager"] = memory_manager
+            plugin_host_refs["external_retrieval_sources"] = (
+                retrieval_engine._external_sources if retrieval_engine is not None else []
+            )
+
+        if hasattr(self, "_system_prompt_cache"):
+            self._invalidate_system_prompt_cache("memory manager rebound")
+        context = getattr(self, "_context", None)
+        if context is not None and hasattr(context, "system"):
+            context.system = self._build_system_prompt()
+
     # 永远不会因为 intent-driven defer 被剔除的工具分类。
     #
     # 这两类是 OpenAkita 在每一轮里都需要的"基础能力"：
