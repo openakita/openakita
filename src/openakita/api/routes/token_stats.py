@@ -19,6 +19,7 @@ from fastapi import APIRouter, Query, Request
 
 from openakita.config import settings
 from openakita.core.context_stats import (
+    ContextUsageSnapshot,
     context_snapshot_from_dict,
     get_context_snapshot,
     update_context_snapshot,
@@ -30,6 +31,62 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/stats/tokens", tags=["token_stats"])
 
 _last_db_error: dict[str, str] = {}
+
+
+def _refresh_persisted_context_limit(
+    snapshot: ContextUsageSnapshot,
+) -> bool:
+    """Reconcile a persisted usage snapshot with the current endpoint config."""
+    try:
+        from openakita.api.routes.config import _context_length_payload, _get_endpoint_manager
+
+        endpoints = _get_endpoint_manager().list_endpoints("endpoints")
+        selected = None
+        if snapshot.endpoint_name:
+            selected = next(
+                (
+                    endpoint
+                    for endpoint in endpoints
+                    if str(endpoint.get("name") or "") == snapshot.endpoint_name
+                ),
+                None,
+            )
+        if selected is None and (snapshot.provider or snapshot.model):
+            selected = next(
+                (
+                    endpoint
+                    for endpoint in endpoints
+                    if (not snapshot.provider or endpoint.get("provider") == snapshot.provider)
+                    and (not snapshot.model or endpoint.get("model") == snapshot.model)
+                ),
+                None,
+            )
+        if selected is None:
+            return False
+        current = _context_length_payload(selected)
+    except Exception:
+        logger.debug("[TokenStats] context config reconciliation failed", exc_info=True)
+        return False
+
+    context_limit = int(current.get("context_limit") or 0)
+    if context_limit <= 0:
+        return False
+
+    values = {
+        "context_limit": context_limit,
+        "remaining_tokens": max(context_limit - snapshot.context_tokens, 0),
+        "percent": round((snapshot.context_tokens / context_limit) * 100, 1),
+        "endpoint_name": current.get("endpoint_name"),
+        "provider": current.get("provider"),
+        "model": current.get("model"),
+        "raw_context_window": current.get("context_window"),
+        "effective_context_window": current.get("effective_context_window"),
+        "output_reserve": current.get("output_reserve"),
+    }
+    changed = any(getattr(snapshot, key) != value for key, value in values.items())
+    for key, value in values.items():
+        setattr(snapshot, key, value)
+    return changed
 
 
 def _db_unavailable_payload() -> dict[str, object]:
@@ -446,6 +503,9 @@ async def context(request: Request, conversation_id: str | None = Query(default=
                     session.get_metadata("context_usage") if session is not None else None
                 )
                 if persisted is not None:
+                    if _refresh_persisted_context_limit(persisted):
+                        session.set_metadata("context_usage", persisted.to_dict())
+                        session_manager.mark_dirty()
                     return persisted.to_dict()
             except Exception as e:
                 logger.debug("[TokenStats] persisted context lookup failed: %s", e)

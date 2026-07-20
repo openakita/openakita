@@ -5068,7 +5068,6 @@ function MainApp() {
               feedbackModalOpen={bugReportOpen}
               envDraft={envDraft}
               setEnvDraft={setEnvDraft}
-              saveEnvKeys={saveEnvKeys}
               onStartService={async () => {
                 const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
                 if (!effectiveWsId) {

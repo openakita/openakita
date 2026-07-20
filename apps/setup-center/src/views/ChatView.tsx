@@ -960,7 +960,6 @@ export function ChatView({
   feedbackModalOpen = false,
   envDraft = {},
   setEnvDraft,
-  saveEnvKeys,
 }: {
   serviceRunning: boolean;
   endpoints: EndpointSummary[];
@@ -972,7 +971,6 @@ export function ChatView({
   feedbackModalOpen?: boolean;
   envDraft?: EnvMap;
   setEnvDraft?: (updater: (prev: EnvMap) => EnvMap) => void;
-  saveEnvKeys?: (keys: string[]) => Promise<{ restartRequired?: boolean; hotReloadable?: boolean } | unknown>;
 }) {
   // multiAgentEnabled is currently observed by App but not consumed inside ChatView
   // (single-agent only); accept the prop for forward compat to avoid runtime warnings.
@@ -1500,6 +1498,7 @@ export function ChatView({
   // ── 上下文占用追踪 ──
   const [contextTokens, setContextTokens] = useState(0);
   const [contextLimit, setContextLimit] = useState(0);
+  const [contextWindow, setContextWindow] = useState(0);
   const [contextUsageEstimated, setContextUsageEstimated] = useState(false);
   const [contextEditOpen, setContextEditOpen] = useState(false);
   const [editingContextLimit, setEditingContextLimit] = useState("");
@@ -2091,6 +2090,9 @@ export function ChatView({
       if (typeof data.context_limit === "number" && Number.isFinite(data.context_limit) && data.context_limit > 0) {
         setContextLimit(data.context_limit);
       }
+      if (typeof data.effective_context_window === "number" && Number.isFinite(data.effective_context_window) && data.effective_context_window > 0) {
+        setContextWindow(data.effective_context_window);
+      }
     } catch {
       // ignore context stat refresh errors
     }
@@ -2111,37 +2113,26 @@ export function ChatView({
 
   const openContextEditor = useCallback(() => {
     const draftLimit = Number(envDraft.CONTEXT_MAX_WINDOW || "0");
-    const preferredLimit = contextLimit > 0 ? contextLimit : (Number.isFinite(draftLimit) ? draftLimit : 0);
+    const configuredLimit = Number.isFinite(draftLimit) && draftLimit > 0 ? draftLimit : 0;
+    const preferredLimit = configuredLimit || contextWindow || contextLimit;
     setEditingContextLimit(String(Math.max(preferredLimit, 1000)));
     setContextEditOpen(true);
-  }, [contextLimit, envDraft]);
+  }, [contextLimit, contextWindow, envDraft]);
 
   const saveContextLimit = useCallback(async () => {
     const parsed = Number(editingContextLimit);
     const nextLimit = Number.isFinite(parsed) ? Math.round(parsed) : 0;
     if (nextLimit < 1000) {
-      notifyError(t("chat.contextEditInvalid", "上下文长度至少为 1000 tokens"));
+      notifyError(t("chat.contextEditInvalid", "上下文窗口上限至少为 1000 tokens"));
       return;
     }
 
     setContextSaving(true);
     const nextValue = String(nextLimit);
-    let restartRequired = false;
 
     try {
       if (setEnvDraft) {
         setEnvDraft((prev) => ({ ...prev, CONTEXT_MAX_WINDOW: nextValue }));
-      }
-
-      if (saveEnvKeys) {
-        try {
-          const result = await saveEnvKeys(["CONTEXT_MAX_WINDOW"]);
-          if (result && typeof result === "object" && "restartRequired" in result) {
-            restartRequired = Boolean((result as { restartRequired?: boolean }).restartRequired);
-          }
-        } catch (err) {
-          logger.warn("Chat", "saveEnvKeys failed before direct env write", { error: String(err) });
-        }
       }
 
       const envRes = await safeFetch(`${apiBaseUrl}/api/config/env`, {
@@ -2151,12 +2142,14 @@ export function ChatView({
       });
       if (!envRes.ok) throw new Error(`HTTP ${envRes.status}`);
       const envData = await envRes.json().catch(() => ({}));
-      restartRequired = restartRequired || Boolean(envData.restart_required);
+      if (envData.status && envData.status !== "ok") {
+        throw new Error(String(envData.error || envData.status));
+      }
 
-      setContextLimit(nextLimit);
+      setContextWindow(nextLimit);
       setContextEditOpen(false);
-      notifyInfo(t("chat.contextEditSaved", "上下文长度已更新"));
-      if (restartRequired) {
+      notifyInfo(t("chat.contextEditSaved", "上下文窗口上限已更新"));
+      if (envData.restart_required) {
         notifyInfo(t("chat.contextEditRestartHint", "该配置在当前版本可能需要重启服务后完全生效"));
       }
       await refreshContextStats(activeConvId);
@@ -2166,7 +2159,7 @@ export function ChatView({
     } finally {
       setContextSaving(false);
     }
-  }, [editingContextLimit, setEnvDraft, saveEnvKeys, apiBaseUrl, t, refreshContextStats, activeConvId]);
+  }, [editingContextLimit, setEnvDraft, apiBaseUrl, t, refreshContextStats, activeConvId]);
 
   useEffect(() => {
     if (!visible) return;
@@ -8438,9 +8431,9 @@ export function ChatView({
       <Dialog open={contextEditOpen} onOpenChange={(open) => { if (!contextSaving) setContextEditOpen(open); }}>
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
-            <DialogTitle>{t("chat.contextEditTitle", "编辑上下文长度")}</DialogTitle>
+            <DialogTitle>{t("chat.contextEditTitle", "编辑上下文窗口上限")}</DialogTitle>
             <DialogDescription>
-              {t("chat.contextEditDesc", "设置当前聊天使用的最大上下文长度（tokens）。")}
+              {t("chat.contextEditDesc", "设置所有聊天使用的上下文窗口上限（tokens）。")}
             </DialogDescription>
           </DialogHeader>
           <div className="chatContextEditBody">

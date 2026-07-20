@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from openakita.api.routes.token_stats import router
+from openakita.config import settings
 from openakita.sessions.manager import SessionManager
 
 
@@ -92,3 +93,50 @@ def test_context_route_backfills_missing_snapshot_from_persisted_history(tmp_pat
         create_if_missing=False,
     )
     assert restored_session.get_metadata("context_usage")["context_tokens"] == 77
+
+
+def test_context_route_recalculates_persisted_limit_after_config_change(tmp_path, monkeypatch):
+    storage = tmp_path / "sessions"
+    manager = SessionManager(storage_path=storage)
+    session = manager.get_session("desktop", "stale-limit", "desktop_user")
+    session.set_metadata("context_usage", _snapshot("stale-limit", 111))
+    manager.persist()
+
+    endpoint = {
+        "name": "primary",
+        "provider": "openai",
+        "model": "test-model",
+        "context_window": 20000,
+        "max_tokens": 1000,
+        "enabled": True,
+    }
+    endpoint_manager = SimpleNamespace(list_endpoints=lambda _kind: [endpoint])
+    from openakita.api.routes import config as config_routes
+
+    monkeypatch.setattr(config_routes, "_get_endpoint_manager", lambda: endpoint_manager)
+    monkeypatch.setattr(settings, "context_max_window", 10000)
+
+    app = FastAPI()
+    app.include_router(router)
+    app.state.session_manager = SessionManager(storage_path=storage)
+    app.state.agent_pool = None
+    app.state.agent = None
+    client = TestClient(app)
+
+    response = client.get("/api/stats/tokens/context?conversation_id=stale-limit")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["context_tokens"] == 111
+    assert data["context_limit"] == 8550
+    assert data["remaining_tokens"] == 8439
+    assert data["raw_context_window"] == 20000
+    assert data["effective_context_window"] == 10000
+    assert data["output_reserve"] == 1000
+    refreshed_session = app.state.session_manager.get_session(
+        "desktop",
+        "stale-limit",
+        "desktop_user",
+        create_if_missing=False,
+    )
+    assert refreshed_session.get_metadata("context_usage")["context_limit"] == 8550
