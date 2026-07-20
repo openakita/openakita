@@ -48,7 +48,7 @@ import {
   IconCheckCircle, IconXCircle, IconInfo,
   IconAlertCircle, IconCheck,
 } from "./icons";
-import { ChevronRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ArrowRight, ChevronRight, Loader2, RefreshCw, ScrollText, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -59,6 +59,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import logoUrl from "./assets/logo.png";
 import "highlight.js/styles/github.css";
 import { getThemePref, setThemePref, THEME_CHANGE_EVENT, type Theme } from "./theme";
+import { resolveOnboardingCompletionStep } from "./utils/onboardingOutcome";
 import { copyToClipboard } from "./utils/clipboard";
 import { BUILTIN_PROVIDERS, PIP_INDEX_PRESETS, WEB_SEARCH_ENV_KEYS } from "./constants";
 import { safeFetch } from "./providers";
@@ -577,7 +578,7 @@ function MainApp() {
   }, [stepId]);
 
   // ── Onboarding Wizard (首次安装引导) ──
-  type OnboardingStep = "ob-welcome" | "ob-agreement" | "ob-llm" | "ob-im" | "ob-finish" | "ob-progress" | "ob-done";
+  type OnboardingStep = "ob-welcome" | "ob-agreement" | "ob-llm" | "ob-im" | "ob-finish" | "ob-progress" | "ob-failed" | "ob-done";
   const [obStep, setObStep] = useState<OnboardingStep>("ob-welcome");
   const [, setObInstallLog] = useState<string[]>([]);
   const [obInstalling, setObInstalling] = useState(false);
@@ -668,6 +669,7 @@ function MainApp() {
       refreshStatus("local", baseUrl, true);
       autoCheckEndpoints(baseUrl);
       // 4. 跳过 onboarding，进入主界面
+      await invoke("set_onboarding_completed", { completed: true });
       navigateToView("status");
     } catch (e) {
       logger.error("App", "obConnectExistingService failed", { error: String(e) });
@@ -680,6 +682,7 @@ function MainApp() {
       try {
         const firstRun = await invoke<boolean>("is_first_run");
         if (firstRun) {
+          await invoke("set_onboarding_completed", { completed: false });
           await obProbeRunningService();
           navigateToView("onboarding");
           obLoadEnvCheck();
@@ -695,6 +698,7 @@ function MainApp() {
     })();
     const unlisten = listen<string>("app-launch-mode", async (e) => {
       if (e.payload === "first-run") {
+        await invoke("set_onboarding_completed", { completed: false });
         await obProbeRunningService();
         navigateToView("onboarding");
         obLoadEnvCheck();
@@ -3417,7 +3421,8 @@ function MainApp() {
 
 
 
-  const [obHasErrors, setObHasErrors] = useState(false);
+  const [obFailureDetailsOpen, setObFailureDetailsOpen] = useState(false);
+  const [obLastLogPath, setObLastLogPath] = useState<string | null>(null);
 
   // ── 结构化进度跟踪 ──
   type TaskStatus = "pending" | "running" | "done" | "error" | "skipped";
@@ -3449,13 +3454,15 @@ function MainApp() {
     setObInstalling(true);
     setObInstallLog([]);
     setObDetailLog([]);
-    setObHasErrors(false);
+    setObFailureDetailsOpen(false);
+    setObLastLogPath(null);
 
     const dateLabel = new Date().toISOString().slice(0, 19).replace("T", "_").replace(/:/g, "-");
     let obLogPath: string | null = null;
     try {
       obLogPath = await invoke<string>("start_onboarding_log", { dateLabel });
       if (obLogPath) {
+        setObLastLogPath(obLogPath);
         const configLines: string[] = [];
         configLines.push("");
         configLines.push("=== LLM 配置 ===");
@@ -3635,6 +3642,7 @@ function MainApp() {
           log(t("onboarding.autostart.fail") + ": " + String(e));
           updateTask("autostart", { status: "error", detail: String(e).slice(0, 120) });
           logTask(t("onboarding.autostart.taskLabel"), "error", String(e));
+          hasErr = true;
         }
       }
 
@@ -3728,6 +3736,7 @@ function MainApp() {
             setObBackendStartupPhase("error", t("onboarding.backendStartup.timeout"));
             updateTask("http-wait", { status: "error", detail: "超时" });
             logTask("等待 HTTP 服务就绪", "error", "超时");
+            hasErr = true;
           }
         }
       } catch (e) {
@@ -3853,10 +3862,42 @@ function MainApp() {
       if (obLogPath) {
         log(t("onboarding.installLogSaved", { path: obLogPath }) || `安装日志已保存至: ${obLogPath}`);
       }
-      setObHasErrors(hasErr);
+      if (!hasErr) {
+        try {
+          await invoke("set_onboarding_completed", { completed: true });
+        } catch (e) {
+          log(t("onboarding.progress.error", { error: String(e) }));
+          hasErr = true;
+        }
+      }
       setObInstalling(false);
-      setObStep("ob-done");
+      setObStep(resolveOnboardingCompletionStep(hasErr));
     }
+  }
+
+  async function enterApplicationAfterOnboarding(confirmIncomplete = false) {
+    if (confirmIncomplete) {
+      try {
+        await invoke("set_onboarding_completed", { completed: true });
+      } catch (e) {
+        notifyError(String(e));
+        return;
+      }
+    }
+    // Onboarding 结束后 HTTP 服务可能仍在启动，短暂抑制不可达闪烁。
+    visibilityGraceRef.current = true;
+    heartbeatFailCount.current = 0;
+    setTimeout(() => { visibilityGraceRef.current = false; }, 15000);
+    navigateToView("status");
+    await refreshAll();
+    try { await refreshStatus("local", "http://127.0.0.1:18900", true); } catch { /* ignore */ }
+    autoCheckEndpoints("http://127.0.0.1:18900");
+    setTimeout(async () => {
+      try { await refreshStatus("local", "http://127.0.0.1:18900", true); } catch { /* ignore */ }
+    }, 3000);
+    setTimeout(async () => {
+      try { await refreshStatus("local", "http://127.0.0.1:18900", true); } catch { /* ignore */ }
+    }, 8000);
   }
 
   function renderOnboarding() {
@@ -3904,7 +3945,10 @@ function MainApp() {
         </div>
       </div>
     );
-    const backendStartupVisible = obBackendStartup.phase !== "idle" && obStep !== "ob-progress" && obStep !== "ob-done";
+    const backendStartupVisible = obBackendStartup.phase !== "idle"
+      && obStep !== "ob-progress"
+      && obStep !== "ob-failed"
+      && obStep !== "ob-done";
     const backendStartupNotice = backendStartupVisible ? (
       <div className={`mb-4 w-full rounded-xl border px-3.5 py-2 text-left text-[12px] shadow-sm ${
         obBackendStartup.phase === "error"
@@ -4490,6 +4534,87 @@ function MainApp() {
         );
       }
 
+      case "ob-failed": {
+        const failedTasks = obTasks.filter((task) => task.status === "error");
+        return (
+          <div className="obPage">
+            <div className="flex flex-col items-center text-center w-full max-w-[620px] gap-4">
+              <div className="flex items-center justify-center size-16 rounded-full bg-red-500 text-white shadow-lg shadow-red-500/25">
+                <IconXCircle size={34} />
+              </div>
+              <div className="space-y-2">
+                <h1 className="text-[28px] font-bold tracking-tight text-foreground">
+                  {t("onboarding.failed.title")}
+                </h1>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  {t("onboarding.failed.desc")}
+                </p>
+              </div>
+
+              <div className="w-full rounded-lg border border-red-200 bg-red-50/70 px-4 py-3 text-left dark:border-red-500/40 dark:bg-red-950/25">
+                <div className="mb-2 text-sm font-semibold text-red-700 dark:text-red-300">
+                  {t("onboarding.failed.failedSteps")}
+                </div>
+                <div className="space-y-2">
+                  {failedTasks.length > 0 ? failedTasks.map((task) => (
+                    <div key={task.id} className="flex items-start gap-2 text-[13px]">
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-500" />
+                      <div className="min-w-0">
+                        <div className="font-medium text-foreground">{task.label}</div>
+                        {task.detail && (
+                          <div className="mt-0.5 break-words text-muted-foreground">{task.detail}</div>
+                        )}
+                      </div>
+                    </div>
+                  )) : (
+                    <div className="flex items-start gap-2 text-[13px] text-muted-foreground">
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-500" />
+                      <span>{t("onboarding.failed.unknownError")}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {obFailureDetailsOpen && (
+                <div className="w-full text-left">
+                  {obLastLogPath && (
+                    <div className="mb-2 break-all text-xs text-muted-foreground">
+                      {t("onboarding.failed.logPath", { path: obLastLogPath })}
+                    </div>
+                  )}
+                  <div className="max-h-[220px] overflow-auto rounded-lg bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200">
+                    {obDetailLog.map((line, index) => (
+                      <div key={index} className="break-words whitespace-pre-wrap">{line}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                <Button onClick={() => { setObStep("ob-progress"); void obRunSetup(); }}>
+                  <RefreshCw className="mr-2 size-4" />
+                  {t("onboarding.failed.retry")}
+                </Button>
+                <Button variant="outline" onClick={() => setObFailureDetailsOpen((open) => !open)}>
+                  <ScrollText className="mr-2 size-4" />
+                  {obFailureDetailsOpen
+                    ? t("onboarding.failed.hideLogs")
+                    : t("onboarding.failed.viewLogs")}
+                </Button>
+                <Button variant="ghost" onClick={() => void enterApplicationAfterOnboarding(true)}>
+                  {t("onboarding.failed.continueAnyway")}
+                  <ArrowRight className="ml-2 size-4" />
+                </Button>
+              </div>
+              <p className="max-w-[520px] text-xs leading-relaxed text-muted-foreground">
+                {t("onboarding.failed.continueHint")}
+              </p>
+            </div>
+            {stepIndicator}
+          </div>
+        );
+      }
+
       case "ob-done":
         return (
           <div className="obPage">
@@ -4497,41 +4622,10 @@ function MainApp() {
               <div className="flex items-center justify-center size-16 rounded-full bg-emerald-500 text-white text-[32px] shadow-lg shadow-emerald-500/30"><IconCheck size={32} /></div>
               <h1 className="text-[28px] font-bold tracking-tight text-foreground">{t("onboarding.done.title")}</h1>
               <p className="text-sm text-muted-foreground leading-relaxed">{t("onboarding.done.desc")}</p>
-              {obHasErrors && (
-                <Card className="w-full border border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-950/30 text-left text-[13px]">
-                  <CardContent className="py-3 px-4 space-y-1">
-                    <div className="flex items-center gap-2 font-semibold">
-                      <AlertTriangle className="size-4 text-amber-500 shrink-0" />
-                      {t("onboarding.done.someErrors")}
-                    </div>
-                    <p className="text-muted-foreground">{t("onboarding.done.errorsHint")}</p>
-                  </CardContent>
-                </Card>
-              )}
               <Button
                 size="lg"
                 className="mt-2 px-10 rounded-xl text-[15px]"
-                onClick={async () => {
-                  // 设置短暂宽限期：onboarding 结束后 HTTP 服务可能还在启动中
-                  // 避免心跳检测立刻报"不可达"导致闪烁
-                  visibilityGraceRef.current = true;
-                  heartbeatFailCount.current = 0;
-                  setTimeout(() => { visibilityGraceRef.current = false; }, 15000);
-                  navigateToView("status");
-                  await refreshAll();
-                  // 关键：刷新端点列表、IM 状态等（forceAliveCheck=true 绕过 serviceStatus 闭包）
-                  // 首次尝试
-                  try { await refreshStatus("local", "http://127.0.0.1:18900", true); } catch { /* ignore */ }
-                  autoCheckEndpoints("http://127.0.0.1:18900");
-                  // 延迟重试：后端 API 可能还在初始化，3 秒后再拉一次端点列表
-                  setTimeout(async () => {
-                    try { await refreshStatus("local", "http://127.0.0.1:18900", true); } catch { /* ignore */ }
-                  }, 3000);
-                  // 8 秒后最终重试
-                  setTimeout(async () => {
-                    try { await refreshStatus("local", "http://127.0.0.1:18900", true); } catch { /* ignore */ }
-                  }, 8000);
-                }}
+                onClick={() => void enterApplicationAfterOnboarding()}
               >
                 {t("onboarding.done.enter")}
               </Button>

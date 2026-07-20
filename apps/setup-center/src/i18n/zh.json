@@ -1896,6 +1896,18 @@
       "someErrors": "部分操作出现问题",
       "errorsHint": "部分操作未成功，你可以稍后在设置中重试。"
     },
+    "failed": {
+      "title": "自动配置未完成",
+      "desc": "一个或多个配置步骤失败，OpenAkita 尚未准备就绪。请查看错误并重试。",
+      "failedSteps": "失败的步骤",
+      "unknownError": "配置流程意外中断，请展开日志查看详细错误。",
+      "retry": "重试配置",
+      "viewLogs": "查看日志",
+      "hideLogs": "收起日志",
+      "logPath": "完整日志：{{path}}",
+      "continueAnyway": "仍然进入应用",
+      "continueHint": "继续后将跳过首次配置；未完成的运行环境或模型配置需要稍后在状态页和设置中修复。"
+    },
     "installLogSaved": "安装日志已保存至: {{path}}",
     "agreement": {
       "title": "使用风险须知",

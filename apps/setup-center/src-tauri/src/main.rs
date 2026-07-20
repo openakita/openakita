@@ -821,6 +821,9 @@ struct AppStateFile {
     install_mode: Option<String>,
     #[serde(default)]
     auto_update: Option<bool>,
+    /// None preserves the legacy first-run heuristic for existing installs.
+    #[serde(default)]
+    onboarding_completed: Option<bool>,
 }
 
 fn default_config_version() -> u32 {
@@ -3575,7 +3578,24 @@ fn preflight_migrate_root(target_path: String) -> Result<MigratePreflightInfo, S
 #[tauri::command]
 fn is_first_run() -> bool {
     let state = read_state_file();
-    state.workspaces.is_empty()
+    onboarding_required(&state)
+}
+
+fn onboarding_required(state: &AppStateFile) -> bool {
+    state
+        .onboarding_completed
+        .map(|completed| !completed)
+        .unwrap_or_else(|| state.workspaces.is_empty())
+}
+
+#[tauri::command]
+fn set_onboarding_completed(completed: bool) -> Result<(), String> {
+    let _lock = STATE_FILE_LOCK
+        .lock()
+        .map_err(|e| format!("state lock failed: {e}"))?;
+    let mut state = read_state_file();
+    state.onboarding_completed = Some(completed);
+    write_state_file(&state)
 }
 
 // ── 环境检测 ──
@@ -6180,6 +6200,7 @@ fn main() {
             openakita_list_processes,
             openakita_stop_all_processes,
             is_first_run,
+            set_onboarding_completed,
             check_environment,
             check_backend_availability,
             cleanup_old_environment,
@@ -11500,6 +11521,23 @@ fn open_external_url(url: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn onboarding_marker_preserves_failures_after_workspace_creation() {
+        let mut state = AppStateFile {
+            workspaces: vec![WorkspaceMeta {
+                id: "default".into(),
+                name: "Default".into(),
+            }],
+            ..Default::default()
+        };
+
+        assert!(!onboarding_required(&state));
+        state.onboarding_completed = Some(false);
+        assert!(onboarding_required(&state));
+        state.onboarding_completed = Some(true);
+        assert!(!onboarding_required(&state));
+    }
 
     #[test]
     fn test_bundled_backend_dir_returns_non_empty_path() {

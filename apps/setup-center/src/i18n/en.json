@@ -1896,6 +1896,18 @@
       "someErrors": "Some issues occurred",
       "errorsHint": "Some operations did not succeed. You can retry later in settings."
     },
+    "failed": {
+      "title": "Automatic Setup Incomplete",
+      "desc": "One or more setup steps failed, so OpenAkita is not ready yet. Review the error and retry.",
+      "failedSteps": "Failed steps",
+      "unknownError": "Setup stopped unexpectedly. Expand the logs for details.",
+      "retry": "Retry setup",
+      "viewLogs": "View logs",
+      "hideLogs": "Hide logs",
+      "logPath": "Full log: {{path}}",
+      "continueAnyway": "Continue anyway",
+      "continueHint": "Continuing skips first-run setup. You will need to repair the runtime or model configuration later from Status and Settings."
+    },
     "installLogSaved": "Install log saved to: {{path}}",
     "agreement": {
       "title": "Risk Acknowledgment",
