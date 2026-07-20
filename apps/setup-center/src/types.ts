@@ -199,6 +199,11 @@ export type ChatErrorInfo = {
   raw?: string;
 };
 
+export type MessageCompletionAction = {
+  type: "submit_feedback";
+  style?: "default" | "prominent";
+};
+
 /** Single row in the organization-command live timeline. */
 export type OrgTimelineEntry = {
   /** "started" – command accepted; "progress" – sub-agent emitted a summary;
@@ -240,6 +245,7 @@ export type ChatMessage = {
    */
   orgTimeline?: OrgTimelineEntry[] | null;
   errorInfo?: ChatErrorInfo | null;
+  completionActions?: MessageCompletionAction[] | null;
   usage?: {
     input_tokens: number;
     output_tokens: number;

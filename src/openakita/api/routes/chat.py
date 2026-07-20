@@ -1165,6 +1165,7 @@ def _schedule_background_save(
     collected_sources: list | None = None,
     collected_mcp_calls: list | None = None,
     progress_events: list[dict] | None = None,
+    completion_actions: list[dict] | None = None,
 ) -> None:
     """Register a background callback so that when a long-running agent task
     finally completes after the SSE stream has closed, the result is still
@@ -1222,6 +1223,8 @@ def _schedule_background_save(
                     meta["sources"] = bg_sources
                 if bg_mcp_calls:
                     meta["mcp_calls"] = bg_mcp_calls
+                if completion_actions:
+                    meta["completion_actions"] = completion_actions
                 if (
                     conversation_id
                     and not bg_ask_user_seen
@@ -1306,6 +1309,9 @@ async def _stream_chat(
     # lets history/reload recover progress as first-class data instead of only
     # the folded snapshot.
     _progress_events: list[dict] = []
+    _completion_actions = [
+        action.model_dump(mode="json") for action in chat_request.completion_actions
+    ]
     # Server-side mirror of the browser's reasoning-chain assembly. Built from
     # the same SSE events so the persisted history can restore the causal
     # timeline (thinking / narration / tool args / results, in order) instead of
@@ -1997,6 +2003,8 @@ async def _stream_chat(
                     _usage_data.get("input_tokens") or _usage_data.get("output_tokens")
                 ):
                     _msg_meta["usage"] = _usage_data
+                if _completion_actions:
+                    _msg_meta["completion_actions"] = _completion_actions
                 if _ask_user_question:
                     _ask_user_data: dict = {"question": _ask_user_question}
                     if _ask_user_options:
@@ -2098,6 +2106,7 @@ async def _stream_chat(
                         _collected_sources,
                         _collected_mcp_calls,
                         _progress_events,
+                        _completion_actions,
                     )
 
         # Drain remaining queue events to accumulate _full_reply for deferred save
@@ -2133,6 +2142,8 @@ async def _stream_chat(
                         _deferred_meta["sources"] = _collected_sources
                     if _collected_mcp_calls:
                         _deferred_meta["mcp_calls"] = _collected_mcp_calls
+                    if _completion_actions:
+                        _deferred_meta["completion_actions"] = _completion_actions
                     _deferred_timeline = _chain_timeline_builder.build()
                     if _deferred_timeline:
                         _deferred_meta["chain_timeline"] = _deferred_timeline
@@ -3519,7 +3530,12 @@ async def chat_sync(request: Request, body: ChatRequest):
 
         if session is not None:
             try:
-                session.add_message("assistant", reply or "")
+                _sync_meta = {}
+                if body.completion_actions:
+                    _sync_meta["completion_actions"] = [
+                        action.model_dump(mode="json") for action in body.completion_actions
+                    ]
+                session.add_message("assistant", reply or "", **_sync_meta)
             except Exception:
                 pass
 

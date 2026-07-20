@@ -11,6 +11,7 @@ import type {
   ChatTodo,
   ChatAttachment,
   MessagePart,
+  MessageCompletionAction,
   ChainGroup,
   ChainEntry,
   ChainToolCall,
@@ -700,6 +701,7 @@ type BackendHistoryMessage = {
   ask_user?: ChatAskUser | null;
   errorInfo?: ChatErrorInfo | null;
   parts?: MessagePart[] | null;
+  completion_actions?: MessageCompletionAction[] | null;
 };
 
 export type BackendPatchStats = {
@@ -861,6 +863,10 @@ export function patchMessagesWithBackendDetailed(
 
     if (!m.usage && backend.usage) {
       patches.usage = backend.usage;
+    }
+
+    if (!m.completionActions?.length && backend.completion_actions?.length) {
+      patches.completionActions = backend.completion_actions;
     }
 
     // Persisted plan snapshot — restore or refresh the plan card when the

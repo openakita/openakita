@@ -466,6 +466,18 @@ def _history_entry(session, conversation_id: str, original_idx: int, msg: dict) 
     usage = msg.get("usage")
     if isinstance(usage, dict) and (usage.get("input_tokens") or usage.get("output_tokens")):
         entry["usage"] = usage
+    completion_actions = msg.get("completion_actions")
+    if isinstance(completion_actions, list):
+        normalized_actions = []
+        for action in completion_actions:
+            if not isinstance(action, dict) or action.get("type") != "submit_feedback":
+                continue
+            style = action.get("style", "default")
+            if style not in ("default", "prominent"):
+                continue
+            normalized_actions.append({"type": "submit_feedback", "style": style})
+        if normalized_actions:
+            entry["completion_actions"] = normalized_actions
 
     # Progress event journal + ordered parts projection — lets rich cards
     # (plan, answered ask_user, attachments) re-display losslessly after reload

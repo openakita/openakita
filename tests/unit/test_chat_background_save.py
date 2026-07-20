@@ -36,3 +36,34 @@ async def test_background_save_respects_text_replace():
     await asyncio.sleep(0.05)
 
     assert saved == [("最终回复", {})]
+
+
+@pytest.mark.asyncio
+async def test_background_save_persists_completion_actions():
+    agent_done = asyncio.Event()
+    agent_queue: asyncio.Queue = asyncio.Queue()
+    await agent_queue.put(None)
+
+    saved: list[tuple[str, dict]] = []
+    session = SimpleNamespace(add_message=lambda role, text, **meta: saved.append((text, meta)))
+    session_manager = SimpleNamespace(persist=lambda: None)
+    action = {"type": "submit_feedback", "style": "prominent"}
+
+    _schedule_background_save(
+        agent_task=asyncio.create_task(asyncio.sleep(0)),
+        agent_done=agent_done,
+        agent_queue=agent_queue,
+        sse_fn=None,
+        session=session,
+        session_manager=session_manager,
+        conversation_id="",
+        full_reply_snapshot="diagnosis",
+        collected_artifacts=[],
+        save_done=False,
+        completion_actions=[action],
+    )
+
+    agent_done.set()
+    await asyncio.sleep(0.05)
+
+    assert saved == [("diagnosis", {"completion_actions": [action]})]

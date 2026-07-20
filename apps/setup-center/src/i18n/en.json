@@ -270,7 +270,7 @@
       "search": "Help me search for the latest OpenAkita updates",
       "email": "Help me write a business email",
       "summary": "Help me summarize today's work",
-      "translate": "Help me translate this paragraph into English"
+      "diagnose": "Help me inspect OpenAkita runtime logs and diagnose the issue"
     },
     "streaming": "AI is responding...",
     "slashHint": "Type / for available commands",
@@ -411,6 +411,11 @@
     "thinkingBtnAuto": "Auto",
     "planModePlaceholder": "Plan Mode  · {{enterSend}}",
     "askModePlaceholder": "Ask Mode  · Read-only, no actions",
+    "diagnosticFeedbackTitle": "Help us investigate further",
+    "diagnosticFeedbackDesc": "Submit this feedback with recent logs to help developers reproduce and fix the issue.",
+    "submitFeedbackLogs": "Submit feedback logs",
+    "diagnosticFeedbackPrefillTitle": "OpenAkita runtime log diagnosis",
+    "diagnosticFeedbackPrefillDescription": "I completed a log diagnosis in Chat. The conclusion was:\n\n{{conclusion}}",
     "skillsCmd": "Skills",
     "skillsCmdDesc": "View installed skills",
     "skillUseCmd": "Use Skill",

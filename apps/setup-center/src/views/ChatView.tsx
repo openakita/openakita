@@ -42,8 +42,10 @@ import type {
   PlanApprovalEvent,
   OrgTimelineEntry,
   MessagePart,
+  MessageCompletionAction,
   EnvMap,
 } from "../types";
+import type { FeedbackPrefill } from "./FeedbackModal";
 import { genId, timeAgo } from "../utils";
 import { SseStateMachine, type SseFrame } from "../utils/sseStateMachine";
 import { notifyError, notifyInfo } from "../utils/notify";
@@ -958,6 +960,7 @@ export function ChatView({
   multiAgentEnabled = false,
   currentWorkspaceId,
   feedbackModalOpen = false,
+  onOpenFeedback,
   envDraft = {},
   setEnvDraft,
   saveEnvKeys,
@@ -970,6 +973,7 @@ export function ChatView({
   multiAgentEnabled?: boolean;
   currentWorkspaceId?: string | null;
   feedbackModalOpen?: boolean;
+  onOpenFeedback?: (prefill: FeedbackPrefill) => void;
   envDraft?: EnvMap;
   setEnvDraft?: (updater: (prev: EnvMap) => EnvMap) => void;
   saveEnvKeys?: (keys: string[]) => Promise<{ restartRequired?: boolean; hotReloadable?: boolean } | unknown>;
@@ -1145,6 +1149,7 @@ export function ChatView({
   const [selectedEndpoint, setSelectedEndpoint] = useState("auto");
   const [selectedEndpointPolicy, setSelectedEndpointPolicy] = useState<EndpointPolicy>("prefer");
   const [chatMode, setChatMode] = useState<"agent" | "plan" | "ask">("agent");
+  const pendingCompletionActionsRef = useRef<MessageCompletionAction[]>([]);
   const [pendingApproval, setPendingApproval] = useState<PlanApprovalEvent | null>(null);
   const pendingApprovalRef = useRef<PlanApprovalEvent | null>(null);
   const [deathSwitchActive, setDeathSwitchActive] = useState(false);
@@ -1721,7 +1726,7 @@ export function ChatView({
   const hydrateSeqRef = useRef(0);
 
   const mapBackendHistoryToMessages = useCallback(
-    (rows: { id: string; index?: number; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[]; chain_timeline?: ChainTimelineGroup[]; artifacts?: ChatArtifact[]; sources?: ChatSource[]; mcp_calls?: ChatMcpCall[]; attachments?: ChatAttachment[]; org_timeline?: OrgTimelineEntry[]; ask_user?: ChatAskUser; error_info?: { message?: string; raw?: string; error_code?: string; org_status?: string | null }; todo?: ChatTodo; progress_events?: ChatProgressEvent[]; parts?: MessagePart[]; usage?: ChatMessage["usage"] }[]): ChatMessage[] => {
+    (rows: { id: string; index?: number; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[]; chain_timeline?: ChainTimelineGroup[]; artifacts?: ChatArtifact[]; sources?: ChatSource[]; mcp_calls?: ChatMcpCall[]; attachments?: ChatAttachment[]; org_timeline?: OrgTimelineEntry[]; ask_user?: ChatAskUser; error_info?: { message?: string; raw?: string; error_code?: string; org_status?: string | null }; todo?: ChatTodo; progress_events?: ChatProgressEvent[]; parts?: MessagePart[]; usage?: ChatMessage["usage"]; completion_actions?: MessageCompletionAction[] }[]): ChatMessage[] => {
       return rows.map((m) => ({
         id: m.id,
         ...(typeof m.index === "number" ? { historyIndex: m.index } : {}),
@@ -1758,6 +1763,7 @@ export function ChatView({
         } : {}),
         ...(m.parts?.length ? { parts: m.parts } : {}),
         ...(m.usage ? { usage: m.usage } : {}),
+        ...(m.completion_actions?.length ? { completionActions: m.completion_actions } : {}),
       }));
     },
     [t],
@@ -3438,6 +3444,12 @@ export function ChatView({
     const sendTimingStartedAt = performance.now();
     const sendTraceId = genId();
     const text = (overrideText ?? inputTextRef.current).trim();
+    const reusedCompletionActions = options?.reuseAssistantMessageId
+      ? latestMessagesRef.current.find((m) => m.id === options.reuseAssistantMessageId)?.completionActions
+      : undefined;
+    const completionActionsToSend = reusedCompletionActions?.length
+      ? reusedCompletionActions
+      : pendingCompletionActionsRef.current;
     const streamTransport = options?.streamTransport;
     const isResumeTransport = streamTransport?.kind === "resume";
     const appendUserMessage = options?.appendUserMessage !== false;
@@ -3533,7 +3545,11 @@ export function ChatView({
       streaming: true,
       streamStatus: options?.initialStreamStatus ?? null,
       timestamp: Date.now(),
+      completionActions: completionActionsToSend.length > 0
+        ? completionActionsToSend.map((action) => ({ ...action }))
+        : undefined,
     };
+    pendingCompletionActionsRef.current = [];
 
     let convId = resolvedConvId;
 
@@ -3826,6 +3842,7 @@ export function ChatView({
         org_id: effectiveOrgId,
         org_node_id: effectiveOrgNodeId,
         client_id: getClientId(),
+        completion_actions: completionActionsToSend,
         ...(askUserReply ? { ask_user_reply: askUserReply } : {}),
       };
 
@@ -6946,13 +6963,25 @@ export function ChatView({
     [filteredConversations]
   );
 
-  const quickStartItems = useMemo(() => [
+  const quickStartItems = useMemo<Array<{
+    id: string;
+    icon: ReactNode;
+    text: string;
+    mode?: "agent" | "plan" | "ask";
+    completionActions?: MessageCompletionAction[];
+  }>>(() => [
     { id: "research", icon: <IconBarChart size={20} />, text: t("chat.quickStart.research", "帮我做一份 OpenAkita 竞品分析") },
     { id: "ppt", icon: <IconPlan size={20} />, text: t("chat.quickStart.ppt", "帮我生成一份项目汇报 PPT 大纲") },
     { id: "search", icon: <IconGlobe size={20} />, text: t("chat.quickStart.search", "帮我搜索 OpenAkita 的最新动态") },
     { id: "email", icon: <IconMail size={20} />, text: t("chat.quickStart.email", "帮我写一封商务邮件") },
     { id: "summary", icon: <IconClipboard size={20} />, text: t("chat.quickStart.summary", "帮我总结一下今天的工作内容") },
-    { id: "translate", icon: <IconGlobe size={20} />, text: t("chat.quickStart.translate", "帮我把这段话翻译成英文") },
+    {
+      id: "diagnose",
+      icon: <IconSearch size={20} />,
+      text: t("chat.quickStart.diagnose", "帮我检查 OpenAkita 运行日志并诊断问题"),
+      mode: "ask",
+      completionActions: [{ type: "submit_feedback", style: "prominent" }],
+    },
   ], [i18n.language, t]);
   const quickStartCardWidth = useMemo(() => {
     const textUnits = Math.max(
@@ -7416,7 +7445,13 @@ export function ChatView({
                 {quickStartItems.map((item) => (
                   <button
                     key={item.id}
-                    onClick={() => setInputValue(item.text)}
+                    onClick={() => {
+                      if (item.mode) setChatMode(item.mode);
+                      pendingCompletionActionsRef.current = item.completionActions
+                        ? item.completionActions.map((action) => ({ ...action }))
+                        : [];
+                      setInputValue(item.text);
+                    }}
                     className="quickStartCard"
                     style={{
                       display: "flex", alignItems: "center", gap: 10,
@@ -7450,6 +7485,19 @@ export function ChatView({
             loadingOlder={historyPage.loadingOlder}
             onLoadOlder={loadOlderMessages}
             onPlanStepAction={handlePlanStepAction}
+            onCompletionAction={(msg, action) => {
+              if (action.type !== "submit_feedback") return;
+              const conclusion = msg.content.trim().slice(0, 4000);
+              onOpenFeedback?.({
+                mode: "bug",
+                title: t("chat.diagnosticFeedbackPrefillTitle", "OpenAkita 运行日志诊断反馈"),
+                description: t(
+                  "chat.diagnosticFeedbackPrefillDescription",
+                  "我已通过聊天页面完成日志诊断，诊断结论如下：\n\n{{conclusion}}",
+                  { conclusion },
+                ),
+              });
+            }}
             onAtBottomChange={(atBottom) => { isMessageListAtBottomRef.current = atBottom; }}
             onActiveUserMessageChange={outlineItems.length > 0 ? setActiveOutlineId : undefined}
             onAskAnswer={handleAskAnswer}

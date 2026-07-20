@@ -136,6 +136,15 @@ class AttachmentInfo(BaseModel):
         return self.to_chat_attachment_record().to_history_dict()
 
 
+class MessageCompletionAction(BaseModel):
+    """A trusted client-requested action rendered after an assistant turn."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["submit_feedback"]
+    style: Literal["default", "prominent"] = "default"
+
+
 class ChatRequest(BaseModel):
     """Chat request body."""
 
@@ -157,6 +166,11 @@ class ChatRequest(BaseModel):
     )
     plan_mode: bool = Field(
         False, description="Deprecated: use mode='plan' instead. Kept for backward compatibility."
+    )
+    completion_actions: list[MessageCompletionAction] = Field(
+        default_factory=list,
+        max_length=3,
+        description="UI actions to persist on the assistant message after this turn completes.",
     )
     permission_mode: (
         Literal[

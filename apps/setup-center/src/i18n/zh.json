@@ -270,7 +270,7 @@
       "search": "帮我搜索 OpenAkita 的最新动态",
       "email": "帮我写一封商务邮件",
       "summary": "帮我总结一下今天的工作内容",
-      "translate": "帮我把这段话翻译成英文"
+      "diagnose": "帮我检查 OpenAkita 运行日志并诊断问题"
     },
     "streaming": "AI 正在回复...",
     "slashHint": "输入 / 查看可用命令",
@@ -411,6 +411,11 @@
     "thinkingBtnAuto": "自动",
     "planModePlaceholder": "规划模式  · {{enterSend}}",
     "askModePlaceholder": "问答模式  · 只读分析，不执行操作",
+    "diagnosticFeedbackTitle": "帮助我们进一步定位问题",
+    "diagnosticFeedbackDesc": "提交本次反馈和近期日志，帮助开发者复现并修复问题。",
+    "submitFeedbackLogs": "提交反馈日志",
+    "diagnosticFeedbackPrefillTitle": "OpenAkita 运行日志诊断反馈",
+    "diagnosticFeedbackPrefillDescription": "我已通过聊天页面完成日志诊断，诊断结论如下：\n\n{{conclusion}}",
     "skillsCmd": "技能列表",
     "skillsCmdDesc": "查看已安装的技能列表",
     "skillUseCmd": "使用技能",

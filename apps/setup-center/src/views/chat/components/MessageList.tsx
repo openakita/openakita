@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useLayoutEffect, useMemo, useState, forwardRef, useImperativeHandle } from "react";
 import { useTranslation } from "react-i18next";
-import type { ChatMessage, MdModules, ChatDisplayMode } from "../utils/chatTypes";
+import type { ChatMessage, MdModules, ChatDisplayMode, MessageCompletionAction } from "../utils/chatTypes";
 import { MessageBubble } from "./MessageBubble";
 import { FlatMessageItem } from "./FlatMessageItem";
 import { IconChevronDown } from "../../../icons";
@@ -102,6 +102,7 @@ export interface MessageListProps {
   onRewind?: (msgId: string) => void;
   onFork?: (msgId: string) => void;
   onSaveMemory?: (msgId: string) => void;
+  onCompletionAction?: (msg: ChatMessage, action: MessageCompletionAction) => void;
   onSkipStep?: () => void;
   onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
   onAtBottomChange?: (atBottom: boolean) => void;
@@ -149,6 +150,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     onRetry,
     onEdit,
     onRegenerate,
+    onCompletionAction,
     onRewind,
     onFork,
     onSaveMemory,
@@ -515,13 +517,14 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
           conversationId={conversationId}
           httpApiBase={httpApiBase}
           onPlanStepAction={onPlanStepAction}
+          onCompletionAction={onCompletionAction}
         />
       </div>
     );
   }, [
     messages.length, displayMode, apiBaseUrl, showChain, mdModules,
     onAskAnswer, onRetry, onEdit, onRegenerate, onRewind, onSkipStep, onImagePreview,
-    conversationId, httpApiBase, onPlanStepAction,
+    conversationId, httpApiBase, onPlanStepAction, onCompletionAction,
   ]);
 
   const Footer = useCallback(() => <div style={{ height: 32 }} />, []);

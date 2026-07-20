@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ChatMessage, ChatAttachment, MdModules } from "../utils/chatTypes";
+import type { ChatMessage, ChatAttachment, MdModules, MessageCompletionAction } from "../utils/chatTypes";
 import { stripLegacySummary } from "../utils/chatHelpers";
 import { resolveMessageParts, hasRenderableBody } from "../utils/messageParts";
 import { formatTime } from "../../../utils";
@@ -8,6 +8,7 @@ import { AttachmentPreview } from "./AttachmentPreview";
 import { SpinnerTipDisplay } from "./SpinnerTipDisplay";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageParts } from "./MessageParts";
+import { MessageCompletionActions } from "./MessageCompletionActions";
 import { useSourceTagFormatter, extractTrailingSourceTag, SourceBadge } from "./SourceBadge";
 import { IconClipboard, IconEdit, IconRefresh, IconRewind, IconChevronRight } from "../../../icons";
 
@@ -27,6 +28,7 @@ export const MessageBubble = memo(function MessageBubble({
   conversationId,
   httpApiBase,
   onPlanStepAction,
+  onCompletionAction,
 }: {
   msg: ChatMessage;
   onAskAnswer?: (msgId: string, answer: string) => void;
@@ -43,6 +45,7 @@ export const MessageBubble = memo(function MessageBubble({
   conversationId?: string;
   httpApiBase?: () => string;
   onPlanStepAction?: (action: "skip" | "retry", stepIdx: number, description: string) => void;
+  onCompletionAction?: (msg: ChatMessage, action: MessageCompletionAction) => void;
 }) {
   const { t } = useTranslation();
   const formatSourceTags = useSourceTagFormatter();
@@ -169,6 +172,9 @@ export const MessageBubble = memo(function MessageBubble({
           )
         )}
       </div>
+      {isAssistant && (
+        <MessageCompletionActions msg={msg} onAction={onCompletionAction} />
+      )}
       <div className="msgActions" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, marginTop: 2, paddingLeft: 2, paddingRight: 2 }}>
         {footerSourceType && <SourceBadge type={footerSourceType} />}
         <span style={{ opacity: 0.35 }}>{formatTime(msg.timestamp)}</span>

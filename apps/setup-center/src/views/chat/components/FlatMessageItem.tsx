@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ChatMessage, MdModules } from "../utils/chatTypes";
+import type { ChatMessage, MdModules, MessageCompletionAction } from "../utils/chatTypes";
 import { stripLegacySummary } from "../utils/chatHelpers";
 import { resolveMessageParts, hasRenderableBody } from "../utils/messageParts";
 import { formatTime } from "../../../utils";
@@ -8,6 +8,7 @@ import { AttachmentPreview } from "./AttachmentPreview";
 import { SpinnerTipDisplay } from "./SpinnerTipDisplay";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageParts } from "./MessageParts";
+import { MessageCompletionActions } from "./MessageCompletionActions";
 import { useSourceTagFormatter, extractTrailingSourceTag, SourceBadge } from "./SourceBadge";
 import { IconClipboard, IconEdit, IconRefresh, IconRewind, IconChevronRight } from "../../../icons";
 
@@ -27,6 +28,7 @@ export const FlatMessageItem = memo(function FlatMessageItem({
   conversationId,
   httpApiBase,
   onPlanStepAction,
+  onCompletionAction,
 }: {
   msg: ChatMessage;
   onAskAnswer?: (msgId: string, answer: string) => void;
@@ -43,6 +45,7 @@ export const FlatMessageItem = memo(function FlatMessageItem({
   conversationId?: string;
   httpApiBase?: () => string;
   onPlanStepAction?: (action: "skip" | "retry", stepIdx: number, description: string) => void;
+  onCompletionAction?: (msg: ChatMessage, action: MessageCompletionAction) => void;
 }) {
   const { t } = useTranslation();
   const formatSourceTags = useSourceTagFormatter();
@@ -160,6 +163,10 @@ export const FlatMessageItem = memo(function FlatMessageItem({
             </div>
           )}
         </>
+      )}
+
+      {isAssistant && (
+        <MessageCompletionActions msg={msg} onAction={onCompletionAction} />
       )}
 
       <div className="msgActions" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, marginTop: 2 }}>
