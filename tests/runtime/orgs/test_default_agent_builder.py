@@ -32,6 +32,12 @@ from openakita.orgs._default_agent_builder import (
     _extract_text_from_response,
 )
 from openakita.orgs._runtime_agent_pipeline import AgentSpec
+from openakita.runtime.execution_context import (
+    ExecutionPhase,
+    UpstreamContext,
+    current_execution_phase_var,
+    current_upstream_context_var,
+)
 
 
 def _spec(**over: Any) -> AgentSpec:
@@ -111,9 +117,8 @@ def test_brain_backed_node_agent_calls_messages_create_async_once() -> None:
     """case id: p01.node_agent.invokes_brain_once
 
     The minimum-viable contract from the v13 audit: a single user
-    message + persona-derived system prompt + zero tools. Nodes do
-    not get the 76-tool main-chat catalogue (out of scope; multi-node
-    sprint).
+    message + persona-derived system prompt + the built-in structured
+    delivery tool. Nodes do not get the main-chat tool catalogue.
     """
 
     fake_response = SimpleNamespace(
@@ -135,7 +140,207 @@ def test_brain_backed_node_agent_calls_messages_create_async_once() -> None:
     # the call to the orgs_v2 path (audit L4.1 finding).
     assert "node `n1`" in kwargs["system"]
     assert "organisation `org_1`" in kwargs["system"]
-    assert kwargs["tools"] == []
+    assert [tool["name"] for tool in kwargs["tools"]] == ["org_submit_deliverable"]
+
+
+def test_structured_finalization_phase_exposes_only_delivery_tool() -> None:
+    brain = SimpleNamespace(
+        messages_create_async=AsyncMock(
+            return_value=SimpleNamespace(content=[SimpleNamespace(text="delivered")])
+        ),
+        set_trace_context=lambda _ctx: None,
+    )
+    agent = DefaultAgentBuilder(brain_provider=lambda: brain).build(
+        _spec(
+            enable_file_tools=True,
+            external_tools=("hh_t2v",),
+            available_nodes=(("worker", "Worker"),),
+        )
+    )
+
+    token = current_execution_phase_var.set(ExecutionPhase.FINALIZATION)
+    try:
+        asyncio.run(agent.run("下游全部产出已回流，请完成最终验收与整合交付"))
+    finally:
+        current_execution_phase_var.reset(token)
+
+    kwargs = brain.messages_create_async.await_args.kwargs
+    assert [tool["name"] for tool in kwargs["tools"]] == ["org_submit_deliverable"]
+
+
+def test_structured_planning_phase_exposes_only_delegation_tools() -> None:
+    brain = SimpleNamespace(
+        messages_create_async=AsyncMock(
+            return_value=SimpleNamespace(content=[SimpleNamespace(text="plan ready")])
+        ),
+        set_trace_context=lambda _ctx: None,
+    )
+    agent = DefaultAgentBuilder(brain_provider=lambda: brain).build(
+        _spec(
+            enable_file_tools=True,
+            external_tools=("web_search",),
+            available_nodes=(("writer", "Writer"),),
+        )
+    )
+
+    token = current_execution_phase_var.set(ExecutionPhase.PLANNING)
+    try:
+        asyncio.run(agent.run("请拆解任务并声明完整 DAG"))
+    finally:
+        current_execution_phase_var.reset(token)
+
+    names = {tool["name"] for tool in brain.messages_create_async.await_args.kwargs["tools"]}
+    assert names == {"org_delegate_task", "org_submit_deliverable"}
+
+
+def test_finalization_words_do_not_control_tool_policy() -> None:
+    brain = SimpleNamespace(
+        messages_create_async=AsyncMock(
+            return_value=SimpleNamespace(content=[SimpleNamespace(text="working")])
+        ),
+        set_trace_context=lambda _ctx: None,
+    )
+    agent = DefaultAgentBuilder(brain_provider=lambda: brain).build(
+        _spec(enable_file_tools=True, available_nodes=(("worker", "Worker"),))
+    )
+
+    asyncio.run(agent.run("【最终整合与交付】这只是普通执行阶段中的引用"))
+
+    names = {tool["name"] for tool in brain.messages_create_async.await_args.kwargs["tools"]}
+    assert "list_directory" in names
+    assert "org_delegate_task" in names
+
+
+def test_agent_passes_configured_workspace_to_tool_runtime(monkeypatch, tmp_path) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_run_with_tools(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(content=[SimpleNamespace(text="done")]), 0
+
+    monkeypatch.setattr(
+        "openakita.orgs._default_agent_builder.run_with_tools",
+        fake_run_with_tools,
+    )
+    brain = SimpleNamespace(
+        messages_create_async=AsyncMock(),
+        set_trace_context=lambda _ctx: None,
+    )
+    workspace = str(tmp_path / "selected-workspace")
+    agent = DefaultAgentBuilder(brain_provider=lambda: brain).build(
+        _spec(workspace_dir=workspace, enable_file_tools=True)
+    )
+
+    assert asyncio.run(agent.run("write the result")) == "done"
+    assert captured["workspace_dir"] == workspace
+
+
+def test_structured_upstream_coordinator_exposes_only_declarative_tools() -> None:
+    brain = SimpleNamespace(
+        messages_create_async=AsyncMock(
+            return_value=SimpleNamespace(content=[SimpleNamespace(text="plan ready")])
+        ),
+        set_trace_context=lambda _ctx: None,
+    )
+    agent = DefaultAgentBuilder(brain_provider=lambda: brain).build(
+        _spec(
+            enable_file_tools=True,
+            external_tools=("web_search",),
+            available_nodes=(("image", "Image"), ("video", "Video")),
+        )
+    )
+
+    token = current_upstream_context_var.set(
+        UpstreamContext(
+            dependencies=(
+                {"step_id": "source", "node_id": "writer", "output": "ready"},
+            )
+        )
+    )
+    try:
+        asyncio.run(agent.run("brief"))
+    finally:
+        current_upstream_context_var.reset(token)
+
+    kwargs = brain.messages_create_async.await_args.kwargs
+    assert {tool["name"] for tool in kwargs["tools"]} == {
+        "org_delegate_task",
+        "org_submit_deliverable",
+    }
+
+
+def test_parent_review_receives_structured_delivery_evidence_as_authoritative() -> None:
+    brain = SimpleNamespace(
+        messages_create_async=AsyncMock(
+            return_value=SimpleNamespace(
+                content=[SimpleNamespace(text='{"decision":"accept","reason":"账本完整"}')]
+            )
+        ),
+        set_trace_context=lambda _ctx: None,
+    )
+    agent = DefaultAgentBuilder(brain_provider=lambda: brain).build(_spec(node_id="producer"))
+
+    verdict = asyncio.run(
+        agent.review_child_output(
+            child_node_id="screenwriter",
+            task="produce complete storyboard JSON",
+            output="storyboard summary only",
+            structured_evidence={
+                "delivery_manifest": {
+                    "state": "complete",
+                    "artifacts": [{"kind": "data", "paths": ["storyboard.json"]}],
+                },
+                "artifact_ledger": {
+                    "records": [
+                        {
+                            "segments": [
+                                {
+                                    "segment_id": "seg-1",
+                                    "prompt": "dance",
+                                    "duration": 5,
+                                }
+                            ]
+                        }
+                    ]
+                },
+            },
+        )
+    )
+
+    assert verdict == (True, "账本完整")
+    kwargs = brain.messages_create_async.await_args.kwargs
+    assert "结构化交付证据" in kwargs["system"]
+    review_content = kwargs["messages"][0]["content"]
+    assert '"segment_id": "seg-1"' in review_content
+    assert "storyboard.json" in review_content
+
+
+def test_invalid_review_json_uses_complete_manifest_instead_of_default_accept() -> None:
+    brain = SimpleNamespace(
+        messages_create_async=AsyncMock(
+            return_value=SimpleNamespace(content=[SimpleNamespace(text="通过，可以上汇")])
+        ),
+        set_trace_context=lambda _ctx: None,
+    )
+    agent = DefaultAgentBuilder(brain_provider=lambda: brain).build(_spec(node_id="director"))
+
+    verdict = asyncio.run(
+        agent.review_child_output(
+            child_node_id="video",
+            task="generate one validated video",
+            output="video ready",
+            structured_evidence={
+                "delivery_manifest": {
+                    "state": "complete",
+                    "artifacts": [{"kind": "video", "status": "ready"}],
+                }
+            },
+        )
+    )
+
+    assert verdict[0] is True
+    assert verdict[1] == "审阅未返回有效 JSON；结构化交付清单已完成，按权威证据采纳。"
+    assert "默认采纳" not in verdict[1]
 
 
 def test_brain_backed_node_agent_handles_empty_content_without_calling_brain() -> None:
@@ -178,15 +383,14 @@ def test_brain_backed_node_agent_tags_trace_context_with_node_identity() -> None
     asyncio.run(agent.run("draft a scene"))
     # Sprint-5 P0-1 added ``tools_count`` to the trace dict so the LLM
     # debug ``context`` block can be filtered by "did the node have any
-    # resolved tools?". With the helper-spec ``enable_file_tools=False``
-    # + empty whitelist the count is "0", which is still informative
-    # (proves the orgs_v2 node path *did* run the resolver path).
+    # resolved tools?". Every node has the built-in delivery manifest tool,
+    # even when its external whitelist and file-tool set are empty.
     assert seen == [
         {
             "org_id": "org_1",
             "node_id": "screenwriter",
             "caller": "orgs_v2_node_agent",
-            "tools_count": "0",
+            "tools_count": "1",
         }
     ]
 

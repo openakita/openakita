@@ -41,6 +41,10 @@ from typing import Any
 import pytest
 
 from openakita.orgs._runtime_agent_host import NodeToolHost, build_node_tool_host
+from openakita.orgs._runtime_delegation import (
+    current_delegation_assignment_var,
+    current_delegation_output_slot_var,
+)
 from openakita.orgs._runtime_event_store import OrgEventStore
 from openakita.orgs._runtime_node_tools import (
     execute_node_tool,
@@ -83,7 +87,9 @@ class _FakeAgent:
     handlers registered through the same path tested here.
     """
 
-    def __init__(self, *, workspace: Path, plugin_tools: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self, *, workspace: Path, plugin_tools: list[dict[str, Any]] | None = None
+    ) -> None:
         self.handler_registry = SystemHandlerRegistry()
         # Hand the registry one real handler so write_file calls actually
         # land on disk -- this is the bug Sprint-5 missed (the registry
@@ -129,6 +135,140 @@ def _read_events(jsonl: Path) -> list[dict[str, Any]]:
     return events
 
 
+@pytest.mark.asyncio
+async def test_node_tool_host_injects_stable_schema_declared_idempotency_key(
+    tmp_path: Path,
+) -> None:
+    captured: list[dict[str, Any]] = []
+
+    async def handler(_tool_name: str, params: dict[str, Any]) -> str:
+        captured.append(params)
+        return '{"ok": true, "task_id": "task-1", "status": "running"}'
+
+    agent = _FakeAgent(
+        workspace=tmp_path,
+        plugin_tools=[
+            {
+                "name": "paid_external_tool",
+                "description": "test",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "segment_id": {"type": "string"},
+                        "client_request_id": {"type": "string"},
+                    },
+                },
+                "x-openakita-execution": {"kind": "external_task", "timeout_s": 900},
+                "x-openakita-idempotency-param": "client_request_id",
+            }
+        ],
+    )
+    agent.handler_registry.register("paid", handler, tool_names=["paid_external_tool"])
+    host = NodeToolHost(agent=agent, org_id="org")
+    assignment_token = current_delegation_assignment_var.set("assignment-1")
+    slot_token = current_delegation_output_slot_var.set("clip-1")
+    try:
+        for _ in range(2):
+            _text, is_error = await execute_node_tool(
+                tool_name="paid_external_tool",
+                tool_input={"segment_id": "seg-1"},
+                org_id="org",
+                node_id="video",
+                command_id="cmd",
+                tool_host=host,
+            )
+            assert is_error is False
+    finally:
+        current_delegation_assignment_var.reset(assignment_token)
+        current_delegation_output_slot_var.reset(slot_token)
+
+    assert captured[0]["client_request_id"].startswith("org_")
+    assert captured[0]["client_request_id"] == captured[1]["client_request_id"]
+
+
+@pytest.mark.asyncio
+async def test_node_tool_host_unifies_video_resolution_and_normalizes_duration(
+    tmp_path: Path,
+) -> None:
+    from openakita.orgs._runtime_media_contract import media_contract_ledger
+
+    captured: list[dict[str, Any]] = []
+
+    async def handler(_tool_name: str, params: dict[str, Any]) -> str:
+        captured.append(params)
+        return '{"ok": true, "task_id": "task", "status": "succeeded"}'
+
+    definition = {
+        "name": "paid_video_tool",
+        "description": "test",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "segment_id": {"type": "string"},
+                "model_id": {"type": "string"},
+                "resolution": {"type": "string"},
+                "aspect_ratio": {"type": "string"},
+                "duration": {"type": "integer"},
+            },
+        },
+        "x-openakita-media-contract": {
+            "kind": "video",
+            "model_param": "model_id",
+            "resolution_param": "resolution",
+            "aspect_ratio_param": "aspect_ratio",
+            "duration_param": "duration",
+            "default_model": "video-v1",
+            "models": {
+                "video-v1": {
+                    "resolutions": ["720P", "1080P"],
+                    "aspects": ["16:9"],
+                    "duration_range": [3, 15],
+                }
+            },
+        },
+    }
+    agent = _FakeAgent(workspace=tmp_path, plugin_tools=[definition])
+    agent.handler_registry.register("paid", handler, tool_names=["paid_video_tool"])
+    host = NodeToolHost(agent=agent, org_id="org")
+    media_contract_ledger.clear()
+    try:
+        first, first_error = await execute_node_tool(
+            tool_name="paid_video_tool",
+            tool_input={
+                "segment_id": "seg-1",
+                "resolution": "720P",
+                "aspect_ratio": "16:9",
+                "duration": 3,
+            },
+            org_id="org",
+            node_id="video",
+            command_id="cmd-media",
+            tool_host=host,
+        )
+        second, second_error = await execute_node_tool(
+            tool_name="paid_video_tool",
+            tool_input={
+                "segment_id": "seg-2",
+                "resolution": "1080P",
+                "aspect_ratio": "16:9",
+                "duration": 2,
+            },
+            org_id="org",
+            node_id="video",
+            command_id="cmd-media",
+            tool_host=host,
+        )
+    finally:
+        media_contract_ledger.clear()
+
+    assert first_error is False, first
+    assert second_error is False, second
+    assert captured[0]["resolution"] == "720P"
+    assert captured[1]["resolution"] == "720P"
+    assert captured[1]["duration"] == 3
+    assert captured[1]["model_id"] == "video-v1"
+
+
 # ---------------------------------------------------------------------------
 # P0-1 -- registry actually dispatches + events.jsonl carries completion
 # ---------------------------------------------------------------------------
@@ -162,9 +302,7 @@ async def test_node_tool_host_executes_real_filesystem_handler(
     org_dir = tmp_path / "orgs" / "org-int"
     import openakita.orgs._runtime_node_artifacts as _artifacts
 
-    monkeypatch.setattr(
-        _artifacts, "_resolve_org_dir", lambda _get, _org: org_dir
-    )
+    monkeypatch.setattr(_artifacts, "_resolve_org_dir", lambda _get, _org: org_dir)
     jsonl = tmp_path / "logs" / "events.jsonl"
     store = OrgEventStore(org_id="org-int", jsonl_path=jsonl)
     agent = _FakeAgent(workspace=workspace)
@@ -185,9 +323,9 @@ async def test_node_tool_host_executes_real_filesystem_handler(
     # The handler really ran -- file exists with the LLM-supplied content,
     # redirected into the PER-COMMAND artifacts dir (not the org-level dir, not
     # the bare workspace/CWD). This is the command-level isolation boundary.
-    written = (
-        org_dir / "commands" / "cmd-001" / "artifacts" / "deliverable.txt"
-    ).read_text(encoding="utf-8")
+    written = (org_dir / "commands" / "cmd-001" / "artifacts" / "deliverable.txt").read_text(
+        encoding="utf-8"
+    )
     assert written == "v18 audit signal"
     # Belt-and-braces: it must NOT have leaked into the shared org-level dir,
     # which is exactly what would re-pollute a sibling command.
@@ -247,12 +385,8 @@ async def test_node_tool_host_classifies_plugin_not_loaded(tmp_path: Path) -> No
 async def test_node_tool_host_steers_phantom_dispatch_tool(tmp_path: Path) -> None:
     """case id: test18.host.phantom_dispatch_steered
 
-    test18: coordinator nodes delegate via ``<dispatch target="...">`` XML
-    text blocks, NOT a callable tool. A node LLM sometimes hallucinates a
-    ``dispatch`` tool anyway; the generic ``plugin_not_loaded`` path made it
-    re-call the phantom tool until its budget drained. The host must instead
-    return a precise corrective (the XML syntax) and tag telemetry with a
-    distinct ``use_dispatch_xml`` reason.
+    Coordinators delegate through ``org_delegate_task``. A model may still
+    hallucinate an older alias, which must be redirected to the structured tool.
     """
 
     workspace = tmp_path / "workspace"
@@ -273,12 +407,38 @@ async def test_node_tool_host_steers_phantom_dispatch_tool(tmp_path: Path) -> No
     )
 
     assert is_error is True
-    # Corrective must teach the exact XML syntax so the node self-corrects.
-    assert "<dispatch target=" in result
+    assert "org_delegate_task" in result
+    assert "do not emit XML" in result
     events = _read_events(jsonl)
     failed = next(e for e in events if e.get("type") == "node_tool_failed")
     assert failed["tool_name"] == "dispatch"
-    assert failed["reason"] == "use_dispatch_xml"
+    assert failed["reason"] == "use_structured_delegation"
+
+
+@pytest.mark.asyncio
+async def test_node_tool_host_steers_dispatch_call_embedded_in_tool_name(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    jsonl = tmp_path / "logs" / "events.jsonl"
+    store = OrgEventStore(org_id="org-int", jsonl_path=jsonl)
+    host = NodeToolHost(agent=_FakeAgent(workspace=workspace), org_id="org-int")
+
+    result, is_error = await execute_node_tool(
+        tool_name='dispatch target="writer-a">write it</arg_value>',
+        tool_input={},
+        org_id="org-int",
+        node_id="planner",
+        command_id="cmd-004",
+        emit=_make_emit(store),
+        tool_host=host,
+    )
+
+    assert is_error is True
+    assert "org_delegate_task" in result
+    failed = next(e for e in _read_events(jsonl) if e.get("type") == "node_tool_failed")
+    assert failed["reason"] == "use_structured_delegation"
 
 
 # ---------------------------------------------------------------------------

@@ -52,12 +52,18 @@ reusing the same registry we:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from openakita.runtime.execution_context import (
+    artifact_role_for_phase,
+    current_execution_phase_var,
+)
 
 if TYPE_CHECKING:
     from ._runtime_agent_host import NodeToolHost
@@ -92,10 +98,38 @@ _RETRIEVAL_TOOL_NAMES: frozenset[str] = frozenset(
 # Explicit adult/porn markers. Deliberately narrow (overt sexual terms only) so
 # we never strip ordinary 玄幻/修仙 vocabulary. Matching is case-insensitive.
 _NSFW_TERMS: tuple[str, ...] = (
-    "口交", "深喉", "肉棒", "性爱", "做爱", "乳交", "巨乳", "内射", "射精",
-    "淫荡", "淫趴", "骑上去", "插入", "高潮", "情色", "色情", "裸体", "脱光",
-    "H漫", "h漫", "成人动漫", "黄漫", "无码", "포르노",
-    "porn", "xxx", "nsfw", "hentai", "blowjob", "cum", "nude", "sex video",
+    "口交",
+    "深喉",
+    "肉棒",
+    "性爱",
+    "做爱",
+    "乳交",
+    "巨乳",
+    "内射",
+    "射精",
+    "淫荡",
+    "淫趴",
+    "骑上去",
+    "插入",
+    "高潮",
+    "情色",
+    "色情",
+    "裸体",
+    "脱光",
+    "H漫",
+    "h漫",
+    "成人动漫",
+    "黄漫",
+    "无码",
+    "포르노",
+    "porn",
+    "xxx",
+    "nsfw",
+    "hentai",
+    "blowjob",
+    "cum",
+    "nude",
+    "sex video",
 )
 _NSFW_RE = re.compile("|".join(re.escape(t) for t in _NSFW_TERMS), re.IGNORECASE)
 
@@ -237,6 +271,7 @@ def pop_node_file_outputs(
         _NODE_FILE_OUTPUTS.pop(key, None)
     return matched
 
+
 # ── Org-node write sandbox (isolation guard) ──────────────────────────────
 # Org node agents share the desktop Agent's FileTool, whose ``_resolve_path``
 # returns absolute paths verbatim and resolves relative paths under CWD (= the
@@ -321,7 +356,11 @@ def _org_artifacts_dir(org_id: str) -> Path | None:
         return None
 
 
-def _command_workspace_dir(org_id: str, command_id: str | None) -> Path | None:
+def _command_workspace_dir(
+    org_id: str,
+    command_id: str | None,
+    workspace_dir: str | None = None,
+) -> Path | None:
     """Resolve the per-COMMAND artifacts sandbox for node file tools.
 
     Exploratory v22 (theme-drift root cause): the contamination vector was a
@@ -335,17 +374,25 @@ def _command_workspace_dir(org_id: str, command_id: str | None) -> Path | None:
     prompt by the agent builder and (b) any tool-written file lands in this same
     per-command dir, readable by later same-command nodes.
 
-    Falls back to the org-level ``artifacts`` dir when ``command_id`` is missing
-    (legacy / unit-test contexts) so non-command tool calls keep their old
-    behaviour byte-for-byte.
+    When the organization configures ``workspace_dir``, command sandboxes live
+    at ``<workspace_dir>/<command_id>/artifacts``. Otherwise they use the
+    built-in ``data/orgs/<id>/commands/<command_id>/artifacts`` tree. Missing
+    ``command_id`` falls back to an ``artifacts`` child of the selected base.
     """
     try:
         from ._runtime_node_artifacts import _resolve_org_dir, safe_path_segment
 
+        cmd = (command_id or "").strip()
+        configured = (workspace_dir or "").strip()
+        if configured:
+            base = Path(configured).expanduser().resolve()
+            if cmd:
+                safe_cmd = safe_path_segment(cmd, fallback="_cmd")
+                return base / safe_cmd / "artifacts"
+            return base / "artifacts"
         org_dir = _resolve_org_dir(None, org_id)
         if org_dir is None:
             return None
-        cmd = (command_id or "").strip()
         if cmd:
             safe_cmd = safe_path_segment(cmd, fallback="_cmd")
             return org_dir / "commands" / safe_cmd / "artifacts"
@@ -373,6 +420,7 @@ def _redirect_relative_writes(
     tool_input: dict[str, Any],
     org_id: str,
     command_id: str | None = None,
+    workspace_dir: str | None = None,
 ) -> list[tuple[str, str]]:
     """Rewrite RELATIVE write destinations to live under the per-command dir.
 
@@ -389,7 +437,7 @@ def _redirect_relative_writes(
     keys = _WRITE_DEST_KEYS.get(tool_name)
     if not keys or not isinstance(tool_input, dict):
         return []
-    artifacts = _command_workspace_dir(org_id, command_id)
+    artifacts = _command_workspace_dir(org_id, command_id, workspace_dir)
     if artifacts is None:
         return []
     rewrites: list[tuple[str, str]] = []
@@ -436,6 +484,7 @@ def _redirect_relative_reads(
     tool_input: dict[str, Any],
     org_id: str,
     command_id: str | None = None,
+    workspace_dir: str | None = None,
 ) -> list[tuple[str, str]]:
     """Sandbox RELATIVE read paths into the per-command workspace.
 
@@ -454,7 +503,7 @@ def _redirect_relative_reads(
     # (un-sandboxed) read behaviour to avoid disturbing legacy/tests.
     if not (command_id or "").strip():
         return []
-    sandbox = _command_workspace_dir(org_id, command_id)
+    sandbox = _command_workspace_dir(org_id, command_id, workspace_dir)
     if sandbox is None:
         return []
     rewrites: list[tuple[str, str]] = []
@@ -463,6 +512,12 @@ def _redirect_relative_reads(
         sandbox_root.mkdir(parents=True, exist_ok=True)
     except Exception:  # noqa: BLE001 -- mkdir best-effort
         pass
+    if not any(isinstance(tool_input.get(key), str) for key in keys):
+        # File search tools commonly make their root optional. Never let an
+        # omitted root fall through to the shared desktop Agent's default_cwd.
+        tool_input[keys[0]] = str(sandbox_root)
+        rewrites.append(("<missing>", str(sandbox_root)))
+        return rewrites
     for key in keys:
         raw = tool_input.get(key)
         if not isinstance(raw, str):
@@ -513,6 +568,7 @@ def _guarded_write_violation(tool_name: str, tool_input: Mapping[str, Any]) -> s
                 continue
     return None
 
+
 __all__ = [
     "MAX_SEARCH_CALLS",
     "MAX_TOOL_CALLS",
@@ -553,13 +609,9 @@ def _env_int(name: str, default: int, *, lo: int, hi: int) -> int:
         return default
 
 
-# test18: coordinator nodes delegate via ``<dispatch target="...">`` XML text
-# blocks (parsed by ``_default_agent_builder``), NOT via a tool call. Some LLMs
-# hallucinate a callable ``dispatch``/``delegate`` tool anyway; that hit the
-# generic ``plugin_not_loaded`` path and the node burned several rounds
-# re-calling the phantom tool. When an UNKNOWN tool name is one of these
-# delegation verbs we return a precise corrective (the exact XML syntax) so the
-# node self-corrects on the next round instead of retrying a dead tool.
+# Coordinators delegate through the built-in ``org_delegate_task`` tool. Some
+# models still hallucinate older alias names; redirect those calls to the real
+# structured protocol instead of letting them hit the plugin-not-loaded path.
 _DELEGATION_VERB_ALIASES: frozenset[str] = frozenset(
     {
         "dispatch",
@@ -578,14 +630,24 @@ _DELEGATION_VERB_ALIASES: frozenset[str] = frozenset(
 )
 
 
+def _is_delegation_tool_alias(tool_name: str) -> bool:
+    """Recognize both a bare alias and malformed ``dispatch target=...`` names."""
+
+    normalized = tool_name.strip().lower()
+    if normalized in _DELEGATION_VERB_ALIASES:
+        return True
+    verb = re.split(r"[\s<]", normalized, maxsplit=1)[0]
+    return verb in _DELEGATION_VERB_ALIASES and bool(re.search(r"(?:^|\s)target\s*=", normalized))
+
+
 def _dispatch_corrective_text(tool_name: str) -> str:
     """The corrective returned when a node calls a phantom delegation tool."""
     return (
         f'There is no "{tool_name}" tool. To delegate to a direct report, do '
-        "NOT call a tool -- instead emit one or more XML blocks directly in "
-        'your reply text using EXACTLY this syntax: <dispatch target="NODE_ID">'
-        "instruction for that node</dispatch>. The target must be one of your "
-        "direct reports. If a part is your own job, just do it yourself "
+        "not emit XML or prose routing. Call the built-in org_delegate_task tool "
+        "with target and instruction; for media tasks also include segment_id and "
+        "tool_name. The target must be one of your direct reports. If a part is "
+        "your own job, just do it yourself "
         "(write the file / call the real tool)."
     )
 
@@ -785,6 +847,10 @@ def resolve_node_tools(
             "plugin / workbench tools not yet wired): %s",
             sorted(dropped),
         )
+    from ._runtime_delivery_manifest import ORG_SUBMIT_DELIVERABLE_TOOL
+
+    if "org_submit_deliverable" not in seen:
+        resolved.append(dict(ORG_SUBMIT_DELIVERABLE_TOOL))
     return resolved
 
 
@@ -910,6 +976,7 @@ async def execute_node_tool(
     org_id: str,
     node_id: str,
     command_id: str | None,
+    workspace_dir: str | None = None,
     emit: NodeToolEmit | None = None,
     tool_host: NodeToolHost | None = None,
 ) -> tuple[str, bool]:
@@ -941,12 +1008,52 @@ async def execute_node_tool(
     pipeline (Sprint-3 P0-2) keeps working through tool execution.
     """
 
+    from ._runtime_artifact_flow import ArtifactBindingError, bind_tool_input
+
+    try:
+        tool_input, bindings = bind_tool_input(
+            org_id=org_id,
+            command_id=command_id,
+            target_node_id=node_id,
+            tool_name=tool_name,
+            tool_input=tool_input,
+        )
+    except ArtifactBindingError as exc:
+        await _safe_emit(
+            emit,
+            "node_tool_failed",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                "reason": exc.reason,
+                "edge_id": exc.edge_id,
+                "error": str(exc),
+            },
+        )
+        return (f"[资产绑定失败：{exc}]", True)
+    for binding in bindings:
+        await _safe_emit(
+            emit,
+            "artifact_binding_applied",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                **binding,
+            },
+        )
+
     # Command-scope sandbox: redirect RELATIVE write destinations into the
     # PER-COMMAND workspace BEFORE preview/exec so a bare filename like
     # ``jianlai_points.md`` lands in data/orgs/<id>/commands/<cmd>/artifacts/
     # instead of the process CWD (repo root). Absolute paths still hit the
     # source-tree guard.
-    redirects = _redirect_relative_writes(tool_name, tool_input, org_id, command_id)
+    redirects = _redirect_relative_writes(
+        tool_name, tool_input, org_id, command_id, workspace_dir
+    )
     if redirects:
         _LOGGER.info(
             "[node-tool] redirected %s relative write(s) into command workspace "
@@ -964,7 +1071,9 @@ async def execute_node_tool(
     # deliverables (the 《剑来》→《凡人修仙传》contamination). Same-command
     # reflow is preserved (upstream output is inlined into the child prompt and
     # any tool-written file lives in this same per-command dir).
-    read_redirects = _redirect_relative_reads(tool_name, tool_input, org_id, command_id)
+    read_redirects = _redirect_relative_reads(
+        tool_name, tool_input, org_id, command_id, workspace_dir
+    )
     if read_redirects:
         _LOGGER.info(
             "[node-tool] sandboxed %s relative read(s) to command workspace "
@@ -1041,6 +1150,168 @@ async def execute_node_tool(
         )
         return (directive, True)
 
+    if tool_name == "org_delegate_task":
+        import json as _json
+
+        from ._runtime_delegation import delegation_key, queue_delegation
+
+        request, detail = queue_delegation(
+            tool_input,
+            org_id=org_id,
+            command_id=command_id,
+        )
+        if request is None:
+            if detail.startswith("duplicate delegation suppressed:"):
+                return (
+                    _json.dumps(
+                        {"ok": True, "queued": False, "duplicate": True, "detail": detail},
+                        ensure_ascii=False,
+                    ),
+                    False,
+                )
+            await _safe_emit(
+                emit,
+                "node_tool_failed",
+                {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "command_id": command_id,
+                    "tool_name": tool_name,
+                    "reason": "delegation_invalid",
+                    "error": detail,
+                },
+            )
+            return (f"结构化派单无效：{detail}", True)
+        payload = {
+            "ok": True,
+            "queued": not request.reuse_completed,
+            "reused": request.reuse_completed,
+            "target": request.target,
+            "step_id": request.step_id,
+            "depends_on": list(request.depends_on),
+            "segment_id": request.segment_id,
+            "tool_name": request.tool_name,
+            "output_slot": request.output_slot,
+            "expected_outputs": request.expected_outputs,
+            "dispatch_key": delegation_key(request),
+            "media_spec": request.media_spec.to_dict() if request.media_spec else None,
+        }
+        await _safe_emit(
+            emit,
+            "delegation_queued",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                **payload,
+            },
+        )
+        return (_json.dumps(payload, ensure_ascii=False), False)
+
+    if tool_name == "org_submit_deliverable":
+        from ._runtime_artifact_flow import artifact_ledger
+        from ._runtime_delegation import (
+            current_delegation_assignment_var,
+            current_delegation_output_slot_var,
+        )
+        from ._runtime_delivery_manifest import (
+            DeliveryManifest,
+            DeliveryManifestError,
+            delivery_manifest_ledger,
+            validate_manifest_runtime_evidence,
+        )
+
+        if not command_id:
+            message = "结构化交付清单只能在组织命令执行期间提交。"
+            await _safe_emit(
+                emit,
+                "node_tool_failed",
+                {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "command_id": command_id,
+                    "tool_name": tool_name,
+                    "reason": "delivery_manifest_command_missing",
+                    "error": message,
+                },
+            )
+            return (message, True)
+        try:
+            manifest = DeliveryManifest.from_mapping(
+                tool_input,
+                org_id=org_id,
+                command_id=command_id,
+                node_id=node_id,
+                assignment_id=current_delegation_assignment_var.get(""),
+                output_slot=current_delegation_output_slot_var.get("default"),
+            )
+        except DeliveryManifestError as exc:
+            await _safe_emit(
+                emit,
+                "node_tool_failed",
+                {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "command_id": command_id,
+                    "tool_name": tool_name,
+                    "reason": "delivery_manifest_invalid",
+                    "error": str(exc),
+                },
+            )
+            return (f"结构化交付清单无效：{exc}", True)
+        media_failures = validate_manifest_runtime_evidence(
+            manifest,
+            artifact_records=artifact_ledger.get(org_id, command_id),
+            workspace_dir=workspace_dir,
+        )
+        if media_failures:
+            failure_code = str(media_failures[0].get("code") or "")
+            failure_reason = (
+                "media_validation_failed"
+                if failure_code.startswith("media_")
+                else "delivery_evidence_validation_failed"
+            )
+            message = (
+                f"{media_failures[0]['message']} 运行时未接受该结构化交付证据，"
+                "请修正清单或重新产出；不要继续把清单标记为 complete。"
+            )
+            await _safe_emit(
+                emit,
+                "node_tool_failed",
+                {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "command_id": command_id,
+                    "tool_name": tool_name,
+                    "reason": failure_reason,
+                    "error": message,
+                    "media_quality_failures": media_failures,
+                },
+            )
+            return (message, True)
+        delivery_manifest_ledger.record(manifest)
+        payload = manifest.to_dict()
+        await _safe_emit(
+            emit,
+            "delivery_manifest_recorded",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                "manifest": payload,
+            },
+        )
+        import json as _json
+
+        return (
+            _json.dumps(
+                {"ok": True, "delivery_manifest": payload},
+                ensure_ascii=False,
+            ),
+            False,
+        )
+
     # Isolation guard: block write-class tools whose target escapes into the
     # OpenAkita source tree (the "stray tool_handler.py" pollution incident).
     violation = _guarded_write_violation(tool_name, tool_input)
@@ -1070,6 +1341,93 @@ async def execute_node_tool(
     from openakita.tools.tool_hints import ToolConfigError
 
     from ._runtime_agent_host import ToolNotAvailable
+    from ._runtime_delegation import (
+        current_delegation_assignment_var,
+        current_delegation_media_spec_var,
+        current_delegation_output_slot_var,
+    )
+    from ._runtime_external_tasks import (
+        current_external_task_tracker_var,
+        external_task_timeout,
+    )
+
+    lookup_definition = getattr(tool_host, "lookup_tool_definition", None)
+    tool_definition = lookup_definition(tool_name) if callable(lookup_definition) else None
+    from ._runtime_media_contract import MediaContractError, bind_media_contract
+
+    try:
+        tool_input, media_changes = bind_media_contract(
+            org_id=org_id,
+            command_id=command_id,
+            tool_input=tool_input,
+            tool_definition=tool_definition,
+            planned_spec=current_delegation_media_spec_var.get(),
+        )
+    except MediaContractError as exc:
+        await _safe_emit(
+            emit,
+            "node_tool_failed",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                "reason": "media_contract_invalid",
+                "error": str(exc),
+            },
+        )
+        return (f"媒体计划规格无效：{exc}", True)
+    if media_changes:
+        await _safe_emit(
+            emit,
+            "node_tool_media_contract_bound",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                "changes": media_changes,
+            },
+        )
+    schema = tool_definition.get("input_schema", {}) if tool_definition else {}
+    properties = schema.get("properties", {}) if isinstance(schema, Mapping) else {}
+    idempotency_param = (
+        str(tool_definition.get("x-openakita-idempotency-param") or "").strip()
+        if tool_definition
+        else ""
+    )
+    assignment_id = current_delegation_assignment_var.get("").strip()
+    if (
+        assignment_id
+        and isinstance(properties, Mapping)
+        and idempotency_param
+        and idempotency_param in properties
+        and not str(tool_input.get(idempotency_param) or "").strip()
+    ):
+        slot = current_delegation_output_slot_var.get("default").strip() or "default"
+        segment = str(tool_input.get("segment_id") or "default").strip() or "default"
+        identity = "|".join((str(command_id or ""), assignment_id, slot, tool_name, segment))
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+        tool_input = dict(tool_input)
+        tool_input[idempotency_param] = f"org_{digest}"
+        await _safe_emit(
+            emit,
+            "node_tool_idempotency_bound",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                "parameter": idempotency_param,
+                "key": tool_input[idempotency_param],
+            },
+        )
+
+    tracker = current_external_task_tracker_var.get()
+    declared_external_timeout = external_task_timeout(tool_definition)
+    if tracker is not None and declared_external_timeout > 0:
+        tracker.active_calls += 1
+        tracker.max_wait_s = max(tracker.max_wait_s, declared_external_timeout)
 
     try:
         if tool_host is not None:
@@ -1088,9 +1446,7 @@ async def execute_node_tool(
             # ``default_handler_registry.execute_by_tool``.
             from openakita.tools.handlers import default_handler_registry
 
-            result = await default_handler_registry.execute_by_tool(
-                tool_name, dict(tool_input)
-            )
+            result = await default_handler_registry.execute_by_tool(tool_name, dict(tool_input))
     except asyncio.CancelledError:
         # User cancel must propagate to the outer node-agent run so the
         # outcome cache resolves to ``cancelled`` instead of failing
@@ -1102,7 +1458,7 @@ async def execute_node_tool(
         # corrective so it self-corrects next round instead of re-calling the
         # phantom tool until its budget drains. Telemetry gets a distinct
         # reason so this is not confused with a real missing plugin.
-        if tool_name.strip().lower() in _DELEGATION_VERB_ALIASES:
+        if _is_delegation_tool_alias(tool_name):
             _LOGGER.info(
                 "[orgs_v2 node tool] %s called phantom delegation tool %s; "
                 "steering to <dispatch> XML syntax",
@@ -1117,7 +1473,7 @@ async def execute_node_tool(
                     "node_id": node_id,
                     "command_id": command_id,
                     "tool_name": tool_name,
-                    "reason": "use_dispatch_xml",
+                    "reason": "use_structured_delegation",
                 },
             )
             return (_dispatch_corrective_text(tool_name), True)
@@ -1206,6 +1562,64 @@ async def execute_node_tool(
             },
         )
         return (f"[tool {tool_name} failed: {exc}]", True)
+    finally:
+        if tracker is not None and declared_external_timeout > 0:
+            tracker.active_calls = max(0, tracker.active_calls - 1)
+
+    from ._runtime_media_quality import observe_media_quality_result
+
+    quality_failure = observe_media_quality_result(
+        tool_name=tool_name,
+        tool_input=tool_input,
+        result=result,
+    )
+    if quality_failure is not None:
+        await _safe_emit(
+            emit,
+            "node_tool_failed",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                "reason": "media_validation_failed",
+                "error_code": quality_failure.get("code"),
+                "error": quality_failure.get("message"),
+                "quality_failure": quality_failure,
+                "reworkable": True,
+            },
+        )
+        text = result if isinstance(result, str) else str(result)
+        return (text, True)
+
+    from ._runtime_artifact_flow import record_tool_result
+
+    artifact_record = record_tool_result(
+        org_id=org_id,
+        command_id=command_id,
+        source_node_id=node_id,
+        tool_name=tool_name,
+        tool_input=tool_input,
+        result=result,
+    )
+    if artifact_record is not None:
+        await _safe_emit(
+            emit,
+            "artifact_recorded",
+            {
+                "org_id": org_id,
+                "node_id": node_id,
+                "command_id": command_id,
+                "tool_name": tool_name,
+                "asset_ids": list(artifact_record.asset_ids),
+                "task_ids": list(artifact_record.task_ids),
+                "segment_id": artifact_record.segment_id,
+                "asset_kinds": list(artifact_record.asset_kinds),
+                "local_paths": list(artifact_record.local_paths),
+                "registered_paths": list(artifact_record.registered_paths),
+                "media_validation_passed": artifact_record.media_validation_passed,
+            },
+        )
 
     text = result if isinstance(result, str) else str(result)
     # Reliability (v23): strip explicit-adult entries from retrieval results
@@ -1228,7 +1642,12 @@ async def execute_node_tool(
     # delivery cards populate live for EVERY write path (not just the final PDF)
     # and (b) the executor can recover a node whose final TEXT was empty but
     # which actually produced a file.
-    for _wpath in _extract_written_paths(tool_name, tool_input):
+    _registered_artifact_paths = (
+        list(artifact_record.registered_paths) if artifact_record is not None else []
+    )
+    for _wpath in dict.fromkeys(
+        [*_extract_written_paths(tool_name, tool_input), *_registered_artifact_paths]
+    ):
         _size = record_node_file_output(org_id, command_id, node_id, _wpath, tool_name)
         if _size is None:
             continue
@@ -1242,6 +1661,10 @@ async def execute_node_tool(
                 "tool_name": tool_name,
                 "path": _wpath,
                 "size_bytes": _size,
+                "verified_plugin_asset": _wpath in _registered_artifact_paths,
+                "artifact_role": artifact_role_for_phase(
+                    current_execution_phase_var.get()
+                ).value,
             },
         )
 
@@ -1274,6 +1697,7 @@ async def run_with_tools(
     org_id: str,
     node_id: str,
     command_id: str | None,
+    workspace_dir: str | None = None,
     emit: NodeToolEmit | None = None,
     second_round_caller: Callable[[list[dict[str, Any]]], Awaitable[Any]] | None = None,
     tool_host: NodeToolHost | None = None,
@@ -1430,6 +1854,7 @@ async def run_with_tools(
                 org_id=org_id,
                 node_id=node_id,
                 command_id=command_id,
+                workspace_dir=workspace_dir,
                 emit=emit,
                 tool_host=tool_host,
             )

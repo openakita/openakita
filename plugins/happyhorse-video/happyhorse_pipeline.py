@@ -59,6 +59,11 @@ from typing import Any
 from happyhorse_dashscope_client import (
     HappyhorseDashScopeClient,
 )
+from happyhorse_inline.asset_probe import (
+    MediaTarget,
+    MediaValidationError,
+    assert_media_dimensions,
+)
 from happyhorse_inline.vendor_client import VendorError
 from happyhorse_model_registry import ModelEntry
 from happyhorse_models import (
@@ -230,6 +235,25 @@ class ApprovalRequired(Exception):
         self.cost_breakdown = cost_breakdown
 
 
+def _approval_wait_hints(
+    cost_breakdown: dict[str, Any],
+    *,
+    message: str,
+) -> dict[str, Any]:
+    """Build the generic blocked-wait contract for a cost gate."""
+
+    return {
+        "wait_state": "blocked",
+        "blocker": {
+            "kind": "approval_required",
+            "action": "approve_cost",
+            "message": message,
+            "details": dict(cost_breakdown),
+            "resume_patch": {"cost_approved": True},
+        },
+    }
+
+
 # ─── Context ──────────────────────────────────────────────────────────
 
 
@@ -334,12 +358,17 @@ async def run_pipeline(
         ctx.error_kind = "approval_required"
         ctx.error_message = "Cost exceeds threshold; user confirmation required"
         ctx.cost_breakdown = ar.cost_breakdown
+        ctx.error_hints = _approval_wait_hints(
+            ar.cost_breakdown,
+            message=ctx.error_message,
+        )
         await tm.update_task_safe(
             ctx.task_id,
             status="pending",
             cost_breakdown_json=ar.cost_breakdown,
             error_kind="approval_required",
             error_message=ctx.error_message,
+            error_hints_json=ctx.error_hints,
         )
         await _emit(emit, "task_update", _ctx_payload(ctx))
     except BaseException as e:  # noqa: BLE001 — root catcher
@@ -926,6 +955,31 @@ async def _step_finalize(
     if last_frame_local is not None:
         ctx.last_frame_path = last_frame_local
 
+    validation: dict[str, object] = {}
+    expected_media = ctx.params.get("expected_media")
+    if isinstance(expected_media, dict):
+        target = MediaTarget(
+            aspect_ratio=str(expected_media.get("aspect_ratio") or ""),
+            width=int(expected_media.get("width") or 0),
+            height=int(expected_media.get("height") or 0),
+        )
+        if ctx.video_path is None:
+            raise MediaValidationError(
+                {
+                    "passed": False,
+                    "code": "media_probe_unavailable",
+                    "message": "生成视频未能下载到本地，无法用 ffprobe 校验实际尺寸，交付已阻止",
+                    "expected": target.to_dict(),
+                    "actual": {"width": 0, "height": 0},
+                }
+            )
+        validation = await asyncio.to_thread(
+            assert_media_dimensions,
+            ctx.video_path,
+            kind="video",
+            target=target,
+        )
+
     # ── Asset Bus integration ────────────────────────────────────────
     # The plugin layer optionally injects ``_publish_asset`` to register
     # the produced video / last_frame as Asset Bus rows. Returns asset_ids
@@ -943,6 +997,7 @@ async def _step_finalize(
         "dashscope_endpoint": ctx.dashscope_endpoint,
         "duration_sec": ctx.video_duration_sec,
         "cost_breakdown": ctx.cost_breakdown,
+        "media_validation": validation,
     }
     if callable(publish_fn):
         try:
@@ -996,6 +1051,7 @@ async def _step_finalize(
         "last_frame_url": ctx.last_frame_url,
         "last_frame_path": str(ctx.last_frame_path) if ctx.last_frame_path else None,
         "asset_ids": list(ctx.asset_ids),
+        "media_validation": validation,
         "elapsed_sec": round(time.time() - ctx.started_at, 2),
     }
     (ctx.task_dir / "metadata.json").write_text(
@@ -1009,6 +1065,7 @@ async def _step_finalize(
         video_path=str(ctx.video_path) if ctx.video_path else "",
         last_frame_url=ctx.last_frame_url or "",
         last_frame_path=str(ctx.last_frame_path) if ctx.last_frame_path else "",
+        asset_paths_json={"media_validation": validation},
         asset_ids_json=list(ctx.asset_ids),
         video_duration_sec=ctx.video_duration_sec,
         completed_at=time.time(),
@@ -1146,6 +1203,11 @@ async def _step_handle_exception(
         ctx.error_kind = "cancelled"
         ctx.error_message = "task cancelled by user"
         status = "cancelled"
+    elif isinstance(exc, MediaValidationError):
+        ctx.error_kind = "media_validation_failed"
+        ctx.error_message = str(exc)
+        ctx.error_hints = dict(exc.result)
+        status = "failed"
     elif isinstance(exc, VendorError):
         ctx.error_kind = exc.kind or "unknown"
         ctx.error_message = str(exc)
@@ -1159,7 +1221,8 @@ async def _step_handle_exception(
         ctx.error_message = f"{type(exc).__name__}: {exc}"
         status = "failed"
 
-    ctx.error_hints = dict(hint_for(ctx.error_kind))
+    if ctx.error_hints is None:
+        ctx.error_hints = dict(hint_for(ctx.error_kind))
 
     try:
         await tm.update_task_safe(

@@ -134,6 +134,11 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
   node_tool_called: "org.eventType.toolCallStart",
   node_tool_completed: "org.eventType.toolCallEnd",
   node_tool_failed: "org.eventType.workbenchToolFailed",
+  artifact_binding_applied: "org.eventType.artifactBindingApplied",
+  artifact_recorded: "org.eventType.artifactRecorded",
+  delivery_manifest_recorded: "org.eventType.deliveryManifestRecorded",
+  artifact_edge_activated: "org.eventType.artifactEdgeActivated",
+  artifact_edge_result: "org.eventType.artifactEdgeResult",
   node_thinking: "org.eventType.thinking",
   command_done: "org.eventType.done",
 };
@@ -301,6 +306,7 @@ export const EDGE_COLORS: Record<string, string> = {
   collaborate: "var(--ok)",
   escalate: "var(--danger)",
   consult: "#a78bfa",
+  artifact: "#0891b2",
 };
 
 const DEPT_KEY_MAP: Record<string, string> = {
@@ -442,6 +448,27 @@ export interface OrgEdgeData {
   bidirectional: boolean;
   priority: number;
   bandwidth_limit: number;
+  binding?: {
+    source_port?: string;
+    target_port?: string;
+    target_tools?: string[];
+    target_param?: string;
+    value_field?: "asset_ids" | "task_ids" | "segments";
+    accepts?: string[];
+    join_key?: string;
+    required?: boolean;
+    cardinality?: "one" | "many";
+    selection?: string;
+    activation?: "manual" | "when_ready";
+    dispatch_mode?: "per_join_key" | "join_all";
+    min_count?: number;
+    max_attempts?: number;
+    join_scope?: {
+      source: string;
+      value_field?: "asset_ids" | "task_ids" | "segments";
+      key_field?: string;
+    };
+  };
 }
 
 export interface OrgSummary {
@@ -473,6 +500,12 @@ export interface OrgFull {
   edges: OrgEdgeData[];
   layout_locked?: boolean;
   user_persona?: UserPersona;
+  runtime_overrides?: {
+    supervisor_hard_ceiling_s?: number;
+    supervisor_soft_ceiling_ratio?: number;
+    supervisor_soft_watchdog_grace_ratio?: number;
+    [key: string]: unknown;
+  };
   [key: string]: any;
 }
 

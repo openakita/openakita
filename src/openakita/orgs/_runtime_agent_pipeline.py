@@ -138,6 +138,9 @@ class AgentSpec:
       producer LLM may dispatch to, so the per-node system prompt can
       list them explicitly and reduce LLM-invented target names
       (audit v5 §5.3 "self-invented director node").
+    * ``workspace_dir`` is propagated to every node tool call. The tool runtime
+      adds ``<command_id>/artifacts`` so commands remain isolated even when an
+      organization uses a user-selected output directory.
 
     All three default to safe-empty values so legacy callers (parity /
     contract tests that build :class:`AgentSpec` by hand) keep working

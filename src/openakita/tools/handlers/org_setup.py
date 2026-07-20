@@ -253,7 +253,7 @@ class OrgSetupHandler:
                 lines.append(f"- {src} → {tgt}")
 
         if other_edges:
-            lines.append("\n**协作/咨询/上报：**")
+            lines.append("\n**协作/咨询/上报/资产流：**")
             for e in other_edges:
                 src = self._find_title_by_node_id(org.nodes, e.source)
                 tgt = self._find_title_by_node_id(org.nodes, e.target)
@@ -966,6 +966,7 @@ class OrgSetupHandler:
             "collaborate": "协作",
             "escalate": "上报",
             "consult": "咨询",
+            "artifact": "资产流",
         }
         for t, label in type_labels.items():
             if t in counts:

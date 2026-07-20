@@ -23,13 +23,35 @@ from openakita.orgs._default_agent_builder import (
     DefaultAgentBuilder,
 )
 from openakita.orgs._runtime_agent_pipeline import AgentSpec
+from openakita.orgs._runtime_media_quality import (
+    current_media_quality_failures,
+    current_media_quality_failures_var,
+)
 from openakita.orgs._runtime_node_tools import (
     MAX_TOOL_ROUNDS,
+    _redirect_relative_reads,
     execute_node_tool,
     extract_tool_use_blocks,
     resolve_node_tools,
     run_with_tools,
 )
+
+
+def test_glob_without_root_is_anchored_to_configured_command_workspace(tmp_path) -> None:
+    params = {"pattern": "**/script.md"}
+
+    redirects = _redirect_relative_reads(
+        "glob",
+        params,
+        "org_1",
+        "cmd_1",
+        str(tmp_path / "org-workspace"),
+    )
+
+    expected = (tmp_path / "org-workspace" / "cmd_1" / "artifacts").resolve()
+    assert params["path"] == str(expected)
+    assert redirects == [("<missing>", str(expected))]
+    assert expected.is_dir()
 
 # ---------------------------------------------------------------------------
 # resolve_node_tools -- maps OrgNode.external_tools to LLM tool dicts
@@ -102,8 +124,9 @@ def test_resolve_node_tools_returns_anthropic_shape() -> None:
 def test_resolve_node_tools_handles_empty_input() -> None:
     """case id: p05.tools.resolve.empty_safe"""
 
-    assert resolve_node_tools(external_tools=(), enable_file_tools=False) == []
-    assert resolve_node_tools(external_tools=None, enable_file_tools=False) == []
+    for external_tools in ((), None):
+        tools = resolve_node_tools(external_tools=external_tools, enable_file_tools=False)
+        assert [tool["name"] for tool in tools] == ["org_submit_deliverable"]
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +259,51 @@ def test_execute_node_tool_inlines_handler_error(monkeypatch) -> None:
     )
     assert is_error is True
     assert "boom" in result
+
+
+def test_execute_node_tool_marks_media_quality_failure_as_reworkable_error(
+    monkeypatch,
+) -> None:
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(event_name: str, payload: dict[str, Any]) -> None:
+        captured.append((event_name, payload))
+
+    async def bad_media(_tool_name: str, _params: dict[str, Any]) -> str:
+        return (
+            '{"ok": false, "reworkable": true, "segment_id": "segment-1", '
+            '"quality_failure": {"code": "media_dimensions_mismatch", '
+            '"message": "expected 1280x720, got 960x960"}}'
+        )
+
+    import openakita.tools.handlers as handlers_mod
+
+    monkeypatch.setattr(
+        handlers_mod.default_handler_registry,
+        "execute_by_tool",
+        bad_media,
+    )
+    token = current_media_quality_failures_var.set({})
+    try:
+        result, is_error = asyncio.run(
+            execute_node_tool(
+                tool_name="hh_status",
+                tool_input={"task_id": "hh_bad"},
+                org_id="o1",
+                node_id="video",
+                command_id="cmd_media",
+                emit=emit,
+            )
+        )
+        failures = current_media_quality_failures()
+    finally:
+        current_media_quality_failures_var.reset(token)
+
+    assert is_error is True
+    assert "media_dimensions_mismatch" in result
+    assert failures[0]["message"] == "expected 1280x720, got 960x960"
+    failed = [payload for name, payload in captured if name == "node_tool_failed"]
+    assert failed[-1]["reason"] == "media_validation_failed"
 
 
 def test_execute_node_tool_propagates_cancel(monkeypatch) -> None:
@@ -437,9 +505,7 @@ def test_run_with_tools_loops_until_text_then_stops(monkeypatch) -> None:
 
     import openakita.tools.handlers as handlers_mod
 
-    monkeypatch.setattr(
-        handlers_mod.default_handler_registry, "execute_by_tool", fake_handler
-    )
+    monkeypatch.setattr(handlers_mod.default_handler_registry, "execute_by_tool", fake_handler)
 
     response, rounds = asyncio.run(
         run_with_tools(
@@ -499,9 +565,7 @@ def test_run_with_tools_forces_text_when_budget_exhausted(monkeypatch) -> None:
 
     import openakita.tools.handlers as handlers_mod
 
-    monkeypatch.setattr(
-        handlers_mod.default_handler_registry, "execute_by_tool", fake_handler
-    )
+    monkeypatch.setattr(handlers_mod.default_handler_registry, "execute_by_tool", fake_handler)
 
     response, rounds = asyncio.run(
         run_with_tools(
@@ -579,9 +643,7 @@ def test_run_with_tools_caps_search_then_asks_to_write(monkeypatch) -> None:
 
     import openakita.tools.handlers as handlers_mod
 
-    monkeypatch.setattr(
-        handlers_mod.default_handler_registry, "execute_by_tool", fake_handler
-    )
+    monkeypatch.setattr(handlers_mod.default_handler_registry, "execute_by_tool", fake_handler)
 
     captured: list[dict[str, Any]] = []
 

@@ -91,11 +91,22 @@ WORKBENCH: dict[str, Any] = {
         "icon": f"/plugins/{PLUGIN_ID}/ui/icon.svg",
     },
     "capabilities": [
-        "t2i", "i2i", "image_edit", "image_ecommerce",
-        "t2v", "i2v", "r2v", "video_edit",
-        "photo_speak", "video_relip", "video_reface",
-        "pose_drive", "avatar_compose",
-        "storyboard", "long_video", "video_concat",
+        "t2i",
+        "i2i",
+        "image_edit",
+        "image_ecommerce",
+        "t2v",
+        "i2v",
+        "r2v",
+        "video_edit",
+        "photo_speak",
+        "video_relip",
+        "video_reface",
+        "pose_drive",
+        "avatar_compose",
+        "storyboard",
+        "long_video",
+        "video_concat",
     ],
     "modes": [
         {
@@ -215,6 +226,14 @@ from happyhorse_image_models import (  # noqa: E402
     build_image_catalog,
     image_model_for,
 )
+from happyhorse_inline.asset_probe import (  # noqa: E402
+    MediaTarget,
+    MediaValidationError,
+    assert_media_aspect,
+    assert_media_dimensions,
+    image_target_for,
+    video_target_for,
+)
 from happyhorse_inline.oss_uploader import (  # noqa: E402
     OssUploader,
     OssUploadError,
@@ -233,7 +252,7 @@ from happyhorse_long_video import (  # noqa: E402
     ffmpeg_available,
     normalize_transition,
 )
-from happyhorse_model_registry import default_model  # noqa: E402
+from happyhorse_model_registry import default_model, models_for  # noqa: E402
 from happyhorse_models import (  # noqa: E402
     MODES_BY_ID,
     SYSTEM_VOICES,
@@ -259,12 +278,50 @@ from openakita.plugins.api import PluginAPI, PluginBase  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+_WAIT_STATES = frozenset({"active", "blocked", "terminal"})
+_ACTIVE_TASK_STATUSES = frozenset({"pending", "queued", "running", "processing"})
+
+
+def _task_wait_state(task: dict[str, Any]) -> str:
+    """Return the protocol-level wait state without interpreting blocker kinds."""
+
+    declared = str(task.get("wait_state") or "").strip().lower()
+    if declared in _WAIT_STATES:
+        return declared
+    hints = task.get("error_hints")
+    if isinstance(hints, dict):
+        hinted = str(hints.get("wait_state") or "").strip().lower()
+        if hinted in _WAIT_STATES:
+            return hinted
+    if str(task.get("error_kind") or "").strip().lower() == "approval_required":
+        return "blocked"
+    status = str(task.get("status") or "").strip().lower()
+    return "active" if status in _ACTIVE_TASK_STATUSES else "terminal"
+
+
+def _task_with_wait_contract(task: dict[str, Any]) -> dict[str, Any]:
+    projected = dict(task)
+    projected["wait_state"] = _task_wait_state(task)
+    hints = task.get("error_hints")
+    blocker = hints.get("blocker") if isinstance(hints, dict) else None
+    if isinstance(blocker, dict):
+        projected["blocker"] = dict(blocker)
+    elif str(task.get("error_kind") or "").strip().lower() == "approval_required":
+        projected["blocker"] = {
+            "kind": "approval_required",
+            "action": "approve_cost",
+            "message": str(task.get("error_message") or "费用超过阈值，需要用户确认"),
+            "resume_patch": {"cost_approved": True},
+        }
+    return projected
+
 
 # ─── Pydantic request bodies ──────────────────────────────────────────
 
 
 class CreateTaskBody(BaseModel):
     mode: str
+    segment_id: str = ""
     prompt: str = ""
     model_id: str = ""
     duration: int | None = None
@@ -305,6 +362,7 @@ class CreateTaskBody(BaseModel):
 
 class ImageCreateTaskBody(BaseModel):
     mode: str = "image_text2img"
+    segment_id: str = ""
     prompt: str = ""
     model_id: str = ""
     size: str = ""
@@ -432,6 +490,18 @@ class SystemInstallBody(BaseModel):
 
 class Plugin(PluginBase):
     """OpenAkita plugin entry — see module docstring for full design."""
+
+    def check_org_readiness(self) -> dict[str, Any]:
+        """Report local prerequisites required by organization workbench nodes."""
+
+        missing: list[str] = []
+        if not self._client.has_api_key():
+            missing.append("dashscope_api_key")
+        if not self._oss.is_configured():
+            missing.append("oss")
+        if not ffmpeg_available():
+            missing.append("ffmpeg")
+        return {"ready": not missing, "missing_requirements": missing}
 
     def on_load(self, api: PluginAPI) -> None:
         self._api = api
@@ -723,6 +793,7 @@ class Plugin(PluginBase):
         """
         terminal_failures = {"failed", "timeout", "cancelled"}
         status_str = str(task.get("status") or "")
+        wait_state = _task_wait_state(task)
 
         video_path = str(task.get("video_path") or "")
         last_frame_path = str(task.get("last_frame_path") or "")
@@ -742,6 +813,13 @@ class Plugin(PluginBase):
             local_paths.append(last_frame_path)
         local_paths.extend(str(p) for p in image_paths if p)
 
+        asset_kinds: list[str] = []
+        mode = str(task.get("mode") or "").lower()
+        if video_path or task.get("video_url") or mode in MODES_BY_ID:
+            asset_kinds.append("video")
+        if last_frame_path or image_paths or image_urls or mode.startswith("image_"):
+            asset_kinds.append("image")
+
         asset_ids = task.get("asset_ids") or []
         if isinstance(asset_ids, str):
             try:
@@ -750,7 +828,7 @@ class Plugin(PluginBase):
                 asset_ids = []
 
         base: dict[str, Any] = {
-            "ok": status_str not in terminal_failures,
+            "ok": status_str not in terminal_failures and wait_state != "blocked",
             "task_id": task.get("id"),
             "status": status_str,
             "mode": task.get("mode"),
@@ -762,13 +840,51 @@ class Plugin(PluginBase):
             "image_urls": [str(u) for u in image_urls if u],
             "local_paths": local_paths,
             "asset_ids": list(asset_ids),
+            "asset_kinds": asset_kinds,
+            "wait_state": wait_state,
         }
+        params = task.get("params") or {}
+        if not isinstance(params, dict):
+            params = {}
+        segment_id = str(params.get("segment_id") or "").strip()
+        if segment_id:
+            base["segment_id"] = segment_id
+        expected_media = params.get("expected_media")
+        if isinstance(expected_media, dict):
+            base["expected_media"] = expected_media
+        validation = asset_paths.get("media_validation")
+        if isinstance(validation, dict):
+            base["validation"] = validation
         if status_str in terminal_failures:
             base["terminal"] = True
         if task.get("error_kind"):
             base["error_kind"] = task["error_kind"]
         if task.get("error_message"):
             base["error_message"] = task["error_message"]
+        error_hints = task.get("error_hints")
+        if isinstance(error_hints, dict):
+            base["error_hints"] = error_hints
+            blocker = error_hints.get("blocker")
+            if isinstance(blocker, dict):
+                base["blocker"] = dict(blocker)
+        if wait_state == "blocked" and "blocker" not in base:
+            projected = _task_with_wait_contract(task)
+            blocker = projected.get("blocker")
+            if isinstance(blocker, dict):
+                base["blocker"] = blocker
+        if wait_state == "blocked":
+            base["blocked"] = True
+        if task.get("error_kind") == "media_validation_failed":
+            failure = dict(error_hints) if isinstance(error_hints, dict) else {}
+            failure.setdefault("passed", False)
+            failure.setdefault("code", "media_validation_failed")
+            failure.setdefault("message", str(task.get("error_message") or "媒体规格校验失败"))
+            if isinstance(expected_media, dict):
+                failure.setdefault("expected", expected_media)
+            if segment_id:
+                failure.setdefault("segment_id", segment_id)
+            base["quality_failure"] = failure
+            base["reworkable"] = True
         if (
             status_str == "succeeded"
             and base["video_url"]
@@ -812,6 +928,7 @@ class Plugin(PluginBase):
             return {}
         urls: list[str] = []
         kinds: list[str] = []
+        source_paths: list[str] = []
         for aid in asset_ids:
             try:
                 asset = await self._api.consume_asset(aid)
@@ -829,6 +946,7 @@ class Plugin(PluginBase):
                 continue
             urls.append(url)
             kinds.append(str(asset.get("asset_kind") or ""))
+            source_paths.append(str(asset.get("source_path") or ""))
 
         out: dict[str, Any] = {}
         if not urls:
@@ -838,10 +956,14 @@ class Plugin(PluginBase):
             out["image_url"] = urls[0]
         elif mode == "i2v":
             out["first_frame_url"] = urls[0]
+            if source_paths and source_paths[0]:
+                out["first_frame_path"] = source_paths[0]
             if len(urls) > 1:
                 out["reference_urls"] = urls[1:]
         elif mode == "i2v_end":
             out["first_frame_url"] = urls[0]
+            if source_paths and source_paths[0]:
+                out["first_frame_path"] = source_paths[0]
             if len(urls) > 1:
                 out["last_frame_url"] = urls[1]
         elif mode == "r2v":
@@ -911,11 +1033,52 @@ class Plugin(PluginBase):
                     detail=f"模式 {body.mode} 没有可用模型，请检查注册表。",
                 )
             body.model_id = entry.model_id
+        mode_models = models_for(body.mode)
+        allowed_models = {entry.model_id for entry in mode_models}
+        if body.model_id not in allowed_models:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"模型 {body.model_id!r} 不属于模式 {body.mode!r} 的可用目录；"
+                    f"允许值：{', '.join(sorted(allowed_models))}"
+                ),
+            )
+        selected_model = next(entry for entry in mode_models if entry.model_id == body.model_id)
+        if body.resolution not in selected_model.resolutions:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"分辨率 {body.resolution!r} 不被模型 {body.model_id!r} 支持；"
+                    f"允许值：{', '.join(selected_model.resolutions)}"
+                ),
+            )
+        if body.aspect_ratio not in selected_model.aspects:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"画幅 {body.aspect_ratio!r} 不被模型 {body.model_id!r} 支持；"
+                    f"允许值：{', '.join(selected_model.aspects)}"
+                ),
+            )
+        if body.duration is not None:
+            duration_min, duration_max = selected_model.duration_range
+            if not duration_min <= body.duration <= duration_max:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"时长 {body.duration}s 不被模型 {body.model_id!r} 支持；"
+                        f"允许范围：{duration_min}-{duration_max}s"
+                    ),
+                )
 
         # Idempotency guard against double-clicks / bridge retries.
         if body.client_request_id:
             existing = await self._tm.get_task_by_client_request_id(body.client_request_id)
-            if existing:
+            if existing and str(existing.get("status") or "") not in {
+                "failed",
+                "timeout",
+                "cancelled",
+            }:
                 return existing
             in_flight = self._pending_create.get(body.client_request_id)
             if in_flight is not None:
@@ -927,6 +1090,8 @@ class Plugin(PluginBase):
 
         try:
             params = body.model_dump()
+            target = video_target_for(body.aspect_ratio, body.resolution)
+            params["expected_media"] = target.to_dict()
             if params.get("video_url") and not params.get("source_video_url"):
                 params["source_video_url"] = params["video_url"]
             if params.get("ref_images_url") and not params.get("image_urls"):
@@ -955,6 +1120,8 @@ class Plugin(PluginBase):
             # Chinese hint, sparing the user a wasted vendor submission.
             try:
                 await self._preflight_asset_specs(body.mode, params)
+            except MediaValidationError:
+                raise
             except HTTPException:
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -1053,10 +1220,23 @@ class Plugin(PluginBase):
         async def _run(func, path):
             try:
                 await asyncio.to_thread(func, path)
+            except MediaValidationError:
+                raise
             except AssetSpecError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        if mode == "video_relip":
+        if mode in {"i2v", "i2v_end"}:
+            ip = _local_path("first_frame_path") or _local_path("first_frame_url")
+            if ip is not None:
+                await _run(
+                    lambda path: assert_media_aspect(
+                        path,
+                        kind="image",
+                        aspect_ratio=str(params.get("aspect_ratio") or "16:9"),
+                    ),
+                    ip,
+                )
+        elif mode == "video_relip":
             ap = _local_path("audio_url")
             if ap is not None:
                 await _run(assert_videoretalk_audio, ap)
@@ -1380,7 +1560,11 @@ class Plugin(PluginBase):
             raise HTTPException(status_code=400, detail="请先在设置中配置 DashScope API Key")
         if body.client_request_id:
             existing = await self._tm.get_task_by_client_request_id(body.client_request_id)
-            if existing:
+            if existing and str(existing.get("status") or "") not in {
+                "failed",
+                "timeout",
+                "cancelled",
+            }:
                 return existing
 
         params = body.model_dump()
@@ -1410,7 +1594,13 @@ class Plugin(PluginBase):
         # losing request. The UI also gates this client-side; the guard
         # exists for LLM tools and direct API callers.
         allowed_sizes = list(resolved.sizes) if resolved.sizes else []
-        if allowed_sizes and size not in allowed_sizes:
+        explicit_requested = "*" in size or "x" in size.lower()
+        supports_quality_labels = any(value.upper().endswith("K") for value in allowed_sizes)
+        if (
+            allowed_sizes
+            and size not in allowed_sizes
+            and not (explicit_requested and supports_quality_labels)
+        ):
             logger.info(
                 "happyhorse-video: image size %r not supported by %s, falling back to %s",
                 size,
@@ -1418,9 +1608,30 @@ class Plugin(PluginBase):
                 allowed_sizes[0],
             )
             size = allowed_sizes[0]
+        requested_ratio = str(body.output_ratio or cfg.get("default_aspect_ratio") or "16:9")
+        if body.mode in {"image_text2img", "image_edit", "image_ecommerce"}:
+            try:
+                target = image_target_for(requested_ratio, size)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            explicit_size = f"{target.width}*{target.height}"
+            if allowed_sizes and not supports_quality_labels:
+                if explicit_size not in allowed_sizes:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"模型 {resolved.model_id} 不支持目标画幅 {requested_ratio} 的"
+                            f"明确规格 {explicit_size}"
+                        ),
+                    )
+            params["requested_size"] = size
+            params["size"] = explicit_size
+            params["output_ratio"] = requested_ratio
+            params["expected_media"] = target.to_dict()
+        else:
+            params["size"] = size
         params["model_id"] = resolved.model_id
         params["model_short_id"] = resolved.id
-        params["size"] = size
 
         task_id = await self._tm.create_task(
             mode=body.mode,
@@ -1469,19 +1680,24 @@ class Plugin(PluginBase):
             image_urls = await self._submit_image_request(params, local_task_id=task_id)
             if not image_urls:
                 raise HTTPException(status_code=502, detail="DashScope 未返回图片 URL")
-            image_paths, asset_ids = await self._download_publish_images(
+            image_paths, asset_ids, validations = await self._download_publish_images(
                 task_id=task_id,
                 image_urls=image_urls,
                 prompt=str(params.get("prompt") or params.get("product_name") or ""),
                 mode=mode,
                 model_id=str(params.get("model_id") or ""),
+                expected_media=params.get("expected_media"),
             )
             await self._tm.update_task_safe(
                 task_id,
                 status="succeeded",
                 last_frame_url=image_urls[0],
                 last_frame_path=image_paths[0] if image_paths else "",
-                asset_paths_json={"image_urls": image_urls, "image_paths": image_paths},
+                asset_paths_json={
+                    "image_urls": image_urls,
+                    "image_paths": image_paths,
+                    "media_validation": validations[0] if validations else {},
+                },
                 asset_ids_json=asset_ids,
                 completed_at=time.time(),
             )
@@ -1501,8 +1717,13 @@ class Plugin(PluginBase):
             await self._tm.update_task_safe(
                 task_id,
                 status="failed",
-                error_kind="image_generation",
+                error_kind=(
+                    "media_validation_failed"
+                    if isinstance(exc, MediaValidationError)
+                    else "image_generation"
+                ),
                 error_message=str(detail),
+                error_hints_json=(exc.result if isinstance(exc, MediaValidationError) else None),
                 completed_at=time.time(),
             )
             self._broadcast(
@@ -1722,7 +1943,8 @@ class Plugin(PluginBase):
         prompt: str,
         mode: str,
         model_id: str = "",
-    ) -> tuple[list[str], list[str]]:
+        expected_media: dict[str, Any] | None = None,
+    ) -> tuple[list[str], list[str], list[dict[str, object]]]:
         import httpx
 
         task_row = await self._tm.get_task(task_id)
@@ -1732,6 +1954,14 @@ class Plugin(PluginBase):
             model_id = model_id or str(task_row.get("model_id") or "")
         paths: list[str] = []
         asset_ids: list[str] = []
+        validations: list[dict[str, object]] = []
+        target = None
+        if isinstance(expected_media, dict):
+            target = MediaTarget(
+                aspect_ratio=str(expected_media.get("aspect_ratio") or ""),
+                width=int(expected_media.get("width") or 0),
+                height=int(expected_media.get("height") or 0),
+            )
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=90.0, write=10.0, pool=5.0),
             follow_redirects=True,
@@ -1754,6 +1984,15 @@ class Plugin(PluginBase):
                     logger.warning("happyhorse-video image download failed: %s", resp.status_code)
                     continue
                 path.write_bytes(resp.content)
+                validation: dict[str, object] = {}
+                if target is not None:
+                    validation = await asyncio.to_thread(
+                        assert_media_dimensions,
+                        path,
+                        kind="image",
+                        target=target,
+                    )
+                    validations.append(validation)
                 paths.append(str(path))
                 aid = await self._publish_local_asset(
                     kind="image",
@@ -1764,11 +2003,12 @@ class Plugin(PluginBase):
                         "task_id": task_id,
                         "mode": mode,
                         "prompt": prompt,
+                        "media_validation": validation,
                     },
                 )
                 if aid:
                     asset_ids.append(aid)
-        return paths, asset_ids
+        return paths, asset_ids, validations
 
     # ── LLM tool definitions (video + image tools) ────────────────────
 
@@ -1776,22 +2016,53 @@ class Plugin(PluginBase):
         common_workbench_note = (
             "Returns JSON with {ok, task_id, status, mode, model_id, "
             "video_url, video_path, last_frame_url, last_frame_path, "
-            "local_paths, asset_ids}. Set from_asset_ids to chain from an "
+            "local_paths, asset_ids, wait_state, blocker}. When wait_state=blocked, "
+            "surface the blocker to the user and do not resubmit the task. "
+            "Set from_asset_ids to chain from an "
             "upstream image / video workbench (e.g. tongyi-image / "
             "another happyhorse-video task) and the input fields are "
             "filled automatically."
         )
 
         def _video_tool(name: str, mode: str, *, description: str) -> dict[str, Any]:
+            entries = models_for(mode)
+            model_ids = [entry.model_id for entry in entries]
+            default_entry = default_model(mode)
             return {
                 "name": name,
                 "description": (f"{description} {common_workbench_note}"),
+                "x-openakita-execution": {
+                    "kind": "external_task",
+                    "timeout_s": 900,
+                },
+                "x-openakita-idempotency-param": "client_request_id",
+                "x-openakita-media-contract": {
+                    "kind": "video",
+                    "model_param": "model_id",
+                    "resolution_param": "resolution",
+                    "aspect_ratio_param": "aspect_ratio",
+                    "duration_param": "duration",
+                    "default_model": default_entry.model_id if default_entry else "",
+                    "models": {
+                        entry.model_id: {
+                            "resolutions": list(entry.resolutions),
+                            "aspects": list(entry.aspects),
+                            "duration_range": list(entry.duration_range),
+                        }
+                        for entry in entries
+                    },
+                },
                 "input_schema": {
                     "type": "object",
                     "properties": {
+                        "segment_id": {
+                            "type": "string",
+                            "description": "Stable storyboard segment id used for asset lineage.",
+                        },
                         "prompt": {"type": "string"},
                         "model_id": {
                             "type": "string",
+                            "enum": model_ids,
                             "description": (
                                 f"Optional DashScope model id. Defaults to the "
                                 f"per-mode default in /catalog (mode={mode})."
@@ -1847,6 +2118,13 @@ class Plugin(PluginBase):
                                 "fire-and-forget UI-driven tasks."
                             ),
                         },
+                        "client_request_id": {
+                            "type": "string",
+                            "description": (
+                                "Stable idempotency key. Organization runtime supplies this "
+                                "automatically; callers should reuse it when resuming a task."
+                            ),
+                        },
                     },
                     "required": ["prompt"],
                 },
@@ -1872,6 +2150,10 @@ class Plugin(PluginBase):
             schema: dict[str, Any] = {
                 "type": "object",
                 "properties": {
+                    "segment_id": {
+                        "type": "string",
+                        "description": "Stable storyboard segment id used for asset lineage.",
+                    },
                     "prompt": {"type": "string"},
                     "model_id": {
                         "type": "string",
@@ -1891,7 +2173,14 @@ class Plugin(PluginBase):
                     "product_name": {"type": "string"},
                     "style_index": {"type": "integer"},
                     "ref_prompt": {"type": "string"},
-                    "output_ratio": {"type": "string"},
+                    "output_ratio": {
+                        "type": "string",
+                        "default": "16:9",
+                        "description": (
+                            "Required output aspect ratio. It is converted to an explicit "
+                            "pixel size and validated after download."
+                        ),
+                    },
                     "sketch_style": {"type": "string"},
                     "ecommerce_scenes": {
                         "type": "array",
@@ -1900,6 +2189,13 @@ class Plugin(PluginBase):
                     },
                     "from_asset_ids": {"type": "array", "items": {"type": "string"}},
                     "wait_for_completion": {"type": "boolean", "default": True},
+                    "client_request_id": {
+                        "type": "string",
+                        "description": (
+                            "Stable idempotency key. Organization runtime supplies this "
+                            "automatically; callers should reuse it when resuming a task."
+                        ),
+                    },
                 },
             }
             if mode == "image_ecommerce":
@@ -1913,6 +2209,11 @@ class Plugin(PluginBase):
                 "name": name,
                 "description": f"{description} {image_note}",
                 "input_schema": schema,
+                "x-openakita-execution": {
+                    "kind": "external_task",
+                    "timeout_s": 600,
+                },
+                "x-openakita-idempotency-param": "client_request_id",
                 "_mode": mode,
             }
 
@@ -2257,6 +2558,7 @@ class Plugin(PluginBase):
         return await self._tool_video(mode, args)
 
     async def _tool_video(self, mode: str, args: dict[str, Any]) -> str:
+        task: dict[str, Any] | None = None
         try:
             body = CreateTaskBody(
                 mode=mode, **{k: v for k, v in args.items() if k in CreateTaskBody.model_fields}
@@ -2264,6 +2566,25 @@ class Plugin(PluginBase):
             task = await self._create_task_internal(body)
             if args.get("wait_for_completion", True):
                 task = await self._wait_for_task(task["id"])
+        except asyncio.CancelledError:
+            if task and task.get("id"):
+                await asyncio.shield(self._cancel_pipeline_task(str(task["id"])))
+            raise
+        except MediaValidationError as exc:
+            failure = dict(exc.result)
+            segment_id = str(args.get("segment_id") or "").strip()
+            if segment_id:
+                failure["segment_id"] = segment_id
+            return json.dumps(
+                {
+                    "ok": False,
+                    "terminal": True,
+                    "reworkable": True,
+                    "error": str(exc),
+                    "quality_failure": failure,
+                },
+                ensure_ascii=False,
+            )
         except HTTPException as e:
             return json.dumps(
                 {
@@ -2288,6 +2609,21 @@ class Plugin(PluginBase):
                 **{k: v for k, v in args.items() if k in ImageCreateTaskBody.model_fields},
             )
             task = await self._create_image_task_internal(body)
+        except MediaValidationError as exc:
+            failure = dict(exc.result)
+            segment_id = str(args.get("segment_id") or "").strip()
+            if segment_id:
+                failure["segment_id"] = segment_id
+            return json.dumps(
+                {
+                    "ok": False,
+                    "terminal": True,
+                    "reworkable": True,
+                    "error": str(exc),
+                    "quality_failure": failure,
+                },
+                ensure_ascii=False,
+            )
         except HTTPException as e:
             return json.dumps(
                 {
@@ -2566,6 +2902,28 @@ class Plugin(PluginBase):
                 payload[key] = result[key]
         return json.dumps(payload, ensure_ascii=False)
 
+    @staticmethod
+    def _shared_expected_media(
+        ordered_segments: list[tuple[int, int, dict[str, Any]]],
+    ) -> dict[str, Any] | None:
+        targets: list[dict[str, Any]] = []
+        for _, _, row in ordered_segments:
+            params = row.get("params") or {}
+            target = params.get("expected_media") if isinstance(params, dict) else None
+            if isinstance(target, dict) and target not in targets:
+                targets.append(dict(target))
+        if len(targets) > 1:
+            raise MediaValidationError(
+                {
+                    "passed": False,
+                    "code": "concat_source_dimensions_inconsistent",
+                    "message": "待拼接片段的目标像素规格不一致，必须先按统一画幅重新生成",
+                    "expected": targets[0],
+                    "actual": {"source_targets": targets},
+                }
+            )
+        return targets[0] if targets else None
+
     async def _tool_video_concat(self, args: dict[str, Any]) -> str:
         """LLM-tool wrapper around ``POST /long-video/concat``.
 
@@ -2601,6 +2959,19 @@ class Plugin(PluginBase):
                 if row.get("chain_group_id"):
                     source_chain_group_ids.add(str(row["chain_group_id"]))
         ordered_segments.sort(key=lambda item: (item[0], item[1]))
+        try:
+            expected_media = self._shared_expected_media(ordered_segments)
+        except MediaValidationError as exc:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "terminal": True,
+                    "reworkable": True,
+                    "error": str(exc),
+                    "quality_failure": exc.result,
+                },
+                ensure_ascii=False,
+            )
         paths = [str(row["video_path"]) for _, _, row in ordered_segments]
         ordered_task_ids = [str(row["id"]) for _, _, row in ordered_segments]
         if len(paths) < 2:
@@ -2628,6 +2999,7 @@ class Plugin(PluginBase):
                     for chain_index, _, row in ordered_segments
                 ],
                 "source_chain_group_ids": sorted(source_chain_group_ids),
+                "expected_media": expected_media,
             },
         )
         await self._tm.update_task_safe(concat_task_id, status="running")
@@ -2697,6 +3069,51 @@ class Plugin(PluginBase):
                 ensure_ascii=False,
             )
 
+        validation: dict[str, object] = {}
+        if expected_media is not None:
+            target = MediaTarget(
+                aspect_ratio=str(expected_media.get("aspect_ratio") or ""),
+                width=int(expected_media.get("width") or 0),
+                height=int(expected_media.get("height") or 0),
+            )
+            try:
+                validation = await asyncio.to_thread(
+                    assert_media_dimensions,
+                    output_path,
+                    kind="video",
+                    target=target,
+                )
+            except MediaValidationError as exc:
+                await self._tm.update_task_safe(
+                    concat_task_id,
+                    status="failed",
+                    error_kind="media_validation_failed",
+                    error_message=str(exc),
+                    error_hints_json=exc.result,
+                    completed_at=time.time(),
+                )
+                self._broadcast(
+                    "task_update",
+                    {
+                        "task_id": concat_task_id,
+                        "status": "failed",
+                        "mode": "long_video_concat",
+                        "error_kind": "media_validation_failed",
+                        "error_message": str(exc),
+                    },
+                )
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "task_id": concat_task_id,
+                        "terminal": True,
+                        "reworkable": True,
+                        "error": str(exc),
+                        "quality_failure": exc.result,
+                    },
+                    ensure_ascii=False,
+                )
+
         preview_dir = self._uploads_dir() / "videos" / "concat"
         preview_dir.mkdir(parents=True, exist_ok=True)
         preview_name = f"{concat_task_id}_{output_path.name}"
@@ -2720,6 +3137,7 @@ class Plugin(PluginBase):
             "output_name": output_path.name,
             "output_path": str(output_path),
             "preview_path": str(preview_path),
+            "expected_media": expected_media,
         }
         asset_ids: list[str] = []
         try:
@@ -2729,6 +3147,7 @@ class Plugin(PluginBase):
                 video_path=str(output_path),
                 video_url=preview_url,
                 params_json=concat_params,
+                asset_paths_json={"media_validation": validation},
                 completed_at=time.time(),
             )
         except Exception as exc:  # noqa: BLE001
@@ -2749,6 +3168,7 @@ class Plugin(PluginBase):
                     "requested_task_ids": list(body.task_ids),
                     "source_chain_group_ids": sorted(source_chain_group_ids),
                     "transition": body.transition,
+                    "media_validation": validation,
                 },
             )
             if aid:
@@ -2806,18 +3226,91 @@ class Plugin(PluginBase):
         deadline = time.time() + max(60, timeout_s)
         while time.time() < deadline:
             row = await self._tm.get_task(task_id)
-            if row and row["status"] not in ("pending", "running"):
-                return row
+            if row and _task_wait_state(row) != "active":
+                return _task_with_wait_contract(row)
             await asyncio.sleep(interval)
         row = await self._tm.get_task(task_id)
         if row is None:
             return {"id": task_id, "status": "timeout"}
-        out = dict(row)
+        out = _task_with_wait_contract(row)
         out["wait_hint"] = (
             f"同步等待已超过 {max(1, timeout_s // 60)} 分钟，任务仍在云端处理中。"
             "请使用 hh_status 查询，不要重新提交。"
         )
         return out
+
+    async def _cancel_pipeline_task(self, task_id: str) -> None:
+        """Cancel both the plugin background pipeline and its vendor job."""
+
+        row = await self._tm.get_task(task_id)
+        if row is None or str(row.get("status") or "") not in {"pending", "running"}:
+            return
+        dashscope_id = str(row.get("dashscope_id") or "")
+        if dashscope_id:
+            try:
+                await self._client.cancel_task(dashscope_id)
+            except Exception as exc:  # noqa: BLE001 -- cancellation is best-effort
+                logger.warning(
+                    "happyhorse-video: vendor cancel for %s failed: %s",
+                    task_id,
+                    exc,
+                )
+        pipeline_task = self._poll_tasks.get(task_id)
+        if pipeline_task is not None and not pipeline_task.done():
+            pipeline_task.cancel()
+        await self._tm.update_task_safe(
+            task_id,
+            status="cancelled",
+            error_kind="cancelled",
+            error_message="caller cancelled external task wait",
+            completed_at=time.time(),
+        )
+        self._broadcast("task_update", {"task_id": task_id, "status": "cancelled"})
+
+    async def _resume_blocked_task(
+        self,
+        task_id: str,
+        row: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Resume a blocked task from its declarative, schema-bounded patch."""
+
+        if _task_wait_state(row) != "blocked":
+            return None
+        hints = row.get("error_hints")
+        blocker = hints.get("blocker") if isinstance(hints, dict) else None
+        resume_patch = blocker.get("resume_patch") if isinstance(blocker, dict) else None
+        if not isinstance(resume_patch, dict) or not resume_patch:
+            return None
+        allowed = set(CreateTaskBody.model_fields)
+        patch = {key: value for key, value in resume_patch.items() if key in allowed}
+        if not patch:
+            return None
+
+        params = dict(row.get("params") or {})
+        body_values = {key: value for key, value in params.items() if key in allowed}
+        body_values.update(patch)
+        body_values.update(
+            {
+                "mode": str(row.get("mode") or params.get("mode") or ""),
+                "model_id": str(row.get("model_id") or params.get("model_id") or ""),
+                "prompt": str(row.get("prompt") or params.get("prompt") or ""),
+            }
+        )
+        body = CreateTaskBody(**body_values)
+        params.update(body.model_dump())
+        await self._tm.update_task_safe(
+            task_id,
+            status="pending",
+            params_json=params,
+            error_kind=None,
+            error_message=None,
+            error_hints_json=None,
+            completed_at=None,
+        )
+        self._spawn_pipeline(task_id, body, params)
+        resumed = await self._tm.get_task(task_id)
+        self._broadcast("task_update", {"task_id": task_id, "status": "pending"})
+        return resumed
 
     # ── REST routes ────────────────────────────────────────────────────
 
@@ -3028,6 +3521,9 @@ class Plugin(PluginBase):
             row = await self._tm.get_task(task_id)
             if row is None:
                 raise HTTPException(status_code=404, detail="task not found")
+            resumed = await self._resume_blocked_task(task_id, row)
+            if resumed is not None:
+                return {"ok": True, "task": resumed, "resumed": True}
             params = row.get("params") or {}
             body = CreateTaskBody(
                 mode=row["mode"],
@@ -3446,6 +3942,10 @@ class Plugin(PluginBase):
                     if row.get("chain_group_id"):
                         source_chain_group_ids.add(str(row["chain_group_id"]))
             ordered_segments.sort(key=lambda item: (item[0], item[1]))
+            try:
+                expected_media = self._shared_expected_media(ordered_segments)
+            except MediaValidationError as exc:
+                raise HTTPException(status_code=422, detail=exc.result) from exc
             paths = [str(row["video_path"]) for _, _, row in ordered_segments]
             ordered_task_ids = [str(row["id"]) for _, _, row in ordered_segments]
             if len(paths) < 2:
@@ -3474,6 +3974,7 @@ class Plugin(PluginBase):
                         for chain_index, _, row in ordered_segments
                     ],
                     "source_chain_group_ids": sorted(source_chain_group_ids),
+                    "expected_media": expected_media,
                 },
             )
             await self._tm.update_task_safe(concat_task_id, status="running")
@@ -3518,6 +4019,41 @@ class Plugin(PluginBase):
                 )
                 raise HTTPException(status_code=500, detail="ffmpeg concat failed")
 
+            validation: dict[str, object] = {}
+            if expected_media is not None:
+                target = MediaTarget(
+                    aspect_ratio=str(expected_media.get("aspect_ratio") or ""),
+                    width=int(expected_media.get("width") or 0),
+                    height=int(expected_media.get("height") or 0),
+                )
+                try:
+                    validation = await asyncio.to_thread(
+                        assert_media_dimensions,
+                        output_path,
+                        kind="video",
+                        target=target,
+                    )
+                except MediaValidationError as exc:
+                    await self._tm.update_task_safe(
+                        concat_task_id,
+                        status="failed",
+                        error_kind="media_validation_failed",
+                        error_message=str(exc),
+                        error_hints_json=exc.result,
+                        completed_at=time.time(),
+                    )
+                    self._broadcast(
+                        "task_update",
+                        {
+                            "task_id": concat_task_id,
+                            "status": "failed",
+                            "mode": "long_video_concat",
+                            "error_kind": "media_validation_failed",
+                            "error_message": str(exc),
+                        },
+                    )
+                    raise HTTPException(status_code=422, detail=exc.result) from exc
+
             # Keep the canonical file in the configured output location,
             # and copy a browser-preview copy under uploads/ because the
             # preview route only serves files from uploads_dir.
@@ -3542,6 +4078,7 @@ class Plugin(PluginBase):
                 "output_name": output_path.name,
                 "output_path": str(output_path),
                 "preview_path": str(preview_path),
+                "expected_media": expected_media,
             }
             asset_ids: list[str] = []
             try:
@@ -3551,6 +4088,7 @@ class Plugin(PluginBase):
                     video_path=str(output_path),
                     video_url=preview_url,
                     params_json=concat_params,
+                    asset_paths_json={"media_validation": validation},
                     completed_at=time.time(),
                 )
             except Exception as exc:  # noqa: BLE001
@@ -3571,6 +4109,7 @@ class Plugin(PluginBase):
                         "requested_task_ids": list(body.task_ids),
                         "source_chain_group_ids": sorted(source_chain_group_ids),
                         "transition": body.transition,
+                        "media_validation": validation,
                     },
                 )
                 if aid:
@@ -3596,6 +4135,7 @@ class Plugin(PluginBase):
             return {
                 "ok": True,
                 "output_path": str(output_path),
+                "video_path": str(output_path),
                 "preview_url": preview_url,
                 "task_id": concat_task_id,
                 "asset_ids": asset_ids,

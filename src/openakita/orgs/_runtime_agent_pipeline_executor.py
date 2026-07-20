@@ -21,8 +21,19 @@ import os
 import re
 import secrets
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+
+from openakita.runtime.execution_context import (
+    ArtifactRole,
+    UpstreamContext,
+    artifact_role_for_phase,
+    current_execution_phase_var,
+    current_upstream_context_var,
+)
 
 from ._runtime_agent_pipeline import (
     MAX_DISPATCH_DEPTH,
@@ -31,7 +42,37 @@ from ._runtime_agent_pipeline import (
     current_command_id_var,
     dispatch_depth_var,
 )
+from ._runtime_artifact_flow import (
+    artifact_ledger,
+    current_artifact_delivery_dir_var,
+    current_artifact_edges_var,
+    structured_upstream_records,
+)
+from ._runtime_delegation import (
+    DelegationExecutionResult,
+    DelegationExecutionStatus,
+    current_delegation_assignment_var,
+    current_delegation_output_slot_var,
+)
+from ._runtime_delivery_manifest import (
+    delivery_manifest_ledger,
+    validate_manifest_media_delivery,
+    validate_manifest_runtime_evidence,
+)
 from ._runtime_dispatch import _append_delegation_log
+from ._runtime_external_tasks import (
+    ExternalTaskTimeout,
+    ExternalTaskTracker,
+    NodeActivationTimeout,
+    current_external_task_tracker_var,
+    wait_with_external_task_budget,
+)
+from ._runtime_media_quality import (
+    current_media_quality_failures,
+    current_media_quality_failures_var,
+    format_media_quality_reason,
+    record_media_quality_failure,
+)
 from ._runtime_node_artifacts import (
     classify_node_output,
     persist_node_artifact,
@@ -44,6 +85,31 @@ if TYPE_CHECKING:
     from ._runtime_agent_pipeline import AgentCache, ProfileResolver
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ActivationResumeContext:
+    parent_node_id: str
+    depth: int
+    assignment_id: str
+    output_slot: str
+    upstream_context: UpstreamContext = UpstreamContext()
+
+
+def _render_upstream_context(context: UpstreamContext) -> str:
+    """Render structured dependency evidence for the LLM prompt boundary."""
+    if not context.is_present:
+        return ""
+    import json
+
+    payload = json.dumps(context.to_dict(), ensure_ascii=False, default=str)
+    if len(payload) > 16_000:
+        payload = payload[:16_000] + "..."
+    return (
+        "=== 已完成的前置步骤结构化上下文 ===\n"
+        f"{payload}\n"
+        "只使用以上已登记证据推进当前步骤；不要重新生成或扫描文件系统。"
+    )
 
 
 def _env_int(name: str, default: int, *, lo: int, hi: int) -> int:
@@ -248,9 +314,7 @@ def _run_accepts_cancel_event(run: Any) -> bool:
     params = sig.parameters
     if "cancel_event" in params:
         return True
-    return any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-    )
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 def _looks_like_quota_or_auth_error(exc: BaseException) -> bool:
@@ -353,6 +417,9 @@ class AgentPipelineExecutor:
         # Sprint-5 observable: ``reason="user_cancel"`` + no
         # ``cancelled_by`` field.
         self._cancel_source_provider = cancel_source_provider
+        self._activation_contexts: OrderedDict[tuple[str, str, str], _ActivationResumeContext] = (
+            OrderedDict()
+        )
 
     async def activate_and_run(
         self,
@@ -368,6 +435,9 @@ class AgentPipelineExecutor:
         parent_node_id: str | None = None,
         chain_id: str | None = None,
         parent_chain_id: str | None = None,
+        assignment_id: str | None = None,
+        output_slot: str = "default",
+        upstream_context: UpstreamContext | Mapping[str, Any] | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """v1 ``_activate_and_run`` + ``_activate_and_run_inner`` parity.
@@ -398,6 +468,21 @@ class AgentPipelineExecutor:
         second round-trip.
         """
 
+        context_restored = False
+        resolved_upstream_context = UpstreamContext.from_value(upstream_context)
+        context_key = (org_id, str(command_id or ""), node_id)
+        if command_id and not parent_node_id and depth == 0 and not assignment_id:
+            resume = self._activation_contexts.get(context_key)
+            if resume is not None:
+                parent_node_id = resume.parent_node_id
+                depth = resume.depth
+                assignment_id = resume.assignment_id
+                output_slot = resume.output_slot
+                if not resolved_upstream_context.is_present:
+                    resolved_upstream_context = resume.upstream_context
+                self._activation_contexts.move_to_end(context_key)
+                context_restored = True
+
         org = self._lookup.get_org(org_id)
         if org is None:
             return self._result("error", command_id, reason="org_not_found")
@@ -419,18 +504,43 @@ class AgentPipelineExecutor:
         # ``dispatch_subtask`` minted for it. Stamped on every lifecycle
         # event below so the kanban can rebuild the parent/child tree.
         run_chain_id = chain_id or _new_chain_id()
+        run_assignment_id = (
+            str(assignment_id or "").strip()
+            or f"command:{command_id or run_chain_id}|node:{node_id}"
+        )
+        run_output_slot = str(output_slot or "default").strip() or "default"
+        if command_id and parent_node_id:
+            previous = self._activation_contexts.get(context_key)
+            if not resolved_upstream_context.is_present and previous is not None:
+                resolved_upstream_context = previous.upstream_context
+            self._activation_contexts[context_key] = _ActivationResumeContext(
+                parent_node_id=parent_node_id,
+                depth=max(1, int(depth)),
+                assignment_id=run_assignment_id,
+                output_slot=run_output_slot,
+                upstream_context=resolved_upstream_context,
+            )
+            self._activation_contexts.move_to_end(context_key)
+            while len(self._activation_contexts) > 256:
+                self._activation_contexts.popitem(last=False)
         started_payload: dict[str, Any] = {
             "org_id": org_id,
             "node_id": node_id,
             "command_id": command_id,
             "chain_id": run_chain_id,
+            "assignment_id": run_assignment_id,
+            "output_slot": run_output_slot,
         }
+        if context_restored:
+            started_payload["context_restored"] = True
         if parent_chain_id:
             started_payload["parent_chain_id"] = parent_chain_id
         if depth:
             started_payload["depth"] = depth
         if parent_node_id:
             started_payload["parent_node_id"] = parent_node_id
+        if resolved_upstream_context.is_present:
+            started_payload["upstream_context"] = resolved_upstream_context.to_dict()
         await self._emit("agent_run_started", started_payload)
         try:
             agent = self._cache.get_or_create(spec)
@@ -467,10 +577,39 @@ class AgentPipelineExecutor:
         # Expose THIS run's chain so a ``<dispatch>`` the agent emits is
         # attributed to it as the child's ``parent_chain_id``.
         chain_token = current_chain_id_var.set(run_chain_id)
+        assignment_token = current_delegation_assignment_var.set(run_assignment_id)
+        output_slot_token = current_delegation_output_slot_var.set(run_output_slot)
+        upstream_context_token = current_upstream_context_var.set(resolved_upstream_context)
+        artifact_edges_token = current_artifact_edges_var.set(
+            tuple(getattr(org, "edges", None) or ())
+        )
+        get_org_dir = getattr(self._lookup, "get_org_dir", None)
+        artifact_delivery_dir: Path | None = None
+        if command_id and callable(get_org_dir):
+            try:
+                artifact_delivery_dir = (
+                    Path(get_org_dir(org_id))
+                    / "commands"
+                    / str(command_id)
+                    / "artifacts"
+                    / "deliverables"
+                    / "plugin_assets"
+                )
+            except (OSError, TypeError, ValueError):
+                artifact_delivery_dir = None
+        artifact_delivery_token = current_artifact_delivery_dir_var.set(artifact_delivery_dir)
+        media_quality_token = current_media_quality_failures_var.set({})
+        external_task_tracker = ExternalTaskTracker()
+        external_task_token = current_external_task_tracker_var.set(external_task_tracker)
+        media_quality_failures: list[dict[str, Any]] = []
         # test11 P1: timestamp the run start so we only adopt files THIS run
         # wrote (not a stale file from an earlier attempt) when recovering an
         # empty-text node from its on-disk deliverable.
         run_start_ts = time.time()
+        rendered_upstream = _render_upstream_context(resolved_upstream_context)
+        run_content = (
+            f"{content}\n\n{rendered_upstream}" if rendered_upstream else content
+        )
         try:
             # Sprint-13 H1 (RC-4 §6 H1): forward ``cancel_event`` so
             # the agent's ``run`` (and through it
@@ -493,15 +632,36 @@ class AgentPipelineExecutor:
                 # bound one stuck leaf (e.g. an LLM grinding on an oversized
                 # write_file arg) so it cannot freeze the org. On timeout we
                 # surface agent_run_failed and let the supervisor move on.
-                output = await asyncio.wait_for(
-                    self._invoke_agent(agent, content, cancel_event=cancel_event),
-                    timeout=node_timeout,
+                output = await wait_with_external_task_budget(
+                    self._invoke_agent(agent, run_content, cancel_event=cancel_event),
+                    node_timeout_s=node_timeout,
+                    tracker=external_task_tracker,
                 )
             else:
-                output = await self._invoke_agent(
-                    agent, content, cancel_event=cancel_event
-                )
-        except TimeoutError:
+                output = await self._invoke_agent(agent, run_content, cancel_event=cancel_event)
+        except ExternalTaskTimeout:
+            _LOGGER.warning(
+                "external task wait timed out after %.1fs (org=%s node=%s)",
+                external_task_tracker.max_wait_s,
+                org_id,
+                node_id,
+            )
+            await self._emit(
+                "agent_run_failed",
+                {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "command_id": command_id,
+                    "chain_id": run_chain_id,
+                    "reason": "external_task_timeout",
+                    "error": (
+                        "external task wait exceeded declared budget "
+                        f"{external_task_tracker.max_wait_s:.0f}s"
+                    ),
+                },
+            )
+            return self._result("error", command_id, reason="external_task_timeout")
+        except (NodeActivationTimeout, TimeoutError):
             node_timeout = _node_timeout_s()
             _LOGGER.warning(
                 "node activation timed out after %ss (org=%s node=%s)",
@@ -520,9 +680,7 @@ class AgentPipelineExecutor:
                     "error": f"node activation exceeded {node_timeout}s",
                 },
             )
-            return self._result(
-                "error", command_id, reason="node_timeout"
-            )
+            return self._result("error", command_id, reason="node_timeout")
         except asyncio.CancelledError:
             # Sprint-3 P0-2 (audit ``_orgs_business_capability_audit_v3.md``
             # §5.3): the user pressed cancel and ``CancelledError`` arrived
@@ -588,9 +746,17 @@ class AgentPipelineExecutor:
             )
             return self._result("error", command_id, reason="agent_run_raised")
         finally:
+            media_quality_failures = current_media_quality_failures()
             dispatch_depth_var.reset(depth_token)
             current_command_id_var.reset(cid_token)
             current_chain_id_var.reset(chain_token)
+            current_delegation_assignment_var.reset(assignment_token)
+            current_delegation_output_slot_var.reset(output_slot_token)
+            current_upstream_context_var.reset(upstream_context_token)
+            current_artifact_edges_var.reset(artifact_edges_token)
+            current_artifact_delivery_dir_var.reset(artifact_delivery_token)
+            current_media_quality_failures_var.reset(media_quality_token)
+            current_external_task_tracker_var.reset(external_task_token)
 
         # Sprint-4 P0-2: persist the artefact + memory summary BEFORE
         # emitting agent_run_finished so the event payload can carry
@@ -608,6 +774,56 @@ class AgentPipelineExecutor:
         # (correctly) treats as a valid "reasoning + document" deliverable. The
         # live ``node_thinking`` timeline channel is unaffected.
         output_text = strip_deliverable_thinking(output_text)
+        delivery_manifest = (
+            delivery_manifest_ledger.latest(
+                org_id,
+                str(command_id),
+                node_id,
+                since=run_start_ts,
+                assignment_id=run_assignment_id,
+            )
+            if command_id
+            else None
+        )
+        if delivery_manifest is None and command_id:
+            # Backward compatibility for integrations/tests that record a
+            # manifest without the new runtime assignment metadata.
+            delivery_manifest = delivery_manifest_ledger.latest(
+                org_id,
+                str(command_id),
+                node_id,
+                since=run_start_ts,
+            )
+        delivery_manifest_payload = (
+            delivery_manifest.to_dict() if delivery_manifest is not None else None
+        )
+        execution_phase = current_execution_phase_var.get()
+        artifact_role = artifact_role_for_phase(execution_phase)
+        if delivery_manifest is not None:
+            artifact_role = ArtifactRole(delivery_manifest.artifact_role)
+        delegated_deliveries = (
+            [
+                {
+                    "node_id": manifest.node_id,
+                    **manifest.to_dict(),
+                }
+                for manifest in delivery_manifest_ledger.list_since(
+                    org_id,
+                    str(command_id),
+                    since=run_start_ts,
+                    exclude_node_id=node_id,
+                )
+            ]
+            if command_id
+            else []
+        )
+        if not parent_node_id and command_id:
+            media_quality_failures.extend(
+                validate_manifest_media_delivery(
+                    delivery_manifest,
+                    artifact_records=artifact_ledger.get(org_id, str(command_id)),
+                )
+            )
         # Quality gate. 核心1: completeness for a CHILD node (one with a
         # connected upstream ``parent_node_id``) is decided by that parent's
         # review in :meth:`dispatch_subtask`, NOT by this central heuristic —
@@ -616,8 +832,10 @@ class AgentPipelineExecutor:
         # The ROOT node (no parent / no upstream reviewer) keeps the heuristic
         # as its only guard against delivering a raw ``thinking…`` leak.
         has_upstream_reviewer = bool(parent_node_id)
-        quality_status, quality_reason = classify_node_output(output_text)
-        get_org_dir = getattr(self._lookup, "get_org_dir", None)
+        quality_status, quality_reason = classify_node_output(
+            output_text,
+            delivery_state=(delivery_manifest.state if delivery_manifest else None),
+        )
         artifact_path: str | None = None
         # test11 P1 (有输出却空产出): a node that did its real work by WRITING A
         # FILE (e.g. writer-a wrote a 12 KB plan via write_file) but ended its
@@ -627,13 +845,11 @@ class AgentPipelineExecutor:
         # sees real content, the artifact is registered, and the node is not
         # needlessly bounced / escalated (which is what fizzled writer-b).
         recovered_from_file = False
-        if quality_status != "ok" and command_id:
+        if quality_reason == "empty_output" and command_id:
             try:
                 from ._runtime_node_tools import pop_node_file_outputs
 
-                written = pop_node_file_outputs(
-                    org_id, command_id, node_id, since_ts=run_start_ts
-                )
+                written = pop_node_file_outputs(org_id, command_id, node_id, since_ts=run_start_ts)
             except Exception:  # noqa: BLE001 -- recovery must never crash the run
                 written = []
             doc = _pick_recoverable_deliverable(written)
@@ -642,7 +858,10 @@ class AgentPipelineExecutor:
                 if recovered_text.strip():
                     output_text = recovered_text
                     artifact_path = doc["path"]
-                    quality_status, quality_reason = ("ok", "recovered_from_file")
+                    quality_status, quality_reason = classify_node_output(
+                        output_text,
+                        delivery_state=(delivery_manifest.state if delivery_manifest else None),
+                    )
                     recovered_from_file = True
                     _LOGGER.info(
                         "[quality-gate] recovered empty-text node from on-disk file "
@@ -652,7 +871,10 @@ class AgentPipelineExecutor:
                         doc["path"],
                         len(output_text),
                     )
-        is_incomplete = (quality_status != "ok") and not has_upstream_reviewer
+        deterministic_quality_failed = bool(media_quality_failures)
+        if deterministic_quality_failed:
+            quality_reason = format_media_quality_reason(media_quality_failures)
+        is_incomplete = deterministic_quality_failed or quality_status != "ok"
         if output_text and command_id and not is_incomplete and not recovered_from_file:
             try:
                 artifact_path = persist_node_artifact(
@@ -717,6 +939,7 @@ class AgentPipelineExecutor:
             "command_id": command_id,
             "output_len": len(output_text),
             "chain_id": run_chain_id,
+            "artifact_role": artifact_role.value,
         }
         if parent_chain_id:
             finished_payload["parent_chain_id"] = parent_chain_id
@@ -731,8 +954,64 @@ class AgentPipelineExecutor:
         if is_incomplete:
             finished_payload["incomplete"] = True
             finished_payload["quality_reason"] = quality_reason
+        if media_quality_failures:
+            finished_payload["media_quality_failures"] = media_quality_failures
+        if delivery_manifest_payload is not None:
+            finished_payload["delivery_manifest"] = delivery_manifest_payload
+        if delegated_deliveries:
+            finished_payload["delegated_deliveries"] = delegated_deliveries
         await self._emit("agent_run_finished", finished_payload)
-        return self._result("ok", command_id, output=output_text)
+        if deterministic_quality_failed and not has_upstream_reviewer:
+            await self._emit(
+                "agent_run_failed",
+                {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "command_id": command_id,
+                    "chain_id": run_chain_id,
+                    "reason": "media_validation_failed",
+                    "error": quality_reason,
+                    "media_quality_failures": media_quality_failures,
+                },
+            )
+            return self._result(
+                "error",
+                command_id,
+                output=output_text,
+                reason="media_validation_failed",
+                media_quality_failures=media_quality_failures,
+                delivery_manifest=delivery_manifest_payload,
+                delegated_deliveries=delegated_deliveries,
+                artifact_role=artifact_role.value,
+            )
+        if delivery_manifest is None:
+            return self._result(
+                "incomplete",
+                command_id,
+                output=output_text,
+                reason="delivery_manifest_missing",
+                delegated_deliveries=delegated_deliveries,
+                artifact_role=artifact_role.value,
+            )
+        if delivery_manifest.state != "complete" and not has_upstream_reviewer:
+            return self._result(
+                "incomplete",
+                command_id,
+                output=output_text,
+                reason=f"delivery_state_{delivery_manifest.state}",
+                delivery_manifest=delivery_manifest_payload,
+                delegated_deliveries=delegated_deliveries,
+                artifact_role=artifact_role.value,
+            )
+        return self._result(
+            "ok",
+            command_id,
+            output=output_text,
+            media_quality_failures=media_quality_failures,
+            delivery_manifest=delivery_manifest_payload,
+            delegated_deliveries=delegated_deliveries,
+            artifact_role=artifact_role.value,
+        )
 
     async def dispatch_subtask(
         self,
@@ -742,8 +1021,11 @@ class AgentPipelineExecutor:
         parent_command_id: str | None,
         child_node_id: str,
         child_content: str,
+        assignment_id: str | None = None,
+        output_slot: str = "default",
+        upstream_context: UpstreamContext | Mapping[str, Any] | None = None,
         cancel_event: asyncio.Event | None = None,
-    ) -> str:
+    ) -> DelegationExecutionResult:
         """Sprint-4 P0-1 -- recurse from a parent node into a child node.
 
         Wired into :class:`DefaultAgentBuilder` so the per-node agent
@@ -783,11 +1065,17 @@ class AgentPipelineExecutor:
                 parent_node_id,
                 child_node_id,
             )
-            return f"[dispatch to `{child_node_id}` refused: max depth reached]"
+            return DelegationExecutionResult.failed(
+                reason_code="max_dispatch_depth",
+                reason=f"maximum dispatch depth {MAX_DISPATCH_DEPTH} reached",
+            )
         target = (child_node_id or "").strip()
         body = (child_content or "").strip()
         if not target or not body:
-            return ""
+            return DelegationExecutionResult(
+                status=DelegationExecutionStatus.SKIPPED,
+                reason_code="empty_dispatch",
+            )
 
         org = self._lookup.get_org(org_id)
         if org is None:
@@ -797,16 +1085,41 @@ class AgentPipelineExecutor:
                 parent_node_id,
                 target,
             )
-            return ""
-        get_node = getattr(org, "get_node", None)
-        if callable(get_node) and get_node(target) is None:
+            return DelegationExecutionResult.failed(reason_code="org_not_found")
+        resolve_reference = getattr(org, "resolve_reference", None)
+        if callable(resolve_reference):
+            resolved, candidates, resolution = resolve_reference(target)
+            if resolved is None or resolution not in {"exact_id", "exact_title"}:
+                _LOGGER.warning(
+                    "dispatch_subtask rejected non-exact node reference "
+                    "(org=%s parent=%s child=%s resolution=%s candidates=%s)",
+                    org_id,
+                    parent_node_id,
+                    target,
+                    resolution,
+                    [getattr(item, "id", "") for item in candidates],
+                )
+                return DelegationExecutionResult.failed(
+                    reason_code=f"node_reference_{resolution}",
+                    reason=f"child node reference {target!r} is not exact",
+                )
+            target = str(getattr(resolved, "id", target))
+        else:
+            get_node = getattr(org, "get_node", None)
+            resolved = get_node(target) if callable(get_node) else None
+            if resolved is not None and str(getattr(resolved, "id", target)) != target:
+                resolved = None
+        if resolved is None:
             _LOGGER.warning(
                 "dispatch_subtask child node missing (org=%s parent=%s child=%s)",
                 org_id,
                 parent_node_id,
                 target,
             )
-            return f"[dispatch to `{target}` skipped: unknown node]"
+            return DelegationExecutionResult.failed(
+                reason_code="node_not_found",
+                reason=f"child node {target!r} does not exist",
+            )
 
         # Hard topology guard (audit 2026-06): the agent prompt only offers a
         # node's DIRECT reports (``_available_nodes_for``), but nothing
@@ -824,9 +1137,9 @@ class AgentPipelineExecutor:
                 parent_node_id,
                 sorted(allowed_children),
             )
-            return (
-                f"[dispatch to `{target}` refused: not a direct report of "
-                f"`{parent_node_id}`; dispatch must follow the org chart]"
+            return DelegationExecutionResult.failed(
+                reason_code="not_direct_report",
+                reason=f"{target!r} is not a direct report of {parent_node_id!r}",
             )
 
         preview = body[:200]
@@ -837,6 +1150,11 @@ class AgentPipelineExecutor:
         # child's ``agent_run_*`` events carry the SAME chain. This lets
         # the kanban link child task -> parent task by chain id exactly.
         parent_chain_id = current_chain_id_var.get("") or None
+        stable_assignment_id = (
+            str(assignment_id or "").strip()
+            or f"legacy:{parent_command_id or parent_chain_id}|{parent_node_id}|{target}"
+        )
+        stable_output_slot = str(output_slot or "default").strip() or "default"
         child_chain_id = _new_chain_id()
         subtask_payload: dict[str, Any] = {
             "org_id": org_id,
@@ -848,6 +1166,8 @@ class AgentPipelineExecutor:
             "depth": next_depth,
             "kind": "child_dispatch",
             "chain_id": child_chain_id,
+            "assignment_id": stable_assignment_id,
+            "output_slot": stable_output_slot,
         }
         if parent_chain_id:
             subtask_payload["parent_chain_id"] = parent_chain_id
@@ -911,21 +1231,117 @@ class AgentPipelineExecutor:
                 parent_node_id=parent_node_id,
                 chain_id=run_chain,
                 parent_chain_id=parent_chain_id,
+                assignment_id=stable_assignment_id,
+                output_slot=stable_output_slot,
+                upstream_context=upstream_context,
                 cancel_event=cancel_event,
             )
             last_output = str(result.get("output") or "")
             # A child that errored / timed out / was skipped is NOT re-reviewed:
             # the supervisor handles those terminal states. Return what we have.
             if result.get("status") != "ok":
-                return last_output
-            ok, reason = await self._parent_review(
-                org_id=org_id,
-                parent_node_id=parent_node_id,
-                child_node_id=target,
-                task=body,
-                output=last_output,
-                cancel_event=cancel_event,
+                reason = str(result.get("reason") or result.get("status") or "unknown")
+                return DelegationExecutionResult.failed(
+                    reason_code=reason,
+                    reason=reason,
+                    output=last_output,
+                    delivery_manifest=(
+                        result.get("delivery_manifest")
+                        if isinstance(result.get("delivery_manifest"), dict)
+                        else None
+                    ),
+                )
+            media_failures = result.get("media_quality_failures") or []
+            delivery_manifest = result.get("delivery_manifest")
+            delivery_state = (
+                str(delivery_manifest.get("state") or "")
+                if isinstance(delivery_manifest, Mapping)
+                else ""
             )
+            if delivery_state == "in_progress":
+                # A coordinator may have legitimately queued work that has not
+                # reached a terminal manifest yet. Re-running its original brief
+                # can duplicate expensive side effects, especially when an LLM
+                # changes a segment label. Leave it pending for supervisor
+                # reconciliation; only an explicit failed quality verdict may
+                # consume the rework budget.
+                await self._emit(
+                    "node_review_deferred",
+                    {
+                        "org_id": org_id,
+                        "command_id": parent_command_id,
+                        "node_id": target,
+                        "parent_node_id": parent_node_id,
+                        "child_node_id": target,
+                        "chain_id": run_chain,
+                        "reason": "delivery_state_in_progress",
+                    },
+                )
+                return DelegationExecutionResult(
+                    status=DelegationExecutionStatus.BLOCKED,
+                    output=last_output,
+                    reason_code="delivery_state_in_progress",
+                    delivery_manifest=(
+                        dict(delivery_manifest)
+                        if isinstance(delivery_manifest, Mapping)
+                        else None
+                    ),
+                )
+            evidence_failures = validate_manifest_runtime_evidence(
+                (
+                    delivery_manifest_ledger.latest(
+                        org_id,
+                        str(parent_command_id or ""),
+                        target,
+                        assignment_id=stable_assignment_id,
+                    )
+                    if isinstance(delivery_manifest, Mapping)
+                    else None
+                ),
+                artifact_records=artifact_ledger.get(org_id, str(parent_command_id or "")),
+                workspace_dir=getattr(
+                    self._resolver.resolve(org_id=org_id, node_id=target),
+                    "workspace_dir",
+                    None,
+                ),
+            )
+            if media_failures or evidence_failures:
+                ok = False
+                failures = list(media_failures) + evidence_failures
+                messages = [str(item.get("message") or "确定性交付证据无效") for item in failures]
+                prefix = (
+                    "确定性媒体校验未通过："
+                    if failures
+                    and all(str(item.get("code") or "").startswith("media_") for item in failures)
+                    else "确定性交付校验未通过："
+                )
+                reason = prefix + "；".join(dict.fromkeys(messages))
+            elif not isinstance(delivery_manifest, Mapping):
+                ok = False
+                reason = "下级未提交结构化交付清单，不能通过完成度校验。"
+            elif delivery_state and delivery_state != "complete":
+                ok = False
+                reason = f"下级结构化交付状态为 {delivery_state}，尚未完成。"
+            else:
+                structured_evidence = {
+                    "delivery_manifest": (
+                        dict(delivery_manifest) if isinstance(delivery_manifest, Mapping) else None
+                    ),
+                    "artifact_ledger": structured_upstream_records(
+                        org_id=org_id,
+                        command_id=str(parent_command_id or ""),
+                        source_node_ids=(target,),
+                    ),
+                }
+                ok, reason = await self._parent_review(
+                    org_id=org_id,
+                    parent_node_id=parent_node_id,
+                    child_node_id=target,
+                    task=body,
+                    output=last_output,
+                    structured_evidence=structured_evidence,
+                    cancel_event=cancel_event,
+                )
             if ok:
                 if attempt > 0 or review_enabled:
                     await self._emit(
@@ -941,7 +1357,14 @@ class AgentPipelineExecutor:
                             "reason": reason,
                         },
                     )
-                return last_output
+                return DelegationExecutionResult.completed(
+                    last_output,
+                    delivery_manifest=(
+                        dict(delivery_manifest)
+                        if isinstance(delivery_manifest, Mapping)
+                        else None
+                    ),
+                )
             if attempt >= rework_max:
                 # 核心2: exhausted the rework budget — escalate to the parent /
                 # supervisor (who may swap, downgrade, accept or terminate). We
@@ -960,7 +1383,19 @@ class AgentPipelineExecutor:
                         "reason": reason,
                     },
                 )
-                return last_output
+                for failure in media_failures:
+                    if isinstance(failure, Mapping):
+                        record_media_quality_failure(failure)
+                return DelegationExecutionResult.failed(
+                    reason_code="review_rework_exhausted",
+                    reason=reason,
+                    output=last_output,
+                    delivery_manifest=(
+                        dict(delivery_manifest)
+                        if isinstance(delivery_manifest, Mapping)
+                        else None
+                    ),
+                )
             attempt += 1
             feedback = (
                 f"【直属上级 `{parent_node_id}` 第 {attempt} 次退回意见】{reason}\n"
@@ -987,6 +1422,7 @@ class AgentPipelineExecutor:
         child_node_id: str,
         task: str,
         output: str,
+        structured_evidence: Mapping[str, Any] | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> tuple[bool, str]:
         """Resolve the parent node's agent and have it review the child output.
@@ -1019,6 +1455,7 @@ class AgentPipelineExecutor:
                 child_node_id=child_node_id,
                 task=task,
                 output=output,
+                structured_evidence=structured_evidence,
                 cancel_event=cancel_event,
             )
         except asyncio.CancelledError:
@@ -1098,13 +1535,26 @@ class AgentPipelineExecutor:
         *,
         output: str | None = None,
         reason: str | None = None,
+        media_quality_failures: list[dict[str, Any]] | None = None,
+        delivery_manifest: dict[str, Any] | None = None,
+        delegated_deliveries: list[dict[str, Any]] | None = None,
+        artifact_role: str | None = None,
     ) -> dict[str, Any]:
-        return {
+        result = {
             "status": status,
             "command_id": command_id,
             "output": output,
             "reason": reason,
         }
+        if media_quality_failures:
+            result["media_quality_failures"] = media_quality_failures
+        if delivery_manifest is not None:
+            result["delivery_manifest"] = delivery_manifest
+        if delegated_deliveries:
+            result["delegated_deliveries"] = delegated_deliveries
+        if artifact_role:
+            result["artifact_role"] = artifact_role
+        return result
 
 
 __all__ = [

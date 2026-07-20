@@ -58,41 +58,6 @@ if TYPE_CHECKING:  # pragma: no cover -- forward ref only
 _LOGGER = logging.getLogger(__name__)
 
 
-# Machine-emitted markers that only appear in a root KICKOFF / 派单 message
-# (the root splitting the request + the executor concatenating the raw child
-# replies), never in a genuine integrated final report. Kept in sync with
-# ``runtime/supervisor.py``'s ``_KICKOFF_MARKERS`` -- both layers must agree on
-# "what a kickoff looks like" so the final deliverable/PDF invariant (never ship
-# the派单稿) holds whether the deliverable comes from memory (supervisor) or from
-# disk (this layer). test13 RCA: the kickoff .md kept winning the final PDF.
-_KICKOFF_ARTIFACT_MARKERS: tuple[str, ...] = (
-    "项目启动指令",
-    "项目正式启动",
-    "[dispatched to ",
-    "[from node `",
-    "层级分解",
-    "dispatched to ",
-)
-
-
-def _artifact_looks_like_kickoff(path: str, *, max_bytes: int = 4000) -> bool:
-    """True when a root ``.md`` on disk is a kickoff/派单稿, not a real report.
-
-    Reads only a bounded prefix (cheap on the event path). Any read failure
-    returns ``False`` (fail-open: we would rather risk keeping a real report
-    than silently drop a genuine deliverable). Used to keep the kickoff out of
-    ``_root_final_artifact`` so the final PDF is never rendered from a派单稿.
-    """
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as fh:
-            head = fh.read(max_bytes)
-    except OSError:
-        return False
-    if not head:
-        return False
-    return any(marker in head for marker in _KICKOFF_ARTIFACT_MARKERS)
-
-
 # H3 / H4 (audit ``_orgs_business_capability_audit_v1.md`` §3.2):
 # callback signatures wired through ``OrgRuntime.__init__`` into the
 # dispatch sibling. They live here (not in ``_runtime_dispatch``) so
@@ -1421,36 +1386,6 @@ class OrgRuntime:
                             "size": fsize,
                         },
                     )
-                    # test13 fix (b): capture the ROOT node's on-disk integration
-                    # file THE MOMENT write_file/append_file lands it -- BEFORE the
-                    # run finishes. This is the crux: when the forced finalization
-                    # is later cancelled by the hard ceiling it never fires
-                    # ``agent_run_finished``, so the ``_root_final_artifact`` slot
-                    # (recorded only from that event) used to keep the stale kickoff.
-                    # By recording the root's substantial non-kickoff .md here, the
-                    # final PDF + command_done fall back to the real integrated
-                    # report on disk instead of the派单稿 / a downstream product.
-                    try:
-                        if fpath.endswith(".md") and node_id and (fsize is None or fsize > 200):
-                            org = self.get_org(org_id)
-                            node = org.get_node(node_id) if org is not None else None
-                            if (
-                                node is not None
-                                and getattr(node, "level", None) == 0
-                                and not _artifact_looks_like_kickoff(fpath)
-                            ):
-                                cid = str(payload.get("command_id") or "")
-                                if cid:
-                                    store = getattr(self, "_root_final_artifact", None)
-                                    if store is None:
-                                        store = {}
-                                        self._root_final_artifact = store
-                                    store[cid] = (node_id, fpath)
-                    except Exception:  # noqa: BLE001
-                        _LOGGER.debug(
-                            "contract: record root file_output artifact failed",
-                            exc_info=True,
-                        )
             elif event_name in ("command_done", "org_command_done"):
                 # Forward status/result/error so the command center can render
                 # the final receipt straight from the WS event instead of
@@ -2131,19 +2066,18 @@ class OrgRuntime:
                 # most-recent root (.md) deliverable for this command; the PDF is
                 # rendered once at convergence (``finalize_command_project``)
                 # from this last-recorded artifact, guaranteeing pdf == final md.
-                if artifact_path and str(artifact_path).endswith(".md") and output_len > 120:
+                if (
+                    artifact_path
+                    and str(artifact_path).endswith(".md")
+                    and output_len > 120
+                    and payload.get("artifact_role") == "final"
+                ):
                     try:
                         org = self.get_org(org_id)
                         node = org.get_node(node_id) if org is not None else None
                         if node is not None and getattr(node, "level", None) == 0:
                             cid = str(payload.get("command_id") or chain_id or "")
-                            # test13 fix (b): never let the root's KICKOFF/派单稿
-                            # become the final PDF. The kickoff IS a level-0 .md
-                            # >120 chars, so without this guard it kept winning the
-                            # ``_root_final_artifact`` slot when the real integration
-                            # run was cut short. A genuine integrated report is
-                            # recorded normally.
-                            if cid and not _artifact_looks_like_kickoff(str(artifact_path)):
+                            if cid:
                                 store = getattr(self, "_root_final_artifact", None)
                                 if store is None:
                                     store = {}

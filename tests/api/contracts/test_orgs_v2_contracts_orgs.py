@@ -439,8 +439,8 @@ def test_b17_export_404(mint_app: FastAPI, mint_client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 # smoke-B3: PUT must accept the full v2-frontend save payload
 # (user_persona, operation_mode, layout_locked, auto_persist_final_answer,
-#  watchdog_*, heartbeat_*, standup_enabled, nodes, edges) -- 13 fields the
-# original OrgPatch skeleton rejected with 422.  See OrgEditorView.tsx
+#  watchdog_*, runtime_overrides, heartbeat_*, standup_enabled, nodes, edges) --
+# fields the original OrgPatch skeleton rejected with 422. See OrgEditorView.tsx
 # buildSavePayload for the exact shape.
 # ---------------------------------------------------------------------------
 
@@ -448,7 +448,7 @@ def test_b17_export_404(mint_app: FastAPI, mint_client: TestClient) -> None:
 def test_b3_update_org_accepts_full_frontend_snapshot(
     mint_app: FastAPI, mint_client: TestClient
 ) -> None:
-    """Regression for smoke-B3: 13 wire fields the frontend posts on every save."""
+    """Regression for the complete wire snapshot the frontend posts on every save."""
     mint_app.state.org_manager.get.return_value = fake_org("org_full", "full")
     mint_app.state.org_manager.update.return_value = fake_org("org_full", "full")
     body = {
@@ -464,6 +464,11 @@ def test_b3_update_org_accepts_full_frontend_snapshot(
         "watchdog_interval_s": 30,
         "watchdog_stuck_threshold_s": 1800,
         "watchdog_silence_threshold_s": 1800,
+        "runtime_overrides": {
+            "supervisor_hard_ceiling_s": 1800,
+            "supervisor_soft_ceiling_ratio": 0.8,
+            "supervisor_soft_watchdog_grace_ratio": 0.5,
+        },
         "heartbeat_enabled": False,
         "heartbeat_interval_s": 600,
         "standup_enabled": False,
@@ -472,6 +477,8 @@ def test_b3_update_org_accepts_full_frontend_snapshot(
     }
     resp = mint_client.put("/api/v2/orgs/org_full", json=body)
     assert resp.status_code == 200, resp.text
+    update = mint_app.state.org_manager.update
+    assert update.call_args.args[1]["runtime_overrides"] == body["runtime_overrides"]
 
 
 def test_b3_update_org_still_rejects_unknown_field(mint_client: TestClient) -> None:

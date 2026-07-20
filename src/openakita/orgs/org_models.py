@@ -97,6 +97,7 @@ class EdgeType(StrEnum):
     COLLABORATE = "collaborate"
     ESCALATE = "escalate"
     CONSULT = "consult"
+    ARTIFACT = "artifact"
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +133,10 @@ def infer_agent_profile_id_for_node(data: dict) -> str:
         return "architect"
     if any(k in haystack for k in ("devops", "运维", "部署", "ci/cd")):
         return "devops-engineer"
-    if any(k in haystack for k in ("dev", "engineer", "工程师", "开发", "全栈", "前端", "后端", "qa", "测试")):
+    if any(
+        k in haystack
+        for k in ("dev", "engineer", "工程师", "开发", "全栈", "前端", "后端", "qa", "测试")
+    ):
         return "code-assistant"
     if any(k in haystack for k in ("pm", "project", "项目", "产品", "cpo")):
         return "project-manager"
@@ -252,9 +256,7 @@ class OrgNode:
             "frozen_reason": self.frozen_reason,
             "frozen_at": self.frozen_at,
             "status": self.status.value,
-            "runtime_overrides": (
-                dict(self.runtime_overrides) if self.runtime_overrides else {}
-            ),
+            "runtime_overrides": (dict(self.runtime_overrides) if self.runtime_overrides else {}),
         }
 
     @classmethod
@@ -282,6 +284,7 @@ class OrgEdge:
     bidirectional: bool = True
     priority: int = 0
     bandwidth_limit: int = 60
+    binding: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -293,6 +296,7 @@ class OrgEdge:
             "bidirectional": self.bidirectional,
             "priority": self.priority,
             "bandwidth_limit": self.bandwidth_limit,
+            "binding": dict(self.binding) if self.binding else {},
         }
 
     @classmethod
@@ -303,19 +307,86 @@ class OrgEdge:
                 d["edge_type"] = EdgeType(d["edge_type"])
             except ValueError:
                 d["edge_type"] = EdgeType.HIERARCHY
-        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        edge = cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        edge.validate_binding()
+        return edge
+
+    def validate_binding(self) -> None:
+        """Validate deterministic asset-flow metadata on artifact edges."""
+        if self.edge_type != EdgeType.ARTIFACT:
+            return
+        binding = self.binding
+        if not isinstance(binding, dict):
+            raise ValueError("artifact edge binding must be an object")
+        target_param = binding.get("target_param")
+        if not isinstance(target_param, str) or not target_param.strip():
+            raise ValueError("artifact edge binding requires target_param")
+        value_field = binding.get("value_field")
+        if value_field not in {"asset_ids", "task_ids", "segments"}:
+            raise ValueError(
+                "artifact edge binding value_field must be asset_ids, task_ids, or segments"
+            )
+        target_tools = binding.get("target_tools")
+        if (
+            not isinstance(target_tools, list)
+            or not target_tools
+            or not all(isinstance(tool, str) and tool.strip() for tool in target_tools)
+        ):
+            raise ValueError("artifact edge binding target_tools must be a non-empty string list")
+        if binding.get("cardinality", "many") not in {"one", "many"}:
+            raise ValueError("artifact edge binding cardinality must be one or many")
+        if "required" in binding and not isinstance(binding["required"], bool):
+            raise ValueError("artifact edge binding required must be a boolean")
+        accepts = binding.get("accepts", [])
+        if not isinstance(accepts, list) or not all(
+            isinstance(kind, str) and kind.strip() for kind in accepts
+        ):
+            raise ValueError("artifact edge binding accepts must be a string list")
+        if binding.get("activation", "manual") not in {"manual", "when_ready"}:
+            raise ValueError("artifact edge binding activation must be manual or when_ready")
+        if binding.get("dispatch_mode", "per_join_key") not in {
+            "per_join_key",
+            "join_all",
+        }:
+            raise ValueError("artifact edge binding dispatch_mode must be per_join_key or join_all")
+        for key in ("min_count", "max_attempts"):
+            value = binding.get(key)
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 1
+            ):
+                raise ValueError(f"artifact edge binding {key} must be a positive integer")
+        if int(binding.get("max_attempts", 1) or 1) > 5:
+            raise ValueError("artifact edge binding max_attempts must not exceed 5")
+        join_scope = binding.get("join_scope")
+        if join_scope is not None:
+            if not isinstance(join_scope, dict):
+                raise ValueError("artifact edge binding join_scope must be an object")
+            if not isinstance(join_scope.get("source"), str) or not join_scope["source"].strip():
+                raise ValueError("artifact edge binding join_scope requires source")
+            if join_scope.get("value_field", "segments") not in {
+                "asset_ids",
+                "task_ids",
+                "segments",
+            }:
+                raise ValueError("artifact edge binding join_scope value_field is invalid")
+            if not isinstance(join_scope.get("key_field", "segment_id"), str):
+                raise ValueError("artifact edge binding join_scope key_field must be a string")
 
 
 @dataclass
 class UserPersona:
     """The human user's identity within an organization."""
+
     title: str = "负责人"
     display_name: str = ""
     description: str = ""
 
     def to_dict(self) -> dict:
-        return {"title": self.title, "display_name": self.display_name,
-                "description": self.description}
+        return {
+            "title": self.title,
+            "display_name": self.display_name,
+            "description": self.description,
+        }
 
     @classmethod
     def from_dict(cls, d: dict | None) -> UserPersona:
@@ -437,8 +508,13 @@ class Organization:
     # ignored):
     #   - max_iterations: int — cap on ReAct loops at the org level
     #     (a node-level override takes priority when present)
-    #   - command_timeout_secs: int — max wall-clock for a single
-    #     user-facing command before the watchdog declares it stuck
+    #   - supervisor_hard_ceiling_s: int — absolute wall-clock ceiling
+    #     for one command (60..86400; 0 disables). ``command_timeout_secs``
+    #     remains a compatibility alias.
+    #   - supervisor_soft_ceiling_ratio: float — cooperative soft budget
+    #     as a fraction of the hard ceiling (0 disables; max 0.95)
+    #   - supervisor_soft_watchdog_grace_ratio: float — where the forced
+    #     soft watchdog fires inside the soft-to-hard interval (0..1)
     #   - command_stuck_warn_secs: int — emit org:command_stuck_warning
     #     after this many seconds of no progress
     #   - inflight_window_secs: float — duplicate-tool-call coalescing
@@ -501,9 +577,7 @@ class Organization:
             "watchdog_stuck_threshold_s": self.watchdog_stuck_threshold_s,
             "watchdog_silence_threshold_s": self.watchdog_silence_threshold_s,
             "auto_persist_final_answer": self.auto_persist_final_answer,
-            "runtime_overrides": (
-                dict(self.runtime_overrides) if self.runtime_overrides else {}
-            ),
+            "runtime_overrides": (dict(self.runtime_overrides) if self.runtime_overrides else {}),
         }
 
     @classmethod
@@ -521,10 +595,7 @@ class Organization:
         filtered = {k: v for k, v in d.items() if k in known and k not in ("nodes", "edges")}
         org = cls(**filtered)
         org.nodes = [OrgNode.from_dict(n) for n in raw_nodes]
-        org.edges = [
-            OrgEdge.from_dict(e) for e in raw_edges
-            if e.get("source") != e.get("target")
-        ]
+        org.edges = [OrgEdge.from_dict(e) for e in raw_edges if e.get("source") != e.get("target")]
         if isinstance(raw_persona, dict):
             org.user_persona = UserPersona.from_dict(raw_persona)
         return org
@@ -546,8 +617,9 @@ class Organization:
             title_norm = title.replace(" ", "").replace("　", "").lower()
             if query == title or query in title or title in query:
                 return n
-            if query_norm and (query_norm == title_norm or query_norm in title_norm
-                              or title_norm in query_norm):
+            if query_norm and (
+                query_norm == title_norm or query_norm in title_norm or title_norm in query_norm
+            ):
                 return n
         if len(query_norm) >= 3:
             for n in self.nodes:
@@ -596,9 +668,7 @@ class Organization:
     # ``get_node``. Callers that need the strict contract (delegate,
     # send_message, reply_message) should consume ``resolve_reference``
     # directly and surface the candidate list in their error messages.
-    def resolve_reference(
-        self, query: str
-    ) -> tuple[OrgNode | None, list[OrgNode], str]:
+    def resolve_reference(self, query: str) -> tuple[OrgNode | None, list[OrgNode], str]:
         if not query:
             return None, [], "not_found"
 
@@ -617,9 +687,7 @@ class Organization:
             # Case-sensitive exact title wins first; if that also yields
             # multiple hits we still have to report ambiguity (e.g. two
             # nodes literally named "产品经理" across departments).
-            exact_title_hits = [
-                n for n in self.nodes if (n.role_title or "").strip() == q_title
-            ]
+            exact_title_hits = [n for n in self.nodes if (n.role_title or "").strip() == q_title]
             if len(exact_title_hits) == 1:
                 return exact_title_hits[0], [], "exact_title"
             if len(exact_title_hits) >= 2:
@@ -633,9 +701,10 @@ class Organization:
             q_norm = q_title.lower().replace(" ", "").replace("　", "")
             if q_norm:
                 ci_hits = [
-                    n for n in self.nodes
-                    if (n.role_title or "").strip().lower()
-                    .replace(" ", "").replace("　", "") == q_norm
+                    n
+                    for n in self.nodes
+                    if (n.role_title or "").strip().lower().replace(" ", "").replace("　", "")
+                    == q_norm
                 ]
                 if len(ci_hits) == 1:
                     return ci_hits[0], [], "exact_title"
@@ -654,15 +723,13 @@ class Organization:
     def get_children(self, node_id: str) -> list[OrgNode]:
         child_ids: set[str] = set()
         for e in self.edges:
-            if (e.edge_type == EdgeType.HIERARCHY
-                    and e.source == node_id and e.target != node_id):
+            if e.edge_type == EdgeType.HIERARCHY and e.source == node_id and e.target != node_id:
                 child_ids.add(e.target)
         return [n for n in self.nodes if n.id in child_ids]
 
     def get_parent(self, node_id: str) -> OrgNode | None:
         for e in self.edges:
-            if (e.edge_type == EdgeType.HIERARCHY
-                    and e.target == node_id and e.source != node_id):
+            if e.edge_type == EdgeType.HIERARCHY and e.target == node_id and e.source != node_id:
                 return self.get_node(e.source)
         return None
 

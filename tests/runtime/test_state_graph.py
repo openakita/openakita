@@ -368,6 +368,25 @@ class TestCompileFromOrg:
         g = compile_from_org(org)
         assert g.static_edges == {}
 
+    def test_artifact_edges_are_dropped(self) -> None:
+        a = _make_node("a", created=datetime(2026, 5, 18, 9, tzinfo=UTC))
+        b = _make_node("b", created=datetime(2026, 5, 18, 10, tzinfo=UTC))
+        org = _make_org(
+            [a, b],
+            [
+                EdgeV2(
+                    id="asset",
+                    org_id="org_test",
+                    src="a",
+                    dst="b",
+                    kind=EdgeKind.ARTIFACT,
+                    binding={"target_param": "asset_ids"},
+                )
+            ],
+        )
+
+        assert compile_from_org(org).static_edges == {}
+
     def test_conditional_routers_replace_static(self) -> None:
         a = _make_node("a", created=datetime(2026, 5, 18, 9, tzinfo=UTC))
         b = _make_node("b", created=datetime(2026, 5, 18, 10, tzinfo=UTC))

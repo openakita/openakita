@@ -40,6 +40,15 @@ from openakita.orgs._runtime_agent_pipeline import (
     AgentPipelineExecutor,
     ProfileResolver,
     current_command_id_var,
+    dispatch_depth_var,
+)
+from openakita.orgs._runtime_delegation import (
+    DelegationExecutionResult,
+    current_delegation_assignment_var,
+)
+from openakita.orgs._runtime_delivery_manifest import (
+    DeliveryManifest,
+    delivery_manifest_ledger,
 )
 from openakita.orgs._runtime_node_artifacts import (
     MEMORY_SUMMARY_THRESHOLD,
@@ -48,7 +57,6 @@ from openakita.orgs._runtime_node_artifacts import (
     persist_node_memory,
     safe_path_segment,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper builders (lightweight stand-ins for OrgManager + brain)
@@ -427,7 +435,7 @@ def _make_executor(
         parent_node_id: str,
         child_node_id: str,
         child_content: str,
-    ) -> str:
+    ) -> DelegationExecutionResult:
         # Mirror the production wiring in ``api/server.py`` -- the
         # parent's command_id rides the ContextVar so the child gets
         # attributed back to the user-command, not orphaned.
@@ -451,6 +459,30 @@ def _make_executor(
         lookup=lookup,
         event_bus=bus,
     )
+    invoke = executor._invoke_agent
+
+    async def _invoke_with_manifest(agent: Any, content: str, **kwargs: Any) -> Any:
+        output = await invoke(agent, content, **kwargs)
+        command_id = current_command_id_var.get("")
+        node_id = str(getattr(getattr(agent, "_spec", None), "node_id", ""))
+        if command_id and node_id:
+            delivery_manifest_ledger.record(
+                DeliveryManifest.from_mapping(
+                    {
+                        "state": "complete",
+                        "final": dispatch_depth_var.get(0) == 0,
+                        "summary": str(output or "")[:200],
+                        "artifacts": [],
+                    },
+                    org_id="o1",
+                    command_id=command_id,
+                    node_id=node_id,
+                    assignment_id=current_delegation_assignment_var.get(""),
+                )
+            )
+        return output
+
+    executor._invoke_agent = _invoke_with_manifest  # type: ignore[method-assign]
     executor_holder["e"] = executor
     return executor
 

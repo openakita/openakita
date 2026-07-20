@@ -137,8 +137,7 @@ class TemplateRegistry:
             return self._templates[template_id]
         except KeyError as exc:
             raise KeyError(
-                f"unknown template id {template_id!r}; "
-                f"known: {sorted(self._templates)}"
+                f"unknown template id {template_id!r}; known: {sorted(self._templates)}"
             ) from exc
 
     def list(self) -> list[TemplateSpec]:
@@ -221,9 +220,7 @@ class TemplateRegistry:
         defaults_overrides = dict(overrides.get("defaults") or {})
         for nid in node_personas:
             if not isinstance(nid, str):
-                raise TemplateValidationError(
-                    "node_persona_prompts keys must be strings"
-                )
+                raise TemplateValidationError("node_persona_prompts keys must be strings")
             try:
                 spec.get_node(nid)
             except KeyError as exc:
@@ -301,23 +298,31 @@ class TemplateRegistry:
                     tool_subset=spec_node.tool_subset,
                     workbench=wb,
                     runtime_overrides=runtime,
-                    parent_id=(
-                        id_map[parent_handle] if parent_handle is not None else None
-                    ),
+                    parent_id=(id_map[parent_handle] if parent_handle is not None else None),
                     department=spec_node.department,
                 )
             )
 
-        edges: list[EdgeV2] = [
-            EdgeV2(
-                id=new_edge_id(),
-                org_id=org_id,
-                src=id_map[edge.src],
-                dst=id_map[edge.dst],
-                kind=edge.kind,
+        edges: list[EdgeV2] = []
+        for edge in spec.edges:
+            binding = dict(edge.binding)
+            join_scope = binding.get("join_scope")
+            if isinstance(join_scope, dict):
+                join_scope = dict(join_scope)
+                source_handle = join_scope.get("source")
+                if source_handle in id_map:
+                    join_scope["source"] = id_map[source_handle]
+                binding["join_scope"] = join_scope
+            edges.append(
+                EdgeV2(
+                    id=new_edge_id(),
+                    org_id=org_id,
+                    src=id_map[edge.src],
+                    dst=id_map[edge.dst],
+                    kind=edge.kind,
+                    binding=binding,
+                )
             )
-            for edge in spec.edges
-        ]
 
         defaults = _merge_defaults(spec.defaults, defaults_overrides)
 
@@ -412,9 +417,7 @@ def _binding_to_runtime(spec: WorkbenchBindingSpec) -> WorkbenchBinding:
     )
 
 
-def _merge_defaults(
-    spec_defaults: object, overrides: dict[str, Any]
-) -> RuntimeDefaultsSpec:
+def _merge_defaults(spec_defaults: object, overrides: dict[str, Any]) -> RuntimeDefaultsSpec:
     """Merge the template's :class:`DefaultsSpec` with override knobs."""
     base = {
         "max_turns": spec_defaults.max_turns,  # type: ignore[attr-defined]
@@ -426,8 +429,7 @@ def _merge_defaults(
     unknown = overrides.keys() - allowed
     if unknown:
         raise TemplateValidationError(
-            f"unknown defaults override keys: {sorted(unknown)}; "
-            f"allowed: {sorted(allowed)}"
+            f"unknown defaults override keys: {sorted(unknown)}; allowed: {sorted(allowed)}"
         )
     base.update(overrides)
     if "stream_channels" in base and not isinstance(base["stream_channels"], tuple):

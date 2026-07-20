@@ -82,49 +82,49 @@ __all__ = [
 # dependency of ``ensure_builtin_templates`` via ``_auto_assign_avatars``.
 
 AVATAR_PRESETS: list[dict[str, str]] = [
-    {"id": "ceo",         "bg": "#1a365d", "label": "CEO / 总裁"},
-    {"id": "cto",         "bg": "#2b6cb0", "label": "CTO / 技术总监"},
-    {"id": "cfo",         "bg": "#2f855a", "label": "CFO / 财务总监"},
-    {"id": "cmo",         "bg": "#dd6b20", "label": "CMO / 市场总监"},
-    {"id": "cpo",         "bg": "#6b46c1", "label": "CPO / 产品总监"},
-    {"id": "architect",   "bg": "#2c5282", "label": "架构师"},
-    {"id": "dev-m",       "bg": "#3182ce", "label": "开发工程师 (男)"},
-    {"id": "dev-f",       "bg": "#00838f", "label": "开发工程师 (女)"},
-    {"id": "devops",      "bg": "#4a5568", "label": "DevOps 工程师"},
-    {"id": "designer-m",  "bg": "#d53f8c", "label": "设计师 (男)"},
-    {"id": "designer-f",  "bg": "#b83280", "label": "设计师 (女)"},
-    {"id": "pm",          "bg": "#805ad5", "label": "产品 / 项目经理"},
-    {"id": "analyst",     "bg": "#3182ce", "label": "数据分析师"},
-    {"id": "marketer",    "bg": "#e53e3e", "label": "市场营销"},
-    {"id": "writer",      "bg": "#744210", "label": "文案 / 写手"},
-    {"id": "hr",          "bg": "#c05621", "label": "人力资源"},
-    {"id": "legal",       "bg": "#718096", "label": "法务顾问"},
-    {"id": "support",     "bg": "#319795", "label": "客服支持"},
-    {"id": "researcher",  "bg": "#276749", "label": "研究员"},
-    {"id": "media",       "bg": "#e53e3e", "label": "社媒运营"},
+    {"id": "ceo", "bg": "#1a365d", "label": "CEO / 总裁"},
+    {"id": "cto", "bg": "#2b6cb0", "label": "CTO / 技术总监"},
+    {"id": "cfo", "bg": "#2f855a", "label": "CFO / 财务总监"},
+    {"id": "cmo", "bg": "#dd6b20", "label": "CMO / 市场总监"},
+    {"id": "cpo", "bg": "#6b46c1", "label": "CPO / 产品总监"},
+    {"id": "architect", "bg": "#2c5282", "label": "架构师"},
+    {"id": "dev-m", "bg": "#3182ce", "label": "开发工程师 (男)"},
+    {"id": "dev-f", "bg": "#00838f", "label": "开发工程师 (女)"},
+    {"id": "devops", "bg": "#4a5568", "label": "DevOps 工程师"},
+    {"id": "designer-m", "bg": "#d53f8c", "label": "设计师 (男)"},
+    {"id": "designer-f", "bg": "#b83280", "label": "设计师 (女)"},
+    {"id": "pm", "bg": "#805ad5", "label": "产品 / 项目经理"},
+    {"id": "analyst", "bg": "#3182ce", "label": "数据分析师"},
+    {"id": "marketer", "bg": "#e53e3e", "label": "市场营销"},
+    {"id": "writer", "bg": "#744210", "label": "文案 / 写手"},
+    {"id": "hr", "bg": "#c05621", "label": "人力资源"},
+    {"id": "legal", "bg": "#718096", "label": "法务顾问"},
+    {"id": "support", "bg": "#319795", "label": "客服支持"},
+    {"id": "researcher", "bg": "#276749", "label": "研究员"},
+    {"id": "media", "bg": "#e53e3e", "label": "社媒运营"},
 ]
 
 AVATAR_MAP: dict[str, dict[str, str]] = {a["id"]: a for a in AVATAR_PRESETS}
 
 _ROLE_AVATAR_KEYWORDS: dict[str, list[str]] = {
-    "ceo":        ["ceo", "首席执行", "总裁", "总经理"],
-    "cto":        ["cto", "技术总监"],
-    "cfo":        ["cfo", "财务总监", "财务"],
-    "cmo":        ["cmo", "市场总监"],
-    "cpo":        ["cpo", "产品总监"],
-    "architect":  ["架构"],
-    "dev-m":      ["工程师", "developer", "dev", "开发", "全栈"],
-    "devops":     ["devops", "运维"],
+    "ceo": ["ceo", "首席执行", "总裁", "总经理"],
+    "cto": ["cto", "技术总监"],
+    "cfo": ["cfo", "财务总监", "财务"],
+    "cmo": ["cmo", "市场总监"],
+    "cpo": ["cpo", "产品总监"],
+    "architect": ["架构"],
+    "dev-m": ["工程师", "developer", "dev", "开发", "全栈"],
+    "devops": ["devops", "运维"],
     "designer-m": ["设计", "designer", "ui"],
-    "pm":         ["产品经理", "项目经理", "pm"],
-    "analyst":    ["分析", "analyst", "数据"],
-    "marketer":   ["营销", "推广", "market"],
-    "writer":     ["文案", "写手", "编辑", "内容", "content", "seo"],
-    "hr":         ["hr", "人力", "人事", "招聘"],
-    "legal":      ["法务", "法律", "legal"],
-    "support":    ["客服", "support", "客户"],
+    "pm": ["产品经理", "项目经理", "pm"],
+    "analyst": ["分析", "analyst", "数据"],
+    "marketer": ["营销", "推广", "market"],
+    "writer": ["文案", "写手", "编辑", "内容", "content", "seo"],
+    "hr": ["hr", "人力", "人事", "招聘"],
+    "legal": ["法务", "法律", "legal"],
+    "support": ["客服", "support", "客户"],
     "researcher": ["研究", "research"],
-    "media":      ["社媒", "运营", "social"],
+    "media": ["社媒", "运营", "social"],
 }
 
 
@@ -489,7 +489,6 @@ STARTUP_COMPANY: dict = {
 }
 
 
-
 SOFTWARE_TEAM: dict = {
     "name": "软件工程团队",
     "description": "前后端分组的软件开发团队，含QA、DevOps和技术文档",
@@ -678,7 +677,6 @@ SOFTWARE_TEAM: dict = {
         },
     ],
 }
-
 
 
 CONTENT_OPS: dict = {
@@ -871,13 +869,10 @@ CONTENT_OPS: dict = {
 # ---------------------------------------------------------------------------
 
 
-
 _HAPPYHORSE_PLUGIN_ORIGIN: dict[str, str] = {
     "plugin_id": "happyhorse-video",
     "template_id": "workbench:happyhorse-video",
 }
-
-
 
 
 AIGC_VIDEO_STUDIO: dict = {
@@ -914,6 +909,11 @@ AIGC_VIDEO_STUDIO: dict = {
     "scaling_enabled": False,
     "max_nodes": 10,
     "scaling_approval": "manager",
+    "runtime_overrides": {
+        "supervisor_hard_ceiling_s": 1800,
+        "supervisor_soft_ceiling_ratio": 0.8,
+        "supervisor_soft_watchdog_grace_ratio": 0.5,
+    },
     "nodes": [
         {
             "id": "producer",
@@ -935,19 +935,24 @@ AIGC_VIDEO_STUDIO: dict = {
                 "你是 AIGC 视频创作工作室的制片人。\n"
                 "直属下级只有两个：『编剧』负责剧本与分镜，『美术指导』负责所有工作台"
                 "调度（图像 / 短视频 / 数字人 / 长视频后期）。工作流：\n"
-                "1. 把出品方的选题派给『编剧』节点，要求他用 org_submit_deliverable "
+                "1. 在首轮用 org_delegate_task 一次声明完整任务 DAG：给『编剧』的步骤设置 "
+                "step_id=storyboard；给『美术指导』的步骤设置 step_id=visual_production、"
+                "depends_on=[storyboard]。runtime 会先执行编剧，再把真实前置产出自动注入"
+                "美术指导指令；不要等下一轮才派美术指导。要求编剧用 org_submit_deliverable "
                 "返回：(a) 完整剧本（场景/人物/对白）；(b) 调用 hh_storyboard_decompose "
                 "得到的结构化分镜 JSON（包含每镜头 prompt / duration / "
                 "key_frame_description / end_frame_description / transition_to_next / "
                 "camera_notes）。\n"
-                "2. 把剧本 + 完整分镜 JSON + 期望的转场偏好（如 cut / crossfade）派给"
-                "『美术指导』节点，要求他统一调度所有工作台：按分镜决定每段走「先 "
+                "2. 要求『美术指导』直接使用 runtime 注入的剧本 + 完整分镜 JSON + 转场"
+                "偏好（如 cut / crossfade），统一调度所有工作台：按分镜决定每段走「先 "
                 "hh_image_* 出首帧再 hh_i2v」还是「直接 hh_t2v」、是否需要数字人口播、"
                 "最后调度『长视频后期工作台』执行 hh_long_video_create / hh_video_concat "
                 "拼接成片，并把成片 task_id + 各段 task_id 一并回传。\n"
                 "3. 收到美术指导的最终交付后向出品方交付：剧本（文字）+ 分镜 JSON（附件）"
                 "+ 各段视频（附件）+ 成片（附件）。多镜头任务严禁让任何工作台用同一段总主题"
-                " prompt 重复生成多个视频——必须按分镜 segments[] 逐镜头拆派。"
+                " prompt 重复生成多个视频——必须按分镜 segments[] 逐镜头拆派。\n"
+                "最终报告只能采用 runtime 已登记且媒体校验通过的视频附件；不得把 Shell 复制"
+                "成功或文本中的文件路径当作交付通过依据。缺少真实附件时必须继续返工。"
             ),
         },
         {
@@ -978,8 +983,10 @@ AIGC_VIDEO_STUDIO: dict = {
                 "参数：story=剧情正文；total_duration=成片总时长（秒）；segment_duration=每段时长"
                 "（默认 10 秒）；aspect_ratio=画幅；style=视觉风格描述。返回的 segments 中每段会带"
                 "transition_to_next（cut / crossfade / ai_extend），下游会用它决定衔接首尾帧或拼接转场。\n"
-                "3. 用 org_submit_deliverable 交付：deliverable 文本里附剧本摘要 + 分镜 JSON 概览，"
-                "并把完整剧本 + 完整 segments JSON 各自落盘为 markdown / json 文件附在交付上。\n"
+                "每个分镜必须保留稳定且唯一的 segment_id；后续图像和视频工具调用都必须原样传入。\n"
+                "3. 用 org_submit_deliverable 交付：summary 写剧本摘要 + 分镜概览；artifacts "
+                "分别登记完整剧本和 segments JSON，kind 填 document/storyboard、status 填 ready，"
+                "并填写真实 paths；不得只在正文里描述文件。\n"
                 "若上级仅是讨论/问询，直接 org_submit_deliverable 文字回复，不要凭空调工具。"
             ),
         },
@@ -1015,8 +1022,9 @@ AIGC_VIDEO_STUDIO: dict = {
                 "crossfade、ai_extend → 用 hh_long_video_create 衔接），调用 "
                 "org_delegate_task 派给『长视频后期工作台』做 hh_long_video_create 衔接 + "
                 "hh_video_concat 拼接成片。\n"
-                "4. 拼接工作台返回成片后，用 org_submit_deliverable 把所有素材（分镜段落 "
-                "task_id 列表 + 最终成片 task_id / asset_id）回交给制片人。\n"
+                "4. 拼接工作台返回成片后，用 org_submit_deliverable 把所有素材回交给制片人："
+                "artifacts 中逐项填写 kind/status/segment_id/task_ids/asset_ids/paths；最终成片必须"
+                "登记为 kind=video、status=ready，不得只在 summary 或正文中列 ID。\n"
                 "\n"
                 "【硬性路由规则 — 违反就是错误派单】\n"
                 "R1. 『数字人工作台』(wb-hh-human) **仅用于**：在已有的人物图 / 视频上做"
@@ -1087,9 +1095,11 @@ AIGC_VIDEO_STUDIO: dict = {
                 "  - hh_image_outpaint：画幅扩展，配合 size 字段输出更大画布。\n"
                 "  - hh_image_sketch：涂鸦/线稿成图。\n"
                 "  - hh_image_ecommerce：电商场景图（prompt 或 product_name 二选一）。\n"
-                "组织 runtime 会把图片下载到 workspace 并自动登记为附件；调 org_submit_deliverable "
-                "时只需在 deliverable 文本里说明镜头号 / 中文画面摘要 / 提示词摘要 / 生成的 asset_id，"
-                "不要重复声明 file_attachments，也不要凭空调工具。中文语境下用户可见交付必须使用中文。"
+                "组织 runtime 会把图片下载到 workspace 并登记资产；调 org_submit_deliverable 时，"
+                "summary 说明镜头号 / 中文画面 / 提示词摘要，artifacts 必须登记 kind=image、"
+                "status=ready、segment_id 以及工具真实返回的 asset_ids/task_ids/paths。"
+                "不要声明 file_attachments，也不要凭空填写资产。中文语境下用户可见交付必须使用中文。"
+                "每次生成必须传入派单中的 segment_id，同一镜头重做时不得改号。"
             ),
         },
         {
@@ -1127,10 +1137,11 @@ AIGC_VIDEO_STUDIO: dict = {
                 "多镜头任务必须按镜头逐个调用：每次只消费当前镜头的 from_asset_ids / first_frame_url，"
                 "并按分镜时长设置 duration（例如 30 秒 / 3 镜头 ⇒ 每段 10 秒）。每次调用的 prompt 必须"
                 "写清当前镜头独有的中文画面、镜头运动和风格，绝不要用同一段总主题 prompt 重复生成。\n"
+                "每次工具调用必须传入派单中的 segment_id，runtime 会自动绑定同镜头的上游关键帧。\n"
                 "插件会把 from_asset_ids 自动展开为 DashScope 的 image_url 注入；生成成功后 runtime "
-                "会把 video.mp4 与 last_frame 自动下载并登记为附件。org_submit_deliverable 只写文字"
-                "说明，不要重复声明 file_attachments；返回交付时必须列出每段的 video task_id，"
-                "便于下游长视频后期拼接。"
+                "会把 video.mp4 与 last_frame 自动下载并登记资产。org_submit_deliverable 的 artifacts "
+                "必须按段登记 kind=video、status=ready、segment_id，以及工具真实返回的 video "
+                "task_ids/asset_ids/paths；summary 仅写说明，不能代替结构化资产字段。"
             ),
         },
         {
@@ -1169,7 +1180,8 @@ AIGC_VIDEO_STUDIO: dict = {
                 "  - hh_avatar_compose：多图合成的口播形象（多张 ref_images_url + 文本）。\n"
                 "如果派单只给了 text 没给 voice_id，插件会用 Edge / CosyVoice 默认音色；上级若要求"
                 "特定音色应在 prompt 里写明 voice_id。生成成功后 runtime 会把 video.mp4 自动下载并"
-                "登记为附件；返回交付必须列出 video task_id 便于下游拼接。"
+                "登记为资产；org_submit_deliverable 的 artifacts 必须登记 kind=video、status=ready，"
+                "并填写真实 video task_ids/asset_ids/paths，供下游拼接。"
             ),
         },
         {
@@ -1208,8 +1220,9 @@ AIGC_VIDEO_STUDIO: dict = {
                 "ffmpeg 的 xfade 渐变过渡；'ai_extend' 与 'cut' 均归一化为 'none'）、fade_duration"
                 "（crossfade 时长，单位秒）、output_name（可空）。\n"
                 "3. 用 hh_status / hh_list 跟踪各分镜段的进度，hh_cost_preview 评估批量成本。\n"
-                "拼接成功后 runtime 会把成片与 asset_id 自动登记为附件。org_submit_deliverable 只写"
-                "文字说明（成片时长 / 段数 / 转场方式 / 最终 asset_id），不要重复声明 file_attachments。"
+                "拼接成功后 runtime 会把成片与 asset_id 登记为资产。org_submit_deliverable 必须在"
+                "artifacts 中登记 kind=video、status=ready、最终 task_ids/asset_ids/paths；summary "
+                "可说明成片时长 / 段数 / 转场方式，但不能代替资产字段。"
             ),
         },
     ],
@@ -1239,8 +1252,18 @@ AIGC_VIDEO_STUDIO: dict = {
             "id": "e-writer-long",
             "source": "screenwriter",
             "target": "wb-hh-long",
-            "edge_type": "collaborate",
+            "edge_type": "artifact",
             "label": "分镜 segments 直送拼接",
+            "binding": {
+                "source_port": "storyboard",
+                "target_port": "segments",
+                "target_tools": ["hh_long_video_create"],
+                "target_param": "segments",
+                "value_field": "segments",
+                "required": False,
+                "cardinality": "many",
+                "selection": "command_scoped",
+            },
         },
         {
             "id": "e-art-image",
@@ -1274,33 +1297,99 @@ AIGC_VIDEO_STUDIO: dict = {
             "id": "e-image-video",
             "source": "wb-hh-image",
             "target": "wb-hh-video",
-            "edge_type": "collaborate",
+            "edge_type": "artifact",
             "label": "asset_ids 作为首帧",
+            "binding": {
+                "source_port": "keyframes",
+                "target_port": "source_frames",
+                "target_tools": ["hh_i2v", "hh_r2v"],
+                "target_param": "from_asset_ids",
+                "value_field": "asset_ids",
+                "accepts": ["image"],
+                "join_key": "segment_id",
+                "required": True,
+                "cardinality": "one",
+                "selection": "matching_or_latest",
+                "activation": "when_ready",
+                "dispatch_mode": "join_all",
+                "join_scope": {
+                    "source": "screenwriter",
+                    "value_field": "segments",
+                    "key_field": "segment_id",
+                },
+                "max_attempts": 1,
+            },
         },
         {
             "id": "e-image-human",
             "source": "wb-hh-image",
             "target": "wb-hh-human",
-            "edge_type": "collaborate",
+            "edge_type": "artifact",
             "label": "肖像图 / 形象库素材",
+            "binding": {
+                "source_port": "portraits",
+                "target_port": "source_images",
+                "target_tools": [
+                    "hh_photo_speak",
+                    "hh_video_reface",
+                    "hh_pose_drive",
+                    "hh_avatar_compose",
+                ],
+                "target_param": "from_asset_ids",
+                "value_field": "asset_ids",
+                "accepts": ["image"],
+                "join_key": "segment_id",
+                "required": False,
+                "cardinality": "one",
+                "selection": "matching_or_latest",
+            },
         },
         {
             "id": "e-video-long",
             "source": "wb-hh-video",
             "target": "wb-hh-long",
-            "edge_type": "collaborate",
+            "edge_type": "artifact",
             "label": "段 task_ids → 拼接",
+            "binding": {
+                "source_port": "video_tasks",
+                "target_port": "segments",
+                "target_tools": ["hh_video_concat"],
+                "target_param": "task_ids",
+                "value_field": "task_ids",
+                "accepts": ["video"],
+                "required": True,
+                "cardinality": "many",
+                "selection": "command_scoped",
+                "activation": "when_ready",
+                "dispatch_mode": "join_all",
+                "join_scope": {
+                    "source": "screenwriter",
+                    "value_field": "segments",
+                    "key_field": "segment_id",
+                },
+                "max_attempts": 1,
+            },
         },
         {
             "id": "e-human-long",
             "source": "wb-hh-human",
             "target": "wb-hh-long",
-            "edge_type": "collaborate",
+            "edge_type": "artifact",
             "label": "口播 task_ids → 拼接",
+            "binding": {
+                "source_port": "video_tasks",
+                "target_port": "segments",
+                "target_tools": ["hh_video_concat"],
+                "target_param": "task_ids",
+                "value_field": "task_ids",
+                "accepts": ["video"],
+                "required": False,
+                "cardinality": "many",
+                "selection": "command_scoped",
+            },
         },
     ],
 }
-
 
 
 ALL_TEMPLATES: dict[str, dict] = {
@@ -1336,6 +1425,7 @@ def _auto_assign_agent_profiles(tpl_data: dict) -> None:
         if not node.get("agent_profile_id"):
             node["agent_profile_id"] = infer_agent_profile_id_for_node(node)
 
+
 def _with_builtin_metadata(tid: str, tpl: dict) -> dict:
     """Return a writable built-in template payload with generated metadata."""
     tpl_data = dict(tpl)
@@ -1343,6 +1433,7 @@ def _with_builtin_metadata(tid: str, tpl: dict) -> dict:
     _auto_assign_avatars(tpl_data)
     _auto_assign_agent_profiles(tpl_data)
     return tpl_data
+
 
 def _is_legacy_aigc_video_studio(data: dict) -> bool:
     """Detect pre-HappyHorse default AIGC templates persisted on disk.
@@ -1365,6 +1456,97 @@ def _is_legacy_aigc_video_studio(data: dict) -> bool:
     )
 
 
+def _upgrade_aigc_artifact_edges(data: dict) -> bool:
+    """Upgrade the known HappyHorse handoff edges without replacing user edits."""
+    expected_nodes = {
+        "producer",
+        "screenwriter",
+        "art-director",
+        "wb-hh-image",
+        "wb-hh-video",
+        "wb-hh-human",
+        "wb-hh-long",
+    }
+    nodes = [node for node in data.get("nodes", []) if isinstance(node, dict)]
+    if {str(node.get("id") or "") for node in nodes} != expected_nodes:
+        return False
+
+    canonical_edges = {
+        edge["id"]: edge
+        for edge in AIGC_VIDEO_STUDIO["edges"]
+        if edge.get("edge_type") == "artifact"
+    }
+    current_edges = {
+        str(edge.get("id") or ""): edge for edge in data.get("edges", []) if isinstance(edge, dict)
+    }
+    changed = False
+    for edge_id, canonical in canonical_edges.items():
+        edge = current_edges.get(edge_id)
+        if edge is None:
+            continue
+        if edge.get("edge_type") == "collaborate" and not edge.get("binding"):
+            edge["edge_type"] = "artifact"
+            edge["binding"] = dict(canonical["binding"])
+            changed = True
+            continue
+        binding = edge.get("binding")
+        if edge.get("edge_type") == "artifact" and isinstance(binding, dict):
+            for key in ("activation", "dispatch_mode", "join_scope", "max_attempts"):
+                if key not in binding and key in canonical["binding"]:
+                    value = canonical["binding"][key]
+                    binding[key] = dict(value) if isinstance(value, dict) else value
+                    changed = True
+
+    prompt_additions = {
+        "producer": (
+            "\n最终报告只能采用 runtime 已登记且媒体校验通过的视频附件；不得把 Shell "
+            "复制成功或文本路径当作交付通过依据。缺少真实附件时必须继续返工。"
+        ),
+        "screenwriter": ("\n每个分镜必须保留稳定且唯一的 segment_id，后续工具调用必须原样传入。"),
+        "wb-hh-image": "\n每次生成必须传入派单中的 segment_id，同一镜头重做时不得改号。",
+        "wb-hh-video": (
+            "\n每次工具调用必须传入派单中的 segment_id，runtime 会自动绑定同镜头的上游关键帧。"
+        ),
+    }
+    for node in nodes:
+        node_id = str(node.get("id") or "")
+        addition = prompt_additions.get(node_id)
+        prompt = str(node.get("custom_prompt") or "")
+        marker = "不得把 Shell 复制" if node_id == "producer" else "segment_id"
+        if addition and marker not in prompt:
+            node["custom_prompt"] = prompt + addition
+            changed = True
+    return changed
+
+
+def _upgrade_aigc_runtime_budget(data: dict) -> bool:
+    """Add media-safe time budgets to the built-in template without overwriting edits."""
+
+    expected_nodes = {
+        "producer",
+        "screenwriter",
+        "art-director",
+        "wb-hh-image",
+        "wb-hh-video",
+        "wb-hh-human",
+        "wb-hh-long",
+    }
+    nodes = [node for node in data.get("nodes", []) if isinstance(node, dict)]
+    if {str(node.get("id") or "") for node in nodes} != expected_nodes:
+        return False
+    overrides = data.get("runtime_overrides")
+    if not isinstance(overrides, dict):
+        overrides = {}
+        data["runtime_overrides"] = overrides
+    defaults = AIGC_VIDEO_STUDIO["runtime_overrides"]
+    changed = False
+    for key, value in defaults.items():
+        if key not in overrides:
+            overrides[key] = value
+            changed = True
+    return changed
+
+
 def _archive_removed_template(path: Path) -> None:
     """Move a removed built-in template out of the ``*.json`` scan set."""
     target = path.with_suffix(path.suffix + ".deprecated")
@@ -1374,6 +1556,7 @@ def _archive_removed_template(path: Path) -> None:
         counter += 1
     path.replace(target)
     logger.info("[Templates] Archived removed built-in template: %s -> %s", path.name, target.name)
+
 
 _REMOVED_BUILTIN_TEMPLATES: tuple[str, ...] = (
     # Pre-HappyHorse AIGC stub kept for migration shape only.
@@ -1423,7 +1606,18 @@ def ensure_builtin_templates(templates_dir: Path) -> None:
                 tpl_data = _with_builtin_metadata(tid, tpl)
                 p.write_text(json.dumps(tpl_data, ensure_ascii=False, indent=2), encoding="utf-8")
                 logger.info("[Templates] Migrated built-in template to HappyHorse: %s", tid)
-
+            elif isinstance(current, dict):
+                upgraded_edges = _upgrade_aigc_artifact_edges(current)
+                upgraded_budget = _upgrade_aigc_runtime_budget(current)
+                if upgraded_edges or upgraded_budget:
+                    p.write_text(
+                        json.dumps(current, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    logger.info(
+                        "[Templates] Upgraded AIGC template edges/budget: %s",
+                        tid,
+                    )
 
 
 # ===========================================================================
@@ -1436,11 +1630,7 @@ def ensure_builtin_templates(templates_dir: Path) -> None:
 def _default_goal_for(manifest: Any) -> str:
     """Compose a default role goal string for a workbench node."""
     name = manifest.display_name_zh or manifest.name or manifest.id
-    desc = (
-        (manifest.description_i18n or {}).get("zh")
-        or manifest.description
-        or ""
-    ).strip()
+    desc = ((manifest.description_i18n or {}).get("zh") or manifest.description or "").strip()
     if desc:
         return f"在组织中作为「{name}」工作台节点，按上级派单调用工作台工具完成产出。能力：{desc}"
     return f"在组织中作为「{name}」工作台节点，按上级派单调用工作台工具完成产出。"
@@ -1451,9 +1641,8 @@ def _default_prompt_for(manifest: Any, tool_names: list[str]) -> str:
 
     The prompt explains:
       1. when the node should be activated (only on org_delegate_task);
-      2. that runtime auto-downloads/registers any artifacts produced by
-         the workbench tools, so the node need NOT declare
-         ``file_attachments`` in ``org_submit_deliverable`` manually;
+      2. that runtime auto-downloads/registers artifacts, while the node still
+         declares their typed identifiers and paths in the delivery manifest;
       3. how upstream-supplied ``asset_id`` / ``image_url`` should be
          threaded into downstream tool calls;
       4. how to fall back to a plain-text deliverable when the upstream
@@ -1468,14 +1657,14 @@ def _default_prompt_for(manifest: Any, tool_names: list[str]) -> str:
         "1. 收到 org_delegate_task 后启动，按工具 input_schema 严格调用工作台工具，"
         "不要凭空想象工具参数；\n"
         "2. 工作台产出的图片/视频会被组织 runtime 自动下载到 org workspace 的 "
-        "plugin_assets/ 目录并登记为任务附件——你只需要在 org_submit_deliverable "
-        "的 deliverable 字段中描述产出内容（标题、规格、prompt 摘要、asset_id），"
-        "不必再手动声明 file_attachments；\n"
+        "plugin_assets/ 目录并登记为任务资产。org_submit_deliverable 的 summary 描述"
+        "标题、规格和 prompt 摘要；artifacts 必须逐项填写 kind/status，以及工具真实返回的"
+        "asset_ids/task_ids/paths。不得只在正文中写 ID 或路径，也不要声明 file_attachments；\n"
         "3. 若上级在 prompt 中提供了上游工作台的 asset_id 或 image_url，请将其"
         "如实填入对应工具参数（例如 seedance_create.from_asset_ids 或 "
         "content[].image_url），不要省略；\n"
         "4. 若上级只是问询/讨论而非真正下单产出，可直接用 org_submit_deliverable "
-        "提交文字回答，无需调用工作台工具；\n"
+        "提交 kind=text 的结构化回答，无需调用工作台工具；\n"
         "5. 完成后调 org_submit_deliverable 把成果交给委派人，等待验收。"
     )
 
@@ -1521,8 +1710,7 @@ def _collect_host_tool_defs(pm: PluginManager | None) -> dict[str, dict]:
             if name:
                 out[name] = td
     except Exception:
-        logger.debug("[workbench-templates] failed to index host tool_definitions",
-                     exc_info=True)
+        logger.debug("[workbench-templates] failed to index host tool_definitions", exc_info=True)
     return out
 
 
@@ -1636,7 +1824,6 @@ def build_workbench_templates(pm: PluginManager | None) -> list[dict]:
     return templates
 
 
-
 def deprecated_tools_for_node(
     node_external_tools: list[str], pm: PluginManager | None
 ) -> list[str]:
@@ -1670,9 +1857,4 @@ def deprecated_tools_for_node(
                     known.add(name)
         except Exception:
             continue
-    return [
-        t
-        for t in node_external_tools
-        if t and t not in ALL_CATEGORY_NAMES and t not in known
-    ]
-
+    return [t for t in node_external_tools if t and t not in ALL_CATEGORY_NAMES and t not in known]

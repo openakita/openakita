@@ -89,6 +89,7 @@ class DegenerateSupervisorBrain(SupervisorBrain):
             "is_in_loop":              {"answer": False, "reason": "single turn"},
             "instruction_or_question": {"answer": self.ack_text, "reason": "final"},
             "next_speaker":            {"answer": "supervisor", "reason": "terminal"},
+            "execution_phase":         "execution",
         }
         return json.dumps(payload)
 
@@ -169,6 +170,7 @@ class PassThroughSupervisorBrain(SupervisorBrain):
                 "is_in_loop":              {"answer": False, "reason": "turn 1 entry"},
                 "instruction_or_question": {"answer": task,    "reason": "verbatim user task"},
                 "next_speaker":            {"answer": self.root_node_id, "reason": "root entry"},
+                "execution_phase":         "planning",
             }
             return json.dumps(payload)
         # After turn 1: terminate. The deliver callable's result is
@@ -181,6 +183,7 @@ class PassThroughSupervisorBrain(SupervisorBrain):
             "is_in_loop":              {"answer": False, "reason": "terminal turn"},
             "instruction_or_question": {"answer": "done", "reason": "no further work"},
             "next_speaker":            {"answer": "supervisor", "reason": "terminal"},
+            "execution_phase":         "execution",
         }
         return json.dumps(payload)
 

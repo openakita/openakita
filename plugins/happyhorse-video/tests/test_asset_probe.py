@@ -10,7 +10,6 @@ otherwise. The point of the test is that probes NEVER raise — only the
 
 from __future__ import annotations
 
-import io
 import shutil
 from pathlib import Path
 
@@ -19,17 +18,21 @@ from happyhorse_inline.asset_probe import (
     AssetSpecError,
     AudioProbe,
     ImageProbe,
+    MediaTarget,
+    MediaValidationError,
     VideoProbe,
     assert_animate_image,
     assert_animate_video,
+    assert_media_dimensions,
     assert_s2v_audio,
     assert_s2v_image,
     assert_videoretalk_audio,
+    image_target_for,
     probe_audio,
     probe_image,
     probe_video,
+    video_target_for,
 )
-
 
 # ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -40,7 +43,7 @@ def _has_ffprobe() -> bool:
 
 @pytest.fixture
 def tiny_png(tmp_path: Path) -> Path:
-    PIL = pytest.importorskip("PIL")
+    pytest.importorskip("PIL")
     from PIL import Image
 
     img = Image.new("RGB", (800, 600), color=(128, 64, 64))
@@ -51,7 +54,7 @@ def tiny_png(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def big_png(tmp_path: Path) -> Path:
-    PIL = pytest.importorskip("PIL")
+    pytest.importorskip("PIL")
     from PIL import Image
 
     img = Image.new("RGB", (8000, 8000), color=(0, 0, 0))
@@ -90,6 +93,24 @@ def test_probe_video_returns_dataclass_for_missing_file():
     assert probe.duration_sec == 0.0
 
 
+def test_ratio_and_quality_labels_resolve_to_explicit_pixels():
+    assert image_target_for("16:9", "2K") == MediaTarget("16:9", 2048, 1152)
+    assert image_target_for("9:16", "2K") == MediaTarget("9:16", 1152, 2048)
+    assert video_target_for("16:9", "720P") == MediaTarget("16:9", 1280, 720)
+    assert video_target_for("9:16", "720P") == MediaTarget("9:16", 720, 1280)
+
+
+def test_generated_image_dimension_validation_is_fail_closed(tiny_png: Path):
+    with pytest.raises(MediaValidationError, match="必须重新生成") as raised:
+        assert_media_dimensions(
+            tiny_png,
+            kind="image",
+            target=MediaTarget("16:9", 1280, 720),
+        )
+    assert raised.value.result["code"] == "media_dimensions_mismatch"
+    assert raised.value.result["actual"]["width"] == 800
+
+
 # ─── assert_s2v_image — spec 400..7000 px JPG/PNG/BMP/WEBP ──────────
 
 
@@ -103,7 +124,7 @@ def test_assert_s2v_image_rejects_too_large(big_png: Path):
 
 
 def test_assert_s2v_image_rejects_too_small(tmp_path: Path):
-    PIL = pytest.importorskip("PIL")
+    pytest.importorskip("PIL")
     from PIL import Image
 
     img = Image.new("RGB", (100, 100))
@@ -129,7 +150,7 @@ def test_assert_animate_image_accepts_in_range(tiny_png: Path):
 
 
 def test_assert_animate_image_rejects_oversize(tmp_path: Path):
-    PIL = pytest.importorskip("PIL")
+    pytest.importorskip("PIL")
     from PIL import Image
 
     # Pillow can't easily produce >5 MB JPEG quickly; emulate by writing

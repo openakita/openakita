@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from openakita.runtime.execution_context import ExecutionPhase
 from openakita.runtime.ledger import (
     REQUIRED_PROGRESS_KEYS,
     ProgressLedger,
@@ -99,6 +100,42 @@ def test_parse_progress_ledger_basic() -> None:
     assert pl.in_loop is False
     assert pl.next_speaker_name == "image_artist"
     assert "render shot 3" in pl.instruction
+    assert pl.execution_phase is ExecutionPhase.EXECUTION
+
+
+def test_parse_progress_ledger_accepts_structured_finalization_phase() -> None:
+    raw = GOOD_JSON.replace(
+        '"next_speaker":           {"answer": "image_artist", "reason": "owns shots"}',
+        '"next_speaker":           {"answer": "node_root", "reason": "integrates"},\n'
+        '  "execution_phase":        "finalization"',
+    )
+
+    pl = parse_progress_ledger_json(raw, turn_id=5)
+
+    assert pl.execution_phase is ExecutionPhase.FINALIZATION
+
+
+def test_parse_progress_ledger_accepts_structured_planning_phase() -> None:
+    raw = GOOD_JSON.replace(
+        '"next_speaker":           {"answer": "image_artist", "reason": "owns shots"}',
+        '"next_speaker":           {"answer": "node_root", "reason": "plans"},\n'
+        '  "execution_phase":        "planning"',
+    )
+
+    pl = parse_progress_ledger_json(raw, turn_id=1)
+
+    assert pl.execution_phase is ExecutionPhase.PLANNING
+
+
+def test_parse_progress_ledger_rejects_unknown_execution_phase() -> None:
+    raw = GOOD_JSON.replace(
+        '"next_speaker":           {"answer": "image_artist", "reason": "owns shots"}',
+        '"next_speaker":           {"answer": "image_artist", "reason": "owns shots"},\n'
+        '  "execution_phase":        "guessing"',
+    )
+
+    with pytest.raises(ProgressLedgerParseError, match="execution_phase"):
+        parse_progress_ledger_json(raw, turn_id=5)
 
 
 def test_parse_progress_ledger_round_trip() -> None:

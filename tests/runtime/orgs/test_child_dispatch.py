@@ -53,7 +53,6 @@ from openakita.orgs._runtime_agent_pipeline import (
     current_command_id_var,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures: lookup + bus + brain stubs minimal enough for end-to-end
 # ``activate_and_run`` exercises without spinning up the real OrgRuntime.
@@ -286,7 +285,7 @@ def test_dispatch_executes_real_child_run(
         )
     )
 
-    assert result["status"] == "ok"
+    assert result["status"] == "incomplete"
     output = result["output"]
     assert "[from node `screenwriter`]" in output
     assert "[from node `art-director`]" in output
@@ -348,10 +347,10 @@ def test_dispatch_unknown_child_node_is_skipped(
         )
     )
 
-    assert result["status"] == "ok"
+    assert result["status"] == "incomplete"
     output = result["output"]
     assert "[剧本] ok" in output
-    assert "skipped: unknown node" in output
+    assert "child node 'art-director' does not exist" in output
     # Only one subtask_assigned because the unknown node short-circuits
     # before the emit (we don't pretend to dispatch to a node that does
     # not exist).
@@ -401,7 +400,7 @@ def test_dispatch_depth_gate_blocks_grandchildren(
         )
     )
 
-    assert result["status"] == "ok"
+    assert result["status"] == "incomplete"
     output = result["output"]
     # Bodies of the deepest two RUNNING nodes surface in the tree.
     assert f"[body{cap - 2}]" in output

@@ -53,19 +53,12 @@ def test_resolve_role_name_to_node_id() -> None:
     )
 
 
-def test_resolve_substring_match() -> None:
-    # Case-insensitive substring on role.
-    assert (
-        LLMSupervisorBrain.resolve_next_speaker("QA", _DIRECTORY, "node_root")
-        == "node_qa"
-    )
+def test_resolve_case_insensitive_exact_role() -> None:
+    assert LLMSupervisorBrain.resolve_next_speaker("QA", _DIRECTORY, "node_root") == "node_qa"
 
 
-def test_resolve_unknown_falls_back_to_root() -> None:
-    assert (
-        LLMSupervisorBrain.resolve_next_speaker("nobody", _DIRECTORY, "node_root")
-        == "node_root"
-    )
+def test_resolve_unknown_remains_unresolved() -> None:
+    assert LLMSupervisorBrain.resolve_next_speaker("nobody", _DIRECTORY, "node_root") == "nobody"
 
 
 def test_resolve_supervisor_sentinel_passthrough() -> None:
@@ -125,11 +118,104 @@ async def test_deliver_passthrough_unchanged_without_directory() -> None:
     assert executor.calls == ["node_root"]
 
 
+async def test_deliver_surfaces_deterministic_media_failure_instead_of_false_report() -> None:
+    class _FailedExecutor(_RecordingExecutor):
+        async def activate_and_run(self, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(str(kwargs["node_id"]))
+            return {
+                "status": "error",
+                "output": "最终报告：视频已经交付 fake.mp4",
+                "reason": "media_validation_failed",
+                "media_quality_failures": [
+                    {
+                        "code": "media_delivery_unregistered",
+                        "message": "最终报告声称已交付视频，但本命令没有已登记的视频资产。",
+                    }
+                ],
+            }
+
+    deliver = _make_executor_deliver(
+        org_id="org1",
+        command_id="cmd1",
+        executor=_FailedExecutor(),
+    )
+
+    result = await deliver("node_root", "finish", None)
+
+    assert result.success is False
+    assert "没有已登记的视频资产" in result.message
+    assert "fake.mp4" not in result.message
+    assert result.metadata["reason"] == "media_validation_failed"
+
+
+async def test_deliver_preserves_incomplete_coordinator_output_when_child_completed() -> None:
+    class _CoordinatorExecutor(_RecordingExecutor):
+        async def activate_and_run(self, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(str(kwargs["node_id"]))
+            return {
+                "status": "incomplete",
+                "output": "制片人派单完成\n[from node `screenwriter`] 分镜和剧本已完成",
+                "reason": "delivery_state_in_progress",
+                "delivery_manifest": {
+                    "state": "in_progress",
+                    "final": False,
+                    "artifacts": [],
+                },
+                "delegated_deliveries": [
+                    {
+                        "node_id": "screenwriter",
+                        "state": "complete",
+                        "final": False,
+                        "artifacts": [{"kind": "storyboard", "status": "ready"}],
+                    }
+                ],
+            }
+
+    deliver = _make_executor_deliver(
+        org_id="org1",
+        command_id="cmd1",
+        executor=_CoordinatorExecutor(),
+    )
+
+    result = await deliver("producer", "continue", None)
+
+    assert result.success is True
+    assert "分镜和剧本已完成" in result.message
+    assert result.metadata["status"] == "incomplete"
+    assert result.metadata["structured_progress"] is True
+
+
+async def test_deliver_does_not_treat_plain_incomplete_manifest_as_progress() -> None:
+    class _IdleExecutor(_RecordingExecutor):
+        async def activate_and_run(self, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "status": "incomplete",
+                "output": "仍在等待",
+                "reason": "delivery_state_in_progress",
+                "delivery_manifest": {
+                    "state": "in_progress",
+                    "final": False,
+                    "artifacts": [],
+                },
+                "delegated_deliveries": [],
+            }
+
+    deliver = _make_executor_deliver(
+        org_id="org1",
+        command_id="cmd1",
+        executor=_IdleExecutor(),
+    )
+
+    result = await deliver("producer", "continue", None)
+
+    assert result.success is False
+    assert result.message == "delivery_state_in_progress"
+    assert result.metadata["structured_progress"] is False
+
+
 def test_resolve_speaker_helper_no_directory_is_verbatim() -> None:
     assert (
-        _resolve_speaker_to_node_id(
-            "copywriter", node_directory=None, root_node_id="node_root"
-        )
+        _resolve_speaker_to_node_id("copywriter", node_directory=None, root_node_id="node_root")
         == "copywriter"
     )
 
@@ -149,7 +235,9 @@ def test_resolve_speaker_helper_with_directory() -> None:
 
 
 class _Node:
-    def __init__(self, id_: str, role_title: str = "", role_goal: str = "", department: str = "") -> None:
+    def __init__(
+        self, id_: str, role_title: str = "", role_goal: str = "", department: str = ""
+    ) -> None:
         self.id = id_
         self.role_title = role_title
         self.role_goal = role_goal
@@ -157,8 +245,9 @@ class _Node:
 
 
 class _Org:
-    def __init__(self, nodes: list[_Node]) -> None:
+    def __init__(self, nodes: list[_Node], edges: list[Any] | None = None) -> None:
         self.nodes = nodes
+        self.edges = edges or []
 
 
 class _Lookup:
@@ -209,3 +298,19 @@ def test_build_node_directory_skips_blank_ids() -> None:
     directory = svc._build_node_directory("org1")
     assert directory is not None
     assert [d.node_id for d in directory] == ["node_a"]
+
+
+def test_build_node_directory_does_not_treat_artifact_edges_as_collaboration() -> None:
+    class _Edge:
+        source = "node_writer"
+        target = "node_design"
+        edge_type = "artifact"
+
+    org = _Org(
+        [_Node("node_writer", role_title="writer"), _Node("node_design", role_title="design")],
+        edges=[_Edge()],
+    )
+
+    directory = _make_service_with_org(org)._build_node_directory("org1")
+    assert directory is not None
+    assert all(descriptor.collaborates_with == () for descriptor in directory)

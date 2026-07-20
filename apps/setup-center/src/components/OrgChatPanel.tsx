@@ -549,7 +549,8 @@ function activityItemsToLedger(
     // 质量门禁: a finished run flagged incomplete is NOT a delivery — converge
     // it to "未通过校验" on reload, matching the live path.
     if (phase === "done" && (it as { incomplete?: boolean }).incomplete) {
-      phase = "incomplete";
+      const qualityReason = String((it as { quality_reason?: string }).quality_reason || "");
+      phase = qualityReason === "delivery_state_in_progress" ? "active" : "incomplete";
     }
     out.push({
       id: `act:${it.id || `${activityTs(it)}:${norm.kind}:${node}`}`,
@@ -891,6 +892,12 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           // verb — surface the output size and any delivered file.
           speaker = nameOf(node);
           if (incomplete) {
+            if (qualityReason === "delivery_state_in_progress") {
+              note = "子任务已交付，当前节点仍在继续协调后续工作";
+              progress = true;
+              phase = "active";
+              break;
+            }
             // Quality gate (test7 RCA): an output that failed the completion
             // check is NOT a delivery — show it as "未通过完成度校验" with the
             // reason and mark progress=false so the timeline doesn't read green.

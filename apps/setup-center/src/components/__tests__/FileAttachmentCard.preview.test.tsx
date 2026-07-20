@@ -68,4 +68,25 @@ describe("FileAttachmentCard preview (test18: HTML preview + PDF download/standa
     expect(safeFetch).toHaveBeenCalled();
     expect(saveAttachment).not.toHaveBeenCalled();
   });
+
+  it("portals the context menu so viewport coordinates survive transformed drawers", () => {
+    const { getByTitle, getByText } = render(
+      <div style={{ transform: "translateX(40%)" }}>
+        <FileAttachmentCard
+          file={{ filename: "报告.md", file_path: "D:/o/报告.md" }}
+          apiBaseUrl="http://test"
+        />
+      </div>,
+    );
+
+    fireEvent.contextMenu(getByTitle("点击预览 · 右键更多操作"), {
+      clientX: 137,
+      clientY: 211,
+    });
+
+    const menu = getByText("下载文件").parentElement;
+    expect(menu?.parentElement).toBe(document.body);
+    expect(menu?.style.left).toBe("137px");
+    expect(menu?.style.top).toBe("211px");
+  });
 });

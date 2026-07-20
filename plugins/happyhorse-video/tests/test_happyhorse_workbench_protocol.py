@@ -30,6 +30,43 @@ _HH = load_happyhorse_plugin()
 HappyhorsePlugin = _HH.Plugin
 
 
+def test_image_and_video_tool_schemas_expose_segment_id():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    definitions = {tool["name"]: tool for tool in plugin._tool_definitions()}
+
+    for tool_name in ("hh_image_create", "hh_i2v", "hh_r2v"):
+        properties = definitions[tool_name]["input_schema"]["properties"]
+        assert properties["segment_id"]["type"] == "string"
+        assert properties["client_request_id"]["type"] == "string"
+        assert definitions[tool_name]["x-openakita-execution"]["kind"] == "external_task"
+
+
+def test_org_readiness_reports_local_prerequisites(monkeypatch: pytest.MonkeyPatch):
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    plugin._client = SimpleNamespace(has_api_key=lambda: False)
+    plugin._oss = SimpleNamespace(is_configured=lambda: False)
+    monkeypatch.setattr(_HH, "ffmpeg_available", lambda: False)
+
+    assert plugin.check_org_readiness() == {
+        "ready": False,
+        "missing_requirements": ["dashscope_api_key", "oss", "ffmpeg"],
+    }
+
+
+def test_org_readiness_passes_when_local_prerequisites_exist(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    plugin._client = SimpleNamespace(has_api_key=lambda: True)
+    plugin._oss = SimpleNamespace(is_configured=lambda: True)
+    monkeypatch.setattr(_HH, "ffmpeg_available", lambda: True)
+
+    assert plugin.check_org_readiness() == {
+        "ready": True,
+        "missing_requirements": [],
+    }
+
+
 # ── _task_to_tool_payload ─────────────────────────────────────────────
 
 
@@ -58,6 +95,7 @@ def test_task_payload_includes_workbench_fields():
     assert "/tmp/v.mp4" in payload["local_paths"]
     assert "/tmp/lf.png" in payload["local_paths"]
     assert payload["asset_ids"] == ["a1", "a2"]
+    assert payload["asset_kinds"] == ["video", "image"]
 
 
 def test_task_payload_failed_sets_ok_false_with_terminal():
@@ -74,6 +112,190 @@ def test_task_payload_failed_sets_ok_false_with_terminal():
     assert payload["terminal"] is True
     assert payload["error_kind"] == "quota"
     assert payload["error_message"] == "no balance"
+
+
+def test_task_payload_exposes_blocked_wait_contract():
+    task = {
+        "id": "hh_approval",
+        "status": "pending",
+        "mode": "i2v",
+        "error_hints": {
+            "wait_state": "blocked",
+            "blocker": {
+                "kind": "approval_required",
+                "action": "approve_cost",
+                "message": "预计费用超过阈值",
+            },
+        },
+        "asset_ids": [],
+    }
+
+    payload = HappyhorsePlugin._task_to_tool_payload(task)
+
+    assert payload["ok"] is False
+    assert payload["blocked"] is True
+    assert payload["wait_state"] == "blocked"
+    assert payload["blocker"]["action"] == "approve_cost"
+
+
+def test_task_payload_synthesizes_blocked_contract_from_legacy_approval_row():
+    task = {
+        "id": "hh_legacy_approval",
+        "status": "pending",
+        "mode": "i2v",
+        "error_kind": "approval_required",
+        "error_message": "Cost exceeds threshold; user confirmation required",
+        "error_hints": None,
+        "asset_ids": [],
+    }
+
+    payload = HappyhorsePlugin._task_to_tool_payload(task)
+
+    assert payload["ok"] is False
+    assert payload["wait_state"] == "blocked"
+    assert payload["blocker"]["action"] == "approve_cost"
+    assert payload["blocker"]["resume_patch"] == {"cost_approved": True}
+
+
+@pytest.mark.asyncio
+async def test_wait_for_task_returns_blocked_state_immediately():
+    row = {
+        "id": "hh_approval",
+        "status": "pending",
+        "error_hints": {
+            "wait_state": "blocked",
+            "blocker": {"kind": "approval_required", "action": "approve_cost"},
+        },
+    }
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    plugin._tm = SimpleNamespace(get_task=AsyncMock(return_value=row))
+
+    result = await plugin._wait_for_task("hh_approval", interval=0.001)
+
+    assert result["wait_state"] == "blocked"
+    assert plugin._tm.get_task.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_wait_for_task_returns_legacy_approval_row_immediately():
+    row = {
+        "id": "hh_legacy_approval",
+        "status": "pending",
+        "error_kind": "approval_required",
+        "error_message": "approval required",
+        "error_hints": None,
+    }
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    plugin._tm = SimpleNamespace(get_task=AsyncMock(return_value=row))
+
+    result = await plugin._wait_for_task("hh_legacy_approval", interval=0.001)
+
+    assert result["wait_state"] == "blocked"
+    assert result["blocker"]["kind"] == "approval_required"
+    assert plugin._tm.get_task.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_wait_for_task_keeps_polling_ordinary_pending_state():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    plugin._tm = SimpleNamespace(
+        get_task=AsyncMock(
+            side_effect=[
+                {"id": "hh_active", "status": "pending", "error_hints": None},
+                {"id": "hh_active", "status": "succeeded", "error_hints": None},
+            ]
+        )
+    )
+
+    result = await plugin._wait_for_task("hh_active", interval=0.001)
+
+    assert result["status"] == "succeeded"
+    assert result["wait_state"] == "terminal"
+    assert plugin._tm.get_task.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_resumes_blocked_task_with_same_task_id():
+    row = {
+        "id": "hh_approval",
+        "status": "pending",
+        "mode": "i2v",
+        "model_id": "happyhorse-1.0-i2v",
+        "prompt": "dance",
+        "params": {"mode": "i2v", "prompt": "dance", "cost_approved": False},
+        "error_hints": {
+            "wait_state": "blocked",
+            "blocker": {
+                "kind": "approval_required",
+                "action": "approve_cost",
+                "resume_patch": {"cost_approved": True},
+            },
+        },
+    }
+    resumed = dict(row, status="pending", error_hints=None)
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    plugin._tm = SimpleNamespace(
+        update_task_safe=AsyncMock(return_value=True),
+        get_task=AsyncMock(return_value=resumed),
+    )
+    spawned: list[tuple[str, object, dict]] = []
+    plugin._spawn_pipeline = lambda task_id, body, params: spawned.append((task_id, body, params))
+    plugin._broadcast = lambda *_args, **_kwargs: None
+
+    result = await plugin._resume_blocked_task("hh_approval", row)
+
+    assert result is resumed
+    assert spawned[0][0] == "hh_approval"
+    assert spawned[0][1].cost_approved is True
+    assert spawned[0][2]["cost_approved"] is True
+
+
+def test_task_payload_exposes_reworkable_media_validation_failure():
+    failure = {
+        "passed": False,
+        "code": "media_dimensions_mismatch",
+        "message": "期望 1280x720，实际 960x960",
+        "expected": {"aspect_ratio": "16:9", "width": 1280, "height": 720},
+        "actual": {"width": 960, "height": 960},
+    }
+    task = {
+        "id": "hh_bad_ratio",
+        "status": "failed",
+        "mode": "i2v",
+        "error_kind": "media_validation_failed",
+        "error_message": failure["message"],
+        "error_hints": failure,
+        "params": {
+            "segment_id": "segment-1",
+            "expected_media": failure["expected"],
+        },
+        "asset_ids": [],
+    }
+
+    payload = HappyhorsePlugin._task_to_tool_payload(task)
+
+    assert payload["ok"] is False
+    assert payload["reworkable"] is True
+    assert payload["segment_id"] == "segment-1"
+    assert payload["quality_failure"]["actual"] == {"width": 960, "height": 960}
+
+
+def test_concat_requires_one_shared_target_pixel_spec():
+    target = {"aspect_ratio": "16:9", "width": 1280, "height": 720}
+    rows = [
+        (1, 0, {"params": {"expected_media": target}}),
+        (2, 1, {"params": {"expected_media": dict(target)}}),
+    ]
+    assert HappyhorsePlugin._shared_expected_media(rows) == target
+
+
+def test_concat_rejects_mixed_target_pixel_specs():
+    rows = [
+        (1, 0, {"params": {"expected_media": {"width": 1280, "height": 720}}}),
+        (2, 1, {"params": {"expected_media": {"width": 960, "height": 960}}}),
+    ]
+    with pytest.raises(_HH.MediaValidationError, match="不一致"):
+        HappyhorsePlugin._shared_expected_media(rows)
 
 
 def test_task_payload_json_round_trip():

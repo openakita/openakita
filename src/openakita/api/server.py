@@ -901,13 +901,21 @@ def create_app(
         parent_node_id: str,
         child_node_id: str,
         child_content: str,
-    ) -> str:
+        assignment_id: str | None = None,
+        output_slot: str = "default",
+        upstream_context: Any = None,
+        cancel_event: asyncio.Event | None = None,
+    ) -> Any:
         return await agent_executor.dispatch_subtask(
             org_id=org_id,
             parent_node_id=parent_node_id,
             parent_command_id=current_command_id_var.get("") or None,
             child_node_id=child_node_id,
             child_content=child_content,
+            assignment_id=assignment_id,
+            output_slot=output_slot,
+            upstream_context=upstream_context,
+            cancel_event=cancel_event,
         )
 
     # Sprint-5 P0-1 (audit ``_orgs_business_capability_audit_v5.md`` §5.2

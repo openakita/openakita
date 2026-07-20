@@ -96,9 +96,7 @@ def test_workbench_modes_match_happyhorse_manifest() -> None:
 
 def test_hierarchy_edges_form_dag_with_expected_paths() -> None:
     spec = aigc_video_studio()
-    hierarchy = {
-        (e.src, e.dst) for e in spec.edges if e.kind is EdgeKind.HIERARCHY
-    }
+    hierarchy = {(e.src, e.dst) for e in spec.edges if e.kind is EdgeKind.HIERARCHY}
     assert ("producer", "screenwriter") in hierarchy
     assert ("producer", "art_director") in hierarchy
     for wb in ("wb_image", "wb_video", "wb_human", "wb_long"):
@@ -110,25 +108,37 @@ def test_hierarchy_edges_form_dag_with_expected_paths() -> None:
             assert src != wb, f"workbench {wb!r} must not appear as a hierarchy src"
 
 
-def test_collaborate_edges_carry_storyboard_and_concat_handoffs() -> None:
+def test_collaboration_and_artifact_edges_have_distinct_semantics() -> None:
     spec = aigc_video_studio()
-    collab = {
-        (e.src, e.dst) for e in spec.edges if e.kind is EdgeKind.COLLABORATE
-    }
+    collab = {(e.src, e.dst) for e in spec.edges if e.kind is EdgeKind.COLLABORATE}
     assert ("screenwriter", "art_director") in collab
-    assert ("screenwriter", "wb_long") in collab
-    assert ("wb_image", "wb_video") in collab
-    assert ("wb_image", "wb_human") in collab
-    assert ("wb_video", "wb_long") in collab
-    assert ("wb_human", "wb_long") in collab
+    artifact = {(e.src, e.dst): e.binding for e in spec.edges if e.kind is EdgeKind.ARTIFACT}
+    assert set(artifact) == {
+        ("screenwriter", "wb_long"),
+        ("wb_image", "wb_video"),
+        ("wb_image", "wb_human"),
+        ("wb_video", "wb_long"),
+        ("wb_human", "wb_long"),
+    }
+    assert artifact[("wb_image", "wb_video")]["join_key"] == "segment_id"
+    assert artifact[("wb_image", "wb_video")]["target_param"] == "from_asset_ids"
+    assert artifact[("wb_video", "wb_long")]["target_param"] == "task_ids"
+    for pair in (("wb_image", "wb_video"), ("wb_video", "wb_long")):
+        assert artifact[pair]["activation"] == "when_ready"
+        assert artifact[pair]["dispatch_mode"] == "join_all"
+        assert artifact[pair]["join_scope"]["source"] == "screenwriter"
 
 
 def test_personas_are_chinese_and_mention_routing_rules() -> None:
     spec = aigc_video_studio()
     by_id = {n.id: n for n in spec.nodes}
-    assert "制片人" in by_id["producer"].persona_prompt
+    producer = by_id["producer"].persona_prompt
+    assert "制片人" in producer
+    assert "step_id=storyboard" in producer
+    assert "depends_on=[storyboard]" in producer
     assert "编剧" in by_id["screenwriter"].persona_prompt
     assert "hh_storyboard_decompose" in by_id["screenwriter"].persona_prompt
+    assert "segment_id" in by_id["screenwriter"].persona_prompt
     art = by_id["art_director"].persona_prompt
     assert "美术指导" in art
     assert "wb_human" in art and "wb_image" in art and "wb_long" in art
@@ -185,6 +195,10 @@ def test_template_instantiates_into_orgv2_with_fresh_ids() -> None:
     assert by_role["image_artist"].workbench is not None
     assert by_role["image_artist"].workbench.mode == "image_artist"
     assert by_role["long_video_director"].workbench.mode == "art_director"
+    auto_edges = [edge for edge in org.edges if edge.binding.get("activation") == "when_ready"]
+    assert len(auto_edges) == 2
+    screenwriter_id = by_role["screenwriter"].id
+    assert all(edge.binding["join_scope"]["source"] == screenwriter_id for edge in auto_edges)
 
 
 def test_instantiated_org_has_producer_as_sole_root_with_correct_children() -> None:
@@ -206,9 +220,7 @@ def test_instantiated_org_has_producer_as_sole_root_with_correct_children() -> N
     producer_children = sorted(n.role for n in org.children_of(by_role["producer"].id))
     assert producer_children == ["art_director", "screenwriter"]
 
-    art_dir_children = sorted(
-        n.role for n in org.children_of(by_role["art_director"].id)
-    )
+    art_dir_children = sorted(n.role for n in org.children_of(by_role["art_director"].id))
     assert art_dir_children == [
         "image_artist",
         "long_video_director",
@@ -232,11 +244,7 @@ def test_persona_override_takes_effect_at_instantiation() -> None:
     org = reg.instantiate(
         "aigc_video_studio",
         name="Acme",
-        overrides={
-            "node_persona_prompts": {
-                "art_director": "你是新版本的美术指导。"
-            }
-        },
+        overrides={"node_persona_prompts": {"art_director": "你是新版本的美术指导。"}},
     )
     art = next(n for n in org.nodes if n.role == "art_director")
     assert art.persona_prompt == "你是新版本的美术指导。"
@@ -246,8 +254,6 @@ def test_module_reexports_factory_for_external_use() -> None:
     """``aigc_video_studio`` must be importable directly so external
     callers (UI, docs generator, tests) can introspect the spec
     without going through the registry."""
-    mod = importlib.import_module(
-        "openakita.runtime.templates.builtin.aigc_video_studio"
-    )
+    mod = importlib.import_module("openakita.runtime.templates.builtin.aigc_video_studio")
     assert callable(mod.aigc_video_studio)
     assert mod.aigc_video_studio().id == "aigc_video_studio"

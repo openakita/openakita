@@ -270,70 +270,27 @@ def strip_deliverable_thinking(text: str | None) -> str:
     return cleaned.strip()
 
 
-def classify_node_output(output: str | None) -> tuple[str, str]:
-    """Completion gate: decide whether a node output is a real deliverable.
+def classify_node_output(
+    output: str | None,
+    *,
+    delivery_state: str | None = None,
+) -> tuple[str, str]:
+    """Classify completion from the structured manifest, never prose wording.
 
-    Returns ``(status, reason)`` where ``status`` is ``"ok"`` (a genuine
-    deliverable that may be persisted + registered as delivered) or
-    ``"incomplete"`` (raw chain-of-thought / mid-iteration reasoning /
-    empty — must NOT be marked delivered; the supervisor should re-route
-    or escalate instead).
-
-    Test7 RCA (2026-06): with the Sprint-5 single tool round, nodes
-    frequently "delivered" their raw reasoning — e.g. ``visual`` (135B),
-    ``data-analyst`` (161B), ``writer-b`` (76B "让我再搜索一下"), ``writer-a``
-    (189B "搜索结果中有很多不合适的同人内容…让我搜索更权威"). The
-    :data:`MAX_TOOL_ROUNDS` bump makes most of these iterate to a real
-    answer; this gate is the safety net that stops the rest from being
-    named as formal deliverables.
-
-    The heuristics are deliberately conservative so they never reject a
-    real deliverable:
-
-    * Empty / whitespace-only -> incomplete.
-    * The output literally OPENS with a leaked chain-of-thought
-      (``thinking`` / ``<thinking>``) and has no markdown heading -> the
-      provider dumped reasoning instead of a document.
-    * A SHORT (<800 char) output with no heading that opens with a
-      reasoning phrase AND announces a next step ("让我再搜索…") -> the node
-      stopped mid-iteration.
+    Empty output remains objectively incomplete. A submitted manifest is
+    authoritative: only ``complete`` is accepted. Missing manifests are
+    incomplete; prose is never promoted to a delivery state.
     """
 
     if not isinstance(output, str) or not output.strip():
         return ("incomplete", "empty_output")
-    text = output.strip()
-    low = text.lower()
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    has_heading = any(ln.startswith("#") for ln in lines)
-    # Strong signal: a chain-of-thought leak emitted as the whole output.
-    # The custom-qwen provider prefixes raw reasoning with the literal token
-    # "thinking" (no separator); Anthropic uses a <thinking> block. Neither is
-    # ever a legitimate deliverable opening. Allow it only when the text also
-    # carries a real markdown heading (reasoning + an actual document).
-    if (low.startswith("thinking") or low.startswith("<thinking>")) and not has_heading:
-        return ("incomplete", "thinking_leak")
-    # Short reasoning-only output that announces a next step: the node
-    # stopped mid-iteration. Length-gated + heading-gated so genuine short
-    # answers (e.g. a one-paragraph factual reply) are never rejected.
-    if len(text) < 800 and not has_heading:
-        starts_reasoning = text.startswith(
-            ("思考", "让我", "我需要", "我先", "我会先", "好的，我", "好的,我", "首先我")
-        )
-        announces_next = any(marker in text for marker in _MID_REASONING_MARKERS)
-        if starts_reasoning and announces_next:
-            return ("incomplete", "mid_reasoning")
-    # Near-empty PROMISE/status stub: a short, heading-less output that merely
-    # promises the deliverable for later ("…将整理完整的报告" / "正在整理中") is
-    # not a deliverable. The executor RECOVERS such a node from its on-disk file
-    # (if it wrote one) BEFORE this verdict reaches a parent review, so this only
-    # bites a node that produced NEITHER a real file NOR real text — exactly the
-    # "看似完成实则空壳" the parent review must not absorb. Length-gated +
-    # heading-gated + marker-gated to avoid touching genuine short answers.
-    if len(text) < 240 and not has_heading and any(
-        marker in text for marker in _DEFERRED_DELIVERY_MARKERS
-    ):
-        return ("incomplete", "deferred_delivery")
-    return ("ok", "")
+    if delivery_state is None:
+        return ("incomplete", "delivery_manifest_missing")
+    if delivery_state == "complete":
+        return ("ok", "")
+    if delivery_state in {"in_progress", "blocked", "failed"}:
+        return ("incomplete", f"delivery_state_{delivery_state}")
+    return ("incomplete", "delivery_state_invalid")
 
 
 def _derive_semantic_title(output: str, *, limit: int = 48) -> str:
@@ -384,7 +341,9 @@ def _derive_semantic_title(output: str, *, limit: int = 48) -> str:
             # Skip a leaked chain-of-thought preamble ("thinking…" / "思考…")
             # so the filename describes the deliverable, not the reasoning.
             low = line.lower()
-            if low.startswith("thinking") or line.startswith(("思考", "我需要", "我先", "我会先", "让我")):
+            if low.startswith("thinking") or line.startswith(
+                ("思考", "我需要", "我先", "我会先", "让我")
+            ):
                 continue
             prose = line.strip("*_`# ")
     title = heading or bold or prose
@@ -467,9 +426,7 @@ def persist_node_artifact(
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except Exception:  # noqa: BLE001 -- best-effort
-        _LOGGER.debug(
-            "artifact dir mkdir failed (org=%s)", org_id, exc_info=True
-        )
+        _LOGGER.debug("artifact dir mkdir failed (org=%s)", org_id, exc_info=True)
         return None
 
     node_seg = safe_path_segment(node_id, fallback="node")
@@ -568,9 +525,7 @@ def persist_node_memory(
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except Exception:  # noqa: BLE001 -- best-effort
-        _LOGGER.debug(
-            "memory dir mkdir failed (org=%s)", org_id, exc_info=True
-        )
+        _LOGGER.debug("memory dir mkdir failed (org=%s)", org_id, exc_info=True)
         return None
     cid_seg = safe_path_segment(command_id, fallback="cmd")
     node_seg = safe_path_segment(node_id, fallback="node")
@@ -585,17 +540,15 @@ def persist_node_memory(
     # a dash) does not collide with YAML reserved characters.
     fm_lines: list[str] = [
         "---",
-        f"command_id: \"{cid_seg}\"",
-        f"node_id: \"{node_seg}\"",
-        f"org_id: \"{safe_path_segment(org_id, fallback='_unknown')}\"",
-        f"timestamp: \"{_timestamp_for_filename()}\"",
+        f'command_id: "{cid_seg}"',
+        f'node_id: "{node_seg}"',
+        f'org_id: "{safe_path_segment(org_id, fallback="_unknown")}"',
+        f'timestamp: "{_timestamp_for_filename()}"',
     ]
     if role:
-        fm_lines.append(f"role: \"{safe_path_segment(role, fallback='worker')}\"")
+        fm_lines.append(f'role: "{safe_path_segment(role, fallback="worker")}"')
     if parent_node_id:
-        fm_lines.append(
-            f"parent_node_id: \"{safe_path_segment(parent_node_id, fallback='parent')}\""
-        )
+        fm_lines.append(f'parent_node_id: "{safe_path_segment(parent_node_id, fallback="parent")}"')
     fm_lines.append(f"chars: {len(output)}")
     fm_lines.append("---")
     contents = "\n".join(fm_lines) + "\n\n" + summary + "\n"

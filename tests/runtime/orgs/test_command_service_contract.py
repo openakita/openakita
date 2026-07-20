@@ -164,6 +164,22 @@ async def test_submit_rejects_missing_target_node() -> None:
         await svc.submit(OrgCommandRequest(org_id="o1", content="x", target_node_id="nope"))
 
 
+@pytest.mark.asyncio
+async def test_submit_rejects_fuzzy_target_node_reference() -> None:
+    org = _Org(root_ids=["producer", "product-manager"])
+
+    def resolve_reference(query: str):
+        if query == "product":
+            return None, [org.nodes[1]], "fuzzy"
+        return None, [], "not_found"
+
+    org.resolve_reference = resolve_reference  # type: ignore[attr-defined]
+    svc = _make_service(_make_runtime(org=org))
+
+    with pytest.raises(OrgCommandError, match="must be exact"):
+        await svc.submit(OrgCommandRequest(org_id="o1", content="x", target_node_id="product"))
+
+
 @pytest.mark.parametrize(
     "status", ["dormant", "created", "paused", "stopped", "archived", "deleted"]
 )

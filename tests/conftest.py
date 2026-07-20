@@ -19,8 +19,8 @@ if sys.platform == "win32":
     _orig_wmi = getattr(platform, "_wmi_query", None)
     if _orig_wmi is not None:
         platform._wmi_query = lambda *a, **k: ("10.0.26200", 1, "Multiprocessor Free", 0, 0)
-        platform.system()          # populate cache
-        platform._wmi_query = _orig_wmi   # restore
+        platform.system()  # populate cache
+        platform._wmi_query = _orig_wmi  # restore
 
 import pytest
 
@@ -47,6 +47,7 @@ def mock_brain(mock_llm_client: MockLLMClient) -> MockBrain:
 def test_session():
     """A clean test Session with no messages."""
     from tests.fixtures.factories import create_test_session
+
     return create_test_session()
 
 
@@ -67,6 +68,7 @@ def test_settings(tmp_workspace: Path):
     os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-placeholder")
 
     from openakita.config import Settings
+
     settings = Settings(
         project_root=tmp_workspace,
         database_path=str(tmp_workspace / "data" / "agent.db"),
@@ -82,6 +84,7 @@ def test_settings(tmp_workspace: Path):
 @pytest.fixture
 def mock_response_factory():
     """Factory fixture for creating MockResponse instances."""
+
     def _create(
         content: str = "",
         tool_calls: list[dict] | None = None,
@@ -92,6 +95,7 @@ def mock_response_factory():
             tool_calls=tool_calls,
             reasoning_content=reasoning_content,
         )
+
     return _create
 
 
@@ -179,13 +183,9 @@ def _disable_desktop_notifications(monkeypatch):
 
     for _dn in modules:
         monkeypatch.setattr(_dn, "send_desktop_notification", _noop_sync, raising=False)
-        monkeypatch.setattr(
-            _dn, "send_desktop_notification_async", _noop_async, raising=False
-        )
+        monkeypatch.setattr(_dn, "send_desktop_notification_async", _noop_async, raising=False)
         monkeypatch.setattr(_dn, "notify_task_completed", _noop_sync, raising=False)
-        monkeypatch.setattr(
-            _dn, "notify_task_completed_async", _noop_async, raising=False
-        )
+        monkeypatch.setattr(_dn, "notify_task_completed_async", _noop_async, raising=False)
 
     # 双保险：把 settings.desktop_notify_enabled 也置为 False，覆盖任何动态导入
     try:
@@ -224,6 +224,9 @@ def _default_org_review_off(monkeypatch):
     so a plain ``setenv`` here is honoured without import-time freezing.
     """
     monkeypatch.setenv("OPENAKITA_ORG_REVIEW_ENABLED", "0")
+    # Legacy XML-dispatch fixtures remain useful migration coverage. Production
+    # defaults this off; new structured-delegation tests explicitly remove it.
+    monkeypatch.setenv("OPENAKITA_ORG_LEGACY_TEXT_DISPATCH", "1")
 
 
 @pytest.fixture(autouse=True)
@@ -261,4 +264,3 @@ def _isolate_policy_v2_singletons():
         reset_death_switch_tracker()
         reset_skill_allowlist_manager()
         reset_session_allowlist_manager()
-

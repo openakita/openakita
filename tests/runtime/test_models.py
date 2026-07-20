@@ -99,6 +99,7 @@ def test_edge_kind_unchanged_from_legacy() -> None:
         "collaborate",
         "escalate",
         "consult",
+        "artifact",
     }
 
 

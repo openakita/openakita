@@ -15,9 +15,11 @@ under deterministic inputs.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -31,6 +33,7 @@ from .checkpoint import (
     CheckpointStatus,
     make_checkpoint_id,
 )
+from .execution_context import ExecutionPhase, current_execution_phase_var
 from .ledger import (
     ProgressLedger,
     ProgressLedgerParseError,
@@ -43,6 +46,8 @@ from .stream import StreamBus
 __all__ = [
     "Supervisor",
     "SupervisorBrain",
+    "ReadyActionProvider",
+    "ReadyDelegationAction",
     "DelegationResult",
     "SupervisorOutcome",
     "FinalOutcome",
@@ -81,6 +86,7 @@ class SupervisorOutcome:
     # REPLAN_BUDGET_EXHAUSTED) it is the best partial result so the command
     # surfaces something useful instead of a bare "ran out of budget" reason.
     deliverable: str = ""
+    delivery_manifest: dict[str, Any] | None = None
 
     def to_jsonable(self) -> dict[str, Any]:
         return {
@@ -91,6 +97,7 @@ class SupervisorOutcome:
             "n_replans": self.n_replans,
             "reason": self.reason,
             "deliverable": self.deliverable,
+            "delivery_manifest": self.delivery_manifest,
         }
 
 
@@ -98,33 +105,6 @@ class SupervisorTimeout(Exception):
     """Coarse last-resort guardrail; only raised by an external watchdog
     when a supervisor itself hangs (e.g. infinite tool loop inside a
     node). Documented in ADR-0004 as `org_command_max_seconds`."""
-
-
-# Machine-emitted markers that only appear in a root KICKOFF / 派单 aggregation
-# (the root splitting work + the executor concatenating the raw child replies),
-# never in a genuine integrated final report. Used to keep the kickoff out of the
-# best-effort deliverable when any real output exists (test13 RCA).
-_KICKOFF_MARKERS = (
-    "[dispatched to ",
-    "[dispatch to `",
-    "[from node `",
-    "项目启动指令",
-    "项目正式启动",
-)
-
-
-def _looks_like_kickoff(text: str) -> bool:
-    """Heuristically detect a root kickoff / 派单 dump (not a final deliverable).
-
-    Deterministic and conservative: a message is treated as a kickoff only when
-    it carries the executor's machine dispatch scaffolding (``[dispatched to …]``
-    / ``[from node …]``) or an unmistakable kickoff heading. A real integrated
-    report that merely mentions a node name in prose does not match.
-    """
-    if not text:
-        return False
-    hits = sum(1 for m in _KICKOFF_MARKERS if m in text)
-    return hits >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -146,12 +126,35 @@ class DelegationResult:
     speaker: str
     message: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    artifact_role: str = "intermediate"
 
 
-DeliverCallable = Callable[
-    [str, str, ProgressLedger], Awaitable[DelegationResult]
-]
+@dataclass(frozen=True)
+class ReadyDelegationAction:
+    """A graph-derived delegation that does not require an LLM routing turn."""
+
+    action_id: str
+    speaker: str
+    instruction: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class ReadyActionProvider(Protocol):
+    """Optional deterministic routing layer evaluated before the LLM brain."""
+
+    def next_action(self) -> ReadyDelegationAction | None: ...
+
+    def record_result(
+        self,
+        action: ReadyDelegationAction,
+        result: DelegationResult,
+    ) -> None: ...
+
+
+DeliverCallable = Callable[[str, str, ProgressLedger], Awaitable[DelegationResult]]
 """``deliver(next_speaker, instruction, progress) -> DelegationResult``."""
+
+AssetInventoryProvider = Callable[[], list[dict[str, Any]]]
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +226,7 @@ class _SupervisorConfig:
     max_turns: int = 30
     max_replans: int = 5
     progress_ledger_max_retries: int = 10
+    progress_ledger_timeout_s: float = 60.0
 
 
 class Supervisor:
@@ -261,6 +265,7 @@ class Supervisor:
         max_turns: int = 30,
         max_replans: int = 5,
         progress_ledger_max_retries: int = 10,
+        progress_ledger_timeout_s: float = 60.0,
         wall_clock_soft_budget_s: float = 0.0,
         deliver_includes_recent_outputs: bool = True,
         recent_output_window: int = 4,
@@ -270,6 +275,8 @@ class Supervisor:
         root_finalization_char_cap: int = 6000,
         wall_clock_hard_ceiling_s: float = 0.0,
         root_finalization_min_budget_s: float = 150.0,
+        ready_action_provider: ReadyActionProvider | None = None,
+        asset_inventory_provider: AssetInventoryProvider | None = None,
     ) -> None:
         self.command_id = command_id
         self.org_id = org_id
@@ -324,10 +331,9 @@ class Supervisor:
             max_turns=max_turns,
             max_replans=max_replans,
             progress_ledger_max_retries=progress_ledger_max_retries,
+            progress_ledger_timeout_s=max(0.01, float(progress_ledger_timeout_s)),
         )
-        self.stall_detector = StallDetector(
-            max_stalls=max_stalls, max_turns=max_turns
-        )
+        self.stall_detector = StallDetector(max_stalls=max_stalls, max_turns=max_turns)
         self.history: list[ProgressLedger] = []
         # RC-5 S1 (gap⑤): the real node deliverables, fed back to the brain's
         # progress ledger so it can judge satisfaction/progress from concrete
@@ -385,6 +391,10 @@ class Supervisor:
         #    force-kill the whole command with a "hard ceiling exceeded" state).
         self._wall_clock_hard_ceiling_s = float(wall_clock_hard_ceiling_s or 0.0)
         self._root_finalization_min_budget_s = max(0.0, float(root_finalization_min_budget_s))
+        # Declarative graph routing is optional. Organizations without an
+        # explicit provider retain the historical LLM-only orchestration path.
+        self._ready_action_provider = ready_action_provider
+        self._asset_inventory_provider = asset_inventory_provider
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -431,9 +441,7 @@ class Supervisor:
                 await self._outer_loop_setup()
             return await self._inner_loop()
         except CancelledByToken as exc:
-            return await self._terminate(
-                FinalOutcome.CANCELLED, exc.reason or "cancelled"
-            )
+            return await self._terminate(FinalOutcome.CANCELLED, exc.reason or "cancelled")
         except UserCancelledError as exc:
             # RC-5 S5: ``UserCancelledError`` is a plain ``Exception``
             # subclass (``openakita.agent.errors``), so neither the
@@ -444,9 +452,7 @@ class Supervisor:
             # ``deliver``. Absorb it into a clean ``cancelled`` terminal
             # checkpoint so the command stays resumable instead of crashing
             # with an uncaught exception.
-            return await self._terminate(
-                FinalOutcome.CANCELLED, exc.reason or "cancelled"
-            )
+            return await self._terminate(FinalOutcome.CANCELLED, exc.reason or "cancelled")
         except asyncio.CancelledError:
             # v23 RC-4 fix: the d1275851 ``cancel_event`` bridge only
             # reaches ``SupervisorBrain`` (production
@@ -472,9 +478,7 @@ class Supervisor:
             # checkpoint write.
             if self.cancel_token.is_cancelled():
                 reason = self.cancel_token.reason or "cancelled"
-                return await self._terminate(
-                    FinalOutcome.CANCELLED, reason
-                )
+                return await self._terminate(FinalOutcome.CANCELLED, reason)
             raise
 
     # ------------------------------------------------------------------
@@ -646,6 +650,9 @@ class Supervisor:
                     ),
                 )
 
+            if await self._run_ready_action():
+                continue
+
             progress = await self._emit_progress_ledger()
             self.history.append(progress)
             await self.stream.emit(
@@ -662,15 +669,30 @@ class Supervisor:
 
             match decision.verdict:
                 case StallVerdict.DONE:
-                    await self._maybe_force_root_finalization(progress)
+                    finalization_error = await self._maybe_force_root_finalization(progress)
+                    if finalization_error:
+                        if finalization_error in {
+                            "insufficient_wall_clock_budget",
+                            "finalization_exceeded_remaining_budget",
+                        }:
+                            return await self._terminate(
+                                FinalOutcome.OUT_OF_TURNS,
+                                finalization_error,
+                            )
+                        replanned = await self._outer_loop_replan(finalization_error)
+                        if not replanned:
+                            return await self._terminate(
+                                FinalOutcome.REPLAN_BUDGET_EXHAUSTED,
+                                finalization_error,
+                            )
+                        self._root_finalized = False
+                        continue
                     return await self._terminate(
                         FinalOutcome.DONE,
                         progress.is_request_satisfied.reason,
                     )
                 case StallVerdict.OUT_OF_TURNS:
-                    return await self._terminate(
-                        FinalOutcome.OUT_OF_TURNS, decision.reason
-                    )
+                    return await self._terminate(FinalOutcome.OUT_OF_TURNS, decision.reason)
                 case StallVerdict.REPLAN:
                     replanned = await self._outer_loop_replan(decision.reason)
                     if not replanned:
@@ -709,10 +731,11 @@ class Supervisor:
                 superstep=self.stall_detector.n_turns,
             )
             try:
-                result = await self.deliver(
+                result = await self._deliver_in_phase(
                     progress.next_speaker_name,
                     self._compose_delegated_content(progress.instruction),
                     progress,
+                    phase=self._phase_for_progress(progress),
                 )
             except CancelledByToken:
                 raise
@@ -731,6 +754,113 @@ class Supervisor:
                 org_id=self.org_id,
                 superstep=self.stall_detector.n_turns,
             )
+
+    async def _run_ready_action(self) -> bool:
+        """Run one declared graph action without spending an LLM routing turn."""
+
+        provider = self._ready_action_provider
+        if provider is None:
+            return False
+        try:
+            action = provider.next_action()
+        except Exception:  # noqa: BLE001 -- optional routing must fail open
+            logger.warning(
+                "Supervisor ready-action provider failed (org=%s command=%s)",
+                self.org_id,
+                self.command_id,
+                exc_info=True,
+            )
+            return False
+        if action is None:
+            return False
+
+        self.cancel_token.raise_if_cancelled()
+        progress = self._ready_action_progress(action)
+        await self.stream.emit(
+            "tasks",
+            "artifact_edge_activated",
+            {
+                "action_id": action.action_id,
+                "speaker": action.speaker,
+                "instruction": action.instruction,
+                **action.metadata,
+            },
+            command_id=self.command_id,
+            org_id=self.org_id,
+            superstep=self.stall_detector.n_turns,
+        )
+        try:
+            raw_phase = str(action.metadata.get("execution_phase") or ExecutionPhase.EXECUTION)
+            try:
+                phase = ExecutionPhase(raw_phase)
+            except ValueError:
+                phase = ExecutionPhase.EXECUTION
+            result = await self._deliver_in_phase(
+                action.speaker,
+                action.instruction,
+                progress,
+                phase=phase,
+            )
+        except CancelledByToken:
+            raise
+        self.delegation_history.append(result)
+        try:
+            provider.record_result(action, result)
+        except Exception:  # noqa: BLE001 -- result is still a valid delegation
+            logger.warning(
+                "Supervisor ready-action result recording failed (org=%s command=%s action=%s)",
+                self.org_id,
+                self.command_id,
+                action.action_id,
+                exc_info=True,
+            )
+        await self.stream.emit(
+            "updates",
+            "artifact_edge_result",
+            {
+                "action_id": action.action_id,
+                "speaker": result.speaker,
+                "success": result.success,
+                "message": result.message,
+                **action.metadata,
+            },
+            command_id=self.command_id,
+            org_id=self.org_id,
+            superstep=self.stall_detector.n_turns,
+        )
+        return True
+
+    def _ready_action_progress(self, action: ReadyDelegationAction) -> ProgressLedger:
+        """Adapt a deterministic action to the existing deliver callable contract."""
+
+        import json
+
+        raw = json.dumps(
+            {
+                "is_request_satisfied": {
+                    "answer": False,
+                    "reason": "declarative artifact dependency is ready",
+                },
+                "is_progress_being_made": {
+                    "answer": True,
+                    "reason": "runtime is advancing the organization graph",
+                },
+                "is_in_loop": {"answer": False, "reason": "idempotent action key"},
+                "instruction_or_question": {
+                    "answer": action.instruction,
+                    "reason": "declared artifact edge activation",
+                },
+                "next_speaker": {
+                    "answer": action.speaker,
+                    "reason": "declared artifact edge target",
+                },
+            },
+            ensure_ascii=False,
+        )
+        return parse_progress_ledger_json(
+            raw,
+            turn_id=self.stall_detector.n_turns + 1,
+        )
 
     # ------------------------------------------------------------------
     # RC-conv: wall-clock soft budget + node context injection helpers
@@ -815,20 +945,13 @@ class Supervisor:
         if not self.delegation_history:
             return ""
         successes = [
-            r for r in self.delegation_history
+            r
+            for r in self.delegation_history
             if getattr(r, "success", False) and str(getattr(r, "message", "") or "").strip()
         ]
-        # test13 RCA: the root's turn-1 output is usually a KICKOFF / 派单 dump
-        # ("# 项目启动指令 … [dispatched to …] … [from node …]"), not a finished
-        # deliverable. When the hard ceiling killed the forced finalization, this
-        # kickoff (being the longest success) became the final PDF + chat bubble.
-        # Prefer any NON-kickoff success; only fall back to a kickoff when it is
-        # the only content we have (so we never return an empty deliverable).
-        non_kickoff = [
-            r for r in successes if not _looks_like_kickoff(str(r.message or ""))
-        ]
-        if non_kickoff:
-            successes = non_kickoff
+        deliverable_outputs = [r for r in successes if r.artifact_role != "kickoff"]
+        if deliverable_outputs:
+            successes = deliverable_outputs
         chosen: DelegationResult | None = None
         if successes:
             last = successes[-1]
@@ -875,9 +998,12 @@ class Supervisor:
         if not successes:
             return False
         last = successes[-1]
+        manifest = last.metadata.get("delivery_manifest")
         return (
             last.speaker == root
-            and len(str(last.message or "")) >= self._root_finalization_min_chars
+            and isinstance(manifest, dict)
+            and manifest.get("state") == "complete"
+            and manifest.get("final") is True
         )
 
     def _compose_root_finalization_instruction(self) -> str:
@@ -901,38 +1027,58 @@ class Supervisor:
                 body = body[: self._root_finalization_char_cap] + "\n…（已截断）"
             blocks.append(f"[产出 {idx}] 来自节点 {r.speaker!r}：\n{body}")
         joined = "\n\n".join(blocks) if blocks else "（无上游产出记录）"
+        assets: list[dict[str, Any]] = []
+        if self._asset_inventory_provider is not None:
+            try:
+                assets = self._asset_inventory_provider()
+            except Exception:  # noqa: BLE001 -- finalization must remain available
+                logger.warning(
+                    "Supervisor asset inventory provider failed (org=%s command=%s)",
+                    self.org_id,
+                    self.command_id,
+                    exc_info=True,
+                )
+        asset_inventory = json.dumps(assets, ensure_ascii=False, default=str)
+        if len(asset_inventory) > 24_000:
+            asset_inventory = asset_inventory[:24_000] + "..."
         return (
             "【最终整合与交付 · 由主编（根节点）亲自完成】\n"
             "所有下游节点均已完成并交付各自产出（见下方）。现在请你作为主编/根节点，"
             "亲自完成本次任务的最终整合与面向用户的总结汇报：\n"
             "1. 通读并整合下方全部上游产出，形成一份完整、连贯、可直接交付给用户的最终成果；\n"
-            "2. 用 write_file 将该最终成果写入一个 .md 文件，并用 deliver_artifacts 交付，"
-            "使其在前端可下载/预览；\n"
-            "3. 在你本次回复的正文中，直接给出这份完整的最终成果与总结汇报"
+            "2. 在你本次回复的正文中，直接给出这份完整的最终成果与总结汇报"
             "（包含关键结论、决策摘要与交付物清单），作为交付给用户的最终报告。\n"
-            "注意：这是收尾步骤，不要再向下派发任务（不要 dispatch / delegate），"
-            "直接基于下方已产出的内容整合成稿。\n\n"
+            "3. 若交付包含图片、音频或视频，只能引用下方【本命令资产账本】中已由 runtime "
+            "登记且校验通过的真实附件；Shell 复制成功或文本路径不构成交付证据。"
+            "缺少附件时不得宣称完成。\n"
+            "4. 必须调用 org_submit_deliverable，且仅当清单 state=complete、final=true，"
+            "并逐项填入账本中的真实 asset_ids/task_ids/registered_paths 时才算完成。\n"
+            "注意：这是收尾步骤，不要再向下派发任务，也不要调用 glob/list/read/shell 搜索文件；"
+            "运行时已直接注入完整的命令资产账本，直接据此整合成稿。\n\n"
+            "=== 本命令资产账本（唯一可信资产来源） ===\n"
+            f"{asset_inventory}\n"
+            "=== 资产账本结束 ===\n\n"
             "=== 上游节点已产出的真实内容（请直接基于这些内容整合，不要假设缺失） ===\n"
             f"{joined}\n"
             "=== 以上为可直接使用的上游产出 ==="
         )
 
-    async def _maybe_force_root_finalization(self, progress: ProgressLedger) -> None:
+    async def _maybe_force_root_finalization(self, progress: ProgressLedger) -> str | None:
         """Force one closing root delegation when the root has not integrated.
 
         Deterministic backstop for the "final delivery owned by the root"
         contract: independent of whether the brain routed the integration to
         the root, this guarantees the root produces the final integrated report
-        exactly once before the command terminates DONE. No-op when disabled,
-        already run, or the root already owns the final deliverable.
+        before the command terminates DONE. Returns a machine-readable failure
+        reason when the closing delegation must be retried or downgraded.
         """
         if not self._force_root_finalization or self._root_finalized:
-            return
+            return None
         if self._root_already_finalized():
-            return
+            return None
         root = self.task_ledger.root_node_id
         if not root:
-            return
+            return None
         # Budget gate (test13 RCA): only start the extra root turn when there is
         # enough remaining hard-ceiling budget for it to plausibly finish. If the
         # run already burned most of the ceiling, forcing a doomed turn wastes the
@@ -940,7 +1086,10 @@ class Supervisor:
         # to the kickoff dump. Skipping here lets the loop terminate cleanly with
         # the best real deliverable instead.
         finalize_timeout = self._root_finalization_budget_s()
-        if finalize_timeout is not None and finalize_timeout <= self._root_finalization_min_budget_s:
+        if (
+            finalize_timeout is not None
+            and finalize_timeout <= self._root_finalization_min_budget_s
+        ):
             self._root_finalized = True  # do not retry within this run
             await self.stream.emit(
                 "updates",
@@ -955,7 +1104,7 @@ class Supervisor:
                 org_id=self.org_id,
                 superstep=self.stall_detector.n_turns,
             )
-            return
+            return "insufficient_wall_clock_budget"
         self._root_finalized = True
         self.cancel_token.raise_if_cancelled()
         instruction = self._compose_root_finalization_instruction()
@@ -981,10 +1130,21 @@ class Supervisor:
                 # exceeded". A cooperative-token cancel (real user cancel /
                 # stop_org) still propagates via CancelledByToken below.
                 result = await asyncio.wait_for(
-                    self.deliver(root, instruction, progress), timeout=finalize_timeout
+                    self._deliver_in_phase(
+                        root,
+                        instruction,
+                        progress,
+                        phase=ExecutionPhase.FINALIZATION,
+                    ),
+                    timeout=finalize_timeout,
                 )
             else:
-                result = await self.deliver(root, instruction, progress)
+                result = await self._deliver_in_phase(
+                    root,
+                    instruction,
+                    progress,
+                    phase=ExecutionPhase.FINALIZATION,
+                )
         except CancelledByToken:
             raise
         except TimeoutError:
@@ -1000,7 +1160,7 @@ class Supervisor:
                 org_id=self.org_id,
                 superstep=self.stall_detector.n_turns,
             )
-            return
+            return "finalization_exceeded_remaining_budget"
         self.delegation_history.append(result)
         await self.stream.emit(
             "updates",
@@ -1015,6 +1175,15 @@ class Supervisor:
             org_id=self.org_id,
             superstep=self.stall_detector.n_turns,
         )
+        if not result.success:
+            reason = str(result.metadata.get("reason") or result.message or "").strip()
+            return reason or "root_finalization_failed"
+        manifest = result.metadata.get("delivery_manifest")
+        if not isinstance(manifest, dict):
+            return "root_final_manifest_missing"
+        if manifest.get("state") != "complete" or manifest.get("final") is not True:
+            return "root_final_manifest_incomplete"
+        return None
 
     # ------------------------------------------------------------------
     # Progress ledger acquisition with retry
@@ -1022,21 +1191,126 @@ class Supervisor:
 
     async def _emit_progress_ledger(self) -> ProgressLedger:
         """Ask the brain for the next ProgressLedger, retrying on bad JSON."""
+        if self._force_root_finalization and self.delegation_history:
+            latest = self.delegation_history[-1]
+            manifest = latest.metadata.get("delivery_manifest")
+            if (
+                latest.success
+                and latest.speaker == self.task_ledger.root_node_id
+                and isinstance(manifest, dict)
+                and manifest.get("state") == "complete"
+                and manifest.get("final") is False
+                and bool(manifest.get("artifacts"))
+            ):
+                # A complete structured root manifest is stronger evidence than
+                # another free-form routing judgment. Go directly to the
+                # existing restricted root-finalization turn; this removes one
+                # supervisory LLM round without bypassing final=true validation.
+                await self.stream.emit(
+                    "lifecycle",
+                    "structured_completion_detected",
+                    {"speaker": latest.speaker, "reason": "root_manifest_complete"},
+                    command_id=self.command_id,
+                    org_id=self.org_id,
+                    superstep=self.stall_detector.n_turns,
+                )
+                raw = json.dumps(
+                    {
+                        "is_request_satisfied": {
+                            "answer": True,
+                            "reason": "root structured manifest is complete",
+                        },
+                        "is_progress_being_made": {"answer": True, "reason": "complete"},
+                        "is_in_loop": {"answer": False, "reason": "complete"},
+                        "instruction_or_question": {
+                            "answer": "perform restricted final integration",
+                            "reason": "complete",
+                        },
+                        "next_speaker": {
+                            "answer": self.task_ledger.root_node_id,
+                            "reason": "root",
+                        },
+                    }
+                )
+                return parse_progress_ledger_json(
+                    raw,
+                    turn_id=self.stall_detector.n_turns + 1,
+                )
         last_error: ProgressLedgerParseError | None = None
         for attempt in range(self.cfg.progress_ledger_max_retries):
             self.cancel_token.raise_if_cancelled()
-            raw = await self.brain.emit_progress_ledger(
-                task=self.task_ledger.task,
-                facts=self.task_ledger.facts,
-                plan=self.task_ledger.plan,
-                history=list(self.history),
-                recent_outputs=list(self.delegation_history),
-                cancel_event=self._cancel_event,
+            started = time.monotonic()
+            await self.stream.emit(
+                "lifecycle",
+                "supervisor_reasoning_started",
+                {
+                    "attempt": attempt + 1,
+                    "timeout_s": self.cfg.progress_ledger_timeout_s,
+                },
+                command_id=self.command_id,
+                org_id=self.org_id,
+                superstep=self.stall_detector.n_turns,
+            )
+
+            async def _heartbeat(
+                *, attempt_number: int = attempt + 1, started_at: float = started
+            ) -> None:
+                interval = min(10.0, max(2.0, self.cfg.progress_ledger_timeout_s / 4))
+                while True:
+                    await asyncio.sleep(interval)
+                    await self.stream.emit(
+                        "lifecycle",
+                        "supervisor_reasoning_heartbeat",
+                        {
+                            "attempt": attempt_number,
+                            "elapsed_s": round(time.monotonic() - started_at, 1),
+                        },
+                        command_id=self.command_id,
+                        org_id=self.org_id,
+                        superstep=self.stall_detector.n_turns,
+                    )
+
+            heartbeat = asyncio.create_task(_heartbeat())
+            try:
+                raw = await asyncio.wait_for(
+                    self.brain.emit_progress_ledger(
+                        task=self.task_ledger.task,
+                        facts=self.task_ledger.facts,
+                        plan=self.task_ledger.plan,
+                        history=list(self.history),
+                        recent_outputs=list(self.delegation_history),
+                        cancel_event=self._cancel_event,
+                    ),
+                    timeout=self.cfg.progress_ledger_timeout_s,
+                )
+            except TimeoutError:
+                elapsed = round(time.monotonic() - started, 1)
+                await self.stream.emit(
+                    "lifecycle",
+                    "supervisor_reasoning_timeout",
+                    {"attempt": attempt + 1, "elapsed_s": elapsed},
+                    command_id=self.command_id,
+                    org_id=self.org_id,
+                    superstep=self.stall_detector.n_turns,
+                )
+                return self._progress_timeout_fallback(elapsed)
+            finally:
+                heartbeat.cancel()
+                with suppress(asyncio.CancelledError):
+                    await heartbeat
+            await self.stream.emit(
+                "lifecycle",
+                "supervisor_reasoning_finished",
+                {
+                    "attempt": attempt + 1,
+                    "elapsed_s": round(time.monotonic() - started, 1),
+                },
+                command_id=self.command_id,
+                org_id=self.org_id,
+                superstep=self.stall_detector.n_turns,
             )
             try:
-                return parse_progress_ledger_json(
-                    raw, turn_id=self.stall_detector.n_turns + 1
-                )
+                return parse_progress_ledger_json(raw, turn_id=self.stall_detector.n_turns + 1)
             except ProgressLedgerParseError as exc:
                 last_error = exc
                 logger.debug(
@@ -1057,6 +1331,36 @@ class Supervisor:
             f"progress ledger could not be parsed after "
             f"{self.cfg.progress_ledger_max_retries} attempts: {last_error}"
         )
+
+    def _progress_timeout_fallback(self, elapsed_s: float) -> ProgressLedger:
+        """Continue through the root when supervisory reasoning times out."""
+
+        raw = json.dumps(
+            {
+                "is_request_satisfied": {
+                    "answer": False,
+                    "reason": f"supervisor reasoning timed out after {elapsed_s:.1f}s",
+                },
+                "is_progress_being_made": {
+                    "answer": False,
+                    "reason": "routing decision timed out",
+                },
+                "is_in_loop": {"answer": False, "reason": "timeout recovery"},
+                "instruction_or_question": {
+                    "answer": (
+                        "监督器进度判断超时。请直接检查最近节点的结构化结果与错误，"
+                        "纠正无效派单后继续执行；不要重新生成已经登记成功的资产。"
+                    ),
+                    "reason": "deterministic timeout recovery",
+                },
+                "next_speaker": {
+                    "answer": self.task_ledger.root_node_id,
+                    "reason": "root owns recovery",
+                },
+            },
+            ensure_ascii=False,
+        )
+        return parse_progress_ledger_json(raw, turn_id=self.stall_detector.n_turns + 1)
 
     # ------------------------------------------------------------------
     # Checkpoint + lifecycle helpers
@@ -1121,9 +1425,7 @@ class Supervisor:
             superstep=self.stall_detector.n_turns,
         )
 
-    async def _terminate(
-        self, outcome: FinalOutcome, reason: str
-    ) -> SupervisorOutcome:
+    async def _terminate(self, outcome: FinalOutcome, reason: str) -> SupervisorOutcome:
         """Emit final lifecycle event and return the outcome record.
 
         Always writes a final cancelled / done checkpoint so resume from
@@ -1180,6 +1482,7 @@ class Supervisor:
             final_message = deliverable
         elif deliverable:
             final_message = f"{reason}\n\n{deliverable}"
+        delivery_manifest = self._best_delivery_manifest()
         return SupervisorOutcome(
             outcome=outcome,
             final_message=final_message,
@@ -1188,4 +1491,51 @@ class Supervisor:
             n_replans=self.n_replans,
             reason=reason,
             deliverable=deliverable,
+            delivery_manifest=delivery_manifest,
         )
+
+    def _best_delivery_manifest(self) -> dict[str, Any] | None:
+        manifests: list[tuple[DelegationResult, dict[str, Any]]] = []
+        for result in self.delegation_history:
+            manifest = result.metadata.get("delivery_manifest")
+            if isinstance(manifest, dict):
+                manifests.append((result, manifest))
+        if not manifests:
+            return None
+        root = self.task_ledger.root_node_id
+        finals = [
+            manifest
+            for result, manifest in manifests
+            if result.speaker == root
+            and manifest.get("state") == "complete"
+            and manifest.get("final") is True
+        ]
+        return dict(finals[-1] if finals else manifests[-1][1])
+
+    async def _deliver_in_phase(
+        self,
+        speaker: str,
+        instruction: str,
+        progress: ProgressLedger,
+        *,
+        phase: ExecutionPhase,
+    ) -> DelegationResult:
+        """Delegate while exposing a machine-owned phase to the node runtime."""
+        token = current_execution_phase_var.set(phase)
+        try:
+            return await self.deliver(speaker, instruction, progress)
+        finally:
+            current_execution_phase_var.reset(token)
+
+    def _phase_for_progress(self, progress: ProgressLedger) -> ExecutionPhase:
+        """Validate the ledger's explicit phase against scheduler-owned state."""
+        root = self.task_ledger.root_node_id
+        if progress.execution_phase is ExecutionPhase.PLANNING:
+            return ExecutionPhase.PLANNING
+        if (
+            progress.execution_phase is ExecutionPhase.FINALIZATION
+            and progress.next_speaker_name == root
+            and self.delegation_history
+        ):
+            return ExecutionPhase.FINALIZATION
+        return ExecutionPhase.EXECUTION

@@ -41,9 +41,15 @@ class _Node:
 
 
 class _Org:
-    def __init__(self, *, roots: tuple[str, ...] = ("root1",)) -> None:
+    def __init__(
+        self,
+        *,
+        roots: tuple[str, ...] = ("root1",),
+        runtime_overrides: dict[str, Any] | None = None,
+    ) -> None:
         self.status = type("_Status", (), {"value": "active"})()
         self.nodes = [_Node(r) for r in roots]
+        self.runtime_overrides = dict(runtime_overrides or {})
 
     def get_node(self, nid: str) -> _Node | None:
         return next((n for n in self.nodes if n.id == nid), None)
@@ -126,6 +132,11 @@ class _QuickDoneSupervisor:
             n_replans=0,
             reason="",
             deliverable="the finished integrated report body",
+            delivery_manifest={
+                "state": "complete",
+                "final": True,
+                "artifacts": [{"kind": "document", "status": "ready"}],
+            },
         )
 
     def best_effort_deliverable(self) -> str:
@@ -152,12 +163,54 @@ def _make_runtime(*, org: _Org | None = None) -> MagicMock:
 
 
 def _make_service(*, supervisor: Any) -> OrgCommandService:
-    def _factory(*, org_id: str, command_id: str, root_node_id: str, task: str,
-                 executor: Any = None, brain: Any = None, stream: Any = None,
-                 checkpointer: Any = None, cancel_token: Any = None) -> Any:
+    def _factory(
+        *,
+        org_id: str,
+        command_id: str,
+        root_node_id: str,
+        task: str,
+        executor: Any = None,
+        brain: Any = None,
+        stream: Any = None,
+        checkpointer: Any = None,
+        cancel_token: Any = None,
+    ) -> Any:
         return supervisor
 
     return OrgCommandService(_make_runtime(), supervisor_factory=_factory)
+
+
+def test_per_org_time_budget_overrides_all_three_supervisor_clocks(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "supervisor_hard_ceiling_s", 900, raising=False)
+    monkeypatch.setattr(settings, "orgs_supervisor_soft_ceiling_ratio", 0.8, raising=False)
+    org = _Org(
+        runtime_overrides={
+            "supervisor_hard_ceiling_s": 1800,
+            "supervisor_soft_ceiling_ratio": 0.8,
+            "supervisor_soft_watchdog_grace_ratio": 0.5,
+        }
+    )
+    svc = OrgCommandService(_make_runtime(org=org))
+
+    budget = svc._supervisor_time_budget("o1")
+    kwargs: dict[str, Any] = {}
+    svc._apply_convergence_budget(kwargs, org_id="o1")
+
+    assert budget.hard_ceiling_s == 1800
+    assert budget.soft_budget_s == 1440.0
+    assert budget.watchdog_s == 1620.0
+    assert svc._hard_ceiling_seconds("o1") == 1800
+    assert svc._soft_landing_seconds(1800, "o1") == 1620.0
+    assert kwargs["wall_clock_hard_ceiling_s"] == 1800.0
+    assert kwargs["wall_clock_soft_budget_s"] == 1440.0
+
+
+def test_legacy_command_timeout_override_is_hard_ceiling_alias(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "supervisor_hard_ceiling_s", 900, raising=False)
+    org = _Org(runtime_overrides={"command_timeout_secs": 1200})
+    svc = OrgCommandService(_make_runtime(org=org))
+
+    assert svc._supervisor_time_budget("o1").hard_ceiling_s == 1200
 
 
 def _enable_fast_soft_landing(monkeypatch, *, ceiling: int = 3) -> None:
@@ -170,9 +223,7 @@ def _enable_fast_soft_landing(monkeypatch, *, ceiling: int = 3) -> None:
     the 3s hard ceiling, so tests exercise the soft path without long waits.
     """
     monkeypatch.setattr(settings, "supervisor_hard_ceiling_s", ceiling, raising=False)
-    monkeypatch.setattr(
-        settings, "orgs_supervisor_soft_ceiling_ratio", 0.1, raising=False
-    )
+    monkeypatch.setattr(settings, "orgs_supervisor_soft_ceiling_ratio", 0.1, raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -181,15 +232,14 @@ def _enable_fast_soft_landing(monkeypatch, *, ceiling: int = 3) -> None:
 
 
 @pytest.mark.asyncio
-async def test_soft_landing_fires_before_hard_ceiling_and_salvages_partial(
+async def test_soft_landing_without_manifest_stays_error(
     monkeypatch,
 ) -> None:
-    """A wedged run past the soft budget -> soft landing -> ``partial`` with output.
+    """A wedged run cannot promote best-effort prose without a manifest.
 
     The soft watchdog (fires ~1s) interrupts the wedged run long before the hard
     ceiling (10s) would. Because a usable best-effort deliverable survived, the
-    command degrades to ``partial`` (NOT ``error``), attributed to the soft
-    landing rather than the hard ceiling.
+    command remains an error even though best-effort prose survived.
     """
     _enable_fast_soft_landing(monkeypatch, ceiling=3)
     salvage = "阶段性市场调研摘要：" + ("关键结论与数据支撑。" * 40)
@@ -217,13 +267,9 @@ async def test_soft_landing_fires_before_hard_ceiling_and_salvages_partial(
     assert oc.get("reason") == "supervisor_soft_ceiling_soft_landing"
 
     cmd = svc._commands[cid]
-    assert cmd["status"] == "partial", "delivered soft landing must not be error"
+    assert cmd["status"] == "error"
     assert cmd["status"] != "cancelled"
-    assert cmd["result"]["partial"] is True
-    assert cmd["result"]["outcome"] == "partial_delivery"
-    assert cmd["result"]["degraded_reason"] == "wall_clock_soft_landing"
-    assert salvage in cmd["result"]["deliverable"]
-    assert cmd["error"] is None
+    assert cmd["result"]["partial"] is False
 
     # No slot / task leak.
     assert ("o1", "root1") not in svc._running_by_root
@@ -277,9 +323,7 @@ async def test_soft_landing_not_triggered_for_fast_task(monkeypatch) -> None:
     # soft-watchdog task is still pending.
     await asyncio.sleep(0)
     lingering = [
-        t
-        for t in asyncio.all_tasks()
-        if "soft-watchdog" in (t.get_name() or "") and not t.done()
+        t for t in asyncio.all_tasks() if "soft-watchdog" in (t.get_name() or "") and not t.done()
     ]
     assert not lingering, f"soft-landing watchdog leaked: {lingering}"
 
@@ -292,9 +336,7 @@ async def test_soft_landing_disabled_when_ratio_zero(monkeypatch) -> None:
     (the pre-existing backstop), attributed to ``hard_ceiling``.
     """
     monkeypatch.setattr(settings, "supervisor_hard_ceiling_s", 2, raising=False)
-    monkeypatch.setattr(
-        settings, "orgs_supervisor_soft_ceiling_ratio", 0.0, raising=False
-    )
+    monkeypatch.setattr(settings, "orgs_supervisor_soft_ceiling_ratio", 0.0, raising=False)
     supervisor = _WedgedSupervisor(deliverable="salvage body long enough" * 10)
     svc = _make_service(supervisor=supervisor)
     monkeypatch.setattr(svc, "_root_disk_deliverable", lambda _c: None)

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
 from _plugin_loader import load_happyhorse_plugin
 
 _HH = load_happyhorse_plugin()
@@ -57,6 +60,57 @@ def test_video_tools_advertise_from_asset_ids_in_schema():
         assert "from_asset_ids" in schema["properties"], (
             f"{tool_name} must accept from_asset_ids for workbench chaining"
         )
+
+
+def test_video_tools_declare_model_catalog_and_idempotency_contract():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    tools = plugin._tool_definitions()
+    by_name = {t["name"]: t for t in tools}
+    for tool_name in ("hh_t2v", "hh_i2v", "hh_r2v", "hh_video_edit"):
+        tool = by_name[tool_name]
+        assert tool["x-openakita-idempotency-param"] == "client_request_id"
+        contract = tool["x-openakita-media-contract"]
+        assert contract["kind"] == "video"
+        assert contract["default_model"] in contract["models"]
+        assert all(
+            len(model_contract["duration_range"]) == 2
+            for model_contract in contract["models"].values()
+        )
+        model_ids = tool["input_schema"]["properties"]["model_id"]["enum"]
+        assert model_ids
+        assert all(isinstance(model_id, str) and model_id for model_id in model_ids)
+
+
+@pytest.mark.asyncio
+async def test_video_task_rejects_model_outside_mode_catalog_before_submission():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    plugin._client = SimpleNamespace(has_api_key=lambda: True)
+    body = _HH.CreateTaskBody(mode="t2v", prompt="test", model_id="kling-v2")
+
+    with pytest.raises(_HH.HTTPException) as exc_info:
+        await plugin._create_task_internal(body)
+
+    assert exc_info.value.status_code == 422
+    assert "可用目录" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_video_task_rejects_unsupported_duration_before_submission():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    plugin._client = SimpleNamespace(has_api_key=lambda: True)
+    body = _HH.CreateTaskBody(
+        mode="i2v",
+        prompt="test",
+        model_id="happyhorse-1.0-i2v",
+        duration=2,
+        resolution="720P",
+    )
+
+    with pytest.raises(_HH.HTTPException) as exc_info:
+        await plugin._create_task_internal(body)
+
+    assert exc_info.value.status_code == 422
+    assert "3-15s" in str(exc_info.value.detail)
 
 
 def test_video_tools_accept_documented_alias_fields():

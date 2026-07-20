@@ -63,11 +63,10 @@ handlers in degraded mode. So Sprint-6 takes the wrapper path:
 
 ### Out-of-scope for Sprint-6 (documented; do NOT add without audit sign-off)
 
-* **Per-org working_directory isolation** -- the host re-uses the
-  main agent's ``default_cwd``; filesystem writes therefore land in
-  the same workspace v1 chat uses. RCA §1.5.3 "out of scope" item
-  #5: per-org ``<org>/workspace/<node_id>/`` split is reserved for
-  Sprint-7+.
+* The handler registry still comes from the main Agent, but org node file
+  calls are given an explicit per-command workspace by
+  :mod:`openakita.orgs._runtime_node_tools`. They therefore do not inherit the
+  main Agent's ``default_cwd`` when a path or search root is omitted.
 * **Per-org memory scope** -- memory handler reads / writes via the
   shared ``memory_manager``. Tenant isolation is a Sprint-7 item;
   Sprint-6 ships with a TODO comment and an integration test that
@@ -204,11 +203,21 @@ class NodeToolHost:
         if isinstance(agent_tools, list):
             for defn in agent_tools:
                 if isinstance(defn, dict) and defn.get("name") == tool_name:
-                    return {
+                    resolved = {
                         "name": tool_name,
                         "description": defn.get("description", ""),
                         "input_schema": defn.get("input_schema", {"type": "object"}),
                     }
+                    execution = defn.get("x-openakita-execution")
+                    if isinstance(execution, dict):
+                        resolved["x-openakita-execution"] = dict(execution)
+                    idempotency_param = defn.get("x-openakita-idempotency-param")
+                    if isinstance(idempotency_param, str) and idempotency_param.strip():
+                        resolved["x-openakita-idempotency-param"] = idempotency_param.strip()
+                    media_contract = defn.get("x-openakita-media-contract")
+                    if isinstance(media_contract, dict):
+                        resolved["x-openakita-media-contract"] = dict(media_contract)
+                    return resolved
         # Fallback: static catalog (system tools only).
         try:
             from openakita.tools.definitions import get_tool_definition
@@ -257,8 +266,7 @@ class NodeToolHost:
         if self._disposed:
             raise ToolNotAvailable(
                 tool_name,
-                "node tool host has been disposed; "
-                "org runtime is shutting down",
+                "node tool host has been disposed; org runtime is shutting down",
             )
         registry = getattr(self._agent, "handler_registry", None)
         if registry is None:

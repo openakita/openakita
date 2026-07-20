@@ -205,6 +205,11 @@ Decision rules (follow strictly):
     项目启动 note). The root's first output is usually a kickoff that splits the
     work — that is NOT the final deliverable; keep going until the root has
     integrated the reports' outputs.
+  * Set execution_phase="planning" when the selected coordinator should only
+    decompose the task and declare a structured delegation DAG. Use
+    execution_phase="execution" when the selected node must invoke its own
+    business/file tools or perform review/rework. Set execution_phase=
+    "finalization" only for the closing ROOT integration turn.
   This keeps the flow legible: 主编 拆分 → 按连线逐级派给下游 → 下游逐级回流 →
   主编整合汇报，直到满足请求。
 
@@ -216,7 +221,8 @@ parsable as-is, with NOTHING else after it:
         "is_progress_being_made":  {{"answer": boolean, "reason": string}},
         "is_in_loop":              {{"answer": boolean, "reason": string}},
         "instruction_or_question": {{"answer": string,  "reason": string}},
-        "next_speaker":            {{"answer": string (one of: {names}), "reason": string}}
+        "next_speaker":            {{"answer": string (one of: {names}), "reason": string}},
+        "execution_phase":         "planning" | "execution" | "finalization"
     }}
 """
 
@@ -522,9 +528,9 @@ class LLMSupervisorBrain(SupervisorBrain):
     ) -> str:
         """Map a model-emitted ``next_speaker`` to a concrete ``node_id``.
 
-        Resolution order: exact node_id match -> exact role match ->
-        case-insensitive substring match on role/node_id -> ``root_node_id``
-        fallback. The terminal sentinel ``"supervisor"`` is passed through
+        Resolution accepts an exact node id or one unique exact role. Unknown,
+        fuzzy, and ambiguous references remain unresolved instead of silently
+        routing work to the root. The terminal sentinel ``"supervisor"`` is passed through
         untouched (it means "no further delegation"; the Supervisor only
         delegates after a non-DONE verdict anyway).
         """
@@ -534,11 +540,14 @@ class LLMSupervisorBrain(SupervisorBrain):
         for n in directory:
             if n.node_id == target:
                 return n.node_id
-        for n in directory:
-            if n.role and n.role == target:
-                return n.node_id
-        low = target.lower()
-        for n in directory:
-            if (n.role and low in n.role.lower()) or low in n.node_id.lower():
-                return n.node_id
-        return root_node_id
+        role_matches = [n for n in directory if n.role and n.role == target]
+        if len(role_matches) == 1:
+            return role_matches[0].node_id
+        low = target.casefold()
+        id_matches = [n for n in directory if n.node_id.casefold() == low]
+        if len(id_matches) == 1:
+            return id_matches[0].node_id
+        ci_role_matches = [n for n in directory if n.role and n.role.casefold() == low]
+        if len(ci_role_matches) == 1:
+            return ci_role_matches[0].node_id
+        return target

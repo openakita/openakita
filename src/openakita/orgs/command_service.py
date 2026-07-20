@@ -44,6 +44,7 @@ import asyncio
 import logging
 import time
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from .command_models import (
@@ -56,6 +57,29 @@ from .command_models import (
 
 if TYPE_CHECKING:  # pragma: no cover -- import-cycle break
     from openakita.runtime.supervisor import Supervisor
+
+
+@dataclass(frozen=True)
+class _SupervisorTimeBudget:
+    hard_ceiling_s: int
+    soft_ceiling_ratio: float
+    soft_watchdog_grace_ratio: float
+
+    @property
+    def soft_budget_s(self) -> float:
+        if self.hard_ceiling_s <= 0 or self.soft_ceiling_ratio <= 0:
+            return 0.0
+        return float(self.hard_ceiling_s) * self.soft_ceiling_ratio
+
+    @property
+    def watchdog_s(self) -> float:
+        soft = self.soft_budget_s
+        if soft <= 0 or self.soft_ceiling_ratio >= 1:
+            return 0.0
+        hard = float(self.hard_ceiling_s)
+        fire = soft + (hard - soft) * self.soft_watchdog_grace_ratio
+        return min(fire, hard - 1.0) if 0 < fire < hard else 0.0
+
 
 __all__ = [
     "BrainProtocol",
@@ -77,27 +101,6 @@ logger = logging.getLogger(__name__)
 # v1 ``_CMD_TTL`` (3600 s) lifted verbatim. Running commands get 2x TTL
 # for graceful shutdown (matches v1 ``_purge_old_commands`` body).
 _CMD_TTL = 3600
-
-
-# Kickoff/派单稿 markers -- kept in sync with ``runtime.py`` and
-# ``runtime/supervisor.py`` so all three layers agree on "never ship a kickoff".
-# Used only to decide whether the in-memory best-effort deliverable is weak
-# enough to be replaced by the root's on-disk integration file (test13 fix b).
-_KICKOFF_TEXT_MARKERS: tuple[str, ...] = (
-    "项目启动指令",
-    "项目正式启动",
-    "[dispatched to ",
-    "[from node `",
-    "层级分解",
-    "dispatched to ",
-)
-
-
-def _looks_like_kickoff_text(text: str) -> bool:
-    """True when a candidate deliverable string is a kickoff/派单 aggregation."""
-    if not text:
-        return False
-    return any(marker in text for marker in _KICKOFF_TEXT_MARKERS)
 
 
 # ---------------------------------------------------------------------------
@@ -493,8 +496,7 @@ class OrgCommandService:
         subscribe = getattr(event_bus, "subscribe", None)
         if not callable(subscribe):
             logger.warning(
-                "[OrgCmd] event_bus has no subscribe(); "
-                "command status reconciliation disabled"
+                "[OrgCmd] event_bus has no subscribe(); command status reconciliation disabled"
             )
             return
         for name in self._AGENT_RUN_EVENT_NAMES:
@@ -533,9 +535,7 @@ class OrgCommandService:
             pass
         return node_id
 
-    async def _publish_summary_progress(
-        self, event_name: str, payload: dict[str, Any]
-    ) -> None:
+    async def _publish_summary_progress(self, event_name: str, payload: dict[str, Any]) -> None:
         if not isinstance(payload, dict):
             return
         command_id = str(payload.get("command_id") or "")
@@ -742,13 +742,31 @@ class OrgCommandService:
             request.output_scope = OrgOutputScope.INTERNAL
 
         org = self._require_org_running(request.org_id)
-        if request.target_node_id and not org.get_node(request.target_node_id):
-            # Same missing-resource semantics as the org-not-found case above:
-            # a target node that does not exist is a 404, not a 400.
-            node_err = OrgCommandError(f"Node not found: {request.target_node_id}")
-            node_err.status_code = 404
-            raise node_err
-        root_node_id = self._resolve_command_root_id(org, request.target_node_id)
+        resolved_target_id: str | None = None
+        if request.target_node_id:
+            resolve_reference = getattr(org, "resolve_reference", None)
+            if callable(resolve_reference):
+                node, candidates, resolution = resolve_reference(request.target_node_id)
+                if node is None or resolution not in {"exact_id", "exact_title"}:
+                    suffix = ""
+                    if candidates:
+                        suffix = "; candidates: " + ", ".join(
+                            str(getattr(item, "id", "")) for item in candidates
+                        )
+                    node_err = OrgCommandError(
+                        f"Node reference must be exact: {request.target_node_id}{suffix}"
+                    )
+                    node_err.status_code = 400 if candidates else 404
+                    raise node_err
+                resolved_target_id = str(getattr(node, "id", ""))
+            else:
+                node = org.get_node(request.target_node_id)
+                if node is None or str(getattr(node, "id", request.target_node_id)) != request.target_node_id:
+                    node_err = OrgCommandError(f"Node not found: {request.target_node_id}")
+                    node_err.status_code = 404
+                    raise node_err
+                resolved_target_id = request.target_node_id
+        root_node_id = self._resolve_command_root_id(org, resolved_target_id)
         if not root_node_id:
             raise OrgCommandError("Organization has no root nodes")
 
@@ -778,9 +796,7 @@ class OrgCommandService:
                     # ``task.cancel()`` so the slot is reclaimed; the
                     # supervisor's own ``_terminate`` will have to
                     # catch up on the next event loop tick.
-                    await self._cooperative_cancel(
-                        existing_id or "", reason="replaced"
-                    )
+                    await self._cooperative_cancel(existing_id or "", reason="replaced")
                 elif request.continue_previous:
                     # Continue-previous on a STILL-RUNNING command is
                     # ambiguous (the user is sending a follow-up while
@@ -802,8 +818,8 @@ class OrgCommandService:
             # called *inside* the background task; here we just look
             # up which checkpoint to hand it.
             if request.continue_previous:
-                resume_checkpoint_id, previous_command_id = (
-                    self._lookup_resume_checkpoint(request.org_id, root_node_id)
+                resume_checkpoint_id, previous_command_id = self._lookup_resume_checkpoint(
+                    request.org_id, root_node_id
                 )
                 if resume_checkpoint_id is None:
                     # No checkpoint on disk -- fall through to the
@@ -852,14 +868,10 @@ class OrgCommandService:
                 # not the attachment-enriched ``content`` that the supervisor
                 # runs on. Otherwise inlined file bodies would pollute the
                 # rebuilt command bubble (upstream e2874585).
-                user_facing = (
-                    request.user_facing_content or request.content or ""
-                ).strip()
+                user_facing = (request.user_facing_content or request.content or "").strip()
                 preview = user_facing
                 source_dict = (
-                    request.source.to_dict()
-                    if hasattr(request.source, "to_dict")
-                    else None
+                    request.source.to_dict() if hasattr(request.source, "to_dict") else None
                 )
                 event_payload: dict[str, Any] = {
                     "type": "user_command",
@@ -902,9 +914,7 @@ class OrgCommandService:
         # never let history assembly block or fail a submission.
         if not request.continue_previous:
             try:
-                history = self._build_history_context(
-                    request.org_id, root_node_id, command_id
-                )
+                history = self._build_history_context(request.org_id, root_node_id, command_id)
                 if history:
                     run_content = f"{history}\n{run_content}"
             except Exception:  # noqa: BLE001
@@ -993,7 +1003,10 @@ class OrgCommandService:
             "root_node_id": cmd.get("root_node_id", ""),
             "result": cmd["result"],
             "error": cmd["error"],
-            "elapsed_s": round(time.time() - cmd["created_at"], 1),
+            "elapsed_s": round(
+                float(cmd.get("finished_at") or time.time()) - float(cmd["created_at"]),
+                1,
+            ),
             "cancel_requested_by_user": bool(cmd.get("cancel_requested_by_user")),
             "origin_surface": cmd.get("origin_surface"),
             "output_scope": cmd.get("output_scope"),
@@ -1114,10 +1127,9 @@ class OrgCommandService:
         active_supervisor = self._active_supervisors.get(command_id)
         supervisor_root: str | None = None
         if active_supervisor is not None:
-            supervisor_root = (
-                getattr(getattr(active_supervisor, "task_ledger", None), "root_node_id", None)
-                or cmd.get("root_node_id")
-            )
+            supervisor_root = getattr(
+                getattr(active_supervisor, "task_ledger", None), "root_node_id", None
+            ) or cmd.get("root_node_id")
         await self._cooperative_cancel(command_id, reason=reason)
         self._update_command_state(
             command_id,
@@ -1130,9 +1142,10 @@ class OrgCommandService:
         # cancel token is).
         runtime_result: dict[str, Any] = {}
         try:
-            runtime_result = await self._runtime.cancel_user_command(
-                org_id, command_id, cancel_reason=reason
-            ) or {}
+            runtime_result = (
+                await self._runtime.cancel_user_command(org_id, command_id, cancel_reason=reason)
+                or {}
+            )
         except Exception:
             logger.debug(
                 "[OrgCmd] runtime.cancel_user_command raised after cooperative cancel",
@@ -1214,18 +1227,14 @@ class OrgCommandService:
         """
 
         effective_timeout = (
-            float(self._cancel_drain_budget_s())
-            if timeout is None
-            else float(timeout)
+            float(self._cancel_drain_budget_s()) if timeout is None else float(timeout)
         )
         supervisor = self._active_supervisors.get(command_id)
         if supervisor is not None:
             try:
                 supervisor.cancel_token.cancel(reason)
             except Exception:  # noqa: BLE001 -- token API is sync + safe
-                logger.debug(
-                    "[OrgCmd] cancel_token.cancel raised", exc_info=True
-                )
+                logger.debug("[OrgCmd] cancel_token.cancel raised", exc_info=True)
         # Pre-seed status + outcome so concurrent get_status / dup_cancel
         # see the right thing without waiting for the supervisor to
         # actually write its final checkpoint.
@@ -1281,9 +1290,7 @@ class OrgCommandService:
         except asyncio.CancelledError:
             pass
         except Exception:  # noqa: BLE001
-            logger.debug(
-                "[OrgCmd] supervisor drain raised", exc_info=True
-            )
+            logger.debug("[OrgCmd] supervisor drain raised", exc_info=True)
 
     # ------------------------------------------------------------------
     # Sprint-6 P0-2: cancel-source bridge (RCA _v17_p1_rca.md §2.5)
@@ -1325,9 +1332,7 @@ class OrgCommandService:
     # Sprint-5 P0-2: org-wide cancel + watchdog
     # ------------------------------------------------------------------
 
-    async def cancel_all_for_org(
-        self, org_id: str, *, reason: str = "stop_org"
-    ) -> list[str]:
+    async def cancel_all_for_org(self, org_id: str, *, reason: str = "stop_org") -> list[str]:
         """Cancel every in-flight command for one org. Returns cid list.
 
         Sprint-9 supervisor takeover: fires
@@ -1363,13 +1368,10 @@ class OrgCommandService:
         # the supervisor's terminal state.
         for cid in cids:
             try:
-                await self._runtime.cancel_user_command(
-                    org_id, cid, cancel_reason=reason
-                )
+                await self._runtime.cancel_user_command(org_id, cid, cancel_reason=reason)
             except Exception:  # noqa: BLE001 -- runtime cancel best-effort
                 logger.debug(
-                    "[OrgCmd] runtime cancel_user_command raised during stop-org "
-                    "(org=%s cid=%s)",
+                    "[OrgCmd] runtime cancel_user_command raised during stop-org (org=%s cid=%s)",
                     org_id,
                     cid,
                     exc_info=True,
@@ -1435,17 +1437,13 @@ class OrgCommandService:
             try:
                 executor = self._executor_provider()
             except Exception:  # noqa: BLE001 -- never crash submit
-                logger.debug(
-                    "[OrgCmd] executor_provider raised", exc_info=True
-                )
+                logger.debug("[OrgCmd] executor_provider raised", exc_info=True)
         checkpointer = None
         if self._checkpointer_provider is not None:
             try:
                 checkpointer = self._checkpointer_provider(org_id)
             except Exception:  # noqa: BLE001
-                logger.debug(
-                    "[OrgCmd] checkpointer_provider raised", exc_info=True
-                )
+                logger.debug("[OrgCmd] checkpointer_provider raised", exc_info=True)
 
         deliver = None
         if executor is None and self._supervisor_factory is None:
@@ -1457,9 +1455,7 @@ class OrgCommandService:
             from openakita.runtime.checkpoint import MemoryCheckpointer
             from openakita.runtime.supervisor import DelegationResult
 
-            async def _noop_deliver(
-                speaker: str, instruction: str, progress
-            ) -> DelegationResult:
+            async def _noop_deliver(speaker: str, instruction: str, progress) -> DelegationResult:
                 return DelegationResult(
                     success=True,
                     speaker=speaker or root_node_id,
@@ -1479,6 +1475,46 @@ class OrgCommandService:
             "executor": executor,
             "checkpointer": checkpointer,
         }
+        if executor is not None:
+            from ._runtime_artifact_flow import artifact_ledger
+
+            def _asset_inventory() -> list[dict[str, Any]]:
+                return [
+                    {
+                        "source_node_id": record.source_node_id,
+                        "tool_name": record.tool_name,
+                        "segment_id": record.segment_id,
+                        "asset_kinds": list(record.asset_kinds),
+                        "asset_ids": list(record.asset_ids),
+                        "task_ids": list(record.task_ids),
+                        "registered_paths": list(record.registered_paths),
+                        "registered_video_paths": list(record.registered_video_paths),
+                        "media_validation_passed": record.media_validation_passed,
+                    }
+                    for record in artifact_ledger.get(org_id, command_id)
+                ]
+
+            kwargs["asset_inventory_provider"] = _asset_inventory
+        if executor is not None:
+            try:
+                org = self._runtime.get_org(org_id)
+                edges = tuple(getattr(org, "edges", None) or ()) if org else ()
+                if any(
+                    getattr(edge, "binding", {}).get("activation") == "when_ready" for edge in edges
+                ):
+                    from ._runtime_artifact_scheduler import ArtifactEdgeScheduler
+
+                    kwargs["ready_action_provider"] = ArtifactEdgeScheduler(
+                        org_id=org_id,
+                        command_id=command_id,
+                        edges=edges,
+                    )
+            except Exception:  # noqa: BLE001 -- declarative routing is opt-in
+                logger.warning(
+                    "[OrgCmd] failed to build artifact-edge scheduler for org=%s",
+                    org_id,
+                    exc_info=True,
+                )
         if deliver is not None:
             kwargs["deliver"] = deliver
 
@@ -1511,12 +1547,16 @@ class OrgCommandService:
                 # passthrough single-shot path keeps the factory defaults
                 # (byte-for-byte unchanged). Config read is defensive: any
                 # failure leaves the factory defaults in place.
-                self._apply_convergence_budget(kwargs)
+                self._apply_convergence_budget(kwargs, org_id=org_id)
 
         return factory(**kwargs)
 
-    @staticmethod
-    def _apply_convergence_budget(kwargs: dict[str, Any]) -> None:
+    def _apply_convergence_budget(
+        self,
+        kwargs: dict[str, Any],
+        *,
+        org_id: str | None = None,
+    ) -> None:
         """Inject the LLM-path convergence budgets + soft ceiling into kwargs.
 
         RC-conv: aligns ``max_turns`` / ``max_replans`` / ``max_stalls`` so the
@@ -1532,22 +1572,80 @@ class OrgCommandService:
             kwargs["max_turns"] = int(getattr(_settings, "orgs_supervisor_max_turns", 12) or 12)
             kwargs["max_replans"] = int(getattr(_settings, "orgs_supervisor_max_replans", 2) or 2)
             kwargs["max_stalls"] = int(getattr(_settings, "orgs_supervisor_max_stalls", 3) or 3)
-            ceiling = int(getattr(_settings, "supervisor_hard_ceiling_s", 0) or 0)
-            ratio = float(getattr(_settings, "orgs_supervisor_soft_ceiling_ratio", 0.8) or 0.0)
-            if ceiling > 0 and ratio > 0:
-                kwargs["wall_clock_soft_budget_s"] = float(ceiling) * ratio
-            if ceiling > 0:
+            budget = self._supervisor_time_budget(org_id)
+            if budget.soft_budget_s > 0:
+                kwargs["wall_clock_soft_budget_s"] = budget.soft_budget_s
+            if budget.hard_ceiling_s > 0:
                 # test13 RCA: hand the SAME outer hard ceiling to the supervisor
                 # so the forced root finalization can be budget-gated + time-boxed
                 # against it (skip / bound the closing turn instead of getting
                 # force-killed by the outer wait_for and falling back to the
                 # kickoff dump).
-                kwargs["wall_clock_hard_ceiling_s"] = float(ceiling)
+                kwargs["wall_clock_hard_ceiling_s"] = float(budget.hard_ceiling_s)
         except Exception:  # noqa: BLE001 -- config must never break submit
             logger.debug(
                 "[OrgCmd] convergence budget read failed; using factory defaults",
                 exc_info=True,
             )
+
+    def _supervisor_time_budget(self, org_id: str | None) -> _SupervisorTimeBudget:
+        """Resolve global defaults plus validated per-organization overrides."""
+
+        try:
+            from openakita.config import settings as _settings
+
+            global_hard = int(getattr(_settings, "supervisor_hard_ceiling_s", 0) or 0)
+            global_soft = float(
+                getattr(_settings, "orgs_supervisor_soft_ceiling_ratio", 0.8) or 0.0
+            )
+            global_grace = float(
+                getattr(_settings, "orgs_supervisor_soft_watchdog_grace_ratio", 0.5) or 0.0
+            )
+        except Exception:  # noqa: BLE001 -- budget lookup must never block submit
+            global_hard, global_soft, global_grace = 0, 0.0, 0.5
+
+        overrides: dict[str, Any] = {}
+        if org_id:
+            try:
+                org = self._runtime.get_org(org_id)
+                raw = getattr(org, "runtime_overrides", None) if org is not None else None
+                if isinstance(raw, dict):
+                    overrides = raw
+            except Exception:  # noqa: BLE001 -- fall back to process defaults
+                logger.debug(
+                    "[OrgCmd] failed to read runtime overrides for org=%s",
+                    org_id,
+                    exc_info=True,
+                )
+
+        has_hard_override = (
+            "supervisor_hard_ceiling_s" in overrides or "command_timeout_secs" in overrides
+        )
+        hard_raw = overrides.get(
+            "supervisor_hard_ceiling_s",
+            overrides.get("command_timeout_secs", global_hard),
+        )
+        soft_raw = overrides.get("supervisor_soft_ceiling_ratio", global_soft)
+        grace_raw = overrides.get("supervisor_soft_watchdog_grace_ratio", global_grace)
+        try:
+            hard = int(hard_raw)
+            if has_hard_override and hard != 0:
+                hard = min(max(hard, 60), 86400)
+        except (TypeError, ValueError):
+            hard = global_hard
+        try:
+            soft = min(max(float(soft_raw), 0.0), 0.95)
+        except (TypeError, ValueError):
+            soft = min(max(global_soft, 0.0), 0.95)
+        try:
+            grace = min(max(float(grace_raw), 0.0), 1.0)
+        except (TypeError, ValueError):
+            grace = min(max(global_grace, 0.0), 1.0)
+        return _SupervisorTimeBudget(
+            hard_ceiling_s=hard,
+            soft_ceiling_ratio=soft,
+            soft_watchdog_grace_ratio=grace,
+        )
 
     # ------------------------------------------------------------------
     # RC-5 S3: org-gated LLM orchestration brain wiring
@@ -1649,7 +1747,7 @@ class OrgCommandService:
                 if et_val in ("hierarchy", "escalate"):
                     delegates.setdefault(src, []).append(tgt)
                     reports.setdefault(tgt, []).append(src)
-                else:  # collaborate / consult => peer link (bidirectional)
+                elif et_val in ("collaborate", "consult"):
                     collaborators.setdefault(src, []).append(tgt)
                     collaborators.setdefault(tgt, []).append(src)
             directory: list[Any] = []
@@ -1669,9 +1767,7 @@ class OrgCommandService:
                         is_root=(getattr(n, "level", None) == 0),
                         reports_to=tuple(dict.fromkeys(reports.get(node_id, []))),
                         delegates_to=tuple(dict.fromkeys(delegates.get(node_id, []))),
-                        collaborates_with=tuple(
-                            dict.fromkeys(collaborators.get(node_id, []))
-                        ),
+                        collaborates_with=tuple(dict.fromkeys(collaborators.get(node_id, []))),
                     )
                 )
 
@@ -1779,7 +1875,9 @@ class OrgCommandService:
         stale = [
             cid
             for cid, cmd in self._commands.items()
-            if (cmd["status"] in ("done", "partial", "error") and now - cmd["created_at"] > _CMD_TTL)
+            if (
+                cmd["status"] in ("done", "partial", "error") and now - cmd["created_at"] > _CMD_TTL
+            )
             or (cmd["status"] == "running" and now - cmd["created_at"] > _CMD_TTL * 2)
         ]
         for cid in stale:
@@ -1923,10 +2021,7 @@ class OrgCommandService:
         if not isinstance(result, dict):
             result = {}
         root_node_id = str(
-            record.get("root_node_id")
-            or record.get("root")
-            or result.get("root_node_id")
-            or ""
+            record.get("root_node_id") or record.get("root") or result.get("root_node_id") or ""
         )
         status = str(record.get("status") or "done")
         return {
@@ -1986,9 +2081,7 @@ class OrgCommandService:
             result = e.get("result")
             summ = ""
             if isinstance(result, dict):
-                summ = str(
-                    result.get("final_message") or result.get("deliverable") or ""
-                ).strip()
+                summ = str(result.get("final_message") or result.get("deliverable") or "").strip()
             summary_by_cmd[cid] = (status, summ)
 
         # Most-recent-first by instruction ts, then back to chronological order.
@@ -2094,9 +2187,7 @@ class OrgCommandService:
             try:
                 if resume_checkpoint_id:
                     try:
-                        await supervisor.resume_from_checkpoint(
-                            resume_checkpoint_id
-                        )
+                        await supervisor.resume_from_checkpoint(resume_checkpoint_id)
                     except (LookupError, ValueError) as exc:
                         logger.warning(
                             "[OrgCmd] supervisor resume failed for cid=%s cp=%s: %s; "
@@ -2105,9 +2196,7 @@ class OrgCommandService:
                             resume_checkpoint_id,
                             exc,
                         )
-                outcome = await self._run_supervisor_with_hard_ceiling(
-                    supervisor, command_id
-                )
+                outcome = await self._run_supervisor_with_hard_ceiling(supervisor, command_id)
                 self._reflect_supervisor_outcome(command_id, supervisor, outcome)
             except asyncio.CancelledError:
                 # Hard fallback path: the supervisor's cooperative
@@ -2177,9 +2266,7 @@ class OrgCommandService:
                     )
                     await self._publish_terminal_events(command_id)
             except Exception as exc:  # noqa: BLE001 -- last-resort guardrail
-                logger.exception(
-                    "[OrgCmd] supervisor.run raised for cid=%s", command_id
-                )
+                logger.exception("[OrgCmd] supervisor.run raised for cid=%s", command_id)
                 self._update_command_state(
                     command_id,
                     status="error",
@@ -2209,9 +2296,7 @@ class OrgCommandService:
                         self._inflight_by_org.pop(request.org_id, None)
 
         loop = asyncio.get_running_loop()
-        task = loop.create_task(
-            _run(), name=f"openakita-orgs-supervisor-{command_id}"
-        )
+        task = loop.create_task(_run(), name=f"openakita-orgs-supervisor-{command_id}")
         # Register the task + by-org index synchronously, before the
         # first ``await``, so cancel-while-still-pending races land
         # against a live task slot.
@@ -2248,7 +2333,9 @@ class OrgCommandService:
         supervisor.run()`` behaviour byte-for-byte (so anyone who
         explicitly opts out via env keeps the old semantics).
         """
-        ceiling = self._hard_ceiling_seconds()
+        org_id = str(getattr(supervisor, "org_id", "") or "") or None
+        budget = self._supervisor_time_budget(org_id)
+        ceiling = budget.hard_ceiling_s
         if ceiling <= 0:
             return await supervisor.run()
 
@@ -2272,14 +2359,12 @@ class OrgCommandService:
             supervisor.run(),
             name=f"openakita-orgs-supervisor-run-{command_id}",
         )
-        soft = self._soft_landing_seconds(ceiling)
+        soft = budget.watchdog_s
         soft_state: dict[str, bool] = {"fired": False}
         watchdog: asyncio.Task[None] | None = None
         if 0.0 < soft < float(ceiling):
             watchdog = loop.create_task(
-                self._soft_ceiling_watchdog(
-                    supervisor, command_id, run_task, soft, soft_state
-                ),
+                self._soft_ceiling_watchdog(supervisor, command_id, run_task, soft, soft_state),
                 name=f"openakita-orgs-supervisor-soft-watchdog-{command_id}",
             )
         try:
@@ -2350,7 +2435,9 @@ class OrgCommandService:
                             else "supervisor hard ceiling exceeded"
                         ),
                         final_checkpoint_id=getattr(supervisor, "last_checkpoint_id", None),
-                        n_turns=int(getattr(getattr(supervisor, "stall_detector", None), "n_turns", 0) or 0),
+                        n_turns=int(
+                            getattr(getattr(supervisor, "stall_detector", None), "n_turns", 0) or 0
+                        ),
                         n_replans=int(getattr(supervisor, "n_replans", 0) or 0),
                         reason="hard_ceiling",
                         deliverable=ceiling_deliverable,
@@ -2373,9 +2460,7 @@ class OrgCommandService:
             # the same tick the watchdog fired keeps its own authoritative
             # outcome.
             if soft_state["fired"] and self._is_bare_cancel_outcome(outcome):
-                return self._build_soft_landing_outcome(
-                    supervisor, command_id, outcome
-                )
+                return self._build_soft_landing_outcome(supervisor, command_id, outcome)
             return outcome
         finally:
             # Always tear the watchdog down: normal completion, hard ceiling,
@@ -2387,7 +2472,7 @@ class OrgCommandService:
                 with suppress(BaseException):
                     await watchdog
 
-    def _soft_landing_seconds(self, ceiling: int) -> float:
+    def _soft_landing_seconds(self, ceiling: int, org_id: str | None = None) -> float:
         """Wall-clock second at which the soft-landing watchdog should fire.
 
         Derived from the SAME ``orgs_supervisor_soft_ceiling_ratio`` that feeds
@@ -2406,33 +2491,14 @@ class OrgCommandService:
         (ratio outside ``(0, 1)``) or any config read fails -- in which case the
         hard ceiling alone governs, byte-for-byte the pre-watchdog behaviour.
         """
-        try:
-            from openakita.config import settings as _settings
-
-            ratio = float(
-                getattr(_settings, "orgs_supervisor_soft_ceiling_ratio", 0.8) or 0.0
+        budget = self._supervisor_time_budget(org_id)
+        if ceiling != budget.hard_ceiling_s:
+            budget = _SupervisorTimeBudget(
+                hard_ceiling_s=ceiling,
+                soft_ceiling_ratio=budget.soft_ceiling_ratio,
+                soft_watchdog_grace_ratio=budget.soft_watchdog_grace_ratio,
             )
-            if ratio <= 0.0 or ratio >= 1.0:
-                return 0.0
-            soft_budget = float(ceiling) * ratio
-            grace_ratio = float(
-                getattr(_settings, "orgs_supervisor_soft_watchdog_grace_ratio", 0.5)
-                or 0.0
-            )
-            grace_ratio = min(max(grace_ratio, 0.0), 1.0)
-            fire = soft_budget + (float(ceiling) - soft_budget) * grace_ratio
-            # Keep a strict >=1s margin below the hard ceiling so the salvage can
-            # complete before the hard backstop; also guarantees soft < hard.
-            fire = min(fire, float(ceiling) - 1.0)
-            if fire <= 0.0 or fire >= float(ceiling):
-                return 0.0
-            return fire
-        except Exception:  # noqa: BLE001 -- config must never break the run
-            logger.debug(
-                "[OrgCmd] soft-landing budget read failed; watchdog disabled",
-                exc_info=True,
-            )
-            return 0.0
+        return budget.watchdog_s
 
     async def _soft_ceiling_watchdog(
         self,
@@ -2534,16 +2600,13 @@ class OrgCommandService:
             or 0
         )
         n_replans = int(
-            getattr(prior_outcome, "n_replans", 0)
-            or getattr(supervisor, "n_replans", 0)
-            or 0
+            getattr(prior_outcome, "n_replans", 0) or getattr(supervisor, "n_replans", 0) or 0
         )
         final_cp = getattr(prior_outcome, "final_checkpoint_id", None) or getattr(
             supervisor, "last_checkpoint_id", None
         )
         note = (
-            "本次任务已达到预设的软时间预算，已在硬性时限之前主动收尾，"
-            "并交付当前阶段的最佳结果。"
+            "本次任务已达到预设的软时间预算，已在硬性时限之前主动收尾，并交付当前阶段的最佳结果。"
         )
         final_message = f"{note}\n\n{deliverable}" if deliverable else note
         return SupervisorOutcome(
@@ -2556,8 +2619,7 @@ class OrgCommandService:
             deliverable=deliverable,
         )
 
-    @staticmethod
-    def _hard_ceiling_seconds() -> int:
+    def _hard_ceiling_seconds(self, org_id: str | None = None) -> int:
         """Read ``settings.supervisor_hard_ceiling_s`` defensively.
 
         Lazy import keeps the ``openakita.orgs`` <-> ``openakita.config``
@@ -2565,12 +2627,7 @@ class OrgCommandService:
         back to ``0`` (= disabled) when the attribute is missing so a
         fork that prunes the field cannot crash the runtime.
         """
-        try:
-            from openakita.config import settings as _settings
-
-            return int(getattr(_settings, "supervisor_hard_ceiling_s", 0) or 0)
-        except Exception:  # noqa: BLE001 -- never block submit()
-            return 0
+        return self._supervisor_time_budget(org_id).hard_ceiling_s
 
     # ------------------------------------------------------------------
     # v22 P1: background reconcile loop for ``_running_by_root``
@@ -2599,9 +2656,7 @@ class OrgCommandService:
             self._reconcile_loop(interval),
             name="openakita-orgs-reconcile-loop",
         )
-        logger.info(
-            "[OrgCmd] reconcile loop started (interval=%ds)", interval
-        )
+        logger.info("[OrgCmd] reconcile loop started (interval=%ds)", interval)
 
     async def stop_reconcile_loop(self, *, timeout: float = 2.0) -> None:
         """Signal + await the background reconcile task (idempotent)."""
@@ -2620,9 +2675,7 @@ class OrgCommandService:
             with suppress(BaseException):
                 await task
         except Exception:  # noqa: BLE001 -- best-effort shutdown
-            logger.debug(
-                "[OrgCmd] reconcile loop stop raised", exc_info=True
-            )
+            logger.debug("[OrgCmd] reconcile loop stop raised", exc_info=True)
 
     @staticmethod
     def _reconcile_interval_seconds() -> int:
@@ -2724,46 +2777,27 @@ class OrgCommandService:
             popped_cid = self._running_by_root.pop(key, None)
             if popped_cid is not None:
                 logger.warning(
-                    "[OrgCmd] reconcile dropped stale _running_by_root "
-                    "entry %s -> %s",
+                    "[OrgCmd] reconcile dropped stale _running_by_root entry %s -> %s",
                     key,
                     popped_cid,
                 )
 
     def _root_disk_deliverable(self, command_id: str) -> str | None:
-        """Return the root node's on-disk integration report for this command.
-
-        test13 fix (b): the runtime records the root's substantial, non-kickoff
-        ``.md`` in ``_root_final_artifact`` (from ``file_output_registered`` the
-        moment write_file lands it, so it survives a cancelled finalization). We
-        read a bounded prefix here so the degrade path can fill
-        ``command_done.final_message`` from the REAL integrated report on disk
-        rather than an in-memory派单稿/downstream product. Returns ``None`` when
-        no such file was recorded or it cannot be read.
-        """
+        """Read a runtime-designated final root artifact without inspecting prose."""
         store = getattr(self._runtime, "_root_final_artifact", None)
         if not isinstance(store, dict):
             return None
-        rec = store.get(command_id)
-        if not rec:
+        record = store.get(command_id)
+        if not record:
             return None
         try:
-            _node_id, path = rec
-        except (TypeError, ValueError):
-            return None
-        from pathlib import Path as _Path
+            _node_id, raw_path = record
+            from pathlib import Path as _Path
 
-        try:
-            body = _Path(str(path)).read_text(encoding="utf-8").strip()
-        except OSError:
+            body = _Path(str(raw_path)).read_text(encoding="utf-8").strip()
+        except (OSError, TypeError, ValueError):
             return None
-        if not body or _looks_like_kickoff_text(body):
-            return None
-        # Bound so a large report doesn't bloat the command_done WS frame; the
-        # full document remains downloadable via the rendered PDF / .md attachment.
-        if len(body) > 12000:
-            body = body[:12000] + "\n\n…（内容较长已截断，完整版本见附件文件）"
-        return body
+        return body[:12000] if body else None
 
     def _degraded_reason(self, command_id: str, outcome_value: str | None) -> str:
         """Human/machine reason a delivered command hit a limit (test16).
@@ -2807,32 +2841,49 @@ class OrgCommandService:
         final_cp = getattr(outcome, "final_checkpoint_id", None)
         final_msg = getattr(outcome, "final_message", "") or ""
         deliverable = str(getattr(outcome, "deliverable", "") or "")
+        delivery_manifest = getattr(outcome, "delivery_manifest", None)
+        if not isinstance(delivery_manifest, dict):
+            delivery_manifest = None
+        manifest_media_failures: list[dict[str, Any]] = []
+        if delivery_manifest is not None:
+            from ._runtime_artifact_flow import artifact_ledger
+            from ._runtime_delivery_manifest import (
+                DeliveryManifest,
+                DeliveryManifestError,
+                validate_manifest_media_delivery,
+            )
 
-        # test13 fix (b): when the forced root finalization was skipped/cut short
-        # by the budget/hard-ceiling, the supervisor's in-memory
-        # ``best_effort_deliverable`` can only pick "the longest surviving output"
-        # -- possibly a downstream product or (before the kickoff guard) the派单稿.
-        # If the ROOT node actually wrote a substantial integrated .md TO DISK
-        # (captured in ``_root_final_artifact`` even when its run was cancelled),
-        # prefer THAT as the delivered text so the final bubble matches the PDF.
-        # Only overrides a weak/empty/kickoff-shaped deliverable so a healthy
-        # finalization's own summary is left untouched.
-        disk_deliverable = self._root_disk_deliverable(command_id)
-        if disk_deliverable and (
-            not deliverable.strip() or _looks_like_kickoff_text(deliverable)
-        ):
-            deliverable = disk_deliverable
-            if not final_msg.strip() or _looks_like_kickoff_text(final_msg):
-                final_msg = disk_deliverable
+            command = self._commands.get(command_id, {})
+            org_id = str(command.get("org_id") or "")
+            root_node_id = str(command.get("root_node_id") or "")
+            try:
+                reflected_manifest = DeliveryManifest.from_mapping(
+                    delivery_manifest,
+                    org_id=org_id,
+                    command_id=command_id,
+                    node_id=root_node_id,
+                    assignment_id=str(delivery_manifest.get("assignment_id") or ""),
+                    output_slot=str(delivery_manifest.get("output_slot") or "default"),
+                )
+                manifest_media_failures = validate_manifest_media_delivery(
+                    reflected_manifest,
+                    artifact_records=artifact_ledger.get(org_id, command_id),
+                )
+            except DeliveryManifestError as exc:
+                manifest_media_failures = [
+                    {
+                        "code": "delivery_manifest_invalid",
+                        "message": str(exc),
+                        "reworkable": True,
+                    }
+                ]
 
         # test16 semantic root-cause: OUT_OF_TURNS / REPLAN_BUDGET_EXHAUSTED /
         # FAILED (the hard-ceiling synthesises FAILED) are *limit* exits, not
         # automatic crashes. What decides the terminal state is whether the
         # command actually DELIVERED, judged on two tiers:
-        #   * ``root_final_present`` -- the ROOT produced a substantial,
-        #     non-kickoff integrated report on disk (``_root_disk_deliverable``).
-        #     That is a *complete* delivery even if a wall-clock/turn limit was
-        #     hit right after: classify as ``done`` with a "触达时限" note.
+        #   * ``root_final_present`` -- the root submitted a complete final
+        #     manifest whose deterministic media checks passed.
         #   * else ``has_usable_deliverable`` -- some usable best-effort output
         #     survived (a downstream product, salvaged summary) but NOT the
         #     root's clean integration: a genuine PARTIAL success -> the new
@@ -2841,10 +2892,19 @@ class OrgCommandService:
         #   * else nothing usable (empty / kickoff-only) -> keep ``error``.
         # Only this last "no valid delivery" case is a failure; a delivered
         # command must never persist as ``error`` just because it timed out.
-        root_final_present = bool(disk_deliverable and disk_deliverable.strip())
-        has_usable_deliverable = bool(deliverable.strip()) and not _looks_like_kickoff_text(
-            deliverable
-        )
+        if delivery_manifest is not None:
+            manifest_state = delivery_manifest.get("state")
+            root_final_present = (
+                manifest_state == "complete"
+                and delivery_manifest.get("final") is True
+                and not manifest_media_failures
+            )
+            has_usable_deliverable = manifest_state == "complete" or bool(
+                delivery_manifest.get("artifacts")
+            )
+        else:
+            root_final_present = False
+            has_usable_deliverable = False
         _limit_exits = {
             FinalOutcome.OUT_OF_TURNS.value,
             FinalOutcome.REPLAN_BUDGET_EXHAUSTED.value,
@@ -2853,7 +2913,15 @@ class OrgCommandService:
         degraded_reason: str | None = None
         result_outcome = outcome_value
         if outcome_value == FinalOutcome.DONE.value:
-            status, phase, error = "done", "done", None
+            if root_final_present:
+                status, phase, error = "done", "done", None
+            elif has_usable_deliverable:
+                status, phase, error = "partial", "partial", None
+                result_outcome = "missing_final_delivery_manifest"
+            else:
+                status, phase = "error", "error"
+                error = "root final delivery manifest is missing or incomplete"
+                result_outcome = "missing_final_delivery_manifest"
         elif outcome_value == FinalOutcome.CANCELLED.value:
             status, phase, error = "cancelled", "cancelled", None
         elif outcome_value in _limit_exits:
@@ -2869,9 +2937,11 @@ class OrgCommandService:
             else:
                 # 无有效交付 -> genuine failure.
                 status = "error"
-                phase = "out_of_turns" if (
-                    outcome_value == FinalOutcome.OUT_OF_TURNS.value
-                ) else "error"
+                phase = (
+                    "out_of_turns"
+                    if (outcome_value == FinalOutcome.OUT_OF_TURNS.value)
+                    else "error"
+                )
                 error = final_msg or outcome_value
         else:
             status, phase, error = "done", "done", None
@@ -2885,7 +2955,10 @@ class OrgCommandService:
             "n_replans": n_replans,
             "final_checkpoint_id": final_cp,
             "outcome": result_outcome,
+            "delivery_manifest": delivery_manifest,
         }
+        if manifest_media_failures:
+            result_payload["media_quality_failures"] = manifest_media_failures
         # Traceability: keep the raw supervisor verdict alongside the honest
         # classification so debugging can still see "the supervisor said FAILED
         # but we delivered" without the misleading value leaking to the UI.
@@ -3133,9 +3206,7 @@ class OrgCommandService:
             event["result"] = cmd.get("result")
         else:
             if status == "cancelled":
-                cancelled_by = (self._command_outcomes.get(command_id) or {}).get(
-                    "cancelled_by"
-                )
+                cancelled_by = (self._command_outcomes.get(command_id) or {}).get("cancelled_by")
                 event["error"] = (
                     "组织已停止，当前任务已取消。"
                     if cancelled_by == "stop_org"

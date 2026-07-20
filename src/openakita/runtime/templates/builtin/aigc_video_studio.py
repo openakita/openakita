@@ -64,10 +64,13 @@ _PRODUCER_PERSONA = """\
   - art_director  统一调度图像/短视频/数字人/长视频后期四个工作台。
 
 工作流：
-1) 把出品方选题派给 screenwriter，要求返回剧本 + segments JSON
-   (含 prompt / duration / transition_to_next 等字段)。
-2) 把剧本 + segments JSON + 转场偏好派给 art_director，让其按分镜
-   分发到三个内容工作台并最终调度长视频后期工作台拼接成片。
+1) 首轮同时声明完整派单 DAG：screenwriter 步骤使用 step_id=storyboard；
+   art_director 步骤使用 step_id=visual_production、depends_on=[storyboard]。
+   runtime 会先执行编剧，再把真实剧本 + segments JSON 自动注入美术指导派单，
+   不要等下一轮才派 visual_production。
+2) 要求 screenwriter 返回剧本 + segments JSON（含 prompt / duration /
+   transition_to_next 等字段）；要求 art_director 按注入的分镜分发到内容
+   工作台，并在需要时调度长视频后期工作台拼接成片。
 3) 收到 art_director 的最终交付（成片 task_id + 各段 task_id）后向
    出品方交付。一镜一资产，严禁让任何工作台用同一段总主题 prompt
    重复生成多个视频；多镜头任务必须按 segments[] 逐镜头拆派。
@@ -81,8 +84,11 @@ _SCREENWRITER_PERSONA = """\
    aspect_ratio=画幅；style=视觉风格。返回的每段会带
    transition_to_next（cut / crossfade / ai_extend），下游据此决定
    衔接首尾帧或拼接转场。
-3) 用一次 deliverable 返回剧本摘要 + segments JSON 概览，并把完整
-   剧本与完整 segments 各自落盘为附件。讨论/问询不要凭空调工具。
+   每个分镜必须保留稳定且唯一的 segment_id，后续图像和视频工具调用
+   都要原样传入该 segment_id，运行时据此绑定同一镜头的资产。
+3) 用 org_submit_deliverable 返回：summary 写剧本摘要与 segments 概览；
+   artifacts 分别登记完整剧本和 segments JSON，填写 kind、status 和真实
+   paths。讨论/问询不要凭空调工具或资产。
 """
 
 _ART_DIRECTOR_PERSONA = """\
@@ -100,8 +106,15 @@ _ART_DIRECTOR_PERSONA = """\
       前一次的 task_id / asset_id 并写「请复用为 from_asset_ids /
       image_url，禁止重新生成」。先用 hh_image_edit 调整，不要再
       hh_image_create。
-  R4. 派单前先看 BLACKBOARD / TASK_DELIVERED 里是否已经有可复用
-      资产；已交付 asset_id 必须落到下一条派单的「上游 asset_ids」。
+  R4. runtime 会在派单正文中注入【结构化上游交付账本】。只读取该 JSON
+      中的 segments / asset_ids / task_ids 声明局部 DAG；禁止 glob、read_file、
+      run_powershell 或扫描工作区寻找上游文件。账本已交付 asset_id 必须落到
+      下一条派单的「上游 asset_ids」。
+  R5. 每个图像/视频步骤都必须在 org_delegate_task.media_spec 中声明 kind、
+      output_group、aspect_ratio、resolution、width、height、duration_s。同一最终
+      成片的所有视频段使用同一 output_group 和像素规格；只有用户明确要求多条
+      成片时才能使用不同 output_group。未指定清晰度时统一使用 720P/1280x720。
+      duration_s 写分镜目标时长，runtime 会在付费提交前按模型最小时长规范化。
 
 最终把每段视频 task_id 按出场顺序整理为列表，连同 transition /
 fade_duration（cut→none、crossfade→crossfade、ai_extend→
@@ -119,8 +132,12 @@ prompt + 上游 asset_ids 选择合适的 hh_image_* 工具：
   - 画幅扩展：hh_image_outpaint
   - 涂鸦/线稿成图：hh_image_sketch
   - 电商场景：hh_image_ecommerce
-deliverable 文本里说明镜头号 + 中文画面 + 提示词摘要 + 生成的
-asset_id；不要重复声明 file_attachments。
+org_submit_deliverable 的 summary 说明镜头号、中文画面和提示词摘要；
+artifacts 登记 kind=image、status=ready、segment_id，以及工具真实返回的
+asset_ids/task_ids/paths，不要只在正文里写 asset_id。
+每次生成必须传入派单中的 segment_id，且同一镜头重做时不得改号。
+hh_image_create / hh_image_edit 必须把派单画幅传为 output_ratio，并明确
+size（默认 2K）；插件会换算为像素规格并在下载后校验，不合格结果不得交付。
 """
 
 _WB_VIDEO_PERSONA = """\
@@ -132,7 +149,13 @@ HappyHorse 短视频工作台。
 多镜头必须按镜头逐个调用，每次只消费当前镜头的 from_asset_ids /
 first_frame_url，并按分镜时长设置 duration。每次 prompt 必须写清
 当前镜头独有的中文画面/镜头运动/风格，绝不要用同一段总主题 prompt
-重复生成。deliverable 必须列出每段 video task_id 给下游拼接。
+重复生成。每次调用必须传入派单中的 segment_id，runtime 会自动绑定
+同 segment 的上游关键帧；aspect_ratio 和 resolution 必须与派单一致。
+派单中的 media_spec 是强制规格合同；不得自行切换 720P/1080P。若目标时长
+低于模型最小值，runtime 会在调用前提升到模型最小值并记录规范化事件。
+插件会在付费生成前校验首帧画幅，并在下载后用 ffprobe 校验成片尺寸。
+org_submit_deliverable 的 artifacts 必须按段登记 kind=video、status=ready、
+segment_id，以及工具真实返回的 video task_ids/asset_ids/paths，供下游拼接。
 """
 
 _WB_HUMAN_PERSONA = """\
@@ -143,7 +166,8 @@ HappyHorse 数字人工作台。
   - 用驱动视频姿态控制目标人物：hh_pose_drive。
   - 多图合成口播：hh_avatar_compose。
 派单只给 text 而无 voice_id 时使用默认音色；上级要求特定音色应
-显式写入 prompt。deliverable 必须列出 video task_id。
+显式写入 prompt。org_submit_deliverable 的 artifacts 必须登记 kind=video、
+status=ready 以及真实 task_ids/asset_ids/paths。
 """
 
 _WB_LONG_PERSONA = """\
@@ -161,7 +185,8 @@ _decompose / hh_cost_preview / hh_status / hh_list）。
    触发 ffmpeg xfade；'ai_extend'/'cut' 归一化为 'none'），
    fade_duration（crossfade 时长，秒），output_name（可空）。
 3) 用 hh_status / hh_list 跟踪进度，hh_cost_preview 评估批量成本。
-deliverable 文本里写：成片时长 / 段数 / 转场方式 / 最终 asset_id。
+org_submit_deliverable 的 artifacts 必须登记最终成片 kind=video、status=ready
+以及真实 task_ids/asset_ids/paths；summary 写成片时长、段数和转场方式。
 """
 
 
@@ -283,15 +308,108 @@ def aigc_video_studio() -> TemplateSpec:
             EdgeSpec(
                 src="screenwriter",
                 dst="wb_long",
-                kind=EdgeKind.COLLABORATE,
+                kind=EdgeKind.ARTIFACT,
+                binding={
+                    "source_port": "storyboard",
+                    "target_port": "segments",
+                    "target_tools": ["hh_long_video_create"],
+                    "target_param": "segments",
+                    "value_field": "segments",
+                    "required": False,
+                    "cardinality": "many",
+                    "selection": "command_scoped",
+                },
             ),
             EdgeSpec(src="art_director", dst="wb_image", kind=EdgeKind.HIERARCHY),
             EdgeSpec(src="art_director", dst="wb_video", kind=EdgeKind.HIERARCHY),
             EdgeSpec(src="art_director", dst="wb_human", kind=EdgeKind.HIERARCHY),
             EdgeSpec(src="art_director", dst="wb_long", kind=EdgeKind.HIERARCHY),
-            EdgeSpec(src="wb_image", dst="wb_video", kind=EdgeKind.COLLABORATE),
-            EdgeSpec(src="wb_image", dst="wb_human", kind=EdgeKind.COLLABORATE),
-            EdgeSpec(src="wb_video", dst="wb_long", kind=EdgeKind.COLLABORATE),
-            EdgeSpec(src="wb_human", dst="wb_long", kind=EdgeKind.COLLABORATE),
+            EdgeSpec(
+                src="wb_image",
+                dst="wb_video",
+                kind=EdgeKind.ARTIFACT,
+                binding={
+                    "source_port": "keyframes",
+                    "target_port": "source_frames",
+                    "target_tools": ["hh_i2v", "hh_r2v"],
+                    "target_param": "from_asset_ids",
+                    "value_field": "asset_ids",
+                    "accepts": ["image"],
+                    "join_key": "segment_id",
+                    "required": True,
+                    "cardinality": "one",
+                    "selection": "matching_or_latest",
+                    "activation": "when_ready",
+                    "dispatch_mode": "join_all",
+                    "join_scope": {
+                        "source": "screenwriter",
+                        "value_field": "segments",
+                        "key_field": "segment_id",
+                    },
+                    "max_attempts": 1,
+                },
+            ),
+            EdgeSpec(
+                src="wb_image",
+                dst="wb_human",
+                kind=EdgeKind.ARTIFACT,
+                binding={
+                    "source_port": "portraits",
+                    "target_port": "source_images",
+                    "target_tools": [
+                        "hh_photo_speak",
+                        "hh_video_reface",
+                        "hh_pose_drive",
+                        "hh_avatar_compose",
+                    ],
+                    "target_param": "from_asset_ids",
+                    "value_field": "asset_ids",
+                    "accepts": ["image"],
+                    "join_key": "segment_id",
+                    "required": False,
+                    "cardinality": "one",
+                    "selection": "matching_or_latest",
+                },
+            ),
+            EdgeSpec(
+                src="wb_video",
+                dst="wb_long",
+                kind=EdgeKind.ARTIFACT,
+                binding={
+                    "source_port": "video_tasks",
+                    "target_port": "segments",
+                    "target_tools": ["hh_video_concat"],
+                    "target_param": "task_ids",
+                    "value_field": "task_ids",
+                    "accepts": ["video"],
+                    "required": True,
+                    "cardinality": "many",
+                    "selection": "command_scoped",
+                    "activation": "when_ready",
+                    "dispatch_mode": "join_all",
+                    "join_scope": {
+                        "source": "screenwriter",
+                        "value_field": "segments",
+                        "key_field": "segment_id",
+                    },
+                    "max_attempts": 1,
+                },
+            ),
+            EdgeSpec(
+                src="wb_human",
+                dst="wb_long",
+                kind=EdgeKind.ARTIFACT,
+                binding={
+                    "source_port": "video_tasks",
+                    "target_port": "segments",
+                    "target_tools": ["hh_video_concat"],
+                    "target_param": "task_ids",
+                    "value_field": "task_ids",
+                    "accepts": ["video"],
+                    "required": False,
+                    "cardinality": "many",
+                    "selection": "command_scoped",
+                },
+            ),
         ),
     )

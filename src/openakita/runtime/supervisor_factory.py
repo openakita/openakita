@@ -46,6 +46,7 @@ from openakita.runtime.stream_registry import get_or_create_org_stream_bus
 from openakita.runtime.supervisor import (
     DelegationResult,
     DeliverCallable,
+    ReadyActionProvider,
     Supervisor,
     SupervisorBrain,
 )
@@ -140,8 +141,8 @@ def _resolve_speaker_to_node_id(
     Sprint-9 comment flagged ("Future brains that emit role-style
     next_speaker will need an address resolver here"). When a real
     ``node_directory`` (list of ``NodeDescriptor``) is supplied we run the
-    brain's resolver (exact node_id -> exact role -> substring -> root
-    fallback) so a model answer like ``"copywriter"`` lands on the concrete
+    brain's strict resolver (exact node_id or unique exact role) so a model answer like
+    ``"copywriter"`` lands on the concrete
     ``"node_writer"`` the executor expects.
 
     Byte-for-byte preservation of the passthrough path: when no directory is
@@ -154,9 +155,7 @@ def _resolve_speaker_to_node_id(
     try:
         from openakita.runtime.llm_supervisor_brain import LLMSupervisorBrain
 
-        return LLMSupervisorBrain.resolve_next_speaker(
-            raw, node_directory, root_node_id
-        )
+        return LLMSupervisorBrain.resolve_next_speaker(raw, node_directory, root_node_id)
     except Exception:  # noqa: BLE001 -- resolution is best-effort, never crash
         logger.debug(
             "SupervisorFactory: speaker resolution failed for %r; using raw",
@@ -222,29 +221,67 @@ def _make_executor_deliver(
             raise
         except Exception as exc:  # noqa: BLE001 -- never crash the supervisor loop
             logger.warning(
-                "SupervisorFactory: executor.activate_and_run raised "
-                "(org=%s node=%s cid=%s): %s",
-                org_id, node_id, command_id, exc,
+                "SupervisorFactory: executor.activate_and_run raised (org=%s node=%s cid=%s): %s",
+                org_id,
+                node_id,
+                command_id,
+                exc,
             )
             return DelegationResult(
                 success=False,
                 speaker=node_id,
                 message=f"executor error: {exc}",
+                artifact_role="intermediate",
                 metadata={"error": str(exc), "command_id": command_id},
             )
         status = str(result.get("status") or "")
         output = str(result.get("output") or "")
         reason = result.get("reason")
         ok = status == "ok"
-        message = output or (str(reason) if reason else status)
+        failures = result.get("media_quality_failures")
+        delivery_manifest = result.get("delivery_manifest")
+        delegated_deliveries = result.get("delegated_deliveries")
+        if not isinstance(delegated_deliveries, list):
+            delegated_deliveries = []
+        completed_child_deliveries = [
+            item
+            for item in delegated_deliveries
+            if isinstance(item, dict)
+            and item.get("state") == "complete"
+            and bool(item.get("artifacts"))
+        ]
+        structured_progress = status == "incomplete" and bool(completed_child_deliveries)
+        ok = status == "ok" or structured_progress
+        failure_details = (
+            [
+                str(item.get("message") or item.get("code") or "").strip()
+                for item in failures
+                if isinstance(item, dict)
+            ]
+            if isinstance(failures, list)
+            else []
+        )
+        failure_message = "；".join(dict.fromkeys(item for item in failure_details if item))
+        message = (
+            output or (str(reason) if reason else status)
+            if ok
+            else failure_message or (str(reason) if reason else output or status)
+        )
         return DelegationResult(
             success=ok,
             speaker=node_id,
             message=message,
+            artifact_role=str(result.get("artifact_role") or "intermediate"),
             metadata={
                 "status": status,
                 "reason": reason,
                 "command_id": command_id,
+                "media_quality_failures": failures or [],
+                "delivery_manifest": (
+                    delivery_manifest if isinstance(delivery_manifest, dict) else None
+                ),
+                "delegated_deliveries": delegated_deliveries,
+                "structured_progress": structured_progress,
             },
         )
 
@@ -292,8 +329,7 @@ def _resolve_brain(
             from openakita.runtime.llm_supervisor_brain import LLMSupervisorBrain
 
             logger.info(
-                "SupervisorFactory: engaging LLMSupervisorBrain (RC-5 route B) "
-                "for root_node=%s",
+                "SupervisorFactory: engaging LLMSupervisorBrain (RC-5 route B) for root_node=%s",
                 root_node_id,
             )
             return LLMSupervisorBrain(
@@ -324,9 +360,12 @@ def build_supervisor_for_command(
     max_turns: int = 30,
     max_replans: int = 5,
     progress_ledger_max_retries: int = 10,
+    progress_ledger_timeout_s: float = 60.0,
     wall_clock_soft_budget_s: float = 0.0,
     force_root_finalization: bool = False,
     wall_clock_hard_ceiling_s: float = 0.0,
+    ready_action_provider: ReadyActionProvider | None = None,
+    asset_inventory_provider: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> Supervisor:
     """Build a fully-wired :class:`Supervisor` for one user command.
 
@@ -434,9 +473,12 @@ def build_supervisor_for_command(
         max_turns=max_turns,
         max_replans=max_replans,
         progress_ledger_max_retries=progress_ledger_max_retries,
+        progress_ledger_timeout_s=progress_ledger_timeout_s,
         wall_clock_soft_budget_s=wall_clock_soft_budget_s,
         force_root_finalization=force_root_finalization,
         wall_clock_hard_ceiling_s=wall_clock_hard_ceiling_s,
+        ready_action_provider=ready_action_provider,
+        asset_inventory_provider=asset_inventory_provider,
     )
 
 

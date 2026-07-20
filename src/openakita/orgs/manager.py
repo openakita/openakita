@@ -360,7 +360,7 @@ class OrgManager:
         is visible). ``get(org_id)`` -- landing in P9.5b --
         will be the cached-read variant.
         """
-        raw = self._persistence.load_org_dict(org_id)
+        raw = self._load_org_dict_with_migrations(org_id)
         if raw is None:
             return None
         return Organization.from_dict(raw)
@@ -543,6 +543,7 @@ class OrgManager:
         """
         self._ensure_name_unique(data.get("name", ""))
         org = Organization.from_dict(data)
+        _validate_artifact_edges(org)
         if not org.id:
             org.id = self._factory.new_org_id()
         org.created_at = _now_iso()
@@ -574,12 +575,29 @@ class OrgManager:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _load_org_dict_with_migrations(self, org_id: str) -> dict[str, Any] | None:
+        raw = self._persistence.load_org_dict(org_id)
+        if raw is None:
+            return None
+        try:
+            from ._runtime_templates import _upgrade_aigc_artifact_edges
+
+            upgraded = _upgrade_aigc_artifact_edges(raw)
+        except Exception:  # noqa: BLE001 -- a migration must not block org loading
+            logger.warning("Failed to inspect AIGC asset edges for %s", org_id, exc_info=True)
+            upgraded = False
+        if upgraded:
+            raw["updated_at"] = _now_iso()
+            self._persistence.save_org_dict(org_id, raw)
+            logger.info("[OrgManager] Upgraded existing AIGC asset edges: %s", org_id)
+        return raw
+
     def _load(self, org_id: str) -> Organization:
         """Cache-aware load; raises FileNotFoundError on miss (matches v1)."""
         cached = self._cache.get(org_id)
         if cached is not None:
             return cached
-        raw = self._persistence.load_org_dict(org_id)
+        raw = self._load_org_dict_with_migrations(org_id)
         if raw is None:
             raise FileNotFoundError(f"Organization not found: {org_id}")
         org = Organization.from_dict(raw)
@@ -732,9 +750,15 @@ class OrgManager:
                     updated.append(OrgNode.from_dict(clean))
             org.nodes = updated
         if edges_raw is not None:
+            previous_edges = org.edges
             org.edges = [
                 OrgEdge.from_dict(e) for e in edges_raw if e.get("source") != e.get("target")
             ]
+            try:
+                _validate_artifact_edges(org)
+            except ValueError:
+                org.edges = previous_edges
+                raise
 
         # Workbench plugin nodes must stay leaves. v1 raises ValueError
         # with a Chinese message; the API layer maps to HTTP 422.
@@ -751,6 +775,8 @@ class OrgManager:
                 + "\u3001".join(_violations)
                 + "\u3002\u8bf7\u5148\u5220\u9664\u5b50\u8282\u70b9\u6216\u79fb\u9664\u5de5\u4f5c\u53f0\u6807\u8bc6\u540e\u518d\u4fdd\u5b58\u3002"
             )
+
+        _validate_artifact_edges(org)
 
         org.updated_at = _now_iso()
         self._ensure_node_dirs(org)
@@ -1127,6 +1153,24 @@ def _edge_kind_to_v2(edge_type: EdgeType) -> EdgeKind:
         return EdgeKind.HIERARCHY
 
 
+def _validate_artifact_edges(org: Organization) -> None:
+    """Reject dangling or malformed artifact bindings before persistence."""
+    node_ids = {node.id for node in org.nodes}
+    for edge in org.edges:
+        if edge.edge_type != EdgeType.ARTIFACT:
+            continue
+        edge.validate_binding()
+        if edge.source == edge.target:
+            raise ValueError("artifact edge source and target must differ")
+        if edge.source not in node_ids or edge.target not in node_ids:
+            raise ValueError(
+                f"artifact edge {edge.source!r}->{edge.target!r} references an unknown node"
+            )
+        join_scope = edge.binding.get("join_scope")
+        if isinstance(join_scope, dict) and join_scope.get("source") not in node_ids:
+            raise ValueError(f"artifact edge {edge.id!r} join_scope references an unknown node")
+
+
 def _parse_iso_or_now(value: Any, fallback_path: Path | None = None) -> datetime:
     """Best-effort ISO parse with file-mtime / now() fallback.
 
@@ -1236,6 +1280,7 @@ def _edge_to_v2(edge: OrgEdge, *, org_id: str) -> EdgeV2:
         src=edge.source,
         dst=edge.target,
         kind=_edge_kind_to_v2(edge.edge_type),
+        binding=dict(edge.binding),
     )
 
 

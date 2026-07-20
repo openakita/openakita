@@ -283,6 +283,14 @@ def _row_to_dict(row: aiosqlite.Row | None) -> dict[str, Any] | None:
     # Always expose ``asset_ids`` as a list — workbench callers count on it.
     if not isinstance(out.get("asset_ids"), list):
         out["asset_ids"] = []
+    hints = out.get("error_hints")
+    if isinstance(hints, dict):
+        wait_state = str(hints.get("wait_state") or "").strip().lower()
+        if wait_state in {"active", "blocked", "terminal"}:
+            out["wait_state"] = wait_state
+        blocker = hints.get("blocker")
+        if isinstance(blocker, dict):
+            out["blocker"] = dict(blocker)
     return out
 
 

@@ -107,6 +107,7 @@ class OrgPatch(BaseModel):
     watchdog_interval_s: int | None = None
     watchdog_stuck_threshold_s: int | None = None
     watchdog_silence_threshold_s: int | None = None
+    runtime_overrides: dict[str, Any] | None = None
     heartbeat_enabled: bool | None = None
     heartbeat_interval_s: int | None = None
     standup_enabled: bool | None = None

@@ -128,9 +128,18 @@ def _make_runtime(*, org: _Org | None = None) -> MagicMock:
 def _make_service(*, supervisor: _SleepForeverSupervisor) -> OrgCommandService:
     """Service whose ``_supervisor_factory`` always returns the stub."""
 
-    def _factory(*, org_id: str, command_id: str, root_node_id: str, task: str,
-                 executor: Any = None, brain: Any = None, stream: Any = None,
-                 checkpointer: Any = None, cancel_token: Any = None) -> Any:
+    def _factory(
+        *,
+        org_id: str,
+        command_id: str,
+        root_node_id: str,
+        task: str,
+        executor: Any = None,
+        brain: Any = None,
+        stream: Any = None,
+        checkpointer: Any = None,
+        cancel_token: Any = None,
+    ) -> Any:
         return supervisor
 
     return OrgCommandService(_make_runtime(), supervisor_factory=_factory)
@@ -149,9 +158,7 @@ async def test_hard_ceiling_triggers_cancel_and_releases_slot(monkeypatch) -> No
     # the run drifts straight to the hard ceiling (with soft landing enabled the
     # watchdog would intercept first -- that path is covered by
     # test_supervisor_soft_ceiling_watchdog.py).
-    monkeypatch.setattr(
-        settings, "orgs_supervisor_soft_ceiling_ratio", 0.0, raising=False
-    )
+    monkeypatch.setattr(settings, "orgs_supervisor_soft_ceiling_ratio", 0.0, raising=False)
 
     supervisor = _SleepForeverSupervisor()
     svc = _make_service(supervisor=supervisor)
@@ -216,6 +223,12 @@ async def test_hard_ceiling_disabled_when_setting_is_zero(monkeypatch) -> None:
                 n_turns=0,
                 n_replans=0,
                 reason="",
+                deliverable="ok",
+                delivery_manifest={
+                    "state": "complete",
+                    "final": True,
+                    "artifacts": [{"kind": "text", "status": "ready"}],
+                },
             )
 
         async def resume_from_checkpoint(self, checkpoint_id: str) -> Any:
@@ -224,17 +237,24 @@ async def test_hard_ceiling_disabled_when_setting_is_zero(monkeypatch) -> None:
 
     quick = _QuickSupervisor()
 
-    def _factory(*, org_id: str, command_id: str, root_node_id: str, task: str,
-                 executor: Any = None, brain: Any = None, stream: Any = None,
-                 checkpointer: Any = None, cancel_token: Any = None) -> Any:
+    def _factory(
+        *,
+        org_id: str,
+        command_id: str,
+        root_node_id: str,
+        task: str,
+        executor: Any = None,
+        brain: Any = None,
+        stream: Any = None,
+        checkpointer: Any = None,
+        cancel_token: Any = None,
+    ) -> Any:
         return quick
 
     svc = OrgCommandService(_make_runtime(), supervisor_factory=_factory)
     res = await svc.submit(OrgCommandRequest(org_id="o1", content="hi"))
     cid = res["command_id"]
-    summary_queue = svc.subscribe_summary(
-        cid, surface="desktop_chat", target="conversation_1"
-    )
+    summary_queue = svc.subscribe_summary(cid, surface="desktop_chat", target="conversation_1")
     task = svc._inflight_tasks.get(cid)
     assert task is not None
     await asyncio.wait_for(task, timeout=2.0)
@@ -297,8 +317,8 @@ def _ceiling_outcome(*, deliverable: str = "", final_message: str = "") -> Any:
 
 
 @pytest.mark.asyncio
-async def test_reflect_complete_delivery_at_ceiling_classified_done(monkeypatch) -> None:
-    """交付完整 + 撞上限 -> ``done`` (root produced its integrated report)."""
+async def test_disk_report_without_manifest_at_ceiling_stays_error(monkeypatch) -> None:
+    """A plausible disk report cannot replace a missing final manifest."""
     svc = _make_service(supervisor=_SleepForeverSupervisor())
     cid = "cmd_complete"
     _seed_running_command(svc, cid)
@@ -315,20 +335,13 @@ async def test_reflect_complete_delivery_at_ceiling_classified_done(monkeypatch)
     svc._reflect_supervisor_outcome(cid, _SleepForeverSupervisor(), _ceiling_outcome())
 
     cmd = svc._commands[cid]
-    assert cmd["status"] == "done", "a complete delivery must not persist as error"
-    assert cmd["phase"] == "partial"
-    assert cmd["result"]["partial"] is True
-    assert cmd["result"]["outcome"] == "completed_with_timeout"
-    assert cmd["result"]["degraded_reason"] == "wall_clock_ceiling"
-    # Raw supervisor verdict retained for traceability, but not leaked as the
-    # user-facing outcome.
-    assert cmd["result"]["supervisor_outcome"] == "failed"
-    assert cmd["error"] is None
+    assert cmd["status"] == "error"
+    assert cmd["result"]["partial"] is False
 
 
 @pytest.mark.asyncio
-async def test_reflect_partial_delivery_at_ceiling_classified_partial(monkeypatch) -> None:
-    """部分交付 + 撞上限 -> ``partial`` terminal, explicitly NOT ``error``."""
+async def test_best_effort_prose_without_manifest_at_ceiling_stays_error(monkeypatch) -> None:
+    """Best-effort prose alone cannot create a partial terminal delivery."""
     svc = _make_service(supervisor=_SleepForeverSupervisor())
     cid = "cmd_partial"
     _seed_running_command(svc, cid)
@@ -343,13 +356,8 @@ async def test_reflect_partial_delivery_at_ceiling_classified_partial(monkeypatc
     )
 
     cmd = svc._commands[cid]
-    assert cmd["status"] == "partial"
-    assert cmd["status"] != "error"
-    assert cmd["phase"] == "partial"
-    assert cmd["result"]["partial"] is True
-    assert cmd["result"]["outcome"] == "partial_delivery"
-    assert cmd["result"]["degraded_reason"] == "wall_clock_ceiling"
-    assert cmd["error"] is None
+    assert cmd["status"] == "error"
+    assert cmd["result"]["partial"] is False
 
 
 @pytest.mark.asyncio
@@ -367,6 +375,124 @@ async def test_reflect_no_delivery_at_ceiling_stays_error(monkeypatch) -> None:
     cmd = svc._commands[cid]
     assert cmd["status"] == "error"
     assert cmd["result"]["partial"] is False
+
+
+def test_reflect_done_requires_complete_final_root_manifest(monkeypatch) -> None:
+    from openakita.runtime.supervisor import FinalOutcome, SupervisorOutcome
+
+    svc = _make_service(supervisor=_SleepForeverSupervisor())
+    cid = "cmd_done_without_final_manifest"
+    _seed_running_command(svc, cid)
+    monkeypatch.setattr(svc, "_root_disk_deliverable", lambda _c: None)
+    outcome = SupervisorOutcome(
+        outcome=FinalOutcome.DONE,
+        final_message="视频报告",
+        final_checkpoint_id="cp",
+        n_turns=3,
+        n_replans=0,
+        reason="",
+        deliverable="视频报告",
+        delivery_manifest={
+            "state": "in_progress",
+            "final": False,
+            "artifacts": [{"kind": "video", "status": "ready"}],
+        },
+    )
+
+    svc._reflect_supervisor_outcome(cid, _SleepForeverSupervisor(), outcome)
+
+    cmd = svc._commands[cid]
+    assert cmd["status"] == "partial"
+    assert cmd["result"]["outcome"] == "missing_final_delivery_manifest"
+
+
+def test_reflect_done_rejects_unregistered_video_in_complete_manifest(monkeypatch) -> None:
+    from openakita.runtime.supervisor import FinalOutcome, SupervisorOutcome
+
+    svc = _make_service(supervisor=_SleepForeverSupervisor())
+    cid = "cmd_done_with_final_manifest"
+    _seed_running_command(svc, cid)
+    monkeypatch.setattr(svc, "_root_disk_deliverable", lambda _c: None)
+    outcome = SupervisorOutcome(
+        outcome=FinalOutcome.DONE,
+        final_message="视频报告",
+        final_checkpoint_id="cp",
+        n_turns=3,
+        n_replans=0,
+        reason="",
+        deliverable="视频报告",
+        delivery_manifest={
+            "state": "complete",
+            "final": True,
+            "artifacts": [{"kind": "video", "status": "ready"}],
+        },
+    )
+
+    svc._reflect_supervisor_outcome(cid, _SleepForeverSupervisor(), outcome)
+
+    cmd = svc._commands[cid]
+    assert cmd["status"] == "partial"
+    assert cmd["phase"] == "partial"
+    assert cmd["result"]["outcome"] == "missing_final_delivery_manifest"
+    assert cmd["result"]["media_quality_failures"][0]["code"] == ("media_delivery_unregistered")
+
+
+def test_reflect_done_accepts_runtime_registered_validated_video(monkeypatch, tmp_path) -> None:
+    from openakita.orgs._runtime_artifact_flow import artifact_ledger, record_tool_result
+    from openakita.runtime.supervisor import FinalOutcome, SupervisorOutcome
+
+    svc = _make_service(supervisor=_SleepForeverSupervisor())
+    cid = "cmd_done_with_valid_video"
+    _seed_running_command(svc, cid)
+    monkeypatch.setattr(svc, "_root_disk_deliverable", lambda _c: None)
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    artifact_ledger.clear()
+    try:
+        record_tool_result(
+            org_id="o1",
+            command_id=cid,
+            source_node_id="video",
+            tool_name="provider_generate",
+            tool_input={},
+            result={
+                "ok": True,
+                "task_id": "task-1",
+                "asset_ids": ["asset-1"],
+                "asset_kinds": ["video"],
+                "video_path": str(source),
+                "media_validation": {"passed": True},
+            },
+            delivery_dir=tmp_path / "registered",
+        )
+        outcome = SupervisorOutcome(
+            outcome=FinalOutcome.DONE,
+            final_message="视频报告",
+            final_checkpoint_id="cp",
+            n_turns=3,
+            n_replans=0,
+            reason="",
+            deliverable="视频报告",
+            delivery_manifest={
+                "state": "complete",
+                "final": True,
+                "artifacts": [
+                    {
+                        "kind": "video",
+                        "status": "ready",
+                        "asset_ids": ["asset-1"],
+                        "task_ids": ["task-1"],
+                    }
+                ],
+            },
+        )
+
+        svc._reflect_supervisor_outcome(cid, _SleepForeverSupervisor(), outcome)
+
+        assert svc._commands[cid]["status"] == "done"
+        assert svc._commands[cid]["phase"] == "done"
+    finally:
+        artifact_ledger.clear()
 
 
 @pytest.mark.asyncio

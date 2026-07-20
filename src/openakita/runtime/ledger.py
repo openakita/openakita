@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from .execution_context import ExecutionPhase
+
 __all__ = [
     "TaskLedger",
     "ProgressLedger",
@@ -140,6 +142,7 @@ class ProgressLedger:
     instruction_or_question: ProgressLedgerEntry
     next_speaker: ProgressLedgerEntry
     raw_json: str
+    execution_phase: ExecutionPhase = ExecutionPhase.EXECUTION
     emitted_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_jsonable(self) -> dict[str, Any]:
@@ -150,6 +153,7 @@ class ProgressLedger:
             "is_in_loop": self.is_in_loop.to_jsonable(),
             "instruction_or_question": self.instruction_or_question.to_jsonable(),
             "next_speaker": self.next_speaker.to_jsonable(),
+            "execution_phase": self.execution_phase.value,
             "raw_json": self.raw_json,
             "emitted_at": self.emitted_at.isoformat(),
         }
@@ -167,6 +171,9 @@ class ProgressLedger:
             instruction_or_question=_entry(data["instruction_or_question"]),
             next_speaker=_entry(data["next_speaker"]),
             raw_json=data.get("raw_json", ""),
+            execution_phase=ExecutionPhase(
+                str(data.get("execution_phase") or ExecutionPhase.EXECUTION)
+            ),
             emitted_at=datetime.fromisoformat(data["emitted_at"]),
         )
 
@@ -310,6 +317,14 @@ def parse_progress_ledger_json(
         reason = str(value["reason"])
         return ProgressLedgerEntry(answer=answer, reason=reason)
 
+    raw_phase = str(payload.get("execution_phase") or ExecutionPhase.EXECUTION).strip().lower()
+    try:
+        execution_phase = ExecutionPhase(raw_phase)
+    except ValueError as exc:
+        raise ProgressLedgerParseError(
+            "execution_phase must be 'planning', 'execution', or 'finalization'"
+        ) from exc
+
     return ProgressLedger(
         turn_id=int(turn_id),
         is_request_satisfied=_coerce_entry("is_request_satisfied", kind="bool"),
@@ -318,6 +333,7 @@ def parse_progress_ledger_json(
         instruction_or_question=_coerce_entry("instruction_or_question", kind="str"),
         next_speaker=_coerce_entry("next_speaker", kind="str"),
         raw_json=json_text,
+        execution_phase=execution_phase,
     )
 
 

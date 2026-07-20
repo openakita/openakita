@@ -24,7 +24,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from openakita.orgs.command_models import OrgCommandRequest
 from openakita.orgs.command_service import OrgCommandService
 
 
@@ -104,12 +103,12 @@ def test_service_subscribes_to_agent_run_events_when_bus_provided() -> None:
 
     bus = _StubEventBus()
     OrgCommandService(_make_runtime(), event_bus=bus)
-    assert set(bus._subs) == {
+    assert {
         "agent_run_started",
         "agent_run_finished",
         "agent_run_failed",
         "agent_run_cancelled",
-    }
+    }.issubset(bus._subs)
 
 
 def test_handle_agent_event_records_failed_outcome() -> None:
@@ -269,3 +268,26 @@ def test_get_status_returns_none_for_truly_unknown_command() -> None:
 
     svc = OrgCommandService(_make_runtime())  # event store returns []
     assert svc.get_status("o1", "cmd_never") is None
+
+
+def test_get_status_freezes_elapsed_time_after_command_finishes() -> None:
+    svc = OrgCommandService(_make_runtime())
+    svc._commands["cmd_done"] = {
+        "command_id": "cmd_done",
+        "org_id": "o1",
+        "root_node_id": "root1",
+        "status": "done",
+        "phase": "done",
+        "result": {"final_message": "done"},
+        "error": None,
+        "created_at": 100.0,
+        "updated_at": 125.0,
+        "finished_at": 125.0,
+        "origin_surface": "org_console",
+        "output_scope": "internal",
+    }
+
+    snapshot = svc.get_status("o1", "cmd_done")
+
+    assert snapshot is not None
+    assert snapshot["elapsed_s"] == 25.0

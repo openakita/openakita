@@ -54,6 +54,25 @@ async def test_update_task_safe_workbench_fields(tm: HappyhorseTaskManager):
 
 
 @pytest.mark.asyncio
+async def test_task_rows_project_structured_blocked_wait_state(tm: HappyhorseTaskManager):
+    task_id = await tm.create_task(mode="i2v")
+    await tm.update_task_safe(
+        task_id,
+        status="pending",
+        error_hints_json={
+            "wait_state": "blocked",
+            "blocker": {"kind": "approval_required", "action": "approve_cost"},
+        },
+    )
+
+    row = await tm.get_task(task_id)
+
+    assert row is not None
+    assert row["wait_state"] == "blocked"
+    assert row["blocker"]["action"] == "approve_cost"
+
+
+@pytest.mark.asyncio
 async def test_update_task_safe_rejects_unknown_column(tm: HappyhorseTaskManager):
     task_id = await tm.create_task(mode="t2v")
     with pytest.raises(ValueError):

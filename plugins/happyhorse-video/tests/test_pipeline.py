@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import happyhorse_pipeline as pipeline_mod
 import pytest
+from happyhorse_inline.asset_probe import MediaValidationError
 from happyhorse_pipeline import (
     _DIGITAL_HUMAN_MODES,
     _TTS_CAPABLE_MODES,
     _VIDEO_SYNTH_MODES,
     DEFAULT_POLL,
     HappyhorsePipelineContext,
+    _approval_wait_hints,
     _step_finalize,
     _step_prepare_assets,
 )
@@ -65,8 +68,24 @@ def test_pipeline_context_carries_cost_approval_flag():
     assert ctx.cost_approved is True
 
 
+def test_cost_approval_uses_generic_blocked_wait_contract():
+    hints = _approval_wait_hints(
+        {"total": 8.0, "threshold": 5.0, "currency": "CNY"},
+        message="approval needed",
+    )
+
+    assert hints["wait_state"] == "blocked"
+    assert hints["blocker"]["kind"] == "approval_required"
+    assert hints["blocker"]["action"] == "approve_cost"
+    assert hints["blocker"]["resume_patch"] == {"cost_approved": True}
+
+
 class _FakeTaskManager:
+    def __init__(self):
+        self.updates = []
+
     async def update_task_safe(self, *_args, **_kwargs):
+        self.updates.append((_args, _kwargs))
         return True
 
 
@@ -77,6 +96,37 @@ class _FakeClient:
 
 async def _noop_emit(_event, _payload):
     return None
+
+
+@pytest.mark.asyncio
+async def test_pipeline_persists_blocked_wait_contract_for_cost_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    async def setup(*_args, **_kwargs):
+        return None
+
+    async def require_approval(*_args, **_kwargs):
+        raise pipeline_mod.ApprovalRequired({"total": 8.0, "threshold": 5.0, "currency": "CNY"})
+
+    monkeypatch.setattr(pipeline_mod, "_step_setup_environment", setup)
+    monkeypatch.setattr(pipeline_mod, "_step_estimate_cost", require_approval)
+    tm = _FakeTaskManager()
+    ctx = HappyhorsePipelineContext(task_id="hh_cost", mode="i2v", params={})
+
+    result = await pipeline_mod.run_pipeline(
+        ctx,
+        tm=tm,
+        client=object(),
+        emit=_noop_emit,
+        base_data_dir=tmp_path,
+    )
+
+    assert result.error_kind == "approval_required"
+    assert result.error_hints["wait_state"] == "blocked"
+    persisted = tm.updates[-1][1]
+    assert persisted["status"] == "pending"
+    assert persisted["error_hints_json"]["blocker"]["action"] == "approve_cost"
 
 
 @pytest.mark.asyncio
@@ -185,3 +235,51 @@ async def test_finalize_calls_publish_with_metadata(tmp_path: Path):
         assert meta.get("cost_breakdown") == {"total": 1.23, "currency": "CNY"}
     assert frame_call[3].get("role") == "last_frame"
     assert ctx.asset_ids == ["aid-1", "aid-2"]
+
+
+@pytest.mark.asyncio
+async def test_finalize_rejects_bad_video_dimensions_before_asset_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake_video = tmp_path / "video.mp4"
+    fake_video.write_bytes(b"not-a-real-video")
+    published: list[str] = []
+
+    async def fake_publish(path, *_args):
+        published.append(path)
+        return "aid-should-not-exist"
+
+    def reject_dimensions(*_args, **_kwargs):
+        raise MediaValidationError(
+            {
+                "passed": False,
+                "code": "media_dimensions_mismatch",
+                "message": "期望 1280x720，实际 960x960；必须重新生成",
+                "expected": {"aspect_ratio": "16:9", "width": 1280, "height": 720},
+                "actual": {"width": 960, "height": 960},
+            }
+        )
+
+    monkeypatch.setattr(pipeline_mod, "assert_media_dimensions", reject_dimensions)
+    ctx = HappyhorsePipelineContext(
+        task_id="task-bad-ratio",
+        mode="i2v",
+        params={
+            "_publish_asset": fake_publish,
+            "expected_media": {"aspect_ratio": "16:9", "width": 1280, "height": 720},
+        },
+    )
+    ctx.task_dir = tmp_path
+    ctx.video_path = fake_video
+
+    with pytest.raises(MediaValidationError, match="必须重新生成"):
+        await _step_finalize(
+            ctx,
+            "happyhorse-video",
+            _FakeTaskManager(),
+            _noop_emit,
+            base_data_dir=tmp_path,
+        )
+
+    assert published == []

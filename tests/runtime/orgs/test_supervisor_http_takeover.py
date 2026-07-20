@@ -113,6 +113,7 @@ class _FakeSupervisor:
                     )
                 await asyncio.sleep(tick)
                 slept += tick
+        done = self._outcome is FinalOutcome.DONE
         return SupervisorOutcome(
             outcome=self._outcome,
             final_message=f"final:{self._outcome.value}",
@@ -120,6 +121,16 @@ class _FakeSupervisor:
             n_turns=int(self.stall_detector.n_turns),
             n_replans=self.n_replans,
             reason="",
+            deliverable="completed result" if done else "",
+            delivery_manifest=(
+                {
+                    "state": "complete",
+                    "final": True,
+                    "artifacts": [{"kind": "text", "status": "ready"}],
+                }
+                if done
+                else None
+            ),
         )
 
     async def resume_from_checkpoint(self, checkpoint_id: str) -> _FakeSupervisor:
@@ -154,9 +165,18 @@ def _make_service(
     used: list[_FakeSupervisor] = []
     queue = list(supervisors or [_FakeSupervisor()])
 
-    def _factory(*, org_id: str, command_id: str, root_node_id: str, task: str,
-                 executor: Any = None, brain: Any = None, stream: Any = None,
-                 checkpointer: Any = None, cancel_token: Any = None) -> Any:
+    def _factory(
+        *,
+        org_id: str,
+        command_id: str,
+        root_node_id: str,
+        task: str,
+        executor: Any = None,
+        brain: Any = None,
+        stream: Any = None,
+        checkpointer: Any = None,
+        cancel_token: Any = None,
+    ) -> Any:
         sup = queue.pop(0) if queue else _FakeSupervisor()
         used.append(sup)
         return sup
@@ -211,9 +231,7 @@ async def test_replace_existing_cooperative_cancels_and_relaunches() -> None:
     await asyncio.sleep(0.05)
     assert slow in used
 
-    res2 = await svc.submit(
-        OrgCommandRequest(org_id="o1", content="second", replace_existing=True)
-    )
+    res2 = await svc.submit(OrgCommandRequest(org_id="o1", content="second", replace_existing=True))
     cid2 = res2["command_id"]
     assert cid2 != cid1
     assert res2["status"] == "running"
@@ -305,12 +323,8 @@ async def test_cancel_all_for_org_cancels_every_supervisor() -> None:
     b = _FakeSupervisor(outcome=FinalOutcome.DONE, run_delay_s=10.0)
     svc, _used = _make_service(org=org, supervisors=[a, b])
 
-    r1 = await svc.submit(
-        OrgCommandRequest(org_id="o1", target_node_id="root1", content="A")
-    )
-    r2 = await svc.submit(
-        OrgCommandRequest(org_id="o1", target_node_id="root2", content="B")
-    )
+    r1 = await svc.submit(OrgCommandRequest(org_id="o1", target_node_id="root1", content="A"))
+    r2 = await svc.submit(OrgCommandRequest(org_id="o1", target_node_id="root2", content="B"))
     await asyncio.sleep(0.05)
     cid1, cid2 = r1["command_id"], r2["command_id"]
     assert {cid1, cid2} <= set(svc._inflight_by_org.get("o1", set()))

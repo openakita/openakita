@@ -81,6 +81,22 @@ class VideoProbe:
     size_bytes: int
 
 
+@dataclass(frozen=True)
+class MediaTarget:
+    """Deterministic dimensions expected from a generated media asset."""
+
+    aspect_ratio: str
+    width: int
+    height: int
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "aspect_ratio": self.aspect_ratio,
+            "width": self.width,
+            "height": self.height,
+        }
+
+
 class AssetSpecError(ValueError):
     """Raised when an asset violates a documented vendor spec.
 
@@ -89,6 +105,14 @@ class AssetSpecError(ValueError):
     actual observed value so users can fix the file without leaving the
     app.
     """
+
+
+class MediaValidationError(AssetSpecError):
+    """Raised when generated media does not match its requested dimensions."""
+
+    def __init__(self, result: dict[str, object]) -> None:
+        self.result = result
+        super().__init__(str(result.get("message") or "媒体规格校验失败"))
 
 
 # ─── Low-level probes ────────────────────────────────────────────────
@@ -214,6 +238,222 @@ def probe_video(path: str | Path) -> VideoProbe:
     return VideoProbe(w, h, dur, fmt, size)
 
 
+# ─── Generated-output validation ─────────────────────────────────────
+
+
+def _parse_aspect_ratio(aspect_ratio: str) -> tuple[float, float]:
+    try:
+        left, right = str(aspect_ratio or "").split(":", 1)
+        width_ratio = float(left)
+        height_ratio = float(right)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"无效画幅比例: {aspect_ratio!r}") from exc
+    if width_ratio <= 0 or height_ratio <= 0:
+        raise ValueError(f"无效画幅比例: {aspect_ratio!r}")
+    return width_ratio, height_ratio
+
+
+def _align_dimension(value: float, *, multiple: int = 16) -> int:
+    return max(multiple, int(round(value / multiple)) * multiple)
+
+
+def image_target_for(aspect_ratio: str, size: str) -> MediaTarget:
+    """Resolve an image quality tier and aspect ratio to explicit pixels.
+
+    ``1K``/``2K``/``4K`` describe the long edge. Explicit ``W*H`` and
+    ``WxH`` inputs remain exact, but must agree with the requested ratio.
+    """
+
+    ratio_w, ratio_h = _parse_aspect_ratio(aspect_ratio)
+    normalized_size = str(size or "2K").strip().upper()
+    explicit = normalized_size.replace("X", "*").split("*", 1)
+    if len(explicit) == 2:
+        try:
+            width, height = (int(part) for part in explicit)
+        except ValueError as exc:
+            raise ValueError(f"无效图片像素规格: {size!r}") from exc
+        if width <= 0 or height <= 0:
+            raise ValueError(f"无效图片像素规格: {size!r}")
+        ratio_error = abs((width / height) - (ratio_w / ratio_h)) / (ratio_w / ratio_h)
+        if ratio_error > 0.01:
+            raise ValueError(
+                f"图片像素规格 {width}x{height} 与目标画幅 {aspect_ratio} 不一致"
+            )
+        return MediaTarget(aspect_ratio, width, height)
+
+    long_edges = {"1K": 1024, "2K": 2048, "4K": 4096}
+    long_edge = long_edges.get(normalized_size)
+    if long_edge is None:
+        raise ValueError(f"不支持的图片清晰度规格: {size!r}")
+    if ratio_w >= ratio_h:
+        width = long_edge
+        height = _align_dimension(long_edge * ratio_h / ratio_w)
+    else:
+        width = _align_dimension(long_edge * ratio_w / ratio_h)
+        height = long_edge
+    return MediaTarget(aspect_ratio, width, height)
+
+
+def video_target_for(aspect_ratio: str, resolution: str) -> MediaTarget:
+    """Resolve a video resolution label to explicit encoded dimensions."""
+
+    ratio_w, ratio_h = _parse_aspect_ratio(aspect_ratio)
+    normalized = str(resolution or "720P").strip().upper()
+    try:
+        short_edge = int(normalized.removesuffix("P"))
+    except ValueError as exc:
+        raise ValueError(f"无效视频清晰度规格: {resolution!r}") from exc
+    if short_edge <= 0:
+        raise ValueError(f"无效视频清晰度规格: {resolution!r}")
+    if ratio_w >= ratio_h:
+        width = _align_dimension(short_edge * ratio_w / ratio_h)
+        height = short_edge
+    else:
+        width = short_edge
+        height = _align_dimension(short_edge * ratio_h / ratio_w)
+    return MediaTarget(aspect_ratio, width, height)
+
+
+def validate_media_dimensions(
+    path: str | Path,
+    *,
+    kind: str,
+    target: MediaTarget,
+    tolerance: float = 0.01,
+) -> dict[str, object]:
+    """Probe generated media and return a fail-closed validation result."""
+
+    if kind == "image":
+        probe = probe_image(path)
+        duration_sec = None
+    elif kind == "video":
+        probe = probe_video(path)
+        duration_sec = round(probe.duration_sec, 3)
+    else:
+        raise ValueError(f"不支持的媒体类型: {kind!r}")
+
+    actual: dict[str, object] = {
+        "width": probe.width,
+        "height": probe.height,
+        "format": probe.fmt,
+        "size_bytes": probe.size_bytes,
+    }
+    if duration_sec is not None:
+        actual["duration_sec"] = duration_sec
+    expected = target.to_dict()
+
+    if not probe.width or not probe.height:
+        return {
+            "passed": False,
+            "code": "media_probe_unavailable",
+            "message": "无法读取生成媒体的实际宽高，交付已阻止；请确认 ffprobe/Pillow 可用",
+            "expected": expected,
+            "actual": actual,
+        }
+
+    width_limit = max(2, round(target.width * max(0.0, tolerance)))
+    height_limit = max(2, round(target.height * max(0.0, tolerance)))
+    passed = (
+        abs(probe.width - target.width) <= width_limit
+        and abs(probe.height - target.height) <= height_limit
+    )
+    if passed:
+        message = (
+            f"媒体尺寸校验通过：期望 {target.width}x{target.height}，"
+            f"实际 {probe.width}x{probe.height}"
+        )
+        code = "media_dimensions_match"
+    else:
+        message = (
+            f"媒体尺寸不符合目标：期望 {target.aspect_ratio} "
+            f"({target.width}x{target.height})，实际 {probe.width}x{probe.height}；必须重新生成"
+        )
+        code = "media_dimensions_mismatch"
+    return {
+        "passed": passed,
+        "code": code,
+        "message": message,
+        "expected": expected,
+        "actual": actual,
+    }
+
+
+def validate_media_aspect(
+    path: str | Path,
+    *,
+    kind: str,
+    aspect_ratio: str,
+    tolerance: float = 0.01,
+) -> dict[str, object]:
+    """Validate only the aspect ratio, for source assets of any resolution."""
+
+    ratio_w, ratio_h = _parse_aspect_ratio(aspect_ratio)
+    probe = probe_image(path) if kind == "image" else probe_video(path)
+    actual: dict[str, object] = {
+        "width": probe.width,
+        "height": probe.height,
+        "format": probe.fmt,
+        "size_bytes": probe.size_bytes,
+    }
+    expected: dict[str, object] = {"aspect_ratio": aspect_ratio}
+    if not probe.width or not probe.height:
+        return {
+            "passed": False,
+            "code": "media_probe_unavailable",
+            "message": "无法读取输入媒体的实际宽高，已阻止付费生成",
+            "expected": expected,
+            "actual": actual,
+        }
+    expected_ratio = ratio_w / ratio_h
+    actual_ratio = probe.width / probe.height
+    passed = abs(actual_ratio - expected_ratio) / expected_ratio <= max(0.0, tolerance)
+    return {
+        "passed": passed,
+        "code": "media_aspect_match" if passed else "media_aspect_mismatch",
+        "message": (
+            f"输入画幅校验通过：目标 {aspect_ratio}，实际 {probe.width}x{probe.height}"
+            if passed
+            else (
+                f"输入画幅不符合目标：期望 {aspect_ratio}，实际 "
+                f"{probe.width}x{probe.height}；已阻止付费视频生成"
+            )
+        ),
+        "expected": expected,
+        "actual": actual,
+    }
+
+
+def assert_media_aspect(
+    path: str | Path,
+    *,
+    kind: str,
+    aspect_ratio: str,
+    tolerance: float = 0.01,
+) -> dict[str, object]:
+    result = validate_media_aspect(
+        path,
+        kind=kind,
+        aspect_ratio=aspect_ratio,
+        tolerance=tolerance,
+    )
+    if not result["passed"]:
+        raise MediaValidationError(result)
+    return result
+
+
+def assert_media_dimensions(
+    path: str | Path,
+    *,
+    kind: str,
+    target: MediaTarget,
+    tolerance: float = 0.01,
+) -> dict[str, object]:
+    result = validate_media_dimensions(path, kind=kind, target=target, tolerance=tolerance)
+    if not result["passed"]:
+        raise MediaValidationError(result)
+    return result
+
+
 # ─── Per-endpoint assertions (raise AssetSpecError on violation) ─────
 
 
@@ -332,13 +572,21 @@ __all__ = [
     "AssetSpecError",
     "AudioProbe",
     "ImageProbe",
+    "MediaTarget",
+    "MediaValidationError",
     "VideoProbe",
     "assert_animate_image",
     "assert_animate_video",
     "assert_s2v_audio",
     "assert_s2v_image",
     "assert_videoretalk_audio",
+    "assert_media_aspect",
+    "assert_media_dimensions",
+    "image_target_for",
     "probe_audio",
     "probe_image",
     "probe_video",
+    "validate_media_dimensions",
+    "validate_media_aspect",
+    "video_target_for",
 ]

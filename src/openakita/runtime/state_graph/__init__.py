@@ -410,14 +410,14 @@ def compile_from_org(
             # Static topology will be replaced by the conditional
             # wiring below. Skip silently.
             continue
-        # Skip CONSULT edges: they are point-in-time advisory hops
+        # Skip CONSULT and ARTIFACT edges: neither participates in execution routing.
         # the supervisor brain may issue, not part of the deterministic
         # routing graph. HIERARCHY and COLLABORATE both translate to a
         # default next-hop; if a node has multiple HIERARCHY children,
         # the *first* declaration wins for the static edge — additional
         # children stay reachable via the brain's next_speaker hint
         # plus the messenger's role/workbench resolution.
-        if edge.kind == EdgeKind.CONSULT:
+        if edge.kind in {EdgeKind.CONSULT, EdgeKind.ARTIFACT}:
             continue
         if edge.src in graph.static_edges:
             continue

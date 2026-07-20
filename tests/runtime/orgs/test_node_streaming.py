@@ -9,9 +9,8 @@ Proves the new ``_BrainBackedNodeAgent`` streaming branch:
 * with no event emitter wired (or an unsupported brain) streaming is skipped
   and the resilient non-streaming path runs unchanged.
 
-These exercise the branch directly because in real orgs nodes default to
-``enable_file_tools=True`` (so they carry the four file tools and take the
-tool-use path); a genuinely no-tools node is the only one that streams.
+These exercise the low-level fallback branch directly. Production organization
+nodes always carry ``org_submit_deliverable`` and therefore use the tool path.
 """
 
 from __future__ import annotations
@@ -34,6 +33,14 @@ def _spec() -> AgentSpec:
         persona="资深文案",
         external_tools=(),
         enable_file_tools=False,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _force_low_level_no_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "openakita.orgs._default_agent_builder.resolve_node_tools",
+        lambda **_kwargs: [],
     )
 
 

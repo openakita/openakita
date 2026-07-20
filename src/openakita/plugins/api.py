@@ -1254,3 +1254,14 @@ class PluginBase(ABC):
         May return ``None`` (sync cleanup) or an awaitable / coroutine
         (``async def on_unload``) — the framework will detect and await it.
         """
+
+    def check_org_readiness(self) -> dict[str, Any]:
+        """Report whether plugin-backed organization nodes may start.
+
+        Plugins with required local configuration should override this
+        method and return stable identifiers in ``missing_requirements``.
+        The organization API accepts either a synchronous result or an
+        awaitable returned by an override.
+        """
+
+        return {"ready": True, "missing_requirements": []}

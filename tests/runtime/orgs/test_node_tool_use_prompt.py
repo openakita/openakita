@@ -229,13 +229,8 @@ async def test_node_agent_run_injects_tool_use_policy_when_tools_present() -> No
 
 
 @pytest.mark.asyncio
-async def test_node_agent_run_omits_tool_use_policy_when_no_tools() -> None:
-    """case id: p07.tool_use_prompt.run_omits_when_no_tools
-
-    Zero-tool path -- the encouragement must NOT appear so the prompt
-    stays byte-for-byte compatible with the Sprint-4 chat-only call
-    shape that legacy nodes still use.
-    """
+async def test_node_agent_run_includes_tool_use_policy_for_delivery_manifest() -> None:
+    """Every node is taught to call its built-in delivery manifest tool."""
 
     brain = _FakeBrain()
     spec = _spec(external_tools=(), enable_file_tools=False)
@@ -249,4 +244,5 @@ async def test_node_agent_run_omits_tool_use_policy_when_no_tools() -> None:
     await agent.run("hello")
     assert brain.calls, "brain.messages_create_async never called"
     system = brain.calls[0].get("system", "")
-    assert "Tool-use policy" not in system
+    assert "Tool-use policy" in system
+    assert "org_submit_deliverable" in system

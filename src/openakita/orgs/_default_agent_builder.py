@@ -13,16 +13,15 @@ in their LLM debug files (always ``producer``). The producer LLM was
 inventing screenwriter / art-director "voices" inside one call rather
 than really handing work off to those nodes.
 
-This module now supports an **explicit XML dispatch syntax** that the
-root node's system prompt teaches:
+This module supports structured delegation through ``org_delegate_task``:
 
-* The producer's LLM may emit zero or more
-  ``<dispatch target="screenwriter">child instruction</dispatch>``
-  blocks inside its reply.
-* :class:`_BrainBackedNodeAgent` parses up to
-  :data:`MAX_DISPATCH_BLOCKS` such blocks and, for each one, calls back
-  into the injected ``dispatch_callback`` (wired by the executor) with
-  the child node id + content.
+* A coordinator may declare up to :data:`MAX_DISPATCH_BLOCKS` assignments
+  during one activation. Each assignment carries a stable ``step_id`` and
+  ``output_slot`` plus optional ``depends_on`` and media-contract fields.
+* The runtime validates the declared DAG, rejects unknown dependencies and
+  cycles, and executes every dependency-ready wave concurrently with
+  :func:`asyncio.gather`. A dependent wave starts only after its prerequisites
+  have completed, with their structured outputs injected into its instruction.
 * The callback recurses through the same executor pipeline so each
   child gets its own :class:`_BrainBackedNodeAgent`, its own
   ``agent_run_started`` / ``agent_run_finished`` events, its own
@@ -32,15 +31,10 @@ root node's system prompt teaches:
   cannot trigger an unbounded fan-out. Depth tracking flows through a
   module-level :class:`contextvars.ContextVar` set by the executor in
   ``activate_and_run``.
-* Children run **serially** in this commit: it keeps cancel propagation
-  simple (a single ``CancelledError`` unwinds the whole tree) and makes
-  the LLM debug ordering deterministic; parallel ``asyncio.gather``
-  fan-out is reserved for the next sprint.
-
-The dispatch tutorial is only spliced into the system prompt at
-``depth == 0`` so children (and grandchildren) do not get the "you may
-dispatch" instructions and therefore cannot recurse further on their
-own initiative even before the depth gate fires.
+* Coordinators at any permitted depth may delegate to their own direct reports;
+  the topology guard prevents skipping levels or inventing node ids.
+* Legacy ``<dispatch>`` text parsing is disabled by default and is available
+  only through ``OPENAKITA_ORG_LEGACY_TEXT_DISPATCH`` for compatibility.
 
 Sprint-4 P0-2 (audit v4 §5.4 / §6.2 #2) -- node artefact persistence -
 is implemented at the executor layer (see
@@ -48,15 +42,6 @@ is implemented at the executor layer (see
 only layer that already owns the post-success bookkeeping (events,
 emit, error mapping) and has clean access to the
 ``get_org_dir`` lookup. The builder stays small and stateless.
-
-**Out of scope** (intentionally deferred to next sprint):
-
-* Parallel ``asyncio.gather`` child fan-out.
-* Inter-node memory retrieval at prompt time (the next node's prompt
-  does not yet read the previous node's persisted memory).
-* Node-level tool / skill / MCP injection (D4).
-* Aggregator / Router / Retriever / Persister builder classes
-  (still encoded inside this module + ``_runtime_dispatch.py``).
 
 The builder is intentionally fail-fast: if the brain provider returns
 ``None`` (lifespan ordering -- HTTP up before the desktop ``Agent`` is
@@ -71,16 +56,33 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
+import os
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
+
+from openakita.runtime.execution_context import UpstreamContext, current_upstream_context_var
 
 from ._runtime_agent_pipeline import (
     MAX_DISPATCH_BLOCKS,
     MAX_DISPATCH_DEPTH,
     AgentSpec,
     dispatch_depth_var,
+)
+from ._runtime_delegation import (
+    DelegationExecutionResult,
+    DelegationExecutionStatus,
+    DelegationRequest,
+    build_delegate_tool,
+    current_delegation_assignment_var,
+    current_delegation_media_spec_var,
+    current_delegation_output_slot_var,
+    current_delegation_requests_var,
+    current_delegation_targets_var,
+    delegation_key,
+    delegation_ledger,
 )
 from ._runtime_node_tools import (
     NodeToolEmit,
@@ -134,7 +136,7 @@ _DISPATCH_RE = re.compile(
 
 # Type alias for the dispatch callback the executor wires in. Keeping
 # it on the module so tests / docstrings can refer to a single name.
-DispatchCallback = Callable[..., Awaitable[str]]
+DispatchCallback = Callable[..., Awaitable[DelegationExecutionResult]]
 
 
 def _callable_accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
@@ -158,9 +160,7 @@ def _callable_accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
     params = sig.parameters
     if name in params:
         return True
-    return any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-    )
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 # 图4 思考过程展示: noise prefixes a model sometimes prepends to its
@@ -199,7 +199,7 @@ def _clean_thinking(thinking: str | None) -> str:
     low = stripped.lower()
     for pref in _THINKING_NOISE_PREFIXES:
         if low.startswith(pref):
-            stripped = stripped[len(pref):].lstrip(" :：\n\t")
+            stripped = stripped[len(pref) :].lstrip(" :：\n\t")
             low = stripped.lower()
     # Collapse 3+ newlines so the snippet stays compact.
     stripped = re.sub(r"\n{3,}", "\n\n", stripped)
@@ -234,8 +234,8 @@ def _dispatch_instructions(*, is_root: bool) -> str:
     owns the sub-task delegated to it).
 
     Kept as a short paragraph so the per-node token budget stays bounded.
-    The XML syntax is rigid on purpose (one target per block) so the regex
-    parser neither over- nor under-matches.
+    Delegation is a structured tool call so examples and prose cannot be
+    mistaken for executable routing instructions.
     """
 
     who = (
@@ -262,20 +262,28 @@ def _dispatch_instructions(*, is_root: bool) -> str:
         "specialist among your reports; "
         "(5) after their results come back, REVIEW them and INTEGRATE into a "
         "coherent result you hand back UP to your parent (逐级汇报). "
-        "To delegate, emit one or more dispatch blocks using EXACTLY this XML "
-        'syntax: <dispatch target="NODE_ID">instruction for that '
-        "node</dispatch>. The target MUST be one of YOUR direct reports "
+        "To delegate, call org_delegate_task once for each concrete subtask. "
+        "Set target to one of YOUR direct reports and put the complete task in instruction. "
+        "For every delegation, set output_slot to the intended result slot. Keep the same slot "
+        "when retrying one result. If the user explicitly requests multiple results, use one "
+        "distinct output_slot per result and set expected_outputs to that total. For media work, "
+        "also set segment_id and tool_name. Runtime assignment + output_slot identity suppresses "
+        "duplicate generation without suppressing requested variants. The target MUST be one of "
+        "YOUR direct reports "
         "listed below — never a node that is not in that list (no skipping "
         "levels, no inventing links). Emit at most "
-        f"{MAX_DISPATCH_BLOCKS} dispatch blocks. "
+        f"{MAX_DISPATCH_BLOCKS} delegation calls. "
         "Work in parallel: when several reports' subtasks are independent, "
-        "put ALL their dispatch blocks in THIS SAME reply — they run "
-        "concurrently. Only split across replies when a later subtask truly "
-        "depends on an earlier report's output. "
+        "make ALL their org_delegate_task calls in THIS SAME reply — they run "
+        "concurrently. For a multi-stage workflow, still declare ALL known steps in this same "
+        "reply: assign each a unique step_id and set depends_on to prerequisite step ids. The "
+        "runtime runs the DAG and injects prerequisite outputs into dependent instructions. "
+        "create_todo is only a user-facing checklist; org_delegate_task step dependencies are the "
+        "executable plan. "
         "Right-size the delegation: a small/simple task you can fully handle "
         "yourself should NOT be fanned out just to use the org chart — "
         "over-delegating trivial work only adds hops and latency. "
-        "After the dispatch blocks the orchestrator appends each report's "
+        "After the structured delegations the orchestrator appends each report's "
         "output to your reply, so your own text should (1) state who you "
         "delegated what and why, and (2) integrate the returned results. "
         "If — and only if — you genuinely cannot decide how to proceed, or "
@@ -295,8 +303,8 @@ def _leaf_worker_instructions() -> str:
     return (
         "You are a leaf specialist: you have no reports to delegate to. "
         "Do the work yourself and produce the concrete deliverable for the "
-        "instruction below, focused on your role. Do NOT emit dispatch "
-        "blocks or pretend to hand work to other nodes — deeper "
+        "instruction below, focused on your role. Do NOT call org_delegate_task "
+        "or pretend to hand work to other nodes — deeper "
         "coordination is not yours to do. When you finish, your output "
         "flows back UP to the node that delegated to you."
     )
@@ -370,6 +378,25 @@ def _language_consistency_rule() -> str:
         "phrased in English. Only reply in English when the user's original "
         "request itself is in English. Never switch to English merely because "
         "this system prompt or a relayed instruction is in English."
+    )
+
+
+def _structured_delivery_rule(*, is_root: bool) -> str:
+    final_rule = (
+        "Set final=true only when this is the integrated delivery to the user."
+        if is_root
+        else "As a child node, normally set final=false; your parent owns the final user delivery."
+    )
+    return (
+        "Before your final text response, call org_submit_deliverable exactly once. "
+        "Report state=complete only when your assigned work is actually ready; otherwise use "
+        "in_progress, blocked, or failed. Declare every real output in artifacts with its kind, "
+        "status, asset_ids/task_ids/paths when available. Suggested paths, quoted examples, and "
+        "future outputs must not be declared as ready artifacts. "
+        "For media delivery, trust the runtime artifact ledger and its validation result. "
+        "Do not run shell commands to copy, rename, hash, or repeatedly probe a file in an "
+        "attempt to make an unregistered asset pass; report it as blocked instead. "
+        f"{final_rule} The runtime decides completion from this structured manifest, not from prose."
     )
 
 
@@ -496,9 +523,7 @@ def _moderation_degraded_note(spec: AgentSpec) -> str:
     )
 
 
-def _persona_system_prompt(
-    spec: AgentSpec, *, depth: int = 0, has_tools: bool = False
-) -> str:
+def _persona_system_prompt(spec: AgentSpec, *, depth: int = 0, has_tools: bool = False) -> str:
     """Compose the per-node system prompt from the resolved spec.
 
     Kept deliberately small (< 1 KB on a typical node) so single-shot
@@ -547,83 +572,50 @@ def _persona_system_prompt(
     if has_tools:
         parts.append(_tool_use_encouragement())
         parts.append(_tool_quality_guidance())
+    parts.append(_structured_delivery_rule(is_root=(depth == 0)))
     parts.append(_language_consistency_rule())
     return "\n".join(parts)
 
 
-_REVIEW_VERDICT_RE = re.compile(r"裁决\s*[:：]\s*(.+)")
-_REVIEW_REASON_RE = re.compile(r"(?:理由|原因)\s*[:：]\s*(.+)")
+def _decode_review_payload(text: str) -> dict[str, Any] | None:
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    payload: Any = None
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        decoder = json.JSONDecoder()
+        offset = 0
+        while True:
+            start = raw.find("{", offset)
+            if start < 0:
+                break
+            try:
+                payload, _ = decoder.raw_decode(raw[start:])
+                break
+            except ValueError:
+                offset = start + 1
+    return payload if isinstance(payload, dict) else None
 
 
 def _parse_review_verdict(text: str) -> tuple[bool, str]:
-    """Parse a parent-review reply into ``(ok, reason)`` (核心1).
+    """Parse the review JSON contract without interpreting prose tokens."""
 
-    Decisively keyed on the explicit ``裁决:`` line so we do NOT mis-read
-    incidental words ("如被退回 / if rejected …") inside the REASON text as a
-    reject — that false-reject bug (test8 RCA 2026-06) trapped good
-    deliverables in endless rework. Verdict resolution order:
-
-    1. The ``裁决:`` line, if present — scan ONLY that line for 通过/退回.
-    2. No verdict line -> fail-open ACCEPT (a vague reviewer must not block
-       convergence; the bounded rework cap is the backstop on the reject path).
-    """
-    raw = (text or "").strip()
-    if not raw:
-        return True, "审阅无明确结论，默认采纳。"
-    # Pull the reason first (so it never pollutes verdict detection).
-    reason = ""
-    m_reason = _REVIEW_REASON_RE.search(raw)
-    if m_reason:
-        reason = m_reason.group(1).strip()[:300]
-    # Drop a reason that is just the prompt template echoed back (some node
-    # models parrot "一句话说明 (If fail, give …)" instead of a real reason);
-    # showing that to the user is worse than a generic note.
-    if reason and any(
-        marker in reason
-        for marker in ("一句话说明", "If fail", "if fail", "actionable improv", "specific actionable")
-    ):
-        reason = ""
-
-    pass_tokens = ("通过", "采纳", "达标", "pass", "accept", "approve", "ok")
-    reject_tokens = ("退回", "未通过", "不通过", "不达标", "需重做", "重做", "revise", "reject", "fail")
-
-    m_verdict = _REVIEW_VERDICT_RE.search(raw)
-    if m_verdict:
-        # Decide by what the verdict line STARTS with (after stripping leading
-        # punctuation / brackets). This is robust to the common failure where a
-        # confused node echoes the option list itself ("通过 或 不通过") — it
-        # starts with 通过, so we fail-open ACCEPT instead of falsely rejecting
-        # a good deliverable (test8 RCA: that false-reject caused 12 reworks ->
-        # 900s ceiling -> error). A genuine reject reads "裁决: 不通过".
-        head = m_verdict.group(1).strip().lstrip(" :：[【(（`*\"'-—、。.")
-        hlow = head.lower()
-        if head.startswith(("不通过", "未通过", "退回", "不达标", "需重做", "重做")) or hlow.startswith(
-            ("revise", "reject", "fail", "no", "not ")
-        ):
-            return False, reason or "需重做（未给出具体理由）。"
-        if head.startswith(("通过", "采纳", "达标", "可以", "合格", "同意")) or hlow.startswith(
-            ("pass", "accept", "approve", "ok", "yes", "good")
-        ):
-            return True, reason or "通过。"
-    # No explicit 裁决 line. Scan the reply with the REASON portion removed (so
-    # "如被退回 / if rejected …" inside a reason can't false-trigger), and
-    # check REJECT FIRST — the negated forms ("不达标/不通过/未通过") contain the
-    # pass substrings ("达标/通过"), so reject must win on overlap.
-    scan = raw
-    if reason:
-        scan = scan.replace(reason, " ")
-    low = scan.lower()
-    has_reject = any(tok in scan for tok in reject_tokens[:5]) or any(
-        tok in low for tok in reject_tokens[5:]
-    )
-    if has_reject:
-        return False, reason or "需重做（未给出具体理由）。"
-    has_pass = any(tok in scan for tok in pass_tokens[:3]) or any(
-        tok in low for tok in pass_tokens[3:]
-    )
-    if has_pass:
-        return True, reason or "通过。"
-    return True, reason or "审阅无明确否决，默认采纳。"
+    payload = _decode_review_payload(text)
+    if payload is None:
+        return True, "审阅未返回结构化 JSON，默认采纳。"
+    decision = payload.get("decision")
+    reason = payload.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        reason = "未给出具体理由。"
+    else:
+        reason = reason.strip()[:300]
+    if decision == "rework":
+        return False, reason
+    if decision == "accept":
+        return True, reason
+    return True, "审阅 JSON 的 decision 无效，默认采纳。"
 
 
 def _extract_text_from_response(resp: Any) -> str:
@@ -822,6 +814,28 @@ class _BrainBackedNodeAgent:
             enable_file_tools=self._spec.enable_file_tools,
             tool_host=tool_host,
         )
+        if self._spec.available_nodes:
+            tool_defs.append(build_delegate_tool(self._spec.available_nodes))
+        from openakita.runtime.execution_context import (
+            ExecutionPhase,
+            current_execution_phase_var,
+        )
+
+        execution_phase = current_execution_phase_var.get()
+        upstream_context = current_upstream_context_var.get()
+        declarative_planning_mode = bool(self._spec.available_nodes) and (
+            execution_phase is ExecutionPhase.PLANNING
+            or bool(upstream_context and upstream_context.is_present)
+        )
+        if declarative_planning_mode:
+            tool_defs = [
+                tool
+                for tool in tool_defs
+                if tool.get("name") in {"org_delegate_task", "org_submit_deliverable"}
+            ]
+        finalization_mode = execution_phase is ExecutionPhase.FINALIZATION
+        if finalization_mode:
+            tool_defs = [tool for tool in tool_defs if tool.get("name") == "org_submit_deliverable"]
         # Tag the brain's debug dump with the node identity + tool
         # count so the v13 audit's "0 orgs_v2 LLM files" finding stays
         # verifiable AND the v17 audit can confirm tools_count > 0 on
@@ -839,9 +853,7 @@ class _BrainBackedNodeAgent:
                 )
             except Exception:  # noqa: BLE001 -- trace tagging is best-effort
                 pass
-        system_prompt = _persona_system_prompt(
-            self._spec, depth=depth, has_tools=bool(tool_defs)
-        )
+        system_prompt = _persona_system_prompt(self._spec, depth=depth, has_tools=bool(tool_defs))
 
         # Sprint-5 P0-1: branch on whether the node has any resolved
         # tools. Zero-tool nodes still use the Sprint-4 single-shot
@@ -851,6 +863,11 @@ class _BrainBackedNodeAgent:
         from ._runtime_agent_pipeline import current_command_id_var
 
         command_id_for_events = current_command_id_var.get("") or None
+        delegation_requests: list[DelegationRequest] = []
+        targets_token = current_delegation_targets_var.set(
+            frozenset(node_id for node_id, _label in self._spec.available_nodes)
+        )
+        requests_token = current_delegation_requests_var.set(delegation_requests)
         try:
             parent_text = await self._produce_text(
                 tool_defs=tool_defs,
@@ -861,8 +878,24 @@ class _BrainBackedNodeAgent:
                 cancel_event=cancel_event,
             )
         except asyncio.CancelledError:
+            for request in delegation_requests:
+                if command_id_for_events:
+                    delegation_ledger.finish(
+                        self._spec.org_id,
+                        command_id_for_events,
+                        delegation_key(request),
+                        success=False,
+                    )
             raise
         except Exception as exc:  # noqa: BLE001 -- only DEGRADE on moderation
+            for request in delegation_requests:
+                if command_id_for_events:
+                    delegation_ledger.finish(
+                        self._spec.org_id,
+                        command_id_for_events,
+                        delegation_key(request),
+                        success=False,
+                    )
             if _is_content_moderation_error(exc):
                 _LOGGER.warning(
                     "orgs_v2 node %s degraded after content-moderation rejection "
@@ -872,10 +905,15 @@ class _BrainBackedNodeAgent:
                 )
                 return _moderation_degraded_note(self._spec)
             raise
+        finally:
+            current_delegation_requests_var.reset(requests_token)
+            current_delegation_targets_var.reset(targets_token)
         return await self._maybe_dispatch(
             parent_text=parent_text,
             depth=depth,
             cancel_event=cancel_event,
+            structured_requests=delegation_requests,
+            command_id=command_id_for_events,
         )
 
     async def _produce_text(
@@ -898,6 +936,7 @@ class _BrainBackedNodeAgent:
                 org_id=self._spec.org_id,
                 node_id=self._spec.node_id,
                 command_id=command_id_for_events,
+                workspace_dir=self._spec.workspace_dir,
                 emit=self._event_emitter,
                 tool_host=tool_host,
                 cancel_event=cancel_event,
@@ -934,6 +973,8 @@ class _BrainBackedNodeAgent:
         parent_text: str,
         depth: int,
         cancel_event: asyncio.Event | None,
+        structured_requests: list[DelegationRequest],
+        command_id: str | None,
     ) -> str:
         # Sprint-4 P0-1: parse + recurse on child dispatch blocks.
         # Skip if the dispatch callback is not wired (unit tests /
@@ -942,16 +983,147 @@ class _BrainBackedNodeAgent:
         # MAX_DISPATCH_DEPTH).
         if self._dispatch_callback is None or depth >= MAX_DISPATCH_DEPTH - 1:
             return parent_text
-        blocks = parse_dispatch_blocks(parent_text)
+        structured = bool(structured_requests)
+        blocks = [(request.target, request.instruction) for request in structured_requests]
+        legacy_enabled = os.environ.get("OPENAKITA_ORG_LEGACY_TEXT_DISPATCH", "0") in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not blocks and legacy_enabled:
+            blocks = parse_dispatch_blocks(parent_text)
         if not blocks:
             return parent_text
 
-        dispatch_accepts_cancel = _callable_accepts_kwarg(
-            self._dispatch_callback, "cancel_event"
+        dispatch_accepts_cancel = _callable_accepts_kwarg(self._dispatch_callback, "cancel_event")
+        dispatch_accepts_assignment = _callable_accepts_kwarg(
+            self._dispatch_callback, "assignment_id"
+        )
+        dispatch_accepts_output_slot = _callable_accepts_kwarg(
+            self._dispatch_callback, "output_slot"
+        )
+        dispatch_accepts_upstream_context = _callable_accepts_kwarg(
+            self._dispatch_callback, "upstream_context"
         )
 
-        async def _run_one(child_target: str, child_content: str) -> str:
+        async def _emit_plan_event(name: str, payload: dict[str, Any]) -> None:
+            if self._event_emitter is None:
+                return
+            emitted = self._event_emitter(
+                name,
+                {
+                    "org_id": self._spec.org_id,
+                    "node_id": self._spec.node_id,
+                    "command_id": command_id,
+                    **payload,
+                },
+            )
+            if inspect.isawaitable(emitted):
+                await emitted
+
+        def _plan_error() -> str | None:
+            if not structured:
+                return None
+            step_ids = [request.step_id for request in structured_requests]
+            if len(set(step_ids)) != len(step_ids):
+                return "step_id values must be unique within one delegation plan"
+            known = set(step_ids)
+            for request in structured_requests:
+                unknown = set(request.depends_on) - known
+                if unknown:
+                    return f"step {request.step_id!r} depends on unknown steps: " + ", ".join(
+                        sorted(unknown)
+                    )
+            resolved: set[str] = set()
+            remaining = set(step_ids)
+            while remaining:
+                ready = {
+                    request.step_id
+                    for request in structured_requests
+                    if request.step_id in remaining and set(request.depends_on) <= resolved
+                }
+                if not ready:
+                    return "delegation plan contains a dependency cycle"
+                resolved.update(ready)
+                remaining.difference_update(ready)
+            media_contracts: dict[tuple[str, str], tuple[str, str, int, int]] = {}
+            for request in structured_requests:
+                spec = request.media_spec
+                if spec is None:
+                    continue
+                contract_key = (spec.kind, spec.output_group)
+                dimensions = (
+                    spec.aspect_ratio,
+                    spec.resolution,
+                    spec.width,
+                    spec.height,
+                )
+                previous = media_contracts.setdefault(contract_key, dimensions)
+                if previous != dimensions:
+                    return (
+                        "media_spec mismatch for output group "
+                        f"{spec.output_group!r}: {previous!r} != {dimensions!r}"
+                    )
+            return None
+
+        plan_error = _plan_error()
+        if plan_error is not None:
+            for request in structured_requests:
+                if command_id and not request.reuse_completed:
+                    delegation_ledger.finish(
+                        self._spec.org_id,
+                        command_id,
+                        delegation_key(request),
+                        success=False,
+                    )
+            await _emit_plan_event("delegation_plan_invalid", {"reason": plan_error})
+            return f"{parent_text}\n\n[delegation plan invalid: {plan_error}]"
+        if structured:
+            await _emit_plan_event(
+                "delegation_plan_declared",
+                {
+                    "steps": [
+                        {
+                            "step_id": request.step_id,
+                            "target": request.target,
+                            "depends_on": list(request.depends_on),
+                            "output_slot": request.output_slot,
+                            "assignment_id": delegation_key(request),
+                            "media_spec": (
+                                request.media_spec.to_dict() if request.media_spec else None
+                            ),
+                        }
+                        for request in structured_requests
+                    ]
+                },
+            )
+
+        async def _run_one(
+            index: int,
+            child_target: str,
+            child_content: str,
+            *,
+            upstream_context: UpstreamContext | None = None,
+        ) -> DelegationExecutionResult:
+            request = structured_requests[index] if structured else None
             try:
+                if request is not None and request.reuse_completed and command_id:
+                    from ._runtime_delivery_manifest import delivery_manifest_ledger
+
+                    manifest = delivery_manifest_ledger.latest(
+                        self._spec.org_id,
+                        command_id,
+                        child_target,
+                        assignment_id=delegation_key(request),
+                    )
+                    if manifest is not None and manifest.state == "complete":
+                        return DelegationExecutionResult.completed(
+                            f"[reused completed assignment `{delegation_key(request)}`]\n"
+                            f"{manifest.summary}\n"
+                            f"[structured manifest]\n{json.dumps(manifest.to_dict(), ensure_ascii=False)}",
+                            delivery_manifest=manifest.to_dict(),
+                        )
                 # Sprint-13 H1: forward ``cancel_event`` into child
                 # dispatch so a user cancel terminates grandchildren
                 # without waiting for the parent to finish its outer
@@ -959,26 +1131,51 @@ class _BrainBackedNodeAgent:
                 # ``tests/runtime/orgs/test_child_dispatch.py``) have a
                 # closed signature without ``cancel_event``; the probe
                 # above keeps them working.
+                dispatch_kwargs: dict[str, Any] = {
+                    "org_id": self._spec.org_id,
+                    "parent_node_id": self._spec.node_id,
+                    "child_node_id": child_target,
+                    "child_content": child_content,
+                }
                 if dispatch_accepts_cancel:
-                    child_output = await self._dispatch_callback(
-                        org_id=self._spec.org_id,
-                        parent_node_id=self._spec.node_id,
-                        child_node_id=child_target,
-                        child_content=child_content,
-                        cancel_event=cancel_event,
+                    dispatch_kwargs["cancel_event"] = cancel_event
+                if request is not None and dispatch_accepts_assignment:
+                    dispatch_kwargs["assignment_id"] = delegation_key(request)
+                if request is not None and dispatch_accepts_output_slot:
+                    dispatch_kwargs["output_slot"] = request.output_slot
+                if upstream_context is not None and dispatch_accepts_upstream_context:
+                    dispatch_kwargs["upstream_context"] = upstream_context
+                media_token = current_delegation_media_spec_var.set(
+                    request.media_spec if request is not None else None
+                )
+                try:
+                    raw_result = await self._dispatch_callback(**dispatch_kwargs)
+                finally:
+                    current_delegation_media_spec_var.reset(media_token)
+                result = (
+                    raw_result
+                    if isinstance(raw_result, DelegationExecutionResult)
+                    else DelegationExecutionResult.completed(str(raw_result or ""))
+                )
+                if request is not None and command_id:
+                    delegation_ledger.finish(
+                        self._spec.org_id,
+                        command_id,
+                        delegation_key(request),
+                        success=result.succeeded,
                     )
-                else:
-                    child_output = await self._dispatch_callback(
-                        org_id=self._spec.org_id,
-                        parent_node_id=self._spec.node_id,
-                        child_node_id=child_target,
-                        child_content=child_content,
-                    )
-                return child_output or ""
+                return result
             except asyncio.CancelledError:
                 # A user cancel must unwind the whole tree -- re-raise so
                 # ``gather`` cancels the surviving siblings too (Sprint-3
                 # P0-2 cancel pipeline stays intact under fan-out).
+                if request is not None and command_id:
+                    delegation_ledger.finish(
+                        self._spec.org_id,
+                        command_id,
+                        delegation_key(request),
+                        success=False,
+                    )
                 raise
             except Exception as exc:  # noqa: BLE001 -- one child failure
                 # must not poison siblings or the parent's reply. The
@@ -993,7 +1190,20 @@ class _BrainBackedNodeAgent:
                     child_target,
                     exc,
                 )
-                return f"[child dispatch failed: {exc}]"
+                if request is not None and command_id:
+                    delegation_ledger.finish(
+                        self._spec.org_id,
+                        command_id,
+                        delegation_key(request),
+                        success=False,
+                    )
+                return DelegationExecutionResult.failed(
+                    reason_code="child_dispatch_raised",
+                    reason=str(exc),
+                )
+
+        def _output_succeeded(result: DelegationExecutionResult) -> bool:
+            return result.succeeded
 
         # UI issue #9: fan the sibling dispatches out **concurrently** via
         # ``asyncio.gather`` instead of awaiting them one-by-one. This is the
@@ -1006,12 +1216,154 @@ class _BrainBackedNodeAgent:
         # already bounded by ``MAX_DISPATCH_BLOCKS`` so the fan-out can't run
         # away. Per-org isolation is unchanged (each child still routes through
         # its own executor + node agent under the same org).
-        results = await asyncio.gather(
-            *(_run_one(t, c) for t, c in blocks)
-        )
+        if structured:
+            results = [
+                DelegationExecutionResult(
+                    status=DelegationExecutionStatus.SKIPPED,
+                    reason_code="not_started",
+                )
+                for _request in structured_requests
+            ]
+            index_by_step = {
+                request.step_id: index for index, request in enumerate(structured_requests)
+            }
+            completed_steps: set[str] = set()
+            remaining_steps = set(index_by_step)
+            while remaining_steps:
+                ready_steps = [
+                    request.step_id
+                    for request in structured_requests
+                    if request.step_id in remaining_steps
+                    and set(request.depends_on) <= completed_steps
+                ]
+
+                async def _run_ready(
+                    step_id: str,
+                ) -> tuple[int, DelegationExecutionResult]:
+                    index = index_by_step[step_id]
+                    request = structured_requests[index]
+                    failed_dependencies = [
+                        dependency
+                        for dependency in request.depends_on
+                        if not _output_succeeded(results[index_by_step[dependency]])
+                    ]
+                    if failed_dependencies:
+                        if command_id and not request.reuse_completed:
+                            delegation_ledger.finish(
+                                self._spec.org_id,
+                                command_id,
+                                delegation_key(request),
+                                success=False,
+                            )
+                        await _emit_plan_event(
+                            "delegation_dependency_blocked",
+                            {
+                                "step_id": step_id,
+                                "depends_on": list(request.depends_on),
+                                "failed_dependencies": failed_dependencies,
+                            },
+                        )
+                        return index, DelegationExecutionResult(
+                            status=DelegationExecutionStatus.BLOCKED,
+                            reason_code="dependency_failed",
+                            reason=(
+                                f"step {step_id} was not started because "
+                                f"{', '.join(failed_dependencies)} failed"
+                            ),
+                        )
+                    upstream_context = UpstreamContext()
+                    if request.depends_on:
+                        dependencies: list[dict[str, Any]] = []
+                        for dependency in request.depends_on:
+                            dependency_result = results[index_by_step[dependency]]
+                            dependency_request = structured_requests[index_by_step[dependency]]
+                            ledger_context = None
+                            if command_id:
+                                from ._runtime_artifact_flow import structured_upstream_records
+                                from ._runtime_delivery_manifest import delivery_manifest_ledger
+
+                                ledger_context = structured_upstream_records(
+                                    org_id=self._spec.org_id,
+                                    command_id=command_id,
+                                    source_node_ids=(dependency_request.target,),
+                                )
+                                manifest = delivery_manifest_ledger.latest(
+                                    self._spec.org_id,
+                                    command_id,
+                                    dependency_request.target,
+                                    assignment_id=delegation_key(dependency_request),
+                                )
+                                if manifest is not None:
+                                    ledger_context["delivery_manifest"] = manifest.to_dict()
+                            output = dependency_result.output
+                            if len(output) > 2000:
+                                output = output[:2000] + "\n…（依赖摘要已截断）"
+                            dependencies.append(
+                                {
+                                    "step_id": dependency,
+                                    "node_id": dependency_request.target,
+                                    "output": output,
+                                    "evidence": ledger_context or {},
+                                }
+                            )
+                        upstream_context = UpstreamContext(
+                            dependencies=tuple(dependencies)
+                        )
+                        await _emit_plan_event(
+                            "delegation_dependency_ready",
+                            {
+                                "step_id": step_id,
+                                "depends_on": list(request.depends_on),
+                            },
+                        )
+                    return index, await _run_one(
+                        index,
+                        request.target,
+                        request.instruction,
+                        upstream_context=upstream_context,
+                    )
+
+                wave_results = await asyncio.gather(*(_run_ready(step) for step in ready_steps))
+                for index, output in wave_results:
+                    results[index] = output
+                    completed_steps.add(structured_requests[index].step_id)
+                    remaining_steps.discard(structured_requests[index].step_id)
+        else:
+            results = await asyncio.gather(
+                *(_run_one(i, target, content) for i, (target, content) in enumerate(blocks))
+            )
         children: list[tuple[str, str]] = [
-            (blocks[i][0], results[i]) for i in range(len(blocks))
+            (blocks[i][0], results[i].render_for_parent()) for i in range(len(blocks))
         ]
+        if structured and command_id:
+            from ._runtime_delivery_manifest import aggregate_completed_child_manifests
+
+            assignment_id = current_delegation_assignment_var.get("")
+            child_assignments = tuple(
+                (request.target, delegation_key(request)) for request in structured_requests
+            )
+            promoted = aggregate_completed_child_manifests(
+                org_id=self._spec.org_id,
+                command_id=command_id,
+                node_id=self._spec.node_id,
+                assignment_id=assignment_id,
+                output_slot=current_delegation_output_slot_var.get("default"),
+                children=child_assignments,
+            )
+            if promoted is not None and self._event_emitter is not None:
+                emitted = self._event_emitter(
+                    "delivery_manifest_recorded",
+                    {
+                        "org_id": self._spec.org_id,
+                        "node_id": self._spec.node_id,
+                        "command_id": command_id,
+                        "tool_name": "runtime_child_aggregation",
+                        "manifest": promoted.to_dict(),
+                        "assignment_ids": [value for _node, value in child_assignments],
+                    },
+                )
+                if inspect.isawaitable(emitted):
+                    await emitted
         return _aggregate_with_children(parent_text, children)
 
     # ------------------------------------------------------------------
@@ -1024,6 +1376,7 @@ class _BrainBackedNodeAgent:
         child_node_id: str,
         task: str,
         output: str,
+        structured_evidence: Mapping[str, Any] | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> tuple[bool, str]:
         """The parent node ACTUALLY reviews a direct report's deliverable.
@@ -1036,48 +1389,21 @@ class _BrainBackedNodeAgent:
             (ok=False, reason="...")  -> send it back for rework with reason
 
         Generic over any topology (root→mid→leaf). The call is deliberately
-        small (truncated output, low token budget) and **fail-open**: any
-        provider error / unparseable verdict resolves to ACCEPT so a flaky
-        reviewer can never permanently block convergence (the bounded rework
-        loop in the executor still caps retries on the reject path).
+        small (truncated output, low token budget). Provider errors and invalid
+        verdicts fall back to the structured manifest: a complete manifest is
+        accepted, while missing/incomplete evidence is rejected. The bounded
+        rework loop in the executor still caps retries on the reject path.
         """
         body = (output or "").strip()
         if not body:
             # Empty output is an unambiguous reject — no model call needed.
             return False, "下级未产出任何内容（空产出），需重做并给出完整成果。"
-        # 硬信号否决 (item 2, 2026-06): the model reviewer occasionally waves
-        # through a half-product (a ``thinking…`` leak / mid-iteration stub /
-        # empty body). Run the SAME objective gate the central deliverable
-        # check uses; when it flags the output as not-a-deliverable we HARD
-        # REJECT regardless of what the model would say, so a mid-layer parent
-        # can no longer accept a thinking-prefixed or stub deliverable. This
-        # only fires on objective signals (never on a real document), so it
-        # does not undermine the fail-open behaviour for "model echoed the
-        # option list" misjudgements. Toggle via env for tuning.
-        import os as _os
-
-        if _os.environ.get("OPENAKITA_ORG_REVIEW_HARD_GATE", "1").strip() != "0":
-            try:
-                from ._runtime_node_artifacts import classify_node_output
-
-                gate_status, gate_reason = classify_node_output(body)
-            except Exception:  # noqa: BLE001 -- gate must never crash review
-                gate_status, gate_reason = ("ok", "")
-            if gate_status != "ok":
-                human = {
-                    "thinking_leak": "下级产出只是思考过程（thinking 泄漏），不是成文成果",
-                    "mid_reasoning": "下级停在中途自述/反复检索，未给出完整成果",
-                    "empty_output": "下级无有效产出",
-                    "deferred_delivery": (
-                        "下级只回复了一句状态/承诺（如“将整理完整报告”），"
-                        "并未给出真正的成文成果"
-                    ),
-                }.get(gate_reason, f"下级产出未通过完成度硬性校验（{gate_reason}）")
-                return False, f"{human}，请重做并产出完整、成文的成果。"
         role = (self._spec.role or "worker").strip()
         persona = (self._spec.persona or "").strip()
         # Truncate the reviewed output so review stays cheap on huge deliverables.
-        sample = body if len(body) <= 4000 else (body[:4000] + "\n…（内容过长已截断，仅审阅前 4000 字）")
+        sample = (
+            body if len(body) <= 4000 else (body[:4000] + "\n…（内容过长已截断，仅审阅前 4000 字）")
+        )
         system = (
             f"{_NODE_SYSTEM_PREFIX} 你是节点 `{self._spec.node_id}`（角色：{role}）。"
             + (f" 设定：{persona}。" if persona else "")
@@ -1085,12 +1411,19 @@ class _BrainBackedNodeAgent:
             " 评判依据：是否真正完成了交办任务、是否是成文成果而非纯思考过程/中途自述、"
             "是否有明显缺漏。请务实：只要是成文且基本覆盖任务要点，就应判定通过；"
             "仅当明显未完成（只有思考、空泛、跑题、严重缺漏）才判定不通过。"
-            " 严格只输出两行，且第一行必须是下面两种之一（逐字）："
-            " `裁决: 通过` 或 `裁决: 不通过`。"
-            " 第二行：`理由: 一句话说明`（判不通过时，这句话要给出具体、可执行的改进点）。"
+            " 结构化交付证据（delivery manifest 与资产账本）是权威事实；如果其中已包含"
+            "任务要求的 JSON、segments、asset_ids、task_ids 或文件，不得仅因为自由文本"
+            "没有重复粘贴这些字段而要求重做。"
+            " 严格只输出一个 JSON 对象，不要代码围栏或额外文字："
+            ' {"decision":"accept|rework","reason":"一句话说明"}。'
+            " decision 只能是 accept 或 rework；rework 时 reason 必须给出具体改进点。"
         )
+        evidence = json.dumps(structured_evidence or {}, ensure_ascii=False, default=str)
+        if len(evidence) > 12_000:
+            evidence = evidence[:12_000] + "..."
         user = (
             f"【交给下级 `{child_node_id}` 的任务】\n{(task or '').strip()[:1500]}\n\n"
+            f"【运行时结构化交付证据（权威）】\n{evidence}\n\n"
             f"【下级 `{child_node_id}` 的产出】\n{sample}\n\n"
             "请给出你的审阅裁决。"
         )
@@ -1106,14 +1439,23 @@ class _BrainBackedNodeAgent:
             verdict_text = _extract_text_from_response(resp)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 -- fail-open: never block on a flaky review
+        except Exception:  # noqa: BLE001 -- fall back to structured evidence
             _LOGGER.debug(
                 "parent review raised (parent=%s child=%s); defaulting to accept",
                 self._spec.node_id,
                 child_node_id,
                 exc_info=True,
             )
-            return True, "审阅调用异常，默认采纳（保证收敛）。"
+            manifest = (structured_evidence or {}).get("delivery_manifest")
+            if isinstance(manifest, Mapping) and manifest.get("state") == "complete":
+                return True, "审阅调用异常；结构化交付清单已完成，按权威证据采纳。"
+            return False, "审阅调用异常，且没有完整的结构化交付清单。"
+        payload = _decode_review_payload(verdict_text)
+        if payload is None or payload.get("decision") not in {"accept", "rework"}:
+            manifest = (structured_evidence or {}).get("delivery_manifest")
+            if isinstance(manifest, Mapping) and manifest.get("state") == "complete":
+                return True, "审阅未返回有效 JSON；结构化交付清单已完成，按权威证据采纳。"
+            return False, "审阅未返回有效 JSON，且没有完整的结构化交付清单。"
         return _parse_review_verdict(verdict_text)
 
     # ------------------------------------------------------------------
@@ -1255,9 +1597,7 @@ class _BrainBackedNodeAgent:
         await _emit(done=True)
         return final_text, True
 
-    async def _emit_node_thinking(
-        self, emit: Any, command_id: str, thinking: str | None
-    ) -> None:
+    async def _emit_node_thinking(self, emit: Any, command_id: str, thinking: str | None) -> None:
         """Emit a single ``node_thinking`` event carrying the run's reasoning.
 
         Best-effort + fail-silent: the reasoning is cleaned (noise prefixes
@@ -1305,12 +1645,8 @@ class _BrainBackedNodeAgent:
             u = Usage(
                 input_tokens=in_tok,
                 output_tokens=out_tok,
-                cache_creation_input_tokens=int(
-                    usage.get("cache_creation_input_tokens", 0) or 0
-                ),
-                cache_read_input_tokens=int(
-                    usage.get("cache_read_input_tokens", 0) or 0
-                ),
+                cache_creation_input_tokens=int(usage.get("cache_creation_input_tokens", 0) or 0),
+                cache_read_input_tokens=int(usage.get("cache_read_input_tokens", 0) or 0),
             )
             info: dict[str, Any] = {}
             try:
@@ -1367,9 +1703,7 @@ class DefaultAgentBuilder:
         if event_emitter is not None and not callable(event_emitter):
             raise TypeError("event_emitter must be callable when provided")
         if tool_host_provider is not None and not callable(tool_host_provider):
-            raise TypeError(
-                "tool_host_provider must be callable when provided"
-            )
+            raise TypeError("tool_host_provider must be callable when provided")
         self._brain_provider = brain_provider
         self._dispatch_callback = dispatch_callback
         self._event_emitter = event_emitter
@@ -1379,9 +1713,7 @@ class DefaultAgentBuilder:
         try:
             brain = self._brain_provider()
         except Exception as exc:  # noqa: BLE001 -- propagate as builder-unavailable
-            raise BuilderUnavailable(
-                f"brain_provider raised: {type(exc).__name__}: {exc}"
-            ) from exc
+            raise BuilderUnavailable(f"brain_provider raised: {type(exc).__name__}: {exc}") from exc
         if brain is None:
             raise BuilderUnavailable(
                 "main agent brain not yet initialised "

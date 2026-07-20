@@ -25,6 +25,7 @@ ceiling preserved), ADR-0012 (no shim under v1).
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Any
 
@@ -94,6 +95,131 @@ async def _call_lifecycle(rt: Any, verb: str, org_id: str) -> Any:
     return _to_dict(result)
 
 
+def _plugin_tool_names(manifest: Any) -> set[str]:
+    """Return tool names declared by a loaded plugin manifest."""
+
+    provides = getattr(manifest, "provides", None)
+    if not isinstance(provides, dict):
+        return set()
+    names: set[str] = set()
+    for entry in provides.get("tools") or []:
+        if isinstance(entry, str):
+            name = entry
+        elif isinstance(entry, dict):
+            name = entry.get("name") or entry.get("id")
+        else:
+            name = None
+        if isinstance(name, str) and name:
+            names.add(name)
+    return names
+
+
+async def _org_start_readiness(request: Request, org_id: str) -> dict[str, Any]:
+    """Check workbench dependencies without mutating organization state."""
+
+    org = _get_manager(request).get(org_id)
+    if org is None:
+        raise HTTPException(404, f"Organization not found: {org_id}")
+
+    raw_nodes = getattr(org, "nodes", None)
+    nodes = list(raw_nodes) if isinstance(raw_nodes, (list, tuple)) else []
+    plugin_nodes: dict[str, list[Any]] = {}
+    for node in nodes:
+        origin = getattr(node, "plugin_origin", None)
+        if not isinstance(origin, dict):
+            continue
+        plugin_id = str(origin.get("plugin_id") or "").strip()
+        if plugin_id:
+            plugin_nodes.setdefault(plugin_id, []).append(node)
+
+    issues: list[dict[str, Any]] = []
+    agent = getattr(request.app.state, "agent", None)
+    plugin_manager = getattr(agent, "_plugin_manager", None) if agent is not None else None
+
+    for plugin_id, owned_nodes in sorted(plugin_nodes.items()):
+        loaded = None
+        if plugin_manager is not None:
+            getter = getattr(plugin_manager, "get_loaded", None)
+            if callable(getter):
+                loaded = getter(plugin_id)
+            else:
+                loaded = getattr(plugin_manager, "loaded_plugins", {}).get(plugin_id)
+        if loaded is None:
+            issues.append(
+                {
+                    "code": "plugin_not_loaded",
+                    "plugin_id": plugin_id,
+                    "node_ids": [str(getattr(node, "id", "")) for node in owned_nodes],
+                }
+            )
+            continue
+
+        declared_tools = _plugin_tool_names(getattr(loaded, "manifest", None))
+        required_tools = {
+            str(tool)
+            for node in nodes
+            for tool in (getattr(node, "external_tools", None) or [])
+            if isinstance(tool, str) and tool in declared_tools
+        }
+        registered_tools = set(getattr(getattr(loaded, "api", None), "_registered_tools", []) or [])
+        missing_tools = sorted(required_tools - registered_tools)
+        if missing_tools:
+            issues.append(
+                {
+                    "code": "plugin_tools_missing",
+                    "plugin_id": plugin_id,
+                    "missing_tools": missing_tools,
+                }
+            )
+
+        instance = getattr(loaded, "instance", None)
+        readiness_check = getattr(instance, "check_org_readiness", None)
+        if callable(readiness_check):
+            try:
+                result = readiness_check()
+                if inspect.isawaitable(result):
+                    result = await result
+            except Exception as exc:  # noqa: BLE001 - readiness must fail closed
+                logger.exception("Plugin readiness check failed: %s", plugin_id)
+                issues.append(
+                    {
+                        "code": "plugin_readiness_failed",
+                        "plugin_id": plugin_id,
+                        "message": str(exc),
+                    }
+                )
+            else:
+                if isinstance(result, dict) and result.get("ready") is False:
+                    requirements = result.get("missing_requirements") or []
+                    issues.append(
+                        {
+                            "code": "plugin_requirements_missing",
+                            "plugin_id": plugin_id,
+                            "missing_requirements": [str(item) for item in requirements if item],
+                        }
+                    )
+
+    return {"ready": not issues, "issues": issues}
+
+
+def _org_not_ready(readiness: dict[str, Any]) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "org_start_not_ready",
+            "message": "Organization dependencies are not ready.",
+            "guidance": "Install, enable, and configure the required workbench plugins.",
+            "issues": readiness["issues"],
+        },
+    )
+
+
+async def _require_org_start_readiness(request: Request, org_id: str) -> None:
+    readiness = await _org_start_readiness(request, org_id)
+    if not readiness["ready"]:
+        raise _org_not_ready(readiness)
+
+
 # v11 #2: ``OrgLifecycleManager`` mutates only an in-memory state map,
 # whereas ``OrgManager.get(org_id)`` (and ``CommandService._refuse_unless_active``)
 # read the persisted ``Organization.status`` field. Without a write-back
@@ -146,9 +272,15 @@ def _sync_spec_status_after_lifecycle(request: Request, org_id: str, verb: str) 
 
 @router.post("/{org_id}/start", summary="B34 start organization")
 async def start_org(request: Request, org_id: str) -> Any:
+    await _require_org_start_readiness(request, org_id)
     result = await _call_lifecycle(_get_runtime(request), "start", org_id)
     _sync_spec_status_after_lifecycle(request, org_id, "start")
     return result
+
+
+@router.get("/{org_id}/start-readiness", summary="Check organization start readiness")
+async def get_start_readiness(request: Request, org_id: str) -> dict[str, Any]:
+    return await _org_start_readiness(request, org_id)
 
 
 @router.post("/{org_id}/stop", summary="B35 stop organization")
@@ -179,6 +311,7 @@ async def resume_org(request: Request, org_id: str) -> Any:
     resume to start, mirroring how the rest of the dispatch surface
     speaks ``{code, ...}`` instead of plain strings.
     """
+    await _require_org_start_readiness(request, org_id)
     rt = _get_runtime(request)
     state_fn = getattr(rt, "_state", None)
     current: str | None = None
@@ -220,6 +353,7 @@ async def send_command(request: Request, org_id: str, body: CommandSubmit) -> di
         OrgOutputScope,
     )
 
+    await _require_org_start_readiness(request, org_id)
     svc = _get_command_service(request)
     src_data = body.source or {}
     source = OrgCommandSource(

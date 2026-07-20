@@ -109,6 +109,7 @@ class EdgeKind(StrEnum):
     COLLABORATE = "collaborate"
     ESCALATE = "escalate"
     CONSULT = "consult"
+    ARTIFACT = "artifact"
 
 
 class TaskLifecycleState(StrEnum):
@@ -364,6 +365,7 @@ class EdgeV2:
     src: NodeId
     dst: NodeId
     kind: EdgeKind = EdgeKind.HIERARCHY
+    binding: dict[str, Any] = field(default_factory=dict)
 
     def to_jsonable(self) -> dict[str, Any]:
         return {
@@ -372,6 +374,7 @@ class EdgeV2:
             "src": self.src,
             "dst": self.dst,
             "kind": self.kind.value,
+            "binding": dict(self.binding),
         }
 
     @classmethod
@@ -382,6 +385,7 @@ class EdgeV2:
             src=data["src"],
             dst=data["dst"],
             kind=EdgeKind(data.get("kind", EdgeKind.HIERARCHY.value)),
+            binding=dict(data.get("binding") or {}),
         )
 
 

@@ -97,6 +97,45 @@ import {
 } from "./orgEditorConstants";
 import agentOrgImg from "../assets/agent_org.png";
 
+type OrgStartReadinessIssue = {
+  code: string;
+  plugin_id?: string;
+  missing_tools?: string[];
+  missing_requirements?: string[];
+  message?: string;
+};
+
+type OrgStartReadiness = {
+  ready: boolean;
+  issues: OrgStartReadinessIssue[];
+};
+
+function formatStartReadinessIssue(
+  issue: OrgStartReadinessIssue,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  const plugin = issue.plugin_id || "plugin";
+  if (issue.code === "plugin_not_loaded") {
+    return t("org.editor.startPluginNotLoaded", { plugin });
+  }
+  if (issue.code === "plugin_tools_missing") {
+    return t("org.editor.startPluginToolsMissing", {
+      plugin,
+      tools: (issue.missing_tools || []).join(", "),
+    });
+  }
+  if (issue.code === "plugin_requirements_missing") {
+    const requirements = (issue.missing_requirements || []).map((requirement) =>
+      t(`org.editor.startRequirement.${requirement}`, { defaultValue: requirement }),
+    );
+    return t("org.editor.startPluginRequirementsMissing", {
+      plugin,
+      requirements: requirements.join("、"),
+    });
+  }
+  return issue.message || t("org.editor.startReadinessUnknown", { plugin });
+}
+
 // ── Task text helpers ──
 
 /** Replace node IDs with human-readable role titles in task display text. */
@@ -173,9 +212,13 @@ function orgEdgeToFlowEdge(e: OrgEdgeData): Edge {
     target: e.target,
     type: "default",
     label: e.label || undefined,
-    style: { stroke: EDGE_COLORS[e.edge_type] || "var(--muted)", strokeWidth: e.edge_type === "hierarchy" ? 2 : 1.5 },
+    style: {
+      stroke: EDGE_COLORS[e.edge_type] || "var(--muted)",
+      strokeWidth: e.edge_type === "hierarchy" ? 2 : 1.5,
+      strokeDasharray: e.edge_type === "artifact" ? "7 5" : undefined,
+    },
     markerEnd: { type: MarkerType.ArrowClosed, color: EDGE_COLORS[e.edge_type] || "var(--muted)" },
-    animated: e.edge_type === "collaborate",
+    animated: e.edge_type === "collaborate" || (e.edge_type === "artifact" && e.binding?.activation === "when_ready"),
     data: { ...e },
   };
 }
@@ -193,6 +236,7 @@ function computeTreeLayout(nodes: Node[], edges: Edge[]): Node[] {
   const childrenMap: Record<string, string[]> = {};
   const parentSet = new Set<string>();
   for (const e of edges) {
+    if (((e.data as any)?.edge_type || "hierarchy") !== "hierarchy") continue;
     const src = e.source;
     const tgt = e.target;
     if (!childrenMap[src]) childrenMap[src] = [];
@@ -755,6 +799,19 @@ export function OrgEditorView({
   const [watchdogLoaded, setWatchdogLoaded] = useState(false);
   const [watchdogSaving, setWatchdogSaving] = useState(false);
 
+  const updateOrgRuntimeBudget = useCallback((key: string, rawValue: string) => {
+    setCurrentOrg((previous) => {
+      if (!previous) return previous;
+      const overrides = { ...(previous.runtime_overrides || {}) };
+      if (rawValue.trim() === "") {
+        delete overrides[key];
+      } else {
+        overrides[key] = Number(rawValue);
+      }
+      return { ...previous, runtime_overrides: overrides };
+    });
+  }, []);
+
   const loadWatchdogConfig = useCallback(async () => {
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/config/env`);
@@ -1112,6 +1169,17 @@ export function OrgEditorView({
   const handleStartOrg = useCallback(async () => {
     if (!currentOrg) return;
     try {
+      const readinessResp = await safeFetch(
+        `${apiBaseUrl}/api/v2/orgs/${currentOrg.id}/start-readiness`,
+      );
+      const readiness = (await readinessResp.json()) as OrgStartReadiness;
+      if (!readiness.ready) {
+        const details = (readiness.issues || [])
+          .map((issue) => formatStartReadinessIssue(issue, t))
+          .join("；");
+        showToast(t("org.editor.startNotReady", { details }), "error");
+        return;
+      }
       await safeFetch(`${apiBaseUrl}/api/v2/orgs/${currentOrg.id}/start`, { method: "POST" });
       setCurrentOrg({ ...currentOrg, status: "active" });
       setOrgList((prev) => prev.map((o) => o.id === currentOrg.id ? { ...o, status: "active" } : o));
@@ -1133,7 +1201,7 @@ export function OrgEditorView({
       console.error("Failed to start org:", e);
       showToast(t("org.editor.startFailed", { error: e?.message || e }), "error");
     }
-  }, [currentOrg, apiBaseUrl, showToast]);
+  }, [currentOrg, apiBaseUrl, showToast, t]);
 
   // 防抖：避免双击/连点导致同一组织连续两次 /stop（旧版本会让后端抛
   // "无效状态转换: dormant -> dormant"）。
@@ -1275,6 +1343,7 @@ export function OrgEditorView({
       watchdog_interval_s: Number((currentOrg as any).watchdog_interval_s || 30),
       watchdog_stuck_threshold_s: Number((currentOrg as any).watchdog_stuck_threshold_s || 1800),
       watchdog_silence_threshold_s: Number((currentOrg as any).watchdog_silence_threshold_s || 1800),
+      runtime_overrides: currentOrg.runtime_overrides || {},
       heartbeat_enabled: currentOrg.heartbeat_enabled,
       heartbeat_interval_s: currentOrg.heartbeat_interval_s,
       standup_enabled: currentOrg.standup_enabled,
@@ -1767,18 +1836,82 @@ export function OrgEditorView({
     setEdges((prev) =>
       prev.map((e) => {
         if (e.id !== selectedEdgeId) return e;
-        const newData = { ...e.data, [field]: value };
+        const newData = {
+          ...e.data,
+          [field]: value,
+          ...(field === "edge_type" && value === "artifact" && !(e.data as any)?.binding
+            ? {
+                binding: {
+                  source_port: "output",
+                  target_port: "input",
+                  target_tools: ["*"],
+                  target_param: "from_asset_ids",
+                  value_field: "asset_ids",
+                  accepts: [],
+                  join_key: "segment_id",
+                  required: false,
+                  cardinality: "many",
+                  selection: "command_scoped",
+                  activation: "manual",
+                  dispatch_mode: "per_join_key",
+                  max_attempts: 1,
+                },
+              }
+            : {}),
+        };
         const edgeType = field === "edge_type" ? value : (e.data as any)?.edge_type;
         return {
           ...e,
           data: newData,
-          style: { stroke: EDGE_COLORS[edgeType] || "var(--muted)", strokeWidth: edgeType === "hierarchy" ? 2 : 1.5 },
+          style: {
+            stroke: EDGE_COLORS[edgeType] || "var(--muted)",
+            strokeWidth: edgeType === "hierarchy" ? 2 : 1.5,
+            strokeDasharray: edgeType === "artifact" ? "7 5" : undefined,
+          },
           markerEnd: { type: MarkerType.ArrowClosed, color: EDGE_COLORS[edgeType] || "var(--muted)" },
-          animated: edgeType === "collaborate",
+          animated: edgeType === "collaborate" || (edgeType === "artifact" && (newData as any)?.binding?.activation === "when_ready"),
           label: field === "label" ? value : (e.data as any)?.label || undefined,
         };
       }),
     );
+  }, [selectedEdgeId, setEdges]);
+
+  const updateArtifactBinding = useCallback((field: string, value: any) => {
+    if (!selectedEdgeId) return;
+    setEdges((prev) => prev.map((edge) => {
+      if (edge.id !== selectedEdgeId) return edge;
+      const data = (edge.data || {}) as Record<string, any>;
+      return {
+        ...edge,
+        data: { ...data, binding: { ...(data.binding || {}), [field]: value } },
+        animated: data.edge_type === "artifact" && field === "activation"
+          ? value === "when_ready"
+          : edge.animated,
+      };
+    }));
+  }, [selectedEdgeId, setEdges]);
+
+  const updateArtifactJoinScope = useCallback((field: string, value: any) => {
+    if (!selectedEdgeId) return;
+    setEdges((prev) => prev.map((edge) => {
+      if (edge.id !== selectedEdgeId) return edge;
+      const data = (edge.data || {}) as Record<string, any>;
+      const binding = data.binding || {};
+      if (field === "source" && !value) {
+        const { join_scope: _removed, ...rest } = binding;
+        return { ...edge, data: { ...data, binding: rest } };
+      }
+      return {
+        ...edge,
+        data: {
+          ...data,
+          binding: {
+            ...binding,
+            join_scope: { ...(binding.join_scope || {}), [field]: value },
+          },
+        },
+      };
+    }));
   }, [selectedEdgeId, setEdges]);
 
   const handleDeleteEdge = useCallback(() => {
@@ -2487,6 +2620,7 @@ export function OrgEditorView({
                     { type: "collaborate", label: t("org.editor.collaborateLegend"), dash: true },
                     { type: "escalate", label: t("org.editor.escalateLegend"), dash: false },
                     { type: "consult", label: t("org.editor.consultLegend"), dash: false },
+                    { type: "artifact", label: t("org.editor.artifactLegend"), dash: true },
                   ] as const).map((e) => (
                     <span key={e.type} className="org-edge-legend-item">
                       <span
@@ -4780,6 +4914,7 @@ export function OrgEditorView({
                 { key: "collaborate", label: t("org.editor.edgeTypeCollaborate"), color: EDGE_COLORS.collaborate },
                 { key: "escalate", label: t("org.editor.edgeTypeEscalate"), color: EDGE_COLORS.escalate },
                 { key: "consult", label: t("org.editor.edgeTypeConsult"), color: EDGE_COLORS.consult || "var(--muted)" },
+                { key: "artifact", label: t("org.editor.edgeTypeArtifact"), color: EDGE_COLORS.artifact },
               ] as const).map((et) => (
                 <ToggleGroupItem
                   key={et.key}
@@ -4795,6 +4930,128 @@ export function OrgEditorView({
             </ToggleGroup>
           </div>
 
+          {selectedEdge.edge_type === "artifact" && (
+            <div className="space-y-3 border-t border-border pt-3">
+              <div>
+                <ShadLabel className="text-xs">{t("org.editor.artifactBinding")}</ShadLabel>
+                <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                  {t("org.editor.artifactBindingHint")}
+                </p>
+              </div>
+              <div className="flex items-center justify-between rounded-md border border-border px-3 py-2.5">
+                <div className="space-y-0.5">
+                  <ShadLabel className="text-xs">{t("org.editor.artifactAutoActivation")}</ShadLabel>
+                  <p className="text-[11px] leading-tight text-muted-foreground">{t("org.editor.artifactAutoActivationHint")}</p>
+                </div>
+                <Switch
+                  checked={selectedEdge.binding?.activation === "when_ready"}
+                  onCheckedChange={(value) => updateArtifactBinding("activation", value ? "when_ready" : "manual")}
+                />
+              </div>
+              {selectedEdge.binding?.activation === "when_ready" && (
+                <div className="space-y-2 rounded-md border border-border p-3">
+                  <div className="space-y-1.5">
+                    <ShadLabel className="text-[11px]">{t("org.editor.artifactDispatchMode")}</ShadLabel>
+                    <select
+                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                      value={selectedEdge.binding?.dispatch_mode || "per_join_key"}
+                      onChange={(e) => updateArtifactBinding("dispatch_mode", e.target.value)}
+                    >
+                      <option value="per_join_key">{t("org.editor.artifactPerJoinKey")}</option>
+                      <option value="join_all">{t("org.editor.artifactJoinAll")}</option>
+                    </select>
+                  </div>
+                  {selectedEdge.binding?.dispatch_mode === "join_all" && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1.5">
+                        <ShadLabel className="text-[11px]">{t("org.editor.artifactScopeSource")}</ShadLabel>
+                        <select
+                          className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                          value={selectedEdge.binding?.join_scope?.source || ""}
+                          onChange={(e) => updateArtifactJoinScope("source", e.target.value)}
+                        >
+                          <option value="">{t("org.editor.artifactScopeNone")}</option>
+                          {nodes.map((node) => (
+                            <option key={node.id} value={node.id}>{(node.data as any)?.role_title || node.id}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <ShadLabel className="text-[11px]">{t("org.editor.artifactScopeKey")}</ShadLabel>
+                        <ShadInput
+                          className="h-8 text-xs"
+                          placeholder="segment_id"
+                          value={selectedEdge.binding?.join_scope?.key_field || ""}
+                          onChange={(e) => updateArtifactJoinScope("key_field", e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1.5">
+                  <ShadLabel className="text-[11px]">{t("org.editor.artifactSourcePort")}</ShadLabel>
+                  <ShadInput className="h-8 text-xs" value={selectedEdge.binding?.source_port || ""} onChange={(e) => updateArtifactBinding("source_port", e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <ShadLabel className="text-[11px]">{t("org.editor.artifactTargetPort")}</ShadLabel>
+                  <ShadInput className="h-8 text-xs" value={selectedEdge.binding?.target_port || ""} onChange={(e) => updateArtifactBinding("target_port", e.target.value)} />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <ShadLabel className="text-[11px]">{t("org.editor.artifactTargetTools")}</ShadLabel>
+                <ShadInput
+                  className="h-8 text-xs"
+                  placeholder={t("org.editor.artifactCommaSeparated")}
+                  value={(selectedEdge.binding?.target_tools || []).join(", ")}
+                  onChange={(e) => updateArtifactBinding("target_tools", e.target.value.split(",").map((v) => v.trim()).filter(Boolean))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <ShadLabel className="text-[11px]">{t("org.editor.artifactTargetParam")}</ShadLabel>
+                <ShadInput className="h-8 text-xs" value={selectedEdge.binding?.target_param || ""} onChange={(e) => updateArtifactBinding("target_param", e.target.value)} />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1.5">
+                  <ShadLabel className="text-[11px]">{t("org.editor.artifactValueField")}</ShadLabel>
+                  <select className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={selectedEdge.binding?.value_field || "asset_ids"} onChange={(e) => updateArtifactBinding("value_field", e.target.value)}>
+                    <option value="asset_ids">asset_ids</option>
+                    <option value="task_ids">task_ids</option>
+                    <option value="segments">segments</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <ShadLabel className="text-[11px]">{t("org.editor.artifactCardinality")}</ShadLabel>
+                  <select className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={selectedEdge.binding?.cardinality || "many"} onChange={(e) => updateArtifactBinding("cardinality", e.target.value)}>
+                    <option value="one">{t("org.editor.artifactOne")}</option>
+                    <option value="many">{t("org.editor.artifactMany")}</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <ShadLabel className="text-[11px]">{t("org.editor.artifactAccepts")}</ShadLabel>
+                <ShadInput
+                  className="h-8 text-xs"
+                  placeholder="image, video"
+                  value={(selectedEdge.binding?.accepts || []).join(", ")}
+                  onChange={(e) => updateArtifactBinding("accepts", e.target.value.split(",").map((v) => v.trim()).filter(Boolean))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <ShadLabel className="text-[11px]">{t("org.editor.artifactJoinKey")}</ShadLabel>
+                <ShadInput className="h-8 text-xs" placeholder="segment_id" value={selectedEdge.binding?.join_key || ""} onChange={(e) => updateArtifactBinding("join_key", e.target.value)} />
+              </div>
+              <div className="flex items-center justify-between rounded-md border border-border px-3 py-2.5">
+                <div className="space-y-0.5">
+                  <ShadLabel className="text-xs">{t("org.editor.artifactRequired")}</ShadLabel>
+                  <p className="text-[11px] leading-tight text-muted-foreground">{t("org.editor.artifactRequiredHint")}</p>
+                </div>
+                <Switch checked={selectedEdge.binding?.required === true} onCheckedChange={(value) => updateArtifactBinding("required", value)} />
+              </div>
+            </div>
+          )}
+
           {/* Label */}
           <div className="space-y-2">
             <ShadLabel className="text-xs" htmlFor="edge-label">{t("org.editor.edgeLabelField")}</ShadLabel>
@@ -4807,6 +5064,7 @@ export function OrgEditorView({
             />
           </div>
 
+          {selectedEdge.edge_type !== "artifact" && <>
           {/* Bidirectional */}
           <div className="flex items-center justify-between rounded-md border border-border px-3 py-2.5">
             <div className="space-y-0.5">
@@ -4844,6 +5102,7 @@ export function OrgEditorView({
               onChange={(e) => updateEdgeData("bandwidth_limit", Number(e.target.value))}
             />
           </div>
+          </>}
 
           {/* Delete */}
           <div className="mt-2 border-t border-border pt-3">
@@ -5060,82 +5319,89 @@ export function OrgEditorView({
           </div>
           )}
 
-          {/* ── 组织运行看门狗（per-org，默认关闭） ── */}
+          {/* ── Per-organization Supervisor wall-clock budget ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
             <div
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
               onClick={() => setOrgWatchdogCollapsed(!orgWatchdogCollapsed)}
             >
               <div style={{ fontWeight: 600, fontSize: 13 }}>
-                {t("org.editor.orgWatchdogTitle")}
-                {orgWatchdogCollapsed && (currentOrg as any).watchdog_enabled === true && (
+                {t("org.editor.orgRuntimeBudgetTitle")}
+                {orgWatchdogCollapsed && Object.keys(currentOrg.runtime_overrides || {}).some((key) => key.startsWith("supervisor_")) && (
                   <span style={{ fontWeight: 400, fontSize: 11, color: "var(--ok)", marginLeft: 6 }}>
-                    {t("org.editor.watchdogActive")}
+                    {t("org.editor.orgRuntimeBudgetCustom")}
                   </span>
                 )}
               </div>
               <span style={{ fontSize: 11, color: "var(--muted)" }}>{orgWatchdogCollapsed ? "▸" : "▾"}</span>
             </div>
             {!orgWatchdogCollapsed && (
-              <div style={{ marginTop: 8 }}>
-                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 8 }}>
-                  <input
-                    type="checkbox"
-                    style={{ marginTop: 3 }}
-                    checked={(currentOrg as any).watchdog_enabled === true}
-                    onChange={(e) => setCurrentOrg({ ...currentOrg, watchdog_enabled: e.target.checked } as any)}
-                  />
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    <span style={{ fontSize: 12 }}>{t("org.editor.orgWatchdogEnable")}</span>
-                    <span style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
-                      {t("org.editor.orgWatchdogHint")}
-                    </span>
-                  </div>
-                </label>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, opacity: (currentOrg as any).watchdog_enabled === true ? 1 : 0.65 }}>
+              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
+                  {t("org.editor.orgRuntimeBudgetHint")}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   <div>
                     <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>
-                      {t("org.editor.orgWatchdogIntervalLabel")}
+                      {t("org.editor.orgRuntimeHardCeiling")}
                     </label>
                     <input
                       className="input"
+                      type="number"
+                      min={60}
+                      max={86400}
                       style={{ width: "100%", fontSize: 12 }}
-                      placeholder="30"
-                      value={(currentOrg as any).watchdog_interval_s ?? 30}
-                      onChange={(e) => setCurrentOrg({ ...currentOrg, watchdog_interval_s: Number(e.target.value || 30) } as any)}
+                      placeholder={t("org.editor.orgRuntimeInherit")}
+                      value={currentOrg.runtime_overrides?.supervisor_hard_ceiling_s ?? ""}
+                      onChange={(e) => updateOrgRuntimeBudget("supervisor_hard_ceiling_s", e.target.value)}
                     />
                   </div>
                   <div>
                     <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>
-                      {t("org.editor.orgWatchdogStuckLabel")}
+                      {t("org.editor.orgRuntimeSoftRatio")}
                     </label>
                     <input
                       className="input"
+                      type="number"
+                      min={0}
+                      max={0.95}
+                      step={0.05}
                       style={{ width: "100%", fontSize: 12 }}
-                      placeholder="1800"
-                      value={(currentOrg as any).watchdog_stuck_threshold_s ?? 1800}
-                      onChange={(e) => setCurrentOrg({ ...currentOrg, watchdog_stuck_threshold_s: Number(e.target.value || 1800) } as any)}
+                      placeholder={t("org.editor.orgRuntimeInherit")}
+                      value={currentOrg.runtime_overrides?.supervisor_soft_ceiling_ratio ?? ""}
+                      onChange={(e) => updateOrgRuntimeBudget("supervisor_soft_ceiling_ratio", e.target.value)}
                     />
-                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
-                      {t("org.editor.orgWatchdogStuckHelp")}
-                    </div>
                   </div>
                   <div>
                     <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>
-                      {t("org.editor.orgWatchdogSilenceLabel")}
+                      {t("org.editor.orgRuntimeWatchdogGrace")}
                     </label>
                     <input
                       className="input"
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
                       style={{ width: "100%", fontSize: 12 }}
-                      placeholder="1800"
-                      value={(currentOrg as any).watchdog_silence_threshold_s ?? 1800}
-                      onChange={(e) => setCurrentOrg({ ...currentOrg, watchdog_silence_threshold_s: Number(e.target.value || 1800) } as any)}
+                      placeholder={t("org.editor.orgRuntimeInherit")}
+                      value={currentOrg.runtime_overrides?.supervisor_soft_watchdog_grace_ratio ?? ""}
+                      onChange={(e) => updateOrgRuntimeBudget("supervisor_soft_watchdog_grace_ratio", e.target.value)}
                     />
-                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
-                      {t("org.editor.orgWatchdogSilenceHelp")}
-                    </div>
                   </div>
                 </div>
+                {typeof currentOrg.runtime_overrides?.supervisor_hard_ceiling_s === "number" &&
+                  typeof currentOrg.runtime_overrides?.supervisor_soft_ceiling_ratio === "number" &&
+                  typeof currentOrg.runtime_overrides?.supervisor_soft_watchdog_grace_ratio === "number" && (
+                    <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                      {t("org.editor.orgRuntimeBudgetPreview", {
+                        soft: Math.round(currentOrg.runtime_overrides.supervisor_hard_ceiling_s * currentOrg.runtime_overrides.supervisor_soft_ceiling_ratio),
+                        watchdog: Math.round(
+                          currentOrg.runtime_overrides.supervisor_hard_ceiling_s * currentOrg.runtime_overrides.supervisor_soft_ceiling_ratio +
+                          currentOrg.runtime_overrides.supervisor_hard_ceiling_s * (1 - currentOrg.runtime_overrides.supervisor_soft_ceiling_ratio) * currentOrg.runtime_overrides.supervisor_soft_watchdog_grace_ratio,
+                        ),
+                      })}
+                    </div>
+                  )}
               </div>
             )}
           </div>

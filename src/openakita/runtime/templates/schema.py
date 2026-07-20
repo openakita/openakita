@@ -103,23 +103,18 @@ class WorkbenchBindingSpec:
                 "WorkbenchBindingSpec.plugin_id must be a non-empty string"
             )
         if not isinstance(self.mode, str) or not self.mode.strip():
-            raise TemplateValidationError(
-                "WorkbenchBindingSpec.mode must be a non-empty string"
-            )
+            raise TemplateValidationError("WorkbenchBindingSpec.mode must be a non-empty string")
         if self.capabilities is not None:
             if not all(isinstance(c, str) and c for c in self.capabilities):
                 raise TemplateValidationError(
-                    "WorkbenchBindingSpec.capabilities must be a tuple of "
-                    "non-empty strings or None"
+                    "WorkbenchBindingSpec.capabilities must be a tuple of non-empty strings or None"
                 )
 
     def to_jsonable(self) -> dict[str, Any]:
         return {
             "plugin_id": self.plugin_id,
             "mode": self.mode,
-            "capabilities": (
-                list(self.capabilities) if self.capabilities is not None else None
-            ),
+            "capabilities": (list(self.capabilities) if self.capabilities is not None else None),
         }
 
 
@@ -141,9 +136,7 @@ class NodeRuntimeOverridesSpec:
         for name, value in self.iter_set():
             if name == "persona_overlay":
                 if not isinstance(value, str):
-                    raise TemplateValidationError(
-                        "persona_overlay must be a string"
-                    )
+                    raise TemplateValidationError("persona_overlay must be a string")
                 continue
             if not isinstance(value, int) or value < 0:
                 raise TemplateValidationError(
@@ -196,17 +189,13 @@ class NodeSpec:
                 f"NodeSpec.id must match /^[a-z][a-z0-9_]*$/ (got {self.id!r})"
             )
         if not isinstance(self.type, NodeType):
-            raise TemplateValidationError(
-                f"NodeSpec.type must be a NodeType, got {self.type!r}"
-            )
+            raise TemplateValidationError(f"NodeSpec.type must be a NodeType, got {self.type!r}")
         if not isinstance(self.role, str) or not self.role.strip():
             raise TemplateValidationError("NodeSpec.role must be a non-empty string")
         if not isinstance(self.label, str) or not self.label.strip():
             raise TemplateValidationError("NodeSpec.label must be a non-empty string")
         if self.persona_prompt is not None and not isinstance(self.persona_prompt, str):
-            raise TemplateValidationError(
-                "NodeSpec.persona_prompt must be a string or None"
-            )
+            raise TemplateValidationError("NodeSpec.persona_prompt must be a string or None")
         if not isinstance(self.department, str):
             raise TemplateValidationError("NodeSpec.department must be a string")
         if self.tool_subset is not None:
@@ -237,12 +226,8 @@ class NodeSpec:
             "role": self.role,
             "label": self.label,
             "persona_prompt": self.persona_prompt,
-            "tool_subset": (
-                list(self.tool_subset) if self.tool_subset is not None else None
-            ),
-            "workbench": (
-                self.workbench.to_jsonable() if self.workbench is not None else None
-            ),
+            "tool_subset": (list(self.tool_subset) if self.tool_subset is not None else None),
+            "workbench": (self.workbench.to_jsonable() if self.workbench is not None else None),
             "runtime": self.runtime.to_jsonable(),
             "guardrails": [g.to_jsonable() for g in self.guardrails],
             "department": self.department,
@@ -256,6 +241,7 @@ class EdgeSpec:
     src: str
     dst: str
     kind: EdgeKind = EdgeKind.HIERARCHY
+    binding: dict[str, Any] = field(default_factory=dict)
 
     def validate(self, *, valid_node_ids: frozenset[str]) -> None:
         if self.src == self.dst:
@@ -263,20 +249,87 @@ class EdgeSpec:
                 f"edge {self.src!r}->{self.dst!r}: src and dst must differ"
             )
         if self.src not in valid_node_ids:
-            raise TemplateValidationError(
-                f"edge src {self.src!r} does not match any NodeSpec.id"
-            )
+            raise TemplateValidationError(f"edge src {self.src!r} does not match any NodeSpec.id")
         if self.dst not in valid_node_ids:
-            raise TemplateValidationError(
-                f"edge dst {self.dst!r} does not match any NodeSpec.id"
-            )
+            raise TemplateValidationError(f"edge dst {self.dst!r} does not match any NodeSpec.id")
         if not isinstance(self.kind, EdgeKind):
-            raise TemplateValidationError(
-                f"EdgeSpec.kind must be an EdgeKind, got {self.kind!r}"
-            )
+            raise TemplateValidationError(f"EdgeSpec.kind must be an EdgeKind, got {self.kind!r}")
+        if self.kind == EdgeKind.ARTIFACT:
+            binding = self.binding
+            if not isinstance(binding, dict):
+                raise TemplateValidationError("artifact edge binding must be an object")
+            if (
+                not isinstance(binding.get("target_param"), str)
+                or not binding["target_param"].strip()
+            ):
+                raise TemplateValidationError("artifact edge binding requires target_param")
+            if binding.get("value_field") not in {"asset_ids", "task_ids", "segments"}:
+                raise TemplateValidationError(
+                    "artifact edge binding value_field must be asset_ids, task_ids, or segments"
+                )
+            tools = binding.get("target_tools")
+            if (
+                not isinstance(tools, list)
+                or not tools
+                or not all(isinstance(tool, str) and tool.strip() for tool in tools)
+            ):
+                raise TemplateValidationError(
+                    "artifact edge binding target_tools must be a non-empty string list"
+                )
+            if binding.get("cardinality", "many") not in {"one", "many"}:
+                raise TemplateValidationError(
+                    "artifact edge binding cardinality must be one or many"
+                )
+            if "required" in binding and not isinstance(binding["required"], bool):
+                raise TemplateValidationError("artifact edge binding required must be a boolean")
+            if binding.get("activation", "manual") not in {"manual", "when_ready"}:
+                raise TemplateValidationError(
+                    "artifact edge binding activation must be manual or when_ready"
+                )
+            if binding.get("dispatch_mode", "per_join_key") not in {
+                "per_join_key",
+                "join_all",
+            }:
+                raise TemplateValidationError(
+                    "artifact edge binding dispatch_mode must be per_join_key or join_all"
+                )
+            for key in ("min_count", "max_attempts"):
+                value = binding.get(key)
+                if value is not None and (
+                    not isinstance(value, int) or isinstance(value, bool) or value < 1
+                ):
+                    raise TemplateValidationError(
+                        f"artifact edge binding {key} must be a positive integer"
+                    )
+            if int(binding.get("max_attempts", 1) or 1) > 5:
+                raise TemplateValidationError(
+                    "artifact edge binding max_attempts must not exceed 5"
+                )
+            join_scope = binding.get("join_scope")
+            if join_scope is not None:
+                if not isinstance(join_scope, dict):
+                    raise TemplateValidationError(
+                        "artifact edge binding join_scope must be an object"
+                    )
+                if (
+                    not isinstance(join_scope.get("source"), str)
+                    or not join_scope["source"].strip()
+                ):
+                    raise TemplateValidationError(
+                        "artifact edge binding join_scope requires source"
+                    )
+                if join_scope["source"] not in valid_node_ids:
+                    raise TemplateValidationError(
+                        "artifact edge binding join_scope source must reference a node"
+                    )
 
     def to_jsonable(self) -> dict[str, Any]:
-        return {"src": self.src, "dst": self.dst, "kind": self.kind.value}
+        return {
+            "src": self.src,
+            "dst": self.dst,
+            "kind": self.kind.value,
+            "binding": dict(self.binding),
+        }
 
 
 @dataclass(frozen=True)
@@ -300,9 +353,7 @@ class DefaultsSpec:
         for name in ("max_turns", "max_stalls", "suspect_secs"):
             value = getattr(self, name)
             if not isinstance(value, int) or value <= 0:
-                raise TemplateValidationError(
-                    f"DefaultsSpec.{name} must be a positive int"
-                )
+                raise TemplateValidationError(f"DefaultsSpec.{name} must be a positive int")
         if not all(isinstance(c, str) and c for c in self.stream_channels):
             raise TemplateValidationError(
                 "DefaultsSpec.stream_channels must be a tuple of non-empty strings"
@@ -338,24 +389,18 @@ class TemplateSpec:
         if not isinstance(self.name, str) or not self.name.strip():
             raise TemplateValidationError("TemplateSpec.name must be a non-empty string")
         if not isinstance(self.category, str) or not self.category.strip():
-            raise TemplateValidationError(
-                "TemplateSpec.category must be a non-empty string"
-            )
+            raise TemplateValidationError("TemplateSpec.category must be a non-empty string")
         if not isinstance(self.description, str):
             raise TemplateValidationError("TemplateSpec.description must be a string")
         if not isinstance(self.version, int) or self.version < 1:
-            raise TemplateValidationError(
-                "TemplateSpec.version must be a positive int"
-            )
+            raise TemplateValidationError("TemplateSpec.version must be a positive int")
         if not self.nodes:
             raise TemplateValidationError("TemplateSpec.nodes must be non-empty")
         seen: set[str] = set()
         for node in self.nodes:
             node.validate()
             if node.id in seen:
-                raise TemplateValidationError(
-                    f"TemplateSpec.nodes has duplicate id {node.id!r}"
-                )
+                raise TemplateValidationError(f"TemplateSpec.nodes has duplicate id {node.id!r}")
             seen.add(node.id)
         valid_ids = frozenset(seen)
         for edge in self.edges:
@@ -383,8 +428,7 @@ class TemplateSpec:
                 if colour[v] == GRAY:
                     cycle = path[path.index(v) :] + [v]
                     raise TemplateValidationError(
-                        f"hierarchy cycle in template {self.id!r}: "
-                        f"{' -> '.join(cycle)}"
+                        f"hierarchy cycle in template {self.id!r}: {' -> '.join(cycle)}"
                     )
                 if colour[v] == WHITE:
                     dfs(v, [*path, v])
