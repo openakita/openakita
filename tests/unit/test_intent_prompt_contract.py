@@ -1,10 +1,9 @@
+import inspect
 from types import SimpleNamespace
 
 from openakita.agent.core import Agent
 from openakita.core._agent_legacy import (
-    MINIMAL_PROMPT_TOOLS,
     _apply_previous_answer_replay_hint,
-    _looks_like_external_tool_request,
     _looks_like_previous_answer_replay_request,
     _resolve_force_tool_policy,
 )
@@ -26,7 +25,6 @@ from openakita.core.intent_analyzer import (
     PromptDepth,
     _make_default,
     _parse_intent_output,
-    _try_fast_query_shortcut,
 )
 from openakita.llm.types import (
     LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
@@ -34,11 +32,6 @@ from openakita.llm.types import (
 )
 from openakita.prompt.builder import PromptMode, PromptProfile, build_system_prompt
 from openakita.runtime.llm import CompilerCircuitBreaker
-
-
-class _FailingCompilerBrain:
-    async def compiler_think(self, *args, **kwargs):
-        raise AssertionError("fast chat must not call the LLM intent analyzer")
 
 
 class _StaticCompilerBrain:
@@ -116,47 +109,24 @@ class _FakeToolCatalog:
         self.deferred_tools = set(names)
 
 
-async def test_fast_chat_shortcut_skips_llm_intent_analysis():
-    result = await IntentAnalyzer(_FailingCompilerBrain()).analyze("你好")
+async def test_greeting_uses_llm_intent_analysis():
+    brain = _StaticCompilerBrain("intent: chat\ntask_type: other\ngoal: respond to greeting")
 
+    result = await IntentAnalyzer(brain).analyze("你好")
+
+    assert brain.calls == 1
     assert result.intent == IntentType.CHAT
-    assert result.fast_reply is True
-    assert result.prompt_depth == PromptDepth.FAST
+    assert result.prompt_depth == PromptDepth.MINIMAL
     assert result.memory_scope == MemoryScope.PINNED_ONLY
     assert result.requires_tools is False
 
 
-async def test_fast_chat_shortcut_still_handles_unambiguous_greeting_with_history():
-    result = await IntentAnalyzer(_FailingCompilerBrain()).analyze("hello", has_history=True)
+def test_session_preparation_has_no_sub_agent_intent_shortcut():
+    source = inspect.getsource(Agent._prepare_session_context)
 
-    assert result.intent == IntentType.CHAT
-    assert result.fast_reply is True
-    assert result.requires_tools is False
-
-
-async def test_direct_short_answer_role_question_skips_llm_intent_analysis():
-    result = await IntentAnalyzer(_FailingCompilerBrain()).analyze(
-        "请只用一句话回答，你的职责是什么？",
-        has_history=True,
-    )
-
-    assert result.intent == IntentType.QUERY
-    assert result.fast_reply is True
-    assert result.prompt_depth == PromptDepth.FAST
-    assert result.memory_scope == MemoryScope.PINNED_ONLY
-    assert result.requires_tools is False
-    assert result.evidence_required is False
-
-
-async def test_direct_identity_question_uses_fast_query_without_tools():
-    result = await IntentAnalyzer(_FailingCompilerBrain()).analyze("你是谁")
-
-    assert result.intent == IntentType.QUERY
-    assert result.fast_reply is True
-    assert result.prompt_depth == PromptDepth.FAST
-    assert result.memory_scope == MemoryScope.PINNED_ONLY
-    assert result.requires_tools is False
-    assert result.evidence_required is False
+    assert "self._intent_analyzer.analyze(" in source
+    assert "skipping IntentAnalyzer" not in source
+    assert "if self._is_sub_agent_call" not in source
 
 
 async def test_intent_analyzer_preserves_compiler_fallback_diagnostics():
@@ -299,7 +269,7 @@ suggest_plan: false"""
     assert result.requires_project_context is False
 
 
-async def test_compound_web_and_file_request_does_not_degrade_in_fast_path():
+async def test_compound_web_and_file_request_keeps_structured_analysis():
     brain = _StaticCompilerBrain(
         """intent: task
 task_type: compound
@@ -330,10 +300,11 @@ suggest_plan: false"""
 
 
 async def test_one_sentence_explanation_skips_tools_without_blocking_model_answer():
-    result = await IntentAnalyzer(_FailingCompilerBrain()).analyze("一句话解释 Docker")
+    brain = _StaticCompilerBrain("intent: query\ntask_type: question\ngoal: explain Docker briefly")
+    result = await IntentAnalyzer(brain).analyze("一句话解释 Docker")
 
+    assert brain.calls == 1
     assert result.intent == IntentType.QUERY
-    assert result.fast_reply is True
     assert result.requires_tools is False
     assert result.force_tool is False
 
@@ -345,7 +316,6 @@ def test_chat_prompt_strategy_uses_lightweight_consumer_profile():
         prompt_depth=PromptDepth.FAST,
         memory_scope=MemoryScope.PINNED_ONLY,
         requires_tools=False,
-        fast_reply=True,
     )
 
     strategy = agent._resolve_prompt_strategy(
@@ -357,7 +327,6 @@ def test_chat_prompt_strategy_uses_lightweight_consumer_profile():
     assert strategy.profile == PromptProfile.CONSUMER_CHAT
     assert strategy.prompt_mode == PromptMode.MINIMAL
     assert strategy.memory_scope == MemoryScope.PINNED_ONLY
-    assert strategy.skip_catalogs is True
     assert strategy.catalog_scope == []
     assert strategy.include_project_guidelines is False
     assert strategy.include_runtime_env_policy is False
@@ -380,7 +349,6 @@ def test_prompt_strategy_uses_structured_intent_not_user_text():
     second = agent._resolve_prompt_strategy(query, session_type="cli", mode="agent")
 
     assert first == second
-    assert first.skip_catalogs is True
 
 
 def test_tool_backed_query_keeps_structured_catalog_scope():
@@ -397,7 +365,6 @@ def test_tool_backed_query_keeps_structured_catalog_scope():
 
     strategy = agent._resolve_prompt_strategy(intent, session_type="cli", mode="agent")
 
-    assert strategy.skip_catalogs is False
     assert strategy.catalog_scope == ["skills", "mcp"]
     assert strategy.include_runtime_env_policy is True
     assert strategy.include_multi_agent is False
@@ -428,7 +395,6 @@ def test_minimal_pinned_only_prompt_still_includes_light_memory(tmp_path):
         prompt_mode=PromptMode.MINIMAL,
         prompt_profile=PromptProfile.CONSUMER_CHAT,
         memory_scope=MemoryScope.PINNED_ONLY,
-        skip_catalogs=True,
     )
 
     assert "## 你的记忆系统" in prompt
@@ -447,7 +413,6 @@ def test_minimal_prompt_preserves_working_facts(tmp_path):
         prompt_mode=PromptMode.MINIMAL,
         prompt_profile=PromptProfile.CONSUMER_CHAT,
         memory_scope=MemoryScope.PINNED_ONLY,
-        skip_catalogs=True,
     )
 
     assert "## Session Working Facts" in prompt
@@ -461,7 +426,6 @@ def test_minimal_consumer_prompt_uses_compact_nonduplicated_rules(tmp_path):
         prompt_mode=PromptMode.MINIMAL,
         prompt_profile=PromptProfile.CONSUMER_CHAT,
         memory_scope=MemoryScope.PINNED_ONLY,
-        skip_catalogs=True,
     )
 
     assert "## 安全约束" in prompt
@@ -471,49 +435,6 @@ def test_minimal_consumer_prompt_uses_compact_nonduplicated_rules(tmp_path):
     assert "### Python 环境" not in prompt
     assert "### 工具执行域" not in prompt
     assert "### 每轮自检" not in prompt
-
-
-def test_fast_chat_effective_tools_use_minimal_schema_set(monkeypatch):
-    """Legacy intent-driven minimal-prompt path (Fix-G4 rollback).
-
-    RCA v11 §1.5 (Fix-G4) added ``settings.effective_tools_main_chat_stable``
-    which defaults to True and bypasses the intent-driven minimal-prompt
-    filter so the main-chat tool set stays stable across turns. This test
-    flips the flag back to False to keep covering the legacy branch as a
-    rollback contract.
-    """
-    from openakita.config import settings as _settings
-
-    monkeypatch.setattr(_settings, "effective_tools_main_chat_stable", False)
-
-    agent = Agent.__new__(Agent)
-    agent._tools = [
-        {"name": "read_file", "category": "File System"},
-        {"name": "web_search", "category": "Web Search"},
-        {"name": "browser_navigate", "category": "Browser"},
-        {"name": "run_shell", "category": "File System"},
-        {"name": "schedule_task", "category": "Scheduled Tasks"},
-    ]
-    agent._current_intent = IntentResult(
-        intent=IntentType.CHAT,
-        prompt_depth=PromptDepth.FAST,
-        requires_tools=False,
-        force_tool=False,
-    )
-    agent._current_user_message = "你好"
-    agent._is_sub_agent_call = False
-    agent._agent_tool_names = frozenset()
-    agent._cron_disabled_tools = set()
-    agent._current_session_type = "cli"
-    agent._discovered_tools = set()
-    agent.tool_catalog = _FakeToolCatalog()
-    agent._get_raw_context_window = lambda: 0
-
-    tool_names = {tool["name"] for tool in agent._effective_tools}
-
-    assert tool_names == {"read_file", "web_search"}
-    assert tool_names <= MINIMAL_PROMPT_TOOLS
-    assert agent._last_minimal_toolset is True
 
 
 def test_main_chat_stable_mode_keeps_small_direct_toolset_across_intents():
@@ -829,28 +750,15 @@ requires_project_context: false
     assert result.evidence_required is False
 
 
-def test_default_intent_is_minimal_non_tool_query():
+def test_default_intent_is_minimal_tool_capable_task():
     result = _make_default("解释一下 Python GIL")
 
-    assert result.intent == IntentType.QUERY
+    assert result.intent == IntentType.TASK
     assert result.prompt_depth == PromptDepth.MINIMAL
     assert result.memory_scope == MemoryScope.PINNED_ONLY
-    assert result.requires_tools is False
+    assert result.requires_tools is True
     assert result.evidence_required is False
-    assert result.force_tool is False
-
-
-def test_log_investigation_is_excluded_from_query_fast_path():
-    assert (
-        _try_fast_query_shortcut(
-            "我看你的运行日志有很多报错和警告的内容，都是关于skills技能的，你排查一下是什么原因导致的"
-        )
-        is None
-    )
-
-
-def test_daily_record_content_is_excluded_from_query_fast_path():
-    assert _try_fast_query_shortcut("3月18日工作：邹总问了下是否有交付确认邮件") is None
+    assert result.force_tool is True
 
 
 def test_write_confirmation_followup_requires_evidence_without_overprompting():
@@ -900,16 +808,6 @@ suggest_plan: false
     assert result.requires_tools is True
     assert result.evidence_required is True
     assert result.force_tool is True
-
-
-def test_plain_concept_query_is_not_over_guarded():
-    result = _try_fast_query_shortcut("什么是API")
-
-    assert result is not None
-    assert result.intent == IntentType.QUERY
-    assert result.requires_tools is False
-    assert result.evidence_required is False
-    assert result.force_tool is False
 
 
 def test_execute_task_followup_is_guarded_as_tool_task():
@@ -1051,59 +949,6 @@ def test_plain_task_without_tools_disables_force_tool_guard():
 
     assert force_retries == 0
     assert evidence_required is False
-
-
-def test_sub_agent_plain_text_delegation_does_not_force_tools():
-    message = (
-        "请扮演法国总统马克龙，围绕 AI 与日本经济写一段 200 字观点。"
-        "直接用纯文本回复，不需要调用任何工具。"
-    )
-
-    assert _looks_like_external_tool_request(message) is False
-
-
-def test_sub_agent_external_delegation_still_requires_tools():
-    message = "请读取 /tmp/report.md，并根据文件内容总结关键结论。"
-
-    assert _looks_like_external_tool_request(message) is True
-
-
-# ---------------------------------------------------------------------------
-# Regression: 5/8 keyword-only delegation guard missed common Chinese
-# "produce-a-deliverable" verbs. Coordinator nodes (editor-in-chief, CEO,
-# tech-lead) ended up self-executing tasks like "做一份 X 计划" instead of
-# delegating because none of "做一份 / 出一份 / 整理 / 宣传 / 调研" matched.
-# These cases lock in the expanded marker list.
-# ---------------------------------------------------------------------------
-
-
-def test_make_a_plan_request_is_treated_as_external_tool_task():
-    assert _looks_like_external_tool_request("帮我做一份 OpenAkita 的宣传计划") is True
-
-
-def test_compile_a_report_request_is_treated_as_external_tool_task():
-    assert _looks_like_external_tool_request("整理一份本周项目进展汇总") is True
-
-
-def test_research_competitor_request_is_treated_as_external_tool_task():
-    assert _looks_like_external_tool_request("调研一下竞品的定价策略") is True
-
-
-def test_publish_announcement_request_is_treated_as_external_tool_task():
-    assert _looks_like_external_tool_request("写一份本月的产品发布通告") is True
-
-
-def test_english_produce_request_is_treated_as_external_tool_task():
-    assert _looks_like_external_tool_request("Please produce a marketing plan") is True
-
-
-def test_explicit_no_tool_keeps_pure_writing_path():
-    """Even with deliverable-style verbs, an explicit "no tools" rider should
-    still route the request to text-only sub-agent flow (preserves the
-    "扮演 X 写一段 200 字" use case introduced in 5/8)."""
-    message = "请扮演记者写一份 200 字的产品介绍。直接用纯文本回复，不要调用任何工具。"
-
-    assert _looks_like_external_tool_request(message) is False
 
 
 def test_org_coordinator_resolves_force_tool_policy_even_for_writing_request():

@@ -2,7 +2,6 @@ import base64
 
 from openakita.api.routes import upload
 from openakita.core.agent import (
-    _allows_lightweight_fast_reply,
     _format_desktop_attachment_reference,
     _format_vision_unavailable_notice,
     _has_pending_media_or_attachments,
@@ -61,13 +60,7 @@ def test_vision_unavailable_notice_tells_model_not_to_guess_image_content():
     assert "OpenAkita 设置中心配置带 vision 能力" in text
 
 
-def test_pending_media_or_attachments_disables_fast_reply_eligibility():
+def test_pending_media_or_attachments_are_detected():
     assert _has_pending_media_or_attachments(attachments=[{"type": "image"}]) is True
     assert _has_pending_media_or_attachments(pending_images=[{"local_path": "x.png"}]) is True
     assert _has_pending_media_or_attachments() is False
-
-
-def test_lightweight_fast_reply_is_disabled_for_media_turns():
-    assert _allows_lightweight_fast_reply() is True
-    assert _allows_lightweight_fast_reply(turn_has_media=True) is False
-    assert _allows_lightweight_fast_reply(endpoint_override="qwen-plus") is False

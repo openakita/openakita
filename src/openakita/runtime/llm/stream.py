@@ -7,9 +7,8 @@ collide with that import path; we place this submodule inside the
 ``runtime/llm/`` package instead -- the deviation is captured in the
 G-RC-4 gate review.
 
-The legacy ``Brain`` exposed two streaming entry points
-(``think_lightweight_stream`` 130 LOC and ``messages_create_stream``
-56 LOC) that wrapped ``LLMClient.chat_stream`` with a
+The legacy ``Brain`` streaming entry point wrapped
+``LLMClient.chat_stream`` with a
 ``TokenTrackingContext`` set/reset, a debug-dump call, and the v1
 multimodal conversion. The conversion is the heavy part; this helper
 exposes the lightweight streaming primitive itself so the v2 agent

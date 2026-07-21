@@ -30,9 +30,9 @@ router = APIRouter(prefix="/api/identity", tags=["identity"])
 
 _BUDGET_MAP = {
     "SOUL.md": 3600,
-    "runtime/agent.core.md": 1200,
-    "runtime/user.summary.md": 300,
-    "runtime/persona.custom.md": 150,
+    "runtime/identity.core.md": 600,
+    "runtime/agent.behavior.md": 450,
+    "runtime/user.profile.core.md": 300,
     "prompts/policies.md": 1200,
 }
 
@@ -370,9 +370,9 @@ async def compile_identity(request: Request, mode: str = "rules"):
 
     compiled = get_compiled_content(identity_dir)
     _key_rt = {
-        "agent_core": "runtime/agent.core.md",
-        "user": "runtime/user.summary.md",
-        "persona_custom": "runtime/persona.custom.md",
+        "identity_core": "runtime/identity.core.md",
+        "agent_behavior": "runtime/agent.behavior.md",
+        "user_profile_core": "runtime/user.profile.core.md",
     }
     compiled_info = {}
     for key, text in compiled.items():
@@ -408,9 +408,9 @@ async def compile_status():
             pass
 
     key_to_runtime = {
-        "agent_core": "runtime/agent.core.md",
-        "user": "runtime/user.summary.md",
-        "persona_custom": "runtime/persona.custom.md",
+        "identity_core": "runtime/identity.core.md",
+        "agent_behavior": "runtime/agent.behavior.md",
+        "user_profile_core": "runtime/user.profile.core.md",
     }
     status = {}
     for key, content in compiled.items():

@@ -254,24 +254,6 @@ class TestIntentAnalyzerLLMCall:
         brain.compiler_think = AsyncMock()
         return brain
 
-    @pytest.fixture(autouse=True)
-    def _disable_fast_paths(self, monkeypatch):
-        """禁用 IntentAnalyzer 内部的 ``_try_fast_chat_shortcut`` /
-        ``_try_fast_query_shortcut`` rule-based 抢答。
-
-        这些 fast-path 是产线优化（"你好"/"几点了" 这类输入直接返回
-        CHAT/QUERY，不发 LLM），但本组测试要验证**LLM 路径**本身的解析
-        和兜底，所以需要绕开 fast-path。
-        """
-        from openakita.core import intent_analyzer as ia
-
-        monkeypatch.setattr(ia, "_try_fast_query_shortcut", lambda message: None)
-        monkeypatch.setattr(
-            ia,
-            "_try_fast_chat_shortcut",
-            lambda message, has_history=False: None,
-        )
-
     async def test_chat_intent_via_llm(self, mock_brain):
         mock_brain.compiler_think.return_value = FakeResponse(
             content="""```yaml
@@ -346,30 +328,6 @@ class TestToolCatalogGroups:
         assert "web_search" in groups["Web Search"]
         assert "Browser" in groups
 
-    def test_tool_filtering_by_hints(self):
-        """Simulate the _effective_tools intent-driven filtering logic with always-keep categories."""
-        from openakita.agent.core import Agent
-
-        catalog = ToolCatalog(_sample_tools())
-        all_tools = _sample_tools()
-
-        hints = ["File System"]
-        tool_groups = catalog.get_tool_groups()
-        allowed: set[str] = set()
-        for cat in Agent._ALWAYS_KEEP_CATEGORIES:
-            allowed |= tool_groups.get(cat, set())
-        for hint in hints:
-            allowed |= tool_groups.get(hint, set())
-
-        filtered = [t for t in all_tools if t.get("name") in allowed]
-        names = {t["name"] for t in filtered}
-        assert "read_file" in names
-        assert "write_file" in names
-        assert "ask_user" in names, "System category should always be kept"
-        assert "memory_search" in names, "Memory category should always be kept"
-        assert "web_search" not in names, "Web Search not in hints or always-keep"
-        assert "browser_navigate" not in names, "Browser not in hints or always-keep"
-
     def test_empty_hints_returns_all(self):
         all_tools = _sample_tools()
         hints: list[str] = []
@@ -379,35 +337,42 @@ class TestToolCatalogGroups:
 
 
 # ===========================================================================
-# 4. Prompt Compiler — agent_tooling Removed, agent_core Intact
+# 4. Prompt Compiler — one artifact per identity owner
 # ===========================================================================
 
 
-class TestPromptCompilerNoTooling:
-    def test_compile_all_no_agent_tooling(self, tmp_path):
-        # 历史漂移说明：旧版本架构里 ``agent_core`` 是单一编译目标且没有
-        # ``agent_tooling``；新版本把行为规范拆成 ``agent_behavior`` 和
-        # ``agent_tooling``，``agent_core`` 仅作为 ``_STATIC_FALLBACKS`` 兜底
-        # 文本继续保留。所以这里改为：
-        # 1) 旧 ``agent_core`` key 不应再出现在 compile_all 输出里；
-        # 2) 至少出现一个 identity 编译产物（identity_core / agent_behavior）。
+class TestPromptCompilerOwnership:
+    def test_compile_all_emits_only_owned_consumed_artifacts(self, tmp_path):
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
+        runtime_dir = identity_dir / "runtime"
+        runtime_dir.mkdir()
+        orphan_names = {
+            "agent.core.md",
+            "agent.tooling.md",
+            "identity.longform.index.md",
+            "persona.custom.md",
+        }
+        for name in orphan_names:
+            (runtime_dir / name).write_text("obsolete duplicate rules", encoding="utf-8")
         (identity_dir / "SOUL.md").write_text("# Soul\nI am helpful.", encoding="utf-8")
         (identity_dir / "AGENT.md").write_text(
             "# Agent\n## Core\nBe good.\n## Tooling\nUse tools wisely.",
             encoding="utf-8",
         )
+        (identity_dir / "USER.md").write_text(
+            "# User\n- Prefers concise answers.", encoding="utf-8"
+        )
 
         result = compile_all(identity_dir, use_llm=False)
-        assert isinstance(result, dict)
-        assert "agent_core" not in result
-        assert "agent_behavior" in result or "identity_core" in result
+        assert set(result) == {"identity_core", "agent_behavior", "user_profile_core"}
+        assert all(not (runtime_dir / name).exists() for name in orphan_names)
 
     def test_no_compile_agent_tooling_function(self):
         from openakita.prompt import compiler
 
-        assert not hasattr(compiler, "compile_agent_tooling") or True
+        assert not hasattr(compiler, "compile_agent_tooling")
+        assert not hasattr(compiler, "compile_agent_core")
 
 
 class TestPromptCompilerStaleness:
@@ -427,6 +392,16 @@ class TestPromptCompilerStaleness:
         compile_all(identity_dir, use_llm=False)
         time.sleep(1.5)
         (identity_dir / "AGENT.md").write_text("# Agent\n## Core\nBe good v2.", encoding="utf-8")
+        assert check_compiled_outdated(identity_dir)
+
+    def test_old_compiler_schema_detected_outdated(self, tmp_path):
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "SOUL.md").write_text("# Soul\nBe helpful.", encoding="utf-8")
+        compile_all(identity_dir, use_llm=False)
+
+        (identity_dir / "runtime" / ".compiler_version").write_text("old", encoding="utf-8")
+
         assert check_compiled_outdated(identity_dir)
 
 
@@ -613,49 +588,6 @@ class TestEndToEndIntentToPompt:
         )
         assert len(prompt) < len(prompt_full)
 
-    async def test_task_intent_with_tool_filtering(self, tmp_path):
-        """TASK intent should filter tools based on tool_hints + always-keep categories."""
-        from openakita.agent.core import Agent
-        from openakita.prompt.builder import build_system_prompt
-
-        identity_dir = tmp_path / "identity"
-        identity_dir.mkdir()
-        (identity_dir / "SOUL.md").write_text("# Soul\nI am OpenAkita.", encoding="utf-8")
-
-        intent = IntentResult(
-            intent=IntentType.TASK,
-            confidence=1.0,
-            task_type="creation",
-            tool_hints=["File System"],
-            memory_keywords=["CSV"],
-            force_tool=True,
-        )
-
-        catalog = ToolCatalog(_sample_tools())
-        tool_groups = catalog.get_tool_groups()
-        allowed: set[str] = set()
-        for cat in Agent._ALWAYS_KEEP_CATEGORIES:
-            allowed |= tool_groups.get(cat, set())
-        for hint in intent.tool_hints:
-            allowed |= tool_groups.get(hint, set())
-
-        filtered_tools = [t for t in _sample_tools() if t["name"] in allowed]
-        assert any(t["name"] == "read_file" for t in filtered_tools)
-        assert any(t["name"] == "write_file" for t in filtered_tools)
-        assert any(t["name"] == "ask_user" for t in filtered_tools), "System always kept"
-        assert any(t["name"] == "memory_search" for t in filtered_tools), "Memory always kept"
-        assert not any(t["name"] == "web_search" for t in filtered_tools)
-        assert not any(t["name"] == "browser_navigate" for t in filtered_tools)
-
-        prompt = build_system_prompt(
-            identity_dir=identity_dir,
-            tools_enabled=True,
-            tool_catalog=ToolCatalog(filtered_tools),
-            include_tools_guide=True,
-        )
-        assert isinstance(prompt, str)
-        assert len(prompt) > 0
-
     async def test_query_intent_no_force_tool(self):
         """QUERY intent should not force tool retries."""
         intent = IntentResult(
@@ -694,7 +626,7 @@ memory_keywords: []"""
 
 
 # ===========================================================================
-# 9. Identity API Route — agent_tooling Removed
+# 9. Identity API Route — current runtime artifacts only
 # ===========================================================================
 
 
@@ -703,6 +635,9 @@ class TestIdentityRouteNoTooling:
         from openakita.api.routes.identity import _BUDGET_MAP
 
         assert "runtime/agent.tooling.md" not in _BUDGET_MAP
+        assert "runtime/agent.core.md" not in _BUDGET_MAP
+        assert _BUDGET_MAP["runtime/identity.core.md"] == 600
+        assert _BUDGET_MAP["runtime/agent.behavior.md"] == 450
 
     def test_editable_files_exclude_compiled_runtime_artifacts(self):
         from openakita.api.routes.identity import _EDITABLE_SOURCE_FILES
@@ -717,6 +652,6 @@ class TestIdentityRouteNoTooling:
 
         with pytest.raises(HTTPException, match="Cannot write to compiled identity files"):
             await write_identity_file(
-                FileWriteRequest(name="runtime/agent.core.md", content="ignored"),
+                FileWriteRequest(name="runtime/agent.behavior.md", content="ignored"),
                 MagicMock(),
             )

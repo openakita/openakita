@@ -12,20 +12,12 @@ OpenAkita Prompt 管线模块
 
 from .budget import BudgetConfig, apply_budget
 from .builder import SYSTEM_PROMPT_DYNAMIC_BOUNDARY, build_system_prompt, split_static_dynamic
-from .compiler import (
-    compile_agent_core,
-    compile_all,
-    compile_soul,
-    compile_user,
-)
+from .compiler import compile_all
 from .retriever import retrieve_memory
 
 __all__ = [
     # Compiler
     "compile_all",
-    "compile_soul",
-    "compile_agent_core",
-    "compile_user",
     # Retriever
     "retrieve_memory",
     # Budget

@@ -122,7 +122,6 @@ def _copy_template_files(ws_dir: Path) -> None:
 
     _copy_dir_templates(ws_dir, repo_root, pkg_root, "identity/personas")
     _copy_dir_templates(ws_dir, repo_root, pkg_root, "identity/prompts")
-    _copy_dir_templates(ws_dir, repo_root, pkg_root, "identity/runtime")
 
     llm_dest = ws_dir / "data" / "llm_endpoints.json"
     if not llm_dest.exists():

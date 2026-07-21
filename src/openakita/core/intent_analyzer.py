@@ -110,7 +110,6 @@ class IntentResult:
     suppress_plan: bool = False
     complexity: ComplexitySignal = field(default_factory=ComplexitySignal)
     raw_output: str = ""
-    fast_reply: bool = False
     capability_scope: list[CapabilityScope] = field(default_factory=list)
     prompt_depth: PromptDepth = PromptDepth.STANDARD
     memory_scope: MemoryScope = MemoryScope.RELEVANT
@@ -127,17 +126,6 @@ class IntentResult:
     compiler_fallback_reason: str = ""
     compiler_fallback_detail: str = ""
 
-
-# Default fallback: behaves identically to the pre-optimization flow
-_DEFAULT_RESULT = IntentResult(
-    intent=IntentType.QUERY,
-    confidence=0.0,
-    force_tool=False,
-    prompt_depth=PromptDepth.MINIMAL,
-    memory_scope=MemoryScope.PINNED_ONLY,
-    requires_tools=False,
-    evidence_required=False,
-)
 
 INTENT_ANALYZER_MAX_TOKENS = 384
 
@@ -209,141 +197,6 @@ scope: broad
 def _strip_thinking_tags(text: str) -> str:
     return re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL).strip()
 
-
-# ---------------------------------------------------------------------------
-# Rule-based fast-path for obvious chat messages
-# ---------------------------------------------------------------------------
-
-_GREETING_PATTERNS: set[str] = {
-    # Chinese greetings / confirmations / farewells
-    "你好",
-    "您好",
-    "你好呀",
-    "你好啊",
-    "嗨",
-    "哈喽",
-    "hello",
-    "hi",
-    "hey",
-    "嗯",
-    "嗯嗯",
-    "好",
-    "好的",
-    "行",
-    "ok",
-    "可以",
-    "收到",
-    "了解",
-    "谢谢",
-    "谢了",
-    "感谢",
-    "thanks",
-    "thank you",
-    "thx",
-    "再见",
-    "拜拜",
-    "bye",
-    "晚安",
-    "早安",
-    "早",
-    "早上好",
-    "下午好",
-    "晚上好",
-    "在吗",
-    "在不在",
-    "你在吗",
-    "哈哈",
-    "哈哈哈",
-    "笑死",
-    "666",
-    "牛",
-    "厉害",
-    "?",
-    "？",
-    "!",
-    "！",
-}
-
-# When conversation history exists, only these unambiguous strings use the fast-path;
-# punctuation and short confirmations are analyzed by the LLM (may be follow-ups).
-_SAFE_WITH_HISTORY: frozenset[str] = frozenset(
-    {
-        "你好",
-        "您好",
-        "你好呀",
-        "你好啊",
-        "嗨",
-        "哈喽",
-        "hello",
-        "hi",
-        "hey",
-        "谢谢",
-        "谢了",
-        "感谢",
-        "thanks",
-        "thank you",
-        "thx",
-        "再见",
-        "拜拜",
-        "bye",
-        "晚安",
-        "早安",
-        "早",
-        "早上好",
-        "下午好",
-        "晚上好",
-    }
-)
-
-_FAST_CHAT_MAX_LEN = 12
-
-# Rule-based patterns for QUERY intent (no tools needed).
-# IMPORTANT: Chinese text has no whitespace, so \S+ greedily matches
-# entire strings.  All patterns must be tightly bounded to avoid
-# false-positives on context-dependent questions like
-# "说回我的情况，我的猫是什么品种？".
-_QUERY_PATTERNS = re.compile(
-    r"^(?:"
-    r"\d+\s*[+\-*/×÷]\s*\d+"  # math: 1+1, 3*4
-    r"|\S{1,12}等于[几多少什么]"  # X等于几 (bounded prefix)
-    r"|今天几[号日]"  # 今天几号
-    r"|现在几[点时]"  # 现在几点
-    r"|(?:什么|啥)(?:时间|日期|时候)"  # 什么时间
-    r"|几月几[号日]"  # 几月几号
-    r"|今天(?:是|星期|周)[几什么]"  # 今天星期几
-    r"|什么是\S{1,10}"  # 什么是X (short term only)
-    r"|\S{1,10}是什么"  # X是什么 (short term only)
-    r")$",
-    re.IGNORECASE,
-)
-
-# Direct short-answer requests are still knowledge/chat style questions.  They
-# should not enter the full ReAct loop just because they contain words like
-# "回答" or "介绍".
-_DIRECT_SHORT_ANSWER_RE = re.compile(
-    r"^(?:请)?(?:只)?(?:用)?一[句段]话(?:回答|说明|解释|介绍)?[，,:：\s]*"
-    r"(?:你(?:的)?(?:职责|角色)(?:是什么)?|你是谁|介绍(?:一下)?你自己|"
-    r"解释\s*\S{1,30}|说明\s*\S{1,30}|介绍\s*\S{1,30})$"
-    r"|^(?:你(?:的)?(?:职责|角色)(?:是什么)?|你是谁|介绍(?:一下)?你自己)$"
-    r"|^(?:请)?(?:简洁|简单|直接)(?:回答|说明|解释|介绍)[，,:：\s]*"
-    r"(?:你(?:的)?(?:职责|角色)(?:是什么)?|你是谁|介绍(?:一下)?你自己|"
-    r"\S{1,30}(?:是什么|怎么理解))$",
-    re.IGNORECASE,
-)
-
-_SHORT_EXPLANATION_RE = re.compile(
-    r"^(?:请)?(?:简单|简洁|直接)?(?:解释|说明|介绍)(?:一下)?[，,:：\s]+.{1,40}$",
-    re.IGNORECASE,
-)
-
-# Context-dependent markers: when present the user is referencing prior
-# conversation turns, so the fast (history-free) path MUST be skipped.
-_CONTEXT_DEPENDENT_RE = re.compile(
-    r"(?:说回|回到|刚才|之前|前面|上面|你说的|我说的|"
-    r"我们讨论的|你提到的|我告诉你的|你记得|还记得|"
-    r"来着|我的.{0,6}叫什么|"
-    r"^[我你他她它](?:的|们的))"
-)
 
 _ACTION_VERB_RE = re.compile(
     r"(?:帮我|请你|开始|继续|执行|处理|排查|查看|看看|检查|分析|修复|安装|"
@@ -468,7 +321,6 @@ def _make_tool_action_result(message: str, *, follow_up: bool = False) -> Intent
         force_tool=True,
         todo_required=False,
         raw_output="[action-tool-guard]",
-        fast_reply=False,
         prompt_depth=PromptDepth.STANDARD,
         memory_scope=MemoryScope.RELEVANT,
         requires_tools=True,
@@ -477,114 +329,6 @@ def _make_tool_action_result(message: str, *, follow_up: bool = False) -> Intent
         requires_project_context=requires_project_context,
         risk_level_hint=RiskLevelHint.NONE,
     )
-
-
-def _try_fast_query_shortcut(message: str) -> IntentResult | None:
-    """Rule-based shortcut for obvious query messages (math, date, definitions).
-    Returns QUERY intent immediately without LLM call."""
-    stripped = message.strip().rstrip("？?。.!！")
-    if len(stripped) > 50:
-        return None
-    if _CONTEXT_DEPENDENT_RE.search(stripped):
-        return None
-    if _looks_like_tool_action_request(stripped):
-        # Action requests need the structured analyzer because even short text
-        # can span multiple capability domains (for example web research plus
-        # writing a file). The rule is only an exclusion guard for the QUERY
-        # shortcut; it must not synthesize a reduced intent on the LLM's behalf.
-        return None
-    if (
-        _QUERY_PATTERNS.match(stripped)
-        or _DIRECT_SHORT_ANSWER_RE.match(stripped)
-        or _SHORT_EXPLANATION_RE.match(stripped)
-    ):
-        logger.info(f"[IntentAnalyzer] Fast-path: '{stripped}' matched as QUERY (rule-based)")
-        return IntentResult(
-            intent=IntentType.QUERY,
-            confidence=1.0,
-            task_definition="",
-            task_type="question",
-            tool_hints=[],
-            memory_keywords=[],
-            force_tool=False,
-            todo_required=False,
-            raw_output="[fast-query-shortcut]",
-            fast_reply=True,
-            prompt_depth=PromptDepth.FAST,
-            memory_scope=MemoryScope.PINNED_ONLY,
-            requires_tools=False,
-            evidence_required=False,
-            risk_level_hint=RiskLevelHint.NONE,
-        )
-    return None
-
-
-def _try_fast_chat_shortcut(message: str, has_history: bool = False) -> IntentResult | None:
-    """Rule-based shortcut: if message is an obvious greeting/confirmation,
-    return CHAT intent immediately without LLM call.
-
-    Returns None if the message doesn't match (should go through normal LLM analysis).
-    """
-    stripped = message.strip()
-
-    if len(stripped) > _FAST_CHAT_MAX_LEN:
-        return None
-
-    normalized = stripped.lower().rstrip("~～。.!！?？、,，")
-
-    # If there's conversation history, only match unambiguous greetings,
-    # NOT punctuation or short confirmations that could be follow-ups
-    if has_history:
-        # With history, only pure greetings are safe to fast-path
-        # Things like "？", "!", "好的", "嗯" could be follow-ups
-        if normalized not in _SAFE_WITH_HISTORY:
-            return None  # Ambiguous with history → go through LLM
-
-    if normalized in _GREETING_PATTERNS:
-        logger.info(f"[IntentAnalyzer] Fast-path: '{stripped}' matched as CHAT (rule-based)")
-        return IntentResult(
-            intent=IntentType.CHAT,
-            confidence=1.0,
-            task_definition="",
-            task_type="other",
-            tool_hints=[],
-            memory_keywords=[],
-            force_tool=False,
-            todo_required=False,
-            raw_output="[fast-chat-shortcut]",
-            fast_reply=True,
-            prompt_depth=PromptDepth.FAST,
-            memory_scope=MemoryScope.PINNED_ONLY,
-            requires_tools=False,
-            evidence_required=False,
-            risk_level_hint=RiskLevelHint.NONE,
-        )
-
-    if (
-        not has_history
-        and len(stripped) <= 6
-        and all(not c.isalnum() or c in "0123456789" for c in stripped)
-    ):
-        logger.info(f"[IntentAnalyzer] Fast-path: '{stripped}' is pure punctuation/emoji → CHAT")
-        return IntentResult(
-            intent=IntentType.CHAT,
-            confidence=0.9,
-            task_definition="",
-            task_type="other",
-            tool_hints=[],
-            memory_keywords=[],
-            force_tool=False,
-            todo_required=False,
-            raw_output="[fast-chat-shortcut-punctuation]",
-            fast_reply=True,
-            prompt_depth=PromptDepth.FAST,
-            memory_scope=MemoryScope.PINNED_ONLY,
-            requires_tools=False,
-            evidence_required=False,
-            risk_level_hint=RiskLevelHint.NONE,
-        )
-
-    return None
 
 
 class IntentAnalyzer:
@@ -599,21 +343,7 @@ class IntentAnalyzer:
         session_context: Any = None,
         has_history: bool = False,
     ) -> IntentResult:
-        """Analyze user message intent. Rule-based shortcut for obvious greetings
-        and simple queries, LLM analysis for everything else."""
-        # Rule-based fast-path for simple queries (math, date, definitions)
-        query_result = _try_fast_query_shortcut(message)
-        if query_result is not None:
-            return query_result
-
-        # Rule-based fast-path for greetings and other unambiguous casual chat.
-        # This avoids sending a full prompt/tool context to small local models for
-        # messages like "你好", while still letting ambiguous follow-ups with
-        # history go through the normal analyzer.
-        chat_result = _try_fast_chat_shortcut(message, has_history=has_history)
-        if chat_result is not None:
-            return chat_result
-
+        """Analyze every user message through the configured intent model."""
         try:
             response = await self.brain.compiler_think(
                 prompt=message,
@@ -645,8 +375,7 @@ def _make_default(message: str) -> IntentResult:
     工具能力服务到**，否则会出现"明明用户在让 OpenAkita 干活，却被识别成
     chitchat 然后没有任何工具被挂到上下文里"的退步。所以这里：
 
-    * 明显的知识问答仍走轻量 ``QUERY``，避免简单解释进入 ReAct 工具循环；
-    * 其余情况默认 ``TASK``；
+    * 所有情况默认 ``TASK``；
     * confidence 设为 ``0.0`` 让上层知道这不是来自 LLM 的高置信结果；
     * 强制 ``force_tool=True`` + ``requires_tools=True`` —— 兜底必须能
       调用工具，否则就退化成纯文本助手；
@@ -654,15 +383,6 @@ def _make_default(message: str) -> IntentResult:
       一个最小可用的工具集；
     * todo_required 仍然 False（LLM 没说要拆 todo，就别强行拆）。
     """
-    fast_query = _try_fast_query_shortcut(message)
-    if fast_query is not None:
-        fast_query.confidence = 0.0
-        fast_query.prompt_depth = PromptDepth.MINIMAL
-        fast_query.fast_reply = False
-        fast_query.task_definition = message[:600]
-        fast_query.raw_output = ""
-        return fast_query
-
     # P0-2 阶段 2：规则启发式降级为 evidence_recommended，不再硬等于 evidence_required
     rule_evidence = _requires_external_evidence(message)
     tool_hints, requires_project_context = _infer_tool_action_hints(message)

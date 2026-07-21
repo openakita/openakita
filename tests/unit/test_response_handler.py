@@ -57,16 +57,6 @@ class TestCleanLLMResponse:
 
 
 class TestResponseHandlerStaticMethods:
-    def test_should_compile_prompt_simple(self):
-        result = ResponseHandler.should_compile_prompt("你好")
-        assert isinstance(result, bool)
-
-    def test_should_compile_prompt_complex(self):
-        result = ResponseHandler.should_compile_prompt(
-            "帮我分析这个项目的架构，然后重构数据库层，最后写测试"
-        )
-        assert isinstance(result, bool)
-
     def test_get_last_user_request(self):
         messages = [
             {"role": "user", "content": "你好"},

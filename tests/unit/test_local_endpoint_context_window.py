@@ -1,6 +1,5 @@
 from types import SimpleNamespace
 
-from openakita.agent.brain import Brain
 from openakita.llm.client import _friendly_error_hint
 from openakita.llm.error_types import FailoverReason
 from openakita.llm.types import (
@@ -98,32 +97,6 @@ def test_models_response_context_window_extraction_prefers_matching_model():
     detected = ConfigHandler._extract_context_window_from_models_response(response, "gemma")
 
     assert detected == 4096
-
-
-def test_brain_tool_schema_budget_scales_down_for_small_context(monkeypatch):
-    brain = Brain.__new__(Brain)
-    endpoint = SimpleNamespace(name="local", context_window=4096)
-    brain._llm_client = SimpleNamespace(endpoints=[endpoint])
-    brain.get_current_model_info = lambda: {"name": "local"}
-
-    monkeypatch.setattr("openakita.core._brain_legacy.settings.api_tools_schema_budget_tokens", 12000)
-
-    tools = [
-        {
-            "name": f"tool_{idx}",
-            "description": "x" * 100,
-            "input_schema": {
-                "type": "object",
-                "properties": {f"field_{idx}": {"type": "string", "description": "y" * 300}},
-            },
-        }
-        for idx in range(10)
-    ]
-
-    converted = brain._convert_tools_to_llm(tools)
-
-    assert converted is not None
-    assert len(converted) < len(tools)
 
 
 def test_context_overflow_hint_is_specific_and_friendly():

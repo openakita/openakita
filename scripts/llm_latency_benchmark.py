@@ -73,7 +73,6 @@ def _assemble(identity_dir: Path, *, full: bool) -> tuple[str, float]:
             prompt_profile=PromptProfile.CONSUMER_CHAT,
             session_type="cli",
             mode="agent",
-            skip_catalogs=True,
         )
     return sp, time.perf_counter() - t0
 

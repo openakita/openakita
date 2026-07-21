@@ -160,8 +160,7 @@ def save_data_uri_attachment(
             suffix = mimetypes.guess_extension(mime) or ".bin"
 
         filename = (
-            f"{int(time.time())}_{uuid.uuid4().hex[:8]}_"
-            f"{safe_attachment_stem(att_name)}{suffix}"
+            f"{int(time.time())}_{uuid.uuid4().hex[:8]}_{safe_attachment_stem(att_name)}{suffix}"
         )
         filepath = get_upload_dir() / filename
         filepath.write_bytes(raw)
@@ -256,7 +255,7 @@ def format_vision_unavailable_notice(
 
     Injected on image-bearing turns where no configured LLM endpoint has
     vision capability. The notice tells the model to admit it cannot read
-    the image rather than fast-replying as if no image existed.
+    the image rather than responding as if no image existed.
     """
     item_label = "张图片" if source == "图片" else source
     details: list[str] = []
@@ -286,25 +285,8 @@ def has_pending_media_or_attachments(
     pending_files: Any = None,
     attachments: Any = None,
 ) -> bool:
-    """True when the current turn carries any media/file payload.
-
-    Used to disable the lightweight fast-reply path so the model never
-    answers before attachment context is considered.
-    """
+    """True when the current turn carries any media/file payload."""
     return any(
         bool(item)
         for item in (pending_images, pending_videos, pending_audio, pending_files, attachments)
     )
-
-
-def allows_lightweight_fast_reply(
-    *,
-    endpoint_override: str | None = None,
-    turn_has_media: bool = False,
-) -> bool:
-    """Whether the lightweight (no-thinking) fast-reply path may run.
-
-    Disabled when the user pinned an endpoint override or when the turn
-    carries media (image/video/audio/file) attachments.
-    """
-    return not endpoint_override and not turn_has_media

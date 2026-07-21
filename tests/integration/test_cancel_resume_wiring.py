@@ -197,19 +197,22 @@ class TestPersistGuard:
 
 class TestRecoverableExitHooks:
     @pytest.mark.asyncio
-    async def test_run_wrapper_persists_recoverable_exit_before_clear(self, engine, data_dir) -> None:
+    async def test_run_wrapper_persists_recoverable_exit_before_clear(
+        self, engine, data_dir
+    ) -> None:
         conv = "conv-run-max"
 
-        async def fake_run_impl(*args, **kwargs) -> str:
+        async def fake_reason_stream_impl(*args, **kwargs):
             st = TaskState(task_id="t", session_id=conv)
             st.is_sub_agent = False
             st.current_model = "claude"
             kwargs["_on_state_resolved"](st)
             engine._last_working_messages = _tool_turn()
             engine._last_exit_reason = "max_iterations"
-            return "hit max iterations"
+            yield {"type": "text_delta", "content": "hit max iterations"}
+            yield {"type": "done"}
 
-        engine._run_impl = fake_run_impl
+        engine._reason_stream_impl = fake_reason_stream_impl
         result = await engine.run(
             [{"role": "user", "content": "继续"}],
             tools=[],

@@ -1,42 +1,8 @@
-"""Fix-10 回归测试：deferred 调度工具提至首轮 + get_tool_info fuzzy 重定向。"""
+"""Tool catalog alias resolution regressions."""
 
 from __future__ import annotations
 
-import pytest
-
 from openakita.tools.catalog import ToolCatalog
-from openakita.tools.defer_config import ALWAYS_LOAD_TOOLS, should_defer
-
-
-# ---------------------------------------------------------------------------
-# Fix-10 (a): 高频调度/记忆/网络工具必须在 ALWAYS_LOAD_TOOLS 中
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "tool_name",
-    [
-        "schedule_task",
-        "list_scheduled_tasks",
-        "cancel_scheduled_task",
-        "search_memory",
-        "add_memory",
-        "web_search",
-        "web_fetch",
-        "update_user_profile",
-    ],
-)
-def test_high_frequency_tools_always_loaded(tool_name: str):
-    assert tool_name in ALWAYS_LOAD_TOOLS, f"{tool_name} should be promoted to first-turn schema"
-    assert not should_defer(tool_name), f"{tool_name} should NOT be deferred"
-
-
-def test_should_defer_still_works_for_individual_defers():
-    """非高频工具仍按原规则 defer。"""
-    assert should_defer("install_skill")  # 在 DEFER_INDIVIDUAL_TOOLS 里
-    assert should_defer("uninstall_skill")
-    assert should_defer("set_persona_trait")
-
 
 # ---------------------------------------------------------------------------
 # Fix-10 (b): get_tool_info fuzzy 重定向

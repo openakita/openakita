@@ -49,8 +49,6 @@ _DEFAULTS: dict[str, bool] = {
     "scheduler_metadata_cleanup_v1": True,
     # P2-2
     "llm_inflight_loop_aware_v1": True,
-    # P2-5
-    "intent_tool_slim_v1": True,
     # P1-2
     "text_replace_on_restart_v1": True,
     # Conversation config-workspace / working-directory split.

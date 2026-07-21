@@ -9,7 +9,6 @@ STRUCTURED_OUTPUT_TOOLS: list[dict] = [
     {
         "name": "structured_output",
         "category": "System",
-        "should_defer": True,
         "description": (
             "Return a structured JSON response conforming to a pre-defined schema. "
             "Only available in API/SDK mode (non-interactive). Use when the caller "

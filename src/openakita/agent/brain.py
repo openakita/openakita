@@ -223,8 +223,8 @@ class Brain(_LegacyBrainImpl):
         * ``think_lightweight(prompt_text, max_tokens=...)`` -- the
           legacy positional form still used by
           :meth:`scheduler.executor._system_memory_nudge_review`,
-          several plugins (e.g. ``fin-pulse``), and the v1 agent's
-          fast-reply path. Routed straight through the legacy impl.
+          several plugins (e.g. ``fin-pulse``). Routed straight through
+          the legacy implementation.
         * ``think_lightweight(system=..., messages=[...])`` -- the v2
           :class:`SupervisorBrain` protocol surface.
 
@@ -270,6 +270,7 @@ class Brain(_LegacyBrainImpl):
         to the legacy ``brain._convert_response_to_anthropic``.
         """
         return response_to_anthropic_message(response)
+
     # ------------------------------------------------------------------
     # Endpoint-management surface re-anchored on the failover view
     # ------------------------------------------------------------------
@@ -301,9 +302,7 @@ class Brain(_LegacyBrainImpl):
             policy=policy,
         )
 
-    def restore_default_model(
-        self, conversation_id: str | None = None
-    ) -> tuple[bool, str]:
+    def restore_default_model(self, conversation_id: str | None = None) -> tuple[bool, str]:
         """Drop the manual override; delegates to the failover view."""
         return self._failover_view.restore_default(conversation_id=conversation_id)
 
@@ -323,9 +322,7 @@ class Brain(_LegacyBrainImpl):
         """Next-priority configured endpoint name; via the failover view."""
         return self._failover_view.next_fallback_model(conversation_id)
 
-    def update_model_priority(
-        self, priority_order: list[str]
-    ) -> tuple[bool, str]:
+    def update_model_priority(self, priority_order: list[str]) -> tuple[bool, str]:
         """Rewrite persisted endpoint priority order; via the failover view."""
         return self._failover_view.update_priority(priority_order)
 
@@ -385,4 +382,3 @@ class Brain(_LegacyBrainImpl):
     def set_trace_context(self, ctx: dict[str, str]) -> None:
         """Set trace context (org_id, node_id, session_id, ...) for dumps."""
         super().set_trace_context(ctx)
-

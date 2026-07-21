@@ -63,13 +63,17 @@ def _sanitize_compiler_error(error: str, max_chars: int = 300) -> str:
 
 def _classify_compiler_access_error(error: str) -> str:
     text = str(error or "").lower()
-    if any(marker in text for marker in ("401", "403", "unauthorized", "authentication", "api key")):
+    if any(
+        marker in text for marker in ("401", "403", "unauthorized", "authentication", "api key")
+    ):
         return "authentication_failed"
     if any(marker in text for marker in ("429", "rate limit", "rate_limit", "quota")):
         return "rate_limited"
     if any(marker in text for marker in ("timeout", "timed out", "connection", "network", "dns")):
         return "network_unreachable"
-    if any(marker in text for marker in ("model_not_found", "model not found", "unknown model", "404")):
+    if any(
+        marker in text for marker in ("model_not_found", "model not found", "unknown model", "404")
+    ):
         return "model_unavailable"
     return "all_endpoints_failed"
 
@@ -143,6 +147,7 @@ class Brain:
         from ..llm.client import (
             LLMClient,  # local import: break core/agent/llm cycle (P-RC-11 P11.2)
         )
+
         # Compiler circuit breaker (P-RC-4 extraction).
         self._compiler_breaker = CompilerCircuitBreaker()
         self._compiler_last_error = ""
@@ -170,7 +175,6 @@ class Brain:
         # Prompt Compiler 专用 LLMClient（独立于主模型，使用快速小模型）
         self._compiler_client: LLMClient | None = None
         self._init_compiler_client()
-
 
         # 公开属性（从 LMClient 获取）
         self._update_public_attrs()
@@ -222,6 +226,7 @@ class Brain:
         from ..llm.client import (
             LLMClient,  # local import: break core/agent/llm cycle (P-RC-11 P11.2)
         )
+
         try:
             _, compiler_eps, _, _ = load_endpoints_config()
             if compiler_eps:
@@ -258,6 +263,7 @@ class Brain:
         from ..llm.client import (
             LLMClient,  # local import: break core/agent/llm cycle (P-RC-11 P11.2)
         )
+
         try:
             _, compiler_eps, _, _ = load_endpoints_config()
             if compiler_eps:
@@ -329,9 +335,7 @@ class Brain:
             _fallback_reason, _fallback_detail = _compiler_configuration_fallback_reason()
         else:
             _fallback_reason = (
-                "authentication_failed"
-                if self._compiler_breaker.auth_failed
-                else "circuit_open"
+                "authentication_failed" if self._compiler_breaker.auth_failed else "circuit_open"
             )
             _fallback_detail = self._compiler_last_error
 
@@ -432,142 +436,6 @@ class Brain:
         self._record_usage(response)
         return self._llm_response_to_response(response)
 
-    async def think_lightweight_stream(
-        self,
-        prompt: str,
-        system: str | None = None,
-        max_tokens: int = 2048,
-        enable_thinking: bool = False,
-        thinking_depth: str | None = None,
-    ):
-        """流式版 think_lightweight：yield reasoning_engine 风格的高层事件字典。
-
-        与 :meth:`think_lightweight` 同样优先 compiler 端点、失败回退主端点；
-        但全程通过 LLMClient.chat_stream 把 token 增量推给调用方，让 IM 通道
-        的 fast-reply 也能呈现"打字机"流式效果。
-
-        Yields:
-            ``{"type": "text_delta", "content": "..."}``
-            ``{"type": "thinking_delta", "content": "..."}``
-            ``{"type": "thinking_end", "duration_ms": int}``
-            ``{"type": "done"}``
-            ``{"type": "error", "message": str}``（仅严重失败时）
-        """
-        # 延迟导入避免与 stream_accumulator 形成循环依赖
-        from ..llm.client import (
-            LLMClient,  # local import: break core/agent/llm cycle (P-RC-11 P11.2)
-        )
-        from .stream_accumulator import StreamAccumulator
-
-        messages = [Message(role="user", content=[TextBlock(text=prompt)])]
-        sys_prompt = system or ""
-
-        req_id = self._dump_llm_request(
-            sys_prompt, messages, [], caller="think_lightweight_stream"
-        )
-
-        async def _stream_via(client: LLMClient, label: str):
-            """从 *client* 的 chat_stream 转发 raw 事件，并用 StreamAccumulator 翻译为高层事件。
-
-            返回 (yielded_text: bool, response: LLMResponse | None) 给上层决定是否回退。
-            """
-            acc = StreamAccumulator()
-            yielded_text = False
-            try:
-                async for raw in client.chat_stream(
-                    messages=messages,
-                    system=sys_prompt,
-                    enable_thinking=enable_thinking,
-                    thinking_depth=thinking_depth,
-                    max_tokens=max_tokens,
-                ):
-                    if isinstance(raw, dict) and raw.get("type") == "endpoint_meta":
-                        continue
-                    for high in acc.feed(raw):
-                        ht = high.get("type")
-                        if ht in ("text_delta", "thinking_delta", "thinking_end"):
-                            if ht == "text_delta":
-                                yielded_text = True
-                            yield ("event", high)
-            except Exception as exc:
-                yield ("error", exc)
-                return
-            decision = acc.build_decision()
-            yield ("done", (decision, dict(acc.usage or {})))
-            logger.info(
-                f"[LLM] think_lightweight_stream completed via {label} endpoint "
-                f"(yielded_text={yielded_text})"
-            )
-
-        use_compiler = self._compiler_available()
-        primary_client = self._compiler_client if use_compiler else self._llm_client
-        primary_label = "compiler" if use_compiler else "main"
-
-        any_text_yielded = False
-        compiler_failed_exc: Exception | None = None
-
-        async for kind, payload in _stream_via(primary_client, primary_label):
-            if kind == "event":
-                evt = payload
-                if evt.get("type") == "text_delta":
-                    any_text_yielded = True
-                yield evt
-            elif kind == "error":
-                compiler_failed_exc = payload
-                if use_compiler:
-                    self._compiler_on_failure(str(payload))
-                break
-            elif kind == "done":
-                _decision, _usage = payload
-                if use_compiler:
-                    self._compiler_on_success()
-                self._dump_llm_response(
-                    None,
-                    caller=f"think_lightweight_stream_{primary_label}",
-                    request_id=req_id,
-                )
-                yield {"type": "done", "usage": _usage}
-                return
-
-        # 失败回退：仅当 compiler 链路报错且主端点尚未被使用时
-        if compiler_failed_exc is not None and use_compiler:
-            if any_text_yielded:
-                # 已经向用户吐了部分文本，不能切端点造成内容前后不一致；直接报错收尾
-                logger.warning(
-                    f"[LLM] think_lightweight_stream: compiler failed mid-stream "
-                    f"({compiler_failed_exc}), no fallback (text already yielded)"
-                )
-                yield {"type": "error", "message": str(compiler_failed_exc)[:300]}
-                yield {"type": "done"}
-                return
-            logger.warning(
-                f"[LLM] think_lightweight_stream: compiler failed ({compiler_failed_exc}), "
-                "falling back to main endpoint"
-            )
-            async for kind, payload in _stream_via(self._llm_client, "main_fallback"):
-                if kind == "event":
-                    yield payload
-                elif kind == "error":
-                    logger.error(
-                        f"[LLM] think_lightweight_stream: main fallback also failed: {payload}"
-                    )
-                    yield {"type": "error", "message": str(payload)[:300]}
-                    yield {"type": "done"}
-                    return
-                elif kind == "done":
-                    _decision, _usage = payload
-                    self._dump_llm_response(
-                        None,
-                        caller="think_lightweight_stream_main_fallback",
-                        request_id=req_id,
-                    )
-                    yield {"type": "done", "usage": _usage}
-                    return
-
-        if compiler_failed_exc is not None and not use_compiler:
-            yield {"type": "error", "message": str(compiler_failed_exc)[:300]}
-            yield {"type": "done"}
-
     def _llm_response_to_response(self, llm_response: LLMResponse) -> Response:
         """将 LLMResponse 转换为向后兼容的 Response"""
         text_parts = []
@@ -646,9 +514,9 @@ class Brain:
             }
         return {"name": "none", "model": "none", "healthy": False}
 
-    # ========================================================================
-    # 核心方法：messages_create
-    # ========================================================================
+        # ========================================================================
+        # 核心方法：messages_create
+        # ========================================================================
         """Return current-endpoint info dict; delegates to EndpointFailoverView."""
         return self._failover_view.current_endpoint_info()
 
@@ -1115,56 +983,25 @@ class Brain:
         return result
 
     def _convert_tools_to_llm(self, tools: list[ToolParam] | None) -> list[Tool] | None:
-        """将工具定义转换为 LLMClient Tool，兼容 Anthropic / OpenAI 两种格式。
+        """Convert the progressively disclosed Agent tool set to provider schemas.
 
-        支持 defer_loading：标记 _deferred=True 的工具只传 name + description，
-        不传 input_schema，减少 token 消耗。模型通过 tool_search 按需获取完整 schema。
-
-        Budget policy (RCA v11 §4.1, Fix-G3):
-        - Tools in ``ALWAYS_LOAD_TOOLS`` (or explicitly ``_promoted=True``)
-          reserve their schema budget *first*. Contestable tools then
-          compete for what is left. This guarantees that delegation
-          tools like ``delegate_to_agent`` never get pushed out of the
-          prompt by list ordering, which is what produced the
-          intermittent "delegate tool missing" symptom in exploratory
-          tests v10/v11.
-        - When the ``ALWAYS_LOAD_TOOLS`` set is empty/unimportable the
-          behaviour collapses to the original single-pass budget walk.
-
-        支持的格式：
-        - Anthropic (内部): {"name": ..., "description": ..., "input_schema": {...}}
-        - OpenAI:          {"type": "function", "function": {"name": ..., ...}}
+        The Agent is the single owner of schema selection. Tools marked
+        ``_deferred=True`` remain discoverable through the textual catalog and
+        are omitted here; every other valid tool is forwarded unchanged.
         """
         if not tools:
             return None
 
-        # Lazy import to avoid bootstrap cycles (tools package imports core).
-        try:
-            from openakita.tools.defer_config import ALWAYS_LOAD_TOOLS as _ALWAYS_LOAD
-        except Exception:
-            _ALWAYS_LOAD = frozenset()  # type: ignore[assignment]
-
         result: list[Tool] = []
         skipped = 0
+        deferred = 0
         duplicate_names: list[str] = []
         seen_names: set[str] = set()
-        deferred = 0
-        promoted = 0
-        always_available = 0
-        schema_budget = self._resolve_api_tools_schema_budget()
-        schema_tokens = 0
 
-        # ---- Phase 1: normalise + bucket --------------------------------
-        # Walk the input once, extract canonical (name, description,
-        # schema, is_deferred, cost), drop unnamed/duplicate entries, and
-        # decide up-front whether each entry is always-load or
-        # contestable. The output preserves the caller's original order.
-        entries: list[dict[str, Any]] = []
         for tool in tools:
             name = tool.get("name", "")
             description = tool.get("detail") or tool.get("description", "")
             schema = tool.get("input_schema", {})
-            is_deferred = tool.get("_deferred", False)
 
             if not name:
                 func = tool.get("function")
@@ -1181,82 +1018,15 @@ class Brain:
                 continue
             seen_names.add(name)
 
-            tool_payload_tokens = 0
-            if schema:
-                try:
-                    tool_payload_tokens = max(
-                        1,
-                        len(
-                            json.dumps(
-                                {"name": name, "description": description, "input_schema": schema},
-                                ensure_ascii=False,
-                                default=str,
-                            )
-                        )
-                        // 4,
-                    )
-                except Exception:
-                    tool_payload_tokens = 200
-
-            is_always = (
-                not is_deferred
-                and (name in _ALWAYS_LOAD or bool(tool.get("_promoted")))
-            )
-
-            entries.append(
-                {
-                    "tool": tool,
-                    "name": name,
-                    "description": description,
-                    "schema": schema,
-                    "is_deferred": is_deferred,
-                    "cost": tool_payload_tokens,
-                    "is_always": is_always,
-                }
-            )
-
-        # ---- Phase 2: reserve budget for always-load, then iterate ------
-        # When schema_budget <= 0 budgeting is disabled and every
-        # non-deferred entry passes through unchanged (legacy behaviour).
-        always_cost = (
-            sum(e["cost"] for e in entries if e["is_always"]) if schema_budget > 0 else 0
-        )
-        contestable_remaining = (
-            max(0, schema_budget - always_cost) if schema_budget > 0 else 0
-        )
-
-        for entry in entries:
-            is_deferred = entry["is_deferred"]
-            cost = entry["cost"]
-
-            if not is_deferred and schema_budget > 0 and not entry["is_always"]:
-                # Contestable tool: only keep if the remaining slice fits.
-                if cost > contestable_remaining:
-                    is_deferred = True
-                else:
-                    contestable_remaining -= cost
-
-            if is_deferred:
-                # Deferred tools are completely omitted from the API tools list.
-                # They remain visible in the system prompt's textual catalog
-                # (with [deferred] annotation) so the LLM can still discover
-                # them via tool_search or direct invocation (auto-promoted).
-                # This saves ~150 tokens per deferred tool compared to
-                # sending a stub entry with an empty schema.
+            if tool.get("_deferred", False):
                 deferred += 1
                 continue
 
-            tool = entry["tool"]
-            if tool.get("_always_available"):
-                always_available += 1
-            if tool.get("_promoted"):
-                promoted += 1
-            schema_tokens += cost
             result.append(
                 Tool(
-                    name=entry["name"],
-                    description=entry["description"],
-                    input_schema=entry["schema"],
+                    name=name,
+                    description=description,
+                    input_schema=schema,
                 )
             )
 
@@ -1276,53 +1046,13 @@ class Brain:
             )
         if deferred:
             logger.info(
-                "[Brain] defer_loading: deferred=%d total=%d schema_tokens~%d budget=%d "
-                "always_available=%d promoted=%d",
+                "[Brain] progressive schemas: deferred=%d direct=%d total=%d",
                 deferred,
-                len(tools),
-                schema_tokens,
-                schema_budget,
-                always_available,
-                promoted,
-            )
-        else:
-            logger.debug(
-                "[Brain] API tools schema_tokens~%d budget=%d count=%d total=%d "
-                "always_available=%d promoted=%d",
-                schema_tokens,
-                schema_budget,
                 len(result),
                 len(tools),
-                always_available,
-                promoted,
             )
 
         return result if result else None
-
-    def _resolve_api_tools_schema_budget(self) -> int:
-        """Scale API tool schema budget to the active model context window."""
-        configured = int(getattr(settings, "api_tools_schema_budget_tokens", 12000) or 0)
-        if configured <= 0:
-            return configured
-
-        ctx = 0
-        try:
-            info = self.get_current_model_info()
-            endpoint_name = info.get("name", "")
-            for ep in getattr(getattr(self, "_llm_client", None), "endpoints", []):
-                if ep.name == endpoint_name:
-                    ctx = int(getattr(ep, "context_window", 0) or 0)
-                    break
-        except Exception:
-            ctx = 0
-
-        if ctx <= 0:
-            return configured
-        if ctx < 8000:
-            return min(configured, max(800, int(ctx * 0.25)))
-        if ctx < 32000:
-            return min(configured, max(2000, int(ctx * 0.20)))
-        return configured
 
     def _convert_response_to_anthropic(self, response: LLMResponse) -> AnthropicMessage:
         """Project an LLMResponse to an AnthropicMessage; delegates to runtime/llm/multimodal."""
@@ -1690,7 +1420,8 @@ class Brain:
                     "input": input_str,
                 }
                 extra = (
-                    block.get("provider_extra") if isinstance(block, dict)
+                    block.get("provider_extra")
+                    if isinstance(block, dict)
                     else getattr(block, "provider_extra", None)
                 )
                 if extra:
@@ -1793,9 +1524,9 @@ class Brain:
         """检查所有端点健康状态"""
         return await self._llm_client.health_check()
 
-    # ========================================================================
-    # 动态模型切换
-    # ========================================================================
+        # ========================================================================
+        # 动态模型切换
+        # ========================================================================
         """Health-probe every endpoint; delegates to EndpointFailoverView."""
         return await self._failover_view.health_check()
 

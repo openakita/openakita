@@ -372,23 +372,17 @@ the analyzer script matches on stored name:
 | `takeover` | `inc_takeover` | `channel` | HTTP `start()` returned `took_over` (lock transfer) |
 | `interrupt_downgrade` | `inc_interrupt_downgrade` | `channel`, `reason ∈ {block_in_flight, unknown_tool}` | INTERRUPT downgraded to QUEUE |
 | `queue_extended` | `inc_queue_extended` | `channel`, `reason ∈ {block_in_flight, unknown_tool}` | QUEUE timeout extended (block tool still in-flight) |
-| `illegal_reasoning_entry` | `inc_illegal_reasoning_entry` | `source ∈ {reason_stream_iter, reason_stream_outer, run_impl_main_loop, run_impl_ask_user_reply, run_impl_ask_user_timeout}` | Reasoning entry hit a terminal state — race past S1 |
+| `illegal_reasoning_entry` | `inc_illegal_reasoning_entry` | `source ∈ {reason_stream_iter, reason_stream_outer}` | Reasoning entry hit a terminal state — race past the single-flight guard |
 
-### `inc_illegal_reasoning_entry` source labels — why five?
+### `inc_illegal_reasoning_entry` source labels
 
-Each label pinpoints **where** the race was caught. S5-B's gating
-gate ("2 weeks of zero hits") would have been vacuously met by the
-SSE-only telemetry shipped in S5-A's first version — IM/CLI users
-go through `_run_impl`, not `_reason_stream_impl`. FIX-S5A-1 + FIX-S5A-2
-added the four extra labels to cover all entry points:
+All channels now use the same event-stream reasoning loop. The labels
+only distinguish the main-loop guard from its outer defensive net:
 
 | Label | Entry point | Channel |
 |---|---|---|
-| `reason_stream_iter` | SSE main loop inner catch | desktop, web |
-| `reason_stream_outer` | SSE outer defensive net | desktop, web (rare) |
-| `run_impl_main_loop` | IM/CLI main loop top | telegram, feishu, etc. |
-| `run_impl_ask_user_reply` | IM/CLI continue after user reply | telegram, feishu, etc. |
-| `run_impl_ask_user_timeout` | IM/CLI continue after ask_user timeout | telegram, feishu, etc. |
+| `reason_stream_iter` | Shared main loop inner catch | all channels |
+| `reason_stream_outer` | Shared outer defensive net | all channels (rare) |
 
 A non-zero count on ANY label means S1's per-conversation
 single-flight was bypassed in production. Investigate the label's
@@ -423,11 +417,9 @@ Pins the `ensure_ready_for_reasoning` contract:
 - Idempotent on REASONING source.
 - Terminal → raises `IllegalReasoningEntry`.
 - Every non-terminal source has REASONING in its `_VALID_TRANSITIONS` set.
-- `inc_illegal_reasoning_entry` source labels are unique (5 of them).
+- `inc_illegal_reasoning_entry` source labels are unique.
 - `_reason_stream_impl` outer try-ladder lists `IllegalReasoningEntry`
   before generic `Exception`.
-- `_run_impl` hot-fix sites use the correct counter labels guarded by
-  `if state.is_terminal:`.
 
 ### `tests/unit/test_tool_interrupt_behavior_completeness.py`
 
@@ -478,18 +470,13 @@ When the trigger is met:
    `reasoning_engine.py` (lines tagged `# s5b-allow-force-write`)
    — the 9th site (MODEL_SWITCHING) is *reclassified* as
    architectural-permanent (analogous to `cancel-idempotent`).
-3. Delete 8 pure-pass `except ValueError: pass` blocks at
-   non-reasoning transition points in `_run_impl`.
-4. Refactor 3 `except ValueError:` blocks with FIX-S5A-2
-   telemetry wiring (`run_impl_main_loop` /
-   `run_impl_ask_user_reply` / `run_impl_ask_user_timeout`) to
-   `except IllegalStateTransition: ...; raise` — preserves the
-   `inc_illegal_reasoning_entry` counter while letting the
-   exception propagate (no more silent loop continue).
-5. Update `S5B_BACKLOG_FILES[reasoning_engine.py]` in the syntax
+3. Keep this work scoped to the canonical event-stream loop. The
+   non-streaming `run()` adapter only consumes `reason_stream()` events and
+   no longer owns independent state transitions or exception recovery.
+4. Update `S5B_BACKLOG_FILES[reasoning_engine.py]` in the syntax
    guard test from 9 to 0 (or 1 if MODEL_SWITCHING is reclassified
    under a new `model-switch-idempotent-force-write` token).
-6. Update `test_each_known_force_write_target_is_present`
+5. Update `test_each_known_force_write_target_is_present`
    parametrize list — remove deleted TaskStatus targets.
 
 See [`docs/architecture/s5b_checklist.md`](./s5b_checklist.md) for

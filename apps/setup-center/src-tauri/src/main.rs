@@ -1468,8 +1468,6 @@ struct BootstrapManifest {
     wheelhouse: Option<serde_json::Value>,
     #[serde(default)]
     python_seed: Option<serde_json::Value>,
-    #[serde(default)]
-    node_seed: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug)]
@@ -1861,8 +1859,6 @@ fn managed_node_seed_path() -> Option<PathBuf> {
 enum RuntimeEnvPurpose {
     Bootstrap,
     Core,
-    Agent,
-    ExtensionInstall,
 }
 
 impl RuntimeEnvPurpose {
@@ -1870,8 +1866,6 @@ impl RuntimeEnvPurpose {
         match self {
             Self::Bootstrap => "bootstrap",
             Self::Core => "core",
-            Self::Agent => "agent",
-            Self::ExtensionInstall => "extension-install",
         }
     }
 }
@@ -1879,8 +1873,8 @@ impl RuntimeEnvPurpose {
 /// Centralized runtime environment builder for OpenAkita-managed subprocesses.
 ///
 /// Core/bootstrap subprocesses must not inherit user Python, Conda, pip, or SSL
-/// state. Agent/tool subprocesses can keep ordinary user context, but still get
-/// explicit OpenAkita runtime paths and Python isolation markers.
+/// state. Both paths receive explicit OpenAkita runtime locations and secret
+/// scrubbing markers.
 fn apply_runtime_env_builder(
     cmd: &mut Command,
     purpose: RuntimeEnvPurpose,
@@ -1930,15 +1924,7 @@ fn apply_runtime_env_builder(
         runtime_venv_bin_dir(&agent_venv_dir()),
     );
 
-    match purpose {
-        RuntimeEnvPurpose::Bootstrap | RuntimeEnvPurpose::Core => {
-            cmd.env("OPENAKITA_SUBPROCESS_SECRET_SCRUB", "1");
-        }
-        RuntimeEnvPurpose::Agent | RuntimeEnvPurpose::ExtensionInstall => {
-            cmd.env("OPENAKITA_SUBPROCESS_SECRET_SCRUB", "1");
-            prepend_path(cmd, &runtime_venv_bin_dir(&agent_venv_dir()));
-        }
-    }
+    cmd.env("OPENAKITA_SUBPROCESS_SECRET_SCRUB", "1");
 }
 
 fn apply_runtime_bootstrap_env(cmd: &mut Command, pip_index: Option<&RuntimePipIndex>) {
@@ -5146,29 +5132,6 @@ fn ensure_workspace_scaffold(dir: &Path) -> Result<(), String> {
         }
     }
 
-    // runtime 黄金文件：手写的行为规范精简版，避免首次启动时等 LLM 编译
-    // SOUL.md 已改为全文注入，不再需要 soul.summary.md
-    {
-        let runtime_dir = dir.join("identity").join("runtime");
-        fs::create_dir_all(&runtime_dir)
-            .map_err(|e| format!("create identity/runtime dir failed: {e}"))?;
-
-        const AGENT_CORE: &str = include_str!("../../../../identity/runtime/agent.core.md");
-        const AGENT_TOOLING: &str = include_str!("../../../../identity/runtime/agent.tooling.md");
-
-        let golden_files: &[(&str, &str)] = &[
-            ("agent.core.md", AGENT_CORE),
-            ("agent.tooling.md", AGENT_TOOLING),
-        ];
-        for (filename, content) in golden_files {
-            let path = runtime_dir.join(filename);
-            if !path.exists() {
-                fs::write(&path, content)
-                    .map_err(|e| format!("write identity/runtime/{filename} failed: {e}"))?;
-            }
-        }
-    }
-
     // 默认 llm_endpoints.json：用仓库内的 data/llm_endpoints.json.example 作为初始模板
     let llm = dir.join("data").join("llm_endpoints.json");
     if !llm.exists() {
@@ -6655,32 +6618,6 @@ fn ensure_bundled_pth_file(internal_dir: &std::path::Path) {
     let _ = std::fs::write(&pth_path, content);
 }
 
-/// 根据 Python 路径自动选择正确的环境配置。
-/// bundled（_internal）Python 需要 apply_bundled_python_env，
-/// venv Python 只需 strip_harmful_python_env。
-fn apply_python_env_for(cmd: &mut Command, py: &std::path::Path) {
-    let internal_dir = bundled_backend_dir().join("_internal");
-    if py.starts_with(&internal_dir) {
-        apply_bundled_python_env(cmd, &internal_dir);
-    } else {
-        strip_harmful_python_env(cmd);
-    }
-}
-
-/// 判断 .env 中的键是否会污染 Python 运行时（应在启动后端时忽略）。
-fn is_harmful_python_env_key(key: &str) -> bool {
-    key.eq_ignore_ascii_case("PYTHONPATH")
-        || key.eq_ignore_ascii_case("PYTHONHOME")
-        || key.eq_ignore_ascii_case("PYTHON_VENV_PATH")
-        || key.eq_ignore_ascii_case("PYTHON_EXECUTABLE")
-        || key.eq_ignore_ascii_case("PYTHONSTARTUP")
-        || key.eq_ignore_ascii_case("VIRTUAL_ENV")
-        || key.eq_ignore_ascii_case("CONDA_PREFIX")
-        || key.eq_ignore_ascii_case("CONDA_DEFAULT_ENV")
-        || key.eq_ignore_ascii_case("CONDA_SHLVL")
-        || key.eq_ignore_ascii_case("CONDA_PYTHON_EXE")
-}
-
 async fn spawn_blocking_result<R: Send + 'static>(
     f: impl FnOnce() -> Result<R, String> + Send + 'static,
 ) -> Result<R, String> {
@@ -8061,7 +7998,6 @@ fn chrono_like_timestamp() -> String {
 fn time_from_epoch(epoch_secs: u64) -> (u32, u32, u32, u32, u32, u32) {
     // Simple epoch-to-datetime conversion (UTC-based, good enough for filenames)
     const SECS_PER_DAY: u64 = 86400;
-    const DAYS_PER_YEAR: u64 = 365;
 
     let total_days = epoch_secs / SECS_PER_DAY;
     let time_of_day = epoch_secs % SECS_PER_DAY;

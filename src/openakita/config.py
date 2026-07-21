@@ -445,18 +445,6 @@ class Settings(BaseSettings):
         default_factory=list,
         description="用户指定的常驻工具分类（如 Browser, MCP），该分类下所有工具不 defer",
     )
-    effective_tools_main_chat_stable: bool = Field(
-        default=True,
-        description=(
-            "When True, main chat exposes only the explicit stable core plus "
-            "user-pinned or tool_search-discovered schemas. Other registered "
-            "tools remain catalogued and deferred. Sub-agents still apply the "
-            "explicit delegate blacklist. Setting this to False restores the "
-            "legacy intent-driven promote/defer behavior. "
-            "See RCA v11 §1.5 (Fix-G4)."
-        ),
-    )
-
     # Thinking 模式配置
     thinking_mode: str = Field(
         default="auto",
@@ -985,10 +973,6 @@ class Settings(BaseSettings):
         default=80000,
         description="单轮工具结果进入上下文前的总字符预算（后续会按上下文压力动态调整）",
     )
-    api_tools_schema_budget_tokens: int = Field(
-        default=12000,
-        description="发送给 LLM API 的 tools schema 估算 token 预算，超出后动态 defer 非核心工具",
-    )
     same_tool_call_limit: int = Field(
         default=0,
         ge=0,
@@ -1190,9 +1174,7 @@ class Settings(BaseSettings):
     )
     orgs_supervisor_max_stalls: int = Field(
         default=3,
-        description=(
-            "LLM 编排脑路径下 StallDetector 触发 REPLAN 的累计 stall 阈值。"
-        ),
+        description=("LLM 编排脑路径下 StallDetector 触发 REPLAN 的累计 stall 阈值。"),
     )
     orgs_supervisor_soft_ceiling_ratio: float = Field(
         default=0.8,
