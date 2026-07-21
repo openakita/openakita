@@ -37,6 +37,7 @@ def test_mobile_release_waits_for_draft_creation_without_an_independent_tag_trig
 
     mobile_job = release_workflow["jobs"]["mobile_release"]
     assert mobile_job["needs"] == ["create_release"]
+    assert mobile_job["permissions"] == {"contents": "write"}
     assert mobile_job["uses"] == "./.github/workflows/mobile.yml"
     assert mobile_job["secrets"] == "inherit"
     assert "github.event_name == 'push'" in mobile_job["if"]

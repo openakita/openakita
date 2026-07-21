@@ -110,6 +110,8 @@ jobs:
   mobile_release:
     needs: [create_release]
     if: github.event_name == 'push' || inputs.include_mobile
+    permissions:
+      contents: write
     uses: ./.github/workflows/mobile.yml
     with:
       tag: ${{ (github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.tag) || github.ref_name }}
