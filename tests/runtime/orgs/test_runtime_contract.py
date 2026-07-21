@@ -539,3 +539,49 @@ def test_contract_start_then_stop_org_lifecycle() -> None:
     stopped = asyncio.run(rt.stop_org("o-cycle"))
     assert stopped["ok"] is True
     assert stopped["status"].upper() == "STOPPED"
+
+
+def test_contract_shutdown_releases_owned_resources_idempotently() -> None:
+    """API lifespan teardown can safely close the composed v2 runtime."""
+
+    rt, _cs, bus = _make_runtime()
+
+    class _Host:
+        def __init__(self) -> None:
+            self.dispose_count = 0
+
+        def dispose(self) -> None:
+            self.dispose_count += 1
+
+    host = _Host()
+    rt.set_node_tool_host(host)  # type: ignore[arg-type]
+    rt._event_stores["o1"] = object()
+    rt._inboxes["o1"] = object()
+    rt._contract_project_by_org["o1"] = "p1"
+
+    async def exercise() -> None:
+        stopped = asyncio.Event()
+
+        async def idle_probe() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+        rt._idle_probe_tasks["o1"] = asyncio.create_task(idle_probe())
+        await asyncio.sleep(0)
+
+        await rt.shutdown()
+        await rt.shutdown()
+
+        assert stopped.is_set()
+
+    asyncio.run(exercise())
+
+    assert host.dispose_count == 1
+    assert rt.get_node_tool_host() is None
+    assert rt._idle_probe_tasks == {}
+    assert rt._event_stores == {}
+    assert rt._inboxes == {}
+    assert rt._contract_project_by_org == {}
+    assert bus._taps == []

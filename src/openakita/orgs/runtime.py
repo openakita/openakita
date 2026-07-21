@@ -516,6 +516,7 @@ class OrgRuntime:
         # workspace / memory isolation is reserved for Sprint-7+
         # (see ``_runtime_agent_host`` module docstring).
         self._node_tool_host: NodeToolHost | None = None
+        self._shutdown = False
 
         # H4 fix (audit ``_orgs_business_capability_audit_v1.md`` §3.2):
         # bridge the in-process dispatch event-bus to two long-lived
@@ -711,6 +712,43 @@ class OrgRuntime:
         """Return the currently-bound :class:`NodeToolHost`, if any."""
 
         return self._node_tool_host
+
+    async def shutdown(self) -> None:
+        """Release resources owned by this runtime.
+
+        The API lifespan still treats ``OrgRuntime`` as a composed resource
+        owner even though the old global ``start()`` entrypoint was removed.
+        Keep teardown idempotent so repeated lifespan/cancellation paths are
+        harmless.
+        """
+
+        if self._shutdown:
+            return
+        self._shutdown = True
+
+        tasks = list(self._idle_probe_tasks.values())
+        self._idle_probe_tasks.clear()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        self.set_node_tool_host(None)
+
+        remove_tap = getattr(self._event_bus, "remove_tap", None)
+        if callable(remove_tap):
+            for tap in (
+                self._persist_event_tap,
+                self._stream_event_tap,
+                self._ws_event_tap,
+                self._contract_event_tap,
+            ):
+                remove_tap(tap)
+
+        self._event_stores.clear()
+        self._inboxes.clear()
+        self._contract_project_by_org.clear()
 
     def set_on_stop_org(self, callback: Any) -> None:
         """Sprint-5 P0-2 passthrough: late-bind the stop-org callback.

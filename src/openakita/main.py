@@ -2103,6 +2103,7 @@ def serve(
     async def _serve():
         nonlocal shutdown_event, agent_or_master, shutdown_triggered
         nonlocal _heartbeat_phase, _heartbeat_http_ready, _heartbeat_im_ready, _heartbeat_ready
+        shutdown_cleanup_started = False
         _install_windows_asyncio_pipe_filter()
         shutdown_event = asyncio.Event()
         shutdown_triggered = False
@@ -2376,8 +2377,12 @@ def serve(
         finally:
             if _watch_task and not _watch_task.done():
                 _watch_task.cancel()
-            if not shutdown_triggered:
-                shutdown_triggered = True
+            # ``shutdown_triggered`` records that SIGINT/SIGTERM was received;
+            # it must not gate cleanup.  The signal handler sets it before
+            # waking ``shutdown_event``, so using it as the old guard skipped
+            # this entire teardown specifically for Ctrl+C shutdowns.
+            if not shutdown_cleanup_started:
+                shutdown_cleanup_started = True
                 is_restart = cfg._restart_requested
                 # 更新心跳状态为重启/停止中
                 _heartbeat_phase = "restarting" if is_restart else "stopping"
