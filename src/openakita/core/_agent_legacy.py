@@ -3800,6 +3800,9 @@ class Agent:
         max_tokens: int = None,
         system_prompt: str = None,
         conversation_id: str | None = None,
+        session_context: object | None = None,
+        working_directory: str | None = None,
+        persist_checkpoint: bool = False,
     ) -> list[dict]:
         """委托给统一的 context_manager.compress_if_needed()。"""
         _sp = system_prompt or getattr(self._context, "system", "")
@@ -3813,6 +3816,9 @@ class Agent:
             max_tokens=max_tokens,
             memory_manager=self.memory_manager,
             conversation_id=_conv_id,
+            session_context=session_context,
+            working_directory=working_directory,
+            persist_checkpoint=persist_checkpoint,
         )
         if len(result) != _msg_count_before:
             logger.info(
@@ -3830,6 +3836,7 @@ class Agent:
         session_id: str,
         conversation_id: str | None = None,
         system_prompt: str | None = None,
+        session: object | None = None,
     ) -> list[dict]:
         """Compress session history during prepare without reusing stale cancel signals."""
         active_task = None
@@ -3845,6 +3852,9 @@ class Agent:
                 messages,
                 system_prompt=system_prompt,
                 conversation_id=conversation_id,
+                session_context=getattr(session, "context", None),
+                working_directory=getattr(session, "working_directory", None),
+                persist_checkpoint=session is not None,
             )
         except _CtxCancelledError:
             active_task = (
@@ -4903,6 +4913,47 @@ class Agent:
         # session_messages 已包含当前轮用户消息（gateway 调用前 add_message），
         # 当前轮由下方 compiled_message 单独追加，需排除最后一条避免重复。
         history_messages = session_messages
+        checkpoint_seed: list[dict] = []
+        if session is not None and not topic_changed and hasattr(session, "context"):
+            try:
+                from openakita.runtime.context.continuity import content_digest
+
+                checkpoint = session.context.latest_compaction_checkpoint()
+                if checkpoint is None:
+                    store = getattr(self.memory_manager, "store", None)
+                    loader = getattr(store, "get_latest_completed_compaction", None)
+                    if callable(loader):
+                        checkpoint = loader(conversation_id or session_id)
+                        if checkpoint:
+                            session.context.append_compaction_checkpoint(checkpoint)
+                source_count = int((checkpoint or {}).get("session_source_message_count", 0) or 0)
+                raw_messages = list(getattr(session.context, "messages", []) or [])
+                profile_matches = (checkpoint or {}).get(
+                    "agent_profile_id", "default"
+                ) == active_agent_profile_id and not bool(
+                    getattr(session.context, "agent_switch_history", [])
+                )
+                source_matches = (
+                    source_count > 0
+                    and source_count <= len(raw_messages)
+                    and content_digest(raw_messages[:source_count])
+                    == (checkpoint or {}).get("session_source_digest")
+                )
+                if checkpoint and profile_matches and source_matches:
+                    history_messages = session_messages[source_count:]
+                    checkpoint_seed = list(checkpoint.get("projected_messages") or [])
+                    if not checkpoint_seed:
+                        checkpoint_seed = self.context_manager._inject_summary_into_recent(
+                            str(checkpoint.get("summary") or ""),
+                            list(checkpoint.get("recent_messages") or []),
+                        )
+                    logger.info(
+                        "[Session:%s] Applied durable compaction checkpoint %s",
+                        session_id,
+                        str(checkpoint.get("id") or "")[:12],
+                    )
+            except Exception as exc:
+                logger.warning("[Session:%s] Checkpoint projection skipped: %s", session_id, exc)
         if history_messages and history_messages[-1].get("role") == "user":
             history_messages = history_messages[:-1]
 
@@ -4942,7 +4993,7 @@ class Agent:
         # 起始符寻找右边界）。新增 marker 时改 ``response_handler.py`` 即可。
         _RE_TIME_PREFIX = re.compile(r"^\[\d{1,2}:\d{2}\]\s")
 
-        messages: list[dict] = []
+        messages: list[dict] = checkpoint_seed
         for msg in history_messages:
             role = msg.get("role", "user")
             content = coerce_text(msg.get("content", ""))
@@ -5491,6 +5542,7 @@ class Agent:
             session_id=session_id,
             conversation_id=conversation_id,
             system_prompt=compression_system_prompt,
+            session=session,
         )
         logger.info(
             "[ChatTiming] stage=context_ready session=%s duration_ms=%.1f "

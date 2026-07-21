@@ -689,6 +689,34 @@ class UnifiedStore:
         return [Attachment.from_dict(r) for r in rows]
 
     # ======================================================================
+    # Durable context continuity
+    # ======================================================================
+
+    def save_context_epoch(self, session_id: str, epoch: dict) -> str:
+        return self.db.save_context_epoch(session_id, epoch)
+
+    def get_latest_context_epoch(self, session_id: str) -> dict | None:
+        return self.db.get_latest_context_epoch(session_id)
+
+    def save_workspace_snapshot(self, snapshot: dict) -> str:
+        return self.db.save_workspace_snapshot(snapshot)
+
+    def get_workspace_snapshot(self, snapshot_id: str) -> dict | None:
+        return self.db.get_workspace_snapshot(snapshot_id)
+
+    def save_tool_output_blob(self, session_id: str, tool_name: str, content: str) -> str:
+        return self.db.save_tool_output_blob(session_id, tool_name, content)
+
+    def get_tool_output_blob(self, blob_id: str, session_id: str = "") -> str | None:
+        return self.db.get_tool_output_blob(blob_id, session_id=session_id)
+
+    def save_compaction_checkpoint(self, checkpoint: dict) -> str:
+        return self.db.save_compaction_checkpoint(checkpoint)
+
+    def get_latest_completed_compaction(self, session_id: str) -> dict | None:
+        return self.db.get_latest_completed_compaction(session_id)
+
+    # ======================================================================
     # Utilities
     # ======================================================================
 

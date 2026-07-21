@@ -17,12 +17,14 @@ SQLite 为唯一结构化主存储，管理所有记忆数据:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import shutil
 import sqlite3
 import threading
+import zlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -32,7 +34,7 @@ from .types import normalize_tags
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 
 # Process-level singleton registry: same db_path → same MemoryStorage instance
 _instance_registry: dict[str, MemoryStorage] = {}
@@ -614,7 +616,7 @@ class MemoryStorage:
         """
         c = conn or self._conn
         # FIX-D (post-S2 audit): do NOT swallow ALTER TABLE failures.  If
-        # we silently continue and then ``_set_schema_version(5)`` bumps
+        # we silently continue and then ``_set_schema_version`` bumps
         # the schema marker, the database lands in a "claims v5 but has
         # no metadata column" state, causing every subsequent
         # ``save_turn`` INSERT (11 placeholders against a 10-column
@@ -731,6 +733,10 @@ class MemoryStorage:
         c.execute("CREATE INDEX IF NOT EXISTS idx_episodes_time ON episodes(started_at)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_memories_episode ON memories(source_episode_id)")
+        episode_columns = {row[1] for row in c.execute("PRAGMA table_info(episodes)").fetchall()}
+        for col in ("compaction_checkpoint_id", "workspace_snapshot_id"):
+            if col not in episode_columns:
+                c.execute(f"ALTER TABLE episodes ADD COLUMN {col} TEXT DEFAULT ''")
 
         c.execute("""
             CREATE TABLE IF NOT EXISTS scratchpad (
@@ -842,6 +848,80 @@ class MemoryStorage:
             )
         """)
 
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS context_epochs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                digest TEXT NOT NULL,
+                system_digest TEXT NOT NULL,
+                tools_digest TEXT NOT NULL,
+                model TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                UNIQUE(session_id, digest)
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS workspace_snapshots (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                root TEXT NOT NULL,
+                capture_status TEXT NOT NULL DEFAULT 'unknown',
+                capture_error TEXT DEFAULT '',
+                vcs TEXT DEFAULT '',
+                head TEXT DEFAULT '',
+                status_digest TEXT DEFAULT '',
+                changed_files TEXT DEFAULT '[]',
+                patch_zlib BLOB,
+                patch_truncated INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        """)
+        workspace_snapshot_columns = {
+            row[1] for row in c.execute("PRAGMA table_info(workspace_snapshots)").fetchall()
+        }
+        if "capture_status" not in workspace_snapshot_columns:
+            c.execute(
+                "ALTER TABLE workspace_snapshots "
+                "ADD COLUMN capture_status TEXT NOT NULL DEFAULT 'unknown'"
+            )
+        if "capture_error" not in workspace_snapshot_columns:
+            c.execute("ALTER TABLE workspace_snapshots ADD COLUMN capture_error TEXT DEFAULT ''")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS tool_output_blobs (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                tool_name TEXT DEFAULT '',
+                content_zlib BLOB NOT NULL,
+                content_chars INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS compaction_checkpoints (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                source_digest TEXT NOT NULL,
+                source_message_count INTEGER NOT NULL,
+                session_source_digest TEXT DEFAULT '',
+                session_source_message_count INTEGER DEFAULT 0,
+                summary TEXT DEFAULT '',
+                recent_messages TEXT DEFAULT '[]',
+                projected_messages TEXT DEFAULT '[]',
+                tail_start_index INTEGER DEFAULT 0,
+                tokens_before INTEGER DEFAULT 0,
+                tokens_after INTEGER DEFAULT 0,
+                epoch_digest TEXT DEFAULT '',
+                workspace_snapshot_id TEXT DEFAULT '',
+                contributions TEXT DEFAULT '[]',
+                model TEXT DEFAULT '',
+                agent_profile_id TEXT DEFAULT 'default',
+                created_at TEXT NOT NULL,
+                completed_at TEXT DEFAULT '',
+                error TEXT DEFAULT ''
+            )
+        """)
+
         # ==============================================================
         # Phase 2: CREATE INDEX — all tables already exist at this point
         # ==============================================================
@@ -870,6 +950,22 @@ class MemoryStorage:
 
         # extraction_queue
         c.execute("CREATE INDEX IF NOT EXISTS idx_eq_status ON extraction_queue(status)")
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_context_epochs_session "
+            "ON context_epochs(session_id, id DESC)"
+        )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_session "
+            "ON workspace_snapshots(session_id, created_at DESC)"
+        )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tool_output_session "
+            "ON tool_output_blobs(session_id, created_at DESC)"
+        )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compaction_session_status "
+            "ON compaction_checkpoints(session_id, status, completed_at DESC)"
+        )
         try:
             c.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_session_turn ON extraction_queue(session_id, turn_index)"
@@ -1516,8 +1612,9 @@ class MemoryStorage:
                     INSERT OR REPLACE INTO episodes
                     (id, session_id, summary, goal, outcome, started_at, ended_at,
                      action_nodes, entities, tools_used, linked_memory_ids, tags,
-                     importance_score, access_count, source)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     importance_score, access_count, source, compaction_checkpoint_id,
+                     workspace_snapshot_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         episode.get("id", ""),
@@ -1535,6 +1632,8 @@ class MemoryStorage:
                         episode.get("importance_score", 0.5),
                         episode.get("access_count", 0),
                         episode.get("source", "session_end"),
+                        episode.get("compaction_checkpoint_id", ""),
+                        episode.get("workspace_snapshot_id", ""),
                     ),
                 )
                 self._conn.commit()
@@ -1649,6 +1748,8 @@ class MemoryStorage:
             "tags",
             "entities",
             "tools_used",
+            "compaction_checkpoint_id",
+            "workspace_snapshot_id",
         }
         filtered = {k: v for k, v in updates.items() if k in allowed}
         if not filtered:
@@ -2571,6 +2672,174 @@ class MemoryStorage:
         except Exception as e:
             logger.error(f"Failed to get session attachments: {e}")
             return []
+
+    # ======================================================================
+    # Durable context continuity
+    # ======================================================================
+
+    def save_context_epoch(self, session_id: str, epoch: dict) -> str:
+        if not self._conn or not session_id or not epoch.get("digest"):
+            return ""
+        with self._lock:
+            self._conn.execute(
+                """INSERT OR IGNORE INTO context_epochs
+                   (session_id, digest, system_digest, tools_digest, model, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    session_id,
+                    epoch["digest"],
+                    epoch.get("system_digest", ""),
+                    epoch.get("tools_digest", ""),
+                    epoch.get("model", ""),
+                    epoch.get("created_at") or datetime.now().isoformat(),
+                ),
+            )
+            self._conn.commit()
+        return str(epoch["digest"])
+
+    def get_latest_context_epoch(self, session_id: str) -> dict | None:
+        if not self._conn or not session_id:
+            return None
+        cursor = self._conn.execute(
+            "SELECT * FROM context_epochs WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+            (session_id,),
+        )
+        rows = self._rows_to_dicts(cursor)
+        return rows[0] if rows else None
+
+    def save_workspace_snapshot(self, snapshot: dict) -> str:
+        if not self._conn or not snapshot.get("id"):
+            return ""
+        patch = str(snapshot.get("patch") or "")
+        with self._lock:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO workspace_snapshots
+                   (id, session_id, root, capture_status, capture_error, vcs, head,
+                    status_digest, changed_files, patch_zlib, patch_truncated, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    snapshot["id"],
+                    snapshot.get("session_id", ""),
+                    snapshot.get("root", ""),
+                    snapshot.get("capture_status", "unknown"),
+                    str(snapshot.get("capture_error") or "")[:1000],
+                    snapshot.get("vcs", ""),
+                    snapshot.get("head", ""),
+                    snapshot.get("status_digest", ""),
+                    json.dumps(snapshot.get("changed_files", []), ensure_ascii=False),
+                    zlib.compress(patch.encode("utf-8")) if patch else b"",
+                    int(bool(snapshot.get("patch_truncated"))),
+                    snapshot.get("created_at") or datetime.now().isoformat(),
+                ),
+            )
+            self._conn.commit()
+        return str(snapshot["id"])
+
+    def get_workspace_snapshot(self, snapshot_id: str) -> dict | None:
+        if not self._conn or not snapshot_id:
+            return None
+        cursor = self._conn.execute(
+            "SELECT * FROM workspace_snapshots WHERE id = ?", (snapshot_id,)
+        )
+        rows = self._rows_to_dicts(cursor, json_fields=["changed_files"])
+        if not rows:
+            return None
+        result = rows[0]
+        compressed = result.pop("patch_zlib", b"") or b""
+        result["patch"] = zlib.decompress(compressed).decode("utf-8") if compressed else ""
+        result["patch_truncated"] = bool(result.get("patch_truncated"))
+        return result
+
+    def save_tool_output_blob(self, session_id: str, tool_name: str, content: str) -> str:
+        if not self._conn or not content:
+            return ""
+        digest = hashlib.sha256(f"{session_id}\0{content}".encode()).hexdigest()
+        with self._lock:
+            self._conn.execute(
+                """INSERT OR IGNORE INTO tool_output_blobs
+                   (id, session_id, tool_name, content_zlib, content_chars, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    digest,
+                    session_id,
+                    tool_name,
+                    zlib.compress(content.encode("utf-8")),
+                    len(content),
+                    datetime.now().isoformat(),
+                ),
+            )
+            self._conn.commit()
+        return digest
+
+    def get_tool_output_blob(self, blob_id: str, session_id: str = "") -> str | None:
+        if not self._conn or not blob_id:
+            return None
+        if session_id:
+            row = self._conn.execute(
+                "SELECT content_zlib FROM tool_output_blobs WHERE id = ? AND session_id = ?",
+                (blob_id, session_id),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT content_zlib FROM tool_output_blobs WHERE id = ?", (blob_id,)
+            ).fetchone()
+        if not row:
+            return None
+        return zlib.decompress(row[0]).decode("utf-8")
+
+    def save_compaction_checkpoint(self, checkpoint: dict) -> str:
+        if not self._conn or not checkpoint.get("id") or not checkpoint.get("session_id"):
+            return ""
+        with self._lock:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO compaction_checkpoints
+                   (id, session_id, status, source_digest, source_message_count,
+                    session_source_digest, session_source_message_count,
+                    summary, recent_messages, projected_messages, tail_start_index, tokens_before,
+                    tokens_after, epoch_digest, workspace_snapshot_id, contributions,
+                    model, agent_profile_id, created_at, completed_at, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    checkpoint["id"],
+                    checkpoint["session_id"],
+                    checkpoint.get("status", "started"),
+                    checkpoint.get("source_digest", ""),
+                    int(checkpoint.get("source_message_count", 0)),
+                    checkpoint.get("session_source_digest", ""),
+                    int(checkpoint.get("session_source_message_count", 0)),
+                    checkpoint.get("summary", ""),
+                    json.dumps(checkpoint.get("recent_messages", []), ensure_ascii=False),
+                    json.dumps(checkpoint.get("projected_messages", []), ensure_ascii=False),
+                    int(checkpoint.get("tail_start_index", 0)),
+                    int(checkpoint.get("tokens_before", 0)),
+                    int(checkpoint.get("tokens_after", 0)),
+                    checkpoint.get("epoch_digest", ""),
+                    checkpoint.get("workspace_snapshot_id", ""),
+                    json.dumps(checkpoint.get("contributions", []), ensure_ascii=False),
+                    checkpoint.get("model", ""),
+                    checkpoint.get("agent_profile_id", "default"),
+                    checkpoint.get("created_at") or datetime.now().isoformat(),
+                    checkpoint.get("completed_at", ""),
+                    checkpoint.get("error", ""),
+                ),
+            )
+            self._conn.commit()
+        return str(checkpoint["id"])
+
+    def get_latest_completed_compaction(self, session_id: str) -> dict | None:
+        if not self._conn or not session_id:
+            return None
+        cursor = self._conn.execute(
+            """SELECT * FROM compaction_checkpoints
+               WHERE session_id = ? AND status = 'completed'
+               ORDER BY completed_at DESC, created_at DESC LIMIT 1""",
+            (session_id,),
+        )
+        rows = self._rows_to_dicts(
+            cursor,
+            json_fields=["recent_messages", "projected_messages", "contributions"],
+        )
+        return rows[0] if rows else None
 
     # ======================================================================
     # Export / Import / Cleanup

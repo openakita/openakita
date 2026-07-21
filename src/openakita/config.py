@@ -930,7 +930,29 @@ class Settings(BaseSettings):
     )
     context_min_recent_turns: int = Field(
         default=12,
-        description="压缩时至少保留的最近对话组数 (4~20)",
+        description="兼容配置：recent-tail 参与选择的对话组上限；token 预算优先 (4~20)",
+    )
+    context_recent_tail_ratio: float = Field(
+        default=0.25,
+        ge=0.05,
+        le=0.5,
+        description="压缩后最近原文可占消息硬预算的比例",
+    )
+    context_recent_tail_min_tokens: int = Field(
+        default=2000,
+        ge=256,
+        description="压缩后最近原文的最小 token 预算",
+    )
+    context_recent_tail_max_tokens: int = Field(
+        default=8000,
+        ge=512,
+        description="压缩后最近原文的最大 token 预算",
+    )
+    context_recent_tail_max_groups: int = Field(
+        default=12,
+        ge=1,
+        le=50,
+        description="参与 recent-tail 选择的最大工具交互组数（同时受兼容配置限制）",
     )
     context_enable_tool_compression: bool = Field(
         default=True,

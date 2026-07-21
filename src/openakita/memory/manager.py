@@ -1681,6 +1681,14 @@ class MemoryManager:
                         turns, session_id, source="session_end"
                     )
                     if episode:
+                        checkpoint = None
+                        with contextlib.suppress(Exception):
+                            checkpoint = self.store.get_latest_completed_compaction(session_id)
+                        if checkpoint:
+                            episode.compaction_checkpoint_id = checkpoint.get("id", "")
+                            episode.workspace_snapshot_id = checkpoint.get(
+                                "workspace_snapshot_id", ""
+                            )
                         self.store.save_episode(episode)
                         logger.info("[Memory] Session finalized: episode saved")
                 except Exception as e:
@@ -1953,6 +1961,36 @@ class MemoryManager:
                     )
             except Exception as e:
                 logger.warning(f"[Memory] Relational quick encode failed: {e}")
+
+    def contribute_to_compaction(self, **_kwargs):
+        """Provide bounded durable-memory state to the compaction pipeline."""
+        from openakita.runtime.context.continuity import CompactionContribution
+
+        parts: list[str] = []
+        snapshot = self.get_precompact_snapshot_context(max_chars=1000)
+        if snapshot:
+            parts.append(snapshot)
+        with contextlib.suppress(Exception):
+            scratchpad = self.store.get_scratchpad(self._current_user_id or "default")
+            if scratchpad:
+                rendered = scratchpad.to_markdown().strip()
+                if rendered:
+                    parts.append(rendered[:1000])
+        if not parts:
+            return None
+        return CompactionContribution(
+            name="Durable memory state",
+            content="\n\n".join(parts),
+            priority=90,
+            max_tokens=700,
+        )
+
+    def get_cold_tool_output(self, blob_id: str) -> str | None:
+        """Load a cold tool payload, restricted to the active session."""
+        session_id = self._current_session_id or ""
+        if not session_id:
+            return None
+        return self.store.get_tool_output_blob(blob_id, session_id=session_id)
 
     async def on_summary_generated(self, summary: str) -> None:
         """Called after context compression generates a summary — Layer 2 backfill."""

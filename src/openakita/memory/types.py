@@ -439,6 +439,8 @@ class Episode:
     importance_score: float = 0.5
     access_count: int = 0
     source: str = "session_end"  # session_end / context_compress / daily_consolidation
+    compaction_checkpoint_id: str = ""
+    workspace_snapshot_id: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -457,6 +459,8 @@ class Episode:
             "importance_score": self.importance_score,
             "access_count": self.access_count,
             "source": self.source,
+            "compaction_checkpoint_id": self.compaction_checkpoint_id,
+            "workspace_snapshot_id": self.workspace_snapshot_id,
         }
 
     @classmethod
@@ -483,6 +487,8 @@ class Episode:
             importance_score=data.get("importance_score", 0.5),
             access_count=data.get("access_count", 0),
             source=data.get("source", "session_end"),
+            compaction_checkpoint_id=data.get("compaction_checkpoint_id", ""),
+            workspace_snapshot_id=data.get("workspace_snapshot_id", ""),
         )
 
     def to_markdown(self) -> str:

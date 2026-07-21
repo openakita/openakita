@@ -11,12 +11,23 @@
 """
 
 import asyncio
+import copy
+import inspect
 import json
 import logging
 import re
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
+from openakita.runtime.context.continuity import (
+    CompactionCheckpoint,
+    CompactionContribution,
+    ContextEpoch,
+    capture_workspace_snapshot,
+    content_digest,
+)
 from openakita.utils.url_safety import safe_urlparse
 
 from ..tracing.tracer import get_tracer
@@ -74,6 +85,16 @@ class ContextManager:
         self._token_cache: dict[int, int] = {}
         self._tools_tokens_cache: int | None = None
         self._previous_summaries: dict[str, str] = {}
+        self._compaction_contributors: list[Any] = []
+
+    def register_compaction_contributor(self, contributor: Any) -> None:
+        """Register a bounded context provider for future compactions."""
+        if contributor not in self._compaction_contributors:
+            self._compaction_contributors.append(contributor)
+
+    def unregister_compaction_contributor(self, contributor: Any) -> None:
+        if contributor in self._compaction_contributors:
+            self._compaction_contributors.remove(contributor)
 
     def set_cancel_event(self, event: asyncio.Event | None) -> None:
         """更新 cancel_event（每次任务开始时由 Agent 设置）"""
@@ -348,10 +369,7 @@ class ContextManager:
         # Otherwise long-running tasks with many side tools see a large fixed
         # tools_tokens overhead and trip token-anomaly compaction prematurely.
         if tools:
-            effective_tools = [
-                t for t in tools
-                if not (isinstance(t, dict) and t.get("_deferred"))
-            ]
+            effective_tools = [t for t in tools if not (isinstance(t, dict) and t.get("_deferred"))]
         else:
             effective_tools = tools
         tools_tokens = self.estimate_tools_tokens(effective_tools)
@@ -443,6 +461,192 @@ class ContextManager:
             force=True,
         )
 
+    @staticmethod
+    def _continuity_store(memory_manager: object | None) -> Any | None:
+        store = getattr(memory_manager, "store", None)
+        required = (
+            "save_context_epoch",
+            "save_compaction_checkpoint",
+            "get_latest_completed_compaction",
+        )
+        return (
+            store if store is not None and all(hasattr(store, name) for name in required) else None
+        )
+
+    def _context_epoch(self, system_prompt: str, tools: list | None) -> ContextEpoch:
+        model = str(getattr(self._brain, "model", "") or "")
+        return ContextEpoch.build(system_prompt=system_prompt, tools=tools, model=model)
+
+    def _restore_completed_checkpoint(
+        self,
+        messages: list[dict],
+        *,
+        session_id: str,
+        store: Any | None,
+        epoch: ContextEpoch,
+    ) -> tuple[list[dict], dict | None, bool]:
+        if store is None or not session_id:
+            return messages, None, False
+        try:
+            checkpoint = store.get_latest_completed_compaction(session_id)
+        except Exception as exc:
+            logger.warning("[Compress] Checkpoint lookup failed: %s", exc)
+            return messages, None, False
+        if not checkpoint:
+            return messages, None, False
+        source_count = int(checkpoint.get("source_message_count", 0) or 0)
+        if source_count <= 0 or source_count > len(messages):
+            return messages, None, False
+        if content_digest(messages[:source_count]) != checkpoint.get("source_digest"):
+            return messages, None, False
+
+        summary = str(checkpoint.get("summary") or "")
+        recent = copy.deepcopy(checkpoint.get("recent_messages") or [])
+        saved_projection = copy.deepcopy(checkpoint.get("projected_messages") or [])
+        if not saved_projection and (not summary or not recent):
+            return messages, None, False
+        projected = saved_projection or self._inject_summary_into_recent(summary, recent)
+        projected.extend(copy.deepcopy(messages[source_count:]))
+        epoch_changed = checkpoint.get("epoch_digest") != epoch.digest
+        if epoch_changed:
+            projected.insert(
+                1,
+                {
+                    "role": "user",
+                    "content": (
+                        "[context_epoch_update] System instructions, tool schemas, or model "
+                        "configuration changed after the saved compaction. The current system "
+                        "context takes precedence over the anchored summary."
+                    ),
+                },
+            )
+        self._previous_summaries[session_id] = summary
+        logger.info(
+            "[Compress] Restored checkpoint %s for %s (%d source messages, epoch_changed=%s)",
+            checkpoint.get("id", "")[:12],
+            session_id,
+            source_count,
+            epoch_changed,
+        )
+        return projected, checkpoint, epoch_changed
+
+    def _recent_tail_budget(self, hard_limit: int) -> int:
+        from ..config import settings as _settings
+
+        ratio = float(getattr(_settings, "context_recent_tail_ratio", 0.25) or 0.25)
+        minimum = int(getattr(_settings, "context_recent_tail_min_tokens", 2000) or 2000)
+        maximum = int(getattr(_settings, "context_recent_tail_max_tokens", 8000) or 8000)
+        return min(maximum, max(minimum, int(hard_limit * ratio)))
+
+    def _select_recent_groups(
+        self, groups: list[list[dict]], *, hard_limit: int
+    ) -> tuple[list[list[dict]], list[list[dict]]]:
+        """Select a recent tail by token budget while preserving whole groups."""
+        if len(groups) <= 1:
+            return [], groups
+        from ..config import settings as _settings
+
+        legacy_cap = int(getattr(_settings, "context_min_recent_turns", 12) or 12)
+        max_groups = min(
+            legacy_cap,
+            int(getattr(_settings, "context_recent_tail_max_groups", legacy_cap) or legacy_cap),
+        )
+        budget = self._recent_tail_budget(hard_limit)
+        selected = 0
+        used = 0
+        for group in reversed(groups[-max_groups:]):
+            size = self.estimate_messages_tokens(group)
+            if selected and used + size > budget:
+                break
+            selected += 1
+            used += size
+            if used >= budget:
+                break
+        selected = max(1, selected)
+        return groups[:-selected], groups[-selected:]
+
+    async def _gather_compaction_contributions(
+        self,
+        *,
+        session_id: str,
+        messages: list[dict],
+        context_epoch: ContextEpoch,
+    ) -> list[CompactionContribution]:
+        results: list[CompactionContribution] = []
+        for contributor in tuple(self._compaction_contributors):
+            callback = getattr(contributor, "contribute_to_compaction", None)
+            if not callable(callback):
+                continue
+            try:
+                value = callback(
+                    session_id=session_id,
+                    messages=messages,
+                    context_epoch=context_epoch,
+                )
+                if inspect.isawaitable(value):
+                    value = await value
+                values = value if isinstance(value, list) else [value]
+                results.extend(item for item in values if isinstance(item, CompactionContribution))
+            except Exception as exc:
+                logger.warning("[Compress] Contributor %r failed: %s", contributor, exc)
+        results.sort(key=lambda item: (-item.priority, item.name))
+        return results
+
+    def _cold_store_tool_outputs(
+        self,
+        messages: list[dict],
+        *,
+        session_id: str,
+        store: Any | None,
+        protect_tokens: int,
+    ) -> tuple[list[dict], list[str]]:
+        if store is None or not hasattr(store, "save_tool_output_blob"):
+            return messages, []
+        copied = copy.deepcopy(messages)
+        protected_start = len(copied)
+        used = 0
+        for index in range(len(copied) - 1, -1, -1):
+            used += self._estimate_single_message_tokens(copied[index])
+            protected_start = index
+            if used >= protect_tokens:
+                break
+
+        tool_names: dict[str, str] = {}
+        for message in copied:
+            for item in (
+                message.get("content", []) if isinstance(message.get("content"), list) else []
+            ):
+                if isinstance(item, dict) and item.get("type") == "tool_use":
+                    tool_names[str(item.get("id") or "")] = str(item.get("name") or "")
+
+        refs: list[str] = []
+        for message in copied[:protected_start]:
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for item in content:
+                if not isinstance(item, dict) or item.get("type") != "tool_result":
+                    continue
+                raw = item.get("content", "")
+                if not isinstance(raw, str) or len(raw) <= 8000 or "memory://tool-output/" in raw:
+                    continue
+                tool_name = tool_names.get(str(item.get("tool_use_id") or ""), "")
+                try:
+                    blob_id = store.save_tool_output_blob(session_id, tool_name, raw)
+                except Exception as exc:
+                    logger.warning("[Compress] Tool output cold-store failed: %s", exc)
+                    continue
+                if not blob_id:
+                    continue
+                refs.append(blob_id)
+                item["content"] = (
+                    raw[:2000]
+                    + f"\n\n[full tool output: memory://tool-output/{blob_id}; "
+                    + f"original_chars={len(raw)}]"
+                )
+                item["_cold_output_ref"] = blob_id
+        return copied, refs
+
     async def compress_if_needed(
         self,
         messages: list[dict],
@@ -454,6 +658,9 @@ class ContextManager:
         conversation_id: str | None = None,
         last_real_input_tokens: int | None = None,
         force: bool = False,
+        session_context: object | None = None,
+        working_directory: str | None = None,
+        persist_checkpoint: bool = False,
     ) -> list[dict]:
         """
         如果上下文接近限制，执行压缩 (autocompact)。
@@ -482,6 +689,47 @@ class ContextManager:
             压缩后的消息列表
         """
         from ..config import settings as _settings
+
+        source_messages = copy.deepcopy(messages)
+        session_id = str(
+            conversation_id or getattr(memory_manager, "_current_session_id", "") or ""
+        )
+        continuity_store = self._continuity_store(memory_manager)
+        context_epoch = self._context_epoch(system_prompt, tools)
+        if persist_checkpoint and continuity_store is not None and session_id:
+            try:
+                continuity_store.save_context_epoch(session_id, context_epoch.to_dict())
+            except Exception as exc:
+                logger.warning("[Compress] Context epoch persistence failed: %s", exc)
+            if session_context is not None and hasattr(session_context, "context_epoch"):
+                session_context.context_epoch = context_epoch.to_dict()
+            messages, restored_checkpoint, _epoch_changed = self._restore_completed_checkpoint(
+                messages,
+                session_id=session_id,
+                store=continuity_store,
+                epoch=context_epoch,
+            )
+            mirrored_getter = getattr(session_context, "latest_compaction_checkpoint", None)
+            mirrored = mirrored_getter() if callable(mirrored_getter) else None
+            if (
+                restored_checkpoint is None
+                and mirrored
+                and mirrored.get("epoch_digest") != context_epoch.digest
+                and not any(
+                    "[context_epoch_update]" in str(message.get("content", ""))
+                    for message in messages
+                )
+            ):
+                messages.insert(
+                    1 if messages else 0,
+                    {
+                        "role": "user",
+                        "content": (
+                            "[context_epoch_update] The current system context changed after "
+                            "the saved compaction and takes precedence over its summary."
+                        ),
+                    },
+                )
 
         pressure = self.calculate_context_pressure(
             messages,
@@ -550,6 +798,8 @@ class ContextManager:
             f"soft={soft_limit}, hard={hard_limit}), compressing with LLM..."
         )
 
+        checkpoint_record: dict | None = None
+
         def _end_ctx_span(result_msgs: list[dict]) -> list[dict]:
             """结束 ctx_span，修复 tool 配对，并返回结果"""
             result_msgs = self._sanitize_tool_pairs(result_msgs)
@@ -557,7 +807,36 @@ class ContextManager:
             ctx_span.set_attribute("tokens_after", result_tokens)
             ctx_span.set_attribute("compression_ratio", result_tokens / max(current_tokens, 1))
             tracer.end_span(ctx_span)
+            if checkpoint_record is not None and checkpoint_record.get("summary"):
+                checkpoint_record.update(
+                    status="completed",
+                    tokens_after=result_tokens,
+                    projected_messages=copy.deepcopy(result_msgs),
+                    completed_at=datetime.now().isoformat(),
+                )
+                try:
+                    continuity_store.save_compaction_checkpoint(checkpoint_record)
+                except Exception as exc:
+                    logger.warning("[Compress] Completed checkpoint persistence failed: %s", exc)
+                append_checkpoint = getattr(session_context, "append_compaction_checkpoint", None)
+                if callable(append_checkpoint):
+                    append_checkpoint(checkpoint_record)
             return result_msgs
+
+        # Deterministically move old large tool payloads out of the active prompt.
+        if persist_checkpoint and session_id:
+            messages, cold_refs = self._cold_store_tool_outputs(
+                messages,
+                session_id=session_id,
+                store=continuity_store,
+                protect_tokens=min(
+                    40_000,
+                    max(self._recent_tail_budget(hard_limit), int(hard_limit * 0.5)),
+                ),
+            )
+            if cold_refs:
+                logger.info("[Compress] Cold-stored %d tool outputs", len(cold_refs))
+                current_tokens = self.estimate_messages_tokens(messages)
 
         # Step 1: 对单条过大的 tool_result 独立压缩
         if _settings.context_enable_tool_compression:
@@ -593,9 +872,9 @@ class ContextManager:
                 "[Compress] Merged trailing assistant-question + user-answer into one group"
             )
 
-        recent_group_count = min(_settings.context_min_recent_turns, len(groups))
+        early_groups, recent_groups = self._select_recent_groups(groups, hard_limit=hard_limit)
 
-        if len(groups) <= recent_group_count:
+        if not early_groups:
             messages = await self._compress_large_tool_results(messages, threshold=2000)
             return _end_ctx_span(
                 self._hard_truncate_if_needed(
@@ -605,9 +884,6 @@ class ContextManager:
                     overhead_bytes=_overhead_bytes,
                 )
             )
-
-        early_groups = groups[:-recent_group_count]
-        recent_groups = groups[-recent_group_count:]
 
         early_messages = [msg for group in early_groups for msg in group]
         recent_messages = [msg for group in recent_groups for msg in group]
@@ -620,14 +896,100 @@ class ContextManager:
         early_tokens = self.estimate_messages_tokens(early_messages)
         target_summary_tokens = max(int(early_tokens * _settings.context_compression_ratio), 200)
         _summary_key = conversation_id or "__default__"
-        summary = await self._summarize_messages_chunked(
-            early_messages,
-            target_summary_tokens,
-            previous_summary=self._previous_summaries.get(_summary_key, ""),
-            url_facts=self._extract_urls_from_messages(early_messages),
+        if callable(getattr(memory_manager, "contribute_to_compaction", None)):
+            self.register_compaction_contributor(memory_manager)
+        contributions = await self._gather_compaction_contributions(
+            session_id=session_id,
+            messages=source_messages,
+            context_epoch=context_epoch,
         )
+        if contributions:
+            contribution_lines = ["[Compaction contributors]"]
+            for contribution in contributions:
+                max_chars = max(1, contribution.max_tokens) * CHARS_PER_TOKEN
+                contribution_lines.append(
+                    f"## {contribution.name}\n{contribution.content[:max_chars]}"
+                )
+            early_messages = [
+                *early_messages,
+                {"role": "user", "content": "\n\n".join(contribution_lines)},
+            ]
+
+        workspace_snapshot_id = ""
+        if persist_checkpoint and continuity_store is not None and session_id:
+            workspace_snapshot = await asyncio.to_thread(
+                capture_workspace_snapshot,
+                working_directory,
+                session_id=session_id,
+            )
+            if workspace_snapshot is not None:
+                try:
+                    workspace_snapshot_id = continuity_store.save_workspace_snapshot(
+                        workspace_snapshot.to_dict()
+                    )
+                except Exception as exc:
+                    logger.warning("[Compress] Workspace snapshot persistence failed: %s", exc)
+
+            checkpoint_record = CompactionCheckpoint(
+                id=uuid.uuid4().hex,
+                session_id=session_id,
+                status="started",
+                source_digest=content_digest(source_messages),
+                source_message_count=len(source_messages),
+                session_source_digest=content_digest(
+                    list(getattr(session_context, "messages", []) or [])
+                ),
+                session_source_message_count=len(
+                    list(getattr(session_context, "messages", []) or [])
+                ),
+                summary="",
+                recent_messages=copy.deepcopy(recent_messages),
+                projected_messages=[],
+                tail_start_index=max(0, len(messages) - len(recent_messages)),
+                tokens_before=pressure.messages_tokens,
+                tokens_after=0,
+                epoch_digest=context_epoch.digest,
+                workspace_snapshot_id=workspace_snapshot_id,
+                contributions=[
+                    {
+                        "name": item.name,
+                        "content": item.content,
+                        "priority": item.priority,
+                        "max_tokens": item.max_tokens,
+                    }
+                    for item in contributions
+                ],
+                model=context_epoch.model,
+                agent_profile_id=str(
+                    getattr(session_context, "agent_profile_id", "default") or "default"
+                ),
+            ).to_dict()
+            try:
+                continuity_store.save_compaction_checkpoint(checkpoint_record)
+            except Exception as exc:
+                logger.warning("[Compress] Started checkpoint persistence failed: %s", exc)
+
+        try:
+            summary = await self._summarize_messages_chunked(
+                early_messages,
+                target_summary_tokens,
+                previous_summary=self._previous_summaries.get(_summary_key, ""),
+                url_facts=self._extract_urls_from_messages(early_messages),
+            )
+        except BaseException as exc:
+            if checkpoint_record is not None:
+                checkpoint_record.update(status="failed", error=str(exc)[:1000])
+                try:
+                    continuity_store.save_compaction_checkpoint(checkpoint_record)
+                except Exception as persist_exc:
+                    logger.warning(
+                        "[Compress] Failed checkpoint persistence failed: %s", persist_exc
+                    )
+            raise
         if summary:
             self._previous_summaries[_summary_key] = summary
+            if checkpoint_record is not None:
+                checkpoint_record["summary"] = summary
 
         if summary and memory_manager is not None:
             try:

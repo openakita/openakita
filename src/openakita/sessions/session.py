@@ -228,6 +228,9 @@ class SessionContext:
     focus_terms: list[str] = field(default_factory=list)
     focus_updated_at: str | None = None
     precompact_snapshot: dict[str, Any] = field(default_factory=dict)
+    compaction_checkpoints: list[dict] = field(default_factory=list)
+    context_epoch: dict[str, Any] = field(default_factory=dict)
+    workspace_snapshot_id: str = ""
     _msg_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     def add_message(self, role: str, content: str, **metadata) -> bool:
@@ -481,6 +484,9 @@ class SessionContext:
             self.messages = []
             self.topic_boundaries = []
             self.current_topic_start = 0
+            self.compaction_checkpoints = []
+            self.context_epoch = {}
+            self.workspace_snapshot_id = ""
             self.variables["_context_reset_at"] = datetime.now().isoformat()
 
     def append_task_checkpoint(
@@ -521,6 +527,23 @@ class SessionContext:
                     return ckpt
         return None
 
+    def append_compaction_checkpoint(self, checkpoint: dict, *, max_keep: int = 20) -> dict:
+        """Mirror a durable compaction checkpoint into the session document."""
+        data = deepcopy(checkpoint)
+        with self._msg_lock:
+            self.compaction_checkpoints.append(data)
+            self.compaction_checkpoints = self.compaction_checkpoints[-max_keep:]
+            self.summary = str(data.get("summary") or self.summary or "")
+            self.workspace_snapshot_id = str(data.get("workspace_snapshot_id") or "")
+        return data
+
+    def latest_compaction_checkpoint(self) -> dict | None:
+        with self._msg_lock:
+            for checkpoint in reversed(self.compaction_checkpoints):
+                if checkpoint.get("status") == "completed":
+                    return deepcopy(checkpoint)
+        return None
+
     def to_dict(self) -> dict:
         """序列化"""
         with self._msg_lock:
@@ -544,6 +567,9 @@ class SessionContext:
                     "focus_terms": self.focus_terms,
                     "focus_updated_at": self.focus_updated_at,
                     "precompact_snapshot": self.precompact_snapshot,
+                    "compaction_checkpoints": self.compaction_checkpoints,
+                    "context_epoch": self.context_epoch,
+                    "workspace_snapshot_id": self.workspace_snapshot_id,
                 }
             )
 
@@ -569,6 +595,9 @@ class SessionContext:
             focus_terms=data.get("focus_terms", []),
             focus_updated_at=data.get("focus_updated_at"),
             precompact_snapshot=data.get("precompact_snapshot", {}),
+            compaction_checkpoints=data.get("compaction_checkpoints", []),
+            context_epoch=data.get("context_epoch", {}),
+            workspace_snapshot_id=data.get("workspace_snapshot_id", ""),
         )
 
 

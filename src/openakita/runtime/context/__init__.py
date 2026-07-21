@@ -19,14 +19,30 @@ from .budget_trace import (
     payload_size_bytes,
 )
 from .compress import pre_request_cleanup, sanitize_tool_pairs
+from .continuity import (
+    CompactionCheckpoint,
+    CompactionContribution,
+    CompactionContributor,
+    ContextEpoch,
+    WorkspaceSnapshot,
+    capture_workspace_snapshot,
+    content_digest,
+)
 from .grouping import group_messages
 
 __all__ = [
     "DEFAULT_MAX_CONTEXT_TOKENS",
     "calc_context_budget",
+    "capture_workspace_snapshot",
+    "CompactionCheckpoint",
+    "CompactionContribution",
+    "CompactionContributor",
+    "content_digest",
+    "ContextEpoch",
     "estimate_tokens",
     "group_messages",
     "payload_size_bytes",
     "pre_request_cleanup",
     "sanitize_tool_pairs",
+    "WorkspaceSnapshot",
 ]
