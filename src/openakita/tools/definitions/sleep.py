@@ -9,7 +9,6 @@ SLEEP_TOOLS: list[dict] = [
     {
         "name": "sleep",
         "category": "System",
-        "should_defer": True,
         "description": (
             "Wait for a specified duration (seconds). The user can interrupt at "
             "any time. Prefer this over run_shell('sleep ...') — it doesn't hold "

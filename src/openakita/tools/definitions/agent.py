@@ -380,7 +380,6 @@ AGENT_TOOLS = [
     {
         "name": "task_stop",
         "category": "Agent",
-        "should_defer": True,
         "description": (
             "Stop a running background agent or shell process. Use when a background "
             "task is stuck, no longer needed, or should be cancelled. Provide the task "
@@ -404,7 +403,6 @@ AGENT_TOOLS = [
     {
         "name": "send_agent_message",
         "category": "Agent",
-        "should_defer": True,
         "description": (
             "Send a message to another active agent. Enables inter-agent communication "
             "in multi-agent scenarios. Target can be a specific agent name or '*' for "

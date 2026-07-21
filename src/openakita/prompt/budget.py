@@ -401,8 +401,8 @@ def apply_budget_to_sections(
 
     # 按区域分配预算
     budget_map = {
-        "soul": config.identity_budget * 60 // 100,
-        "agent_core": config.identity_budget * 25 // 100,
+        "identity_core": config.identity_budget * 60 // 100,
+        "agent_behavior": config.identity_budget * 25 // 100,
         "user_policies": config.identity_budget * 15 // 100,
         "tools": config.catalogs_budget // 3,  # 33%
         "skills": config.catalogs_budget * 55 // 100,  # 55%

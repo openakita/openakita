@@ -226,7 +226,6 @@ async def test_build_system_prompt_compiled_includes_ask_user_reply_context() ->
     )
     agent.tool_executor = SimpleNamespace(_current_mode="agent")
     agent._current_intent = None
-    agent._has_pending_image_attachments = False
     agent._is_sub_agent_call = False
     agent._system_prompt_cache = {}
     agent._system_prompt_cache_dirty = True
@@ -238,7 +237,6 @@ async def test_build_system_prompt_compiled_includes_ask_user_reply_context() ->
     )
     agent._resolve_prompt_strategy = lambda *_args, **_kwargs: SimpleNamespace(
         profile="default",
-        skip_catalogs=False,
         prompt_mode="default",
         memory_scope="session",
         catalog_scope=[],
@@ -319,8 +317,8 @@ async def test_finalize_schedules_trait_mining_after_lifecycle_completion() -> N
         events.append("lifecycle_finished")
 
     agent._finish_agent_run_lifecycle_once = _finish_lifecycle
-    agent._schedule_trait_mining_background = (
-        lambda message, session_id: events.append(("trait_scheduled", message, session_id))
+    agent._schedule_trait_mining_background = lambda message, session_id: events.append(
+        ("trait_scheduled", message, session_id)
     )
     task_monitor = SimpleNamespace(
         complete=lambda **_kwargs: SimpleNamespace(retrospect_needed=False)

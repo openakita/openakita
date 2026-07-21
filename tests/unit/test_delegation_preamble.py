@@ -4,8 +4,7 @@ Validates:
 1. Delegation preamble injected for main agent (is_sub_agent=False)
 2. Delegation preamble NOT injected for sub-agents
 3. Org mode agents unaffected (still use lean prompt)
-4. agent.core.md contains delegation exception
-5. Preset skills: code-reviewer fixed, brand-guidelines removed
+4. Preset skills: code-reviewer fixed, brand-guidelines removed
 """
 
 from __future__ import annotations
@@ -61,31 +60,6 @@ class TestDelegationPreambleInjection:
         prompt = self._build_prompt(is_sub_agent=False)
         assert "协作优先原则" in prompt
         assert len(prompt) > 500
-
-
-class TestAgentCoreMdDelegationException:
-    """Test that agent.core.md has delegation exception in the iron laws."""
-
-    def test_static_fallback_has_exception(self):
-        from openakita.prompt.compiler import _STATIC_FALLBACKS
-
-        agent_core = _STATIC_FALLBACKS.get("agent_core", "")
-        assert "例外" in agent_core
-        assert "多 Agent 模式" in agent_core or "多Agent" in agent_core
-
-    def test_runtime_file_has_exception(self):
-        """historical drift: runtime ``agent.core.md`` 经过编译/精简后已不再保留
-        “例外/委派”原文（编译目标 agent_behavior 输出 600~1000 tokens 的执行规范，
-        长尾细节会被裁掉）。委派例外条款仍然完整存在于 ``_STATIC_FALLBACKS``
-        兜底文本中，由 ``test_static_fallback_has_exception`` 守住。
-
-        所以这里只要求 runtime 文件存在且非空，避免 CI 因为编译策略变动而抖动。"""
-        from openakita.config import settings
-
-        core_path = settings.identity_path / "runtime" / "agent.core.md"
-        if core_path.exists():
-            content = core_path.read_text(encoding="utf-8")
-            assert content.strip(), "runtime/agent.core.md 不应为空"
 
 
 class TestPresetSkillFixes:

@@ -22,7 +22,6 @@ class DummyPluginCatalog:
 
 def test_tool_estimate_uses_provider_projection_not_registered_catalog():
     brain = Brain.__new__(Brain)
-    brain._resolve_api_tools_schema_budget = lambda: 12000
     cm = ContextManager(brain)
     tools = [
         {
@@ -48,10 +47,32 @@ def test_tool_estimate_uses_provider_projection_not_registered_catalog():
     assert estimated < raw_internal // 10
 
 
+def test_brain_forwards_every_non_deferred_tool_schema():
+    brain = Brain.__new__(Brain)
+    tools = [
+        {
+            "name": f"tool_{index}",
+            "description": "provider description",
+            "input_schema": {
+                "type": "object",
+                "properties": {"value": {"type": "string", "description": "x" * 1000}},
+            },
+        }
+        for index in range(30)
+    ]
+
+    projected = brain._convert_tools_to_llm(tools)
+
+    assert projected is not None
+    assert [tool.name for tool in projected] == [tool["name"] for tool in tools]
+
+
 def test_context_pressure_includes_system_tools_and_real_usage():
     cm = ContextManager(DummyBrain())
     messages = [{"role": "user", "content": "短消息"}]
-    tools = [{"name": "big_tool", "input_schema": {"type": "object", "properties": {"x": "y" * 5000}}}]
+    tools = [
+        {"name": "big_tool", "input_schema": {"type": "object", "properties": {"x": "y" * 5000}}}
+    ]
 
     pressure = cm.calculate_context_pressure(
         messages,
@@ -195,8 +216,12 @@ def test_microcompact_dedupes_cached_and_repeated_tool_results():
 
 
 def test_token_anomaly_compaction_uses_configured_summary_chars(monkeypatch):
-    monkeypatch.setattr("openakita.core._reasoning_engine_legacy.settings.context_token_anomaly_threshold", 100)
-    monkeypatch.setattr("openakita.core._reasoning_engine_legacy.settings.context_cached_summary_chars", 100)
+    monkeypatch.setattr(
+        "openakita.core._reasoning_engine_legacy.settings.context_token_anomaly_threshold", 100
+    )
+    monkeypatch.setattr(
+        "openakita.core._reasoning_engine_legacy.settings.context_cached_summary_chars", 100
+    )
     engine = object.__new__(ReasoningEngine)
     working_messages = [
         {

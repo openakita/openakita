@@ -6,30 +6,84 @@ from openakita.prompt.budget import BudgetConfig
 class TestPromptCompileFunctions:
     """Test individual compile_* functions from prompt/compiler.py."""
 
-    def test_compile_soul(self):
-        from openakita.prompt.compiler import compile_soul
+    def test_identity_core_owns_identity_not_platform_safety(self):
+        from openakita.prompt.budget import estimate_tokens
+        from openakita.prompt.compiler import _COMPILE_PROMPTS, _compile_with_rules
 
-        result = compile_soul("You are OpenAkita, a loyal AI assistant.")
-        assert isinstance(result, str)
-        assert len(result) > 0
+        source = """# Soul Overview
+- {{agent_name}} helps users solve meaningful problems.
+- 支持人类监督 PLATFORM_OWNED_INLINE_SAFETY_RULE
+# Being Honest
+- PLATFORM_OWNED_HONESTY_RULE
+# Big-picture Safety
+- PLATFORM_OWNED_SAFETY_RULE
+# Identity - 身份认知
+- {{agent_name}} is curious, pragmatic, and warm.
+"""
 
-    def test_compile_soul_empty(self):
-        from openakita.prompt.compiler import compile_soul
+        result = _compile_with_rules(source, _COMPILE_PROMPTS["identity_core"])
 
-        result = compile_soul("")
-        assert isinstance(result, str)
+        assert "helps users" in result
+        assert "curious, pragmatic, and warm" in result
+        assert "PLATFORM_OWNED_INLINE_SAFETY_RULE" not in result
+        assert "PLATFORM_OWNED_HONESTY_RULE" not in result
+        assert "PLATFORM_OWNED_SAFETY_RULE" not in result
+        assert estimate_tokens(result) <= 600
 
-    def test_compile_agent_core(self):
-        from openakita.prompt.compiler import compile_agent_core
+    def test_agent_behavior_owns_only_openakita_specific_deltas(self):
+        from openakita.prompt.budget import estimate_tokens
+        from openakita.prompt.compiler import _COMPILE_PROMPTS, _compile_with_rules
 
-        result = compile_agent_core("## Core Behaviors\n- Never give up\n- Be honest")
-        assert isinstance(result, str)
+        source = """# Agent
+## Working Mode
+### Task Execution Flow
+- PLATFORM_OWNED_EXECUTION_RULE
+## Proactive Behavior Framework
+### Growth Loops
+- Preserve useful lessons from repeated work.
+### Self-Healing Protocol
+- Diagnose root causes before escalating a system problem.
+## Tool Priority
+- PLATFORM_OWNED_TOOL_RULE
+"""
 
-    def test_compile_user(self):
-        from openakita.prompt.compiler import compile_user
+        result = _compile_with_rules(source, _COMPILE_PROMPTS["agent_behavior"])
 
-        result = compile_user("User prefers Chinese. Name: 小明")
-        assert isinstance(result, str)
+        assert "Preserve useful lessons" in result
+        assert "Diagnose root causes" in result
+        assert "PLATFORM_OWNED_EXECUTION_RULE" not in result
+        assert "PLATFORM_OWNED_TOOL_RULE" not in result
+        assert estimate_tokens(result) <= 450
+
+    def test_compiled_identity_limit_is_strict(self):
+        from openakita.prompt.budget import estimate_tokens
+        from openakita.prompt.compiler import _COMPILE_PROMPTS, _compile_with_rules
+
+        lines = "\n".join(f"- identity trait {index}: " + "useful " * 40 for index in range(100))
+        result = _compile_with_rules(
+            f"# Identity\n{lines}",
+            _COMPILE_PROMPTS["identity_core"],
+        )
+
+        assert result
+        assert estimate_tokens(result) <= 600
+
+    def test_user_profile_compiler_drops_placeholders(self):
+        from openakita.prompt.compiler import _COMPILE_PROMPTS, _compile_with_rules
+
+        source = """# User
+- **称呼**: [待学习]
+- **Python 风格**: pathlib 优先
+- [Agent 会记录用户的纠正，避免重复错误]
+*此文件由 OpenAkita 自动维护。*
+"""
+
+        result = _compile_with_rules(source, _COMPILE_PROMPTS["user_profile_core"])
+
+        assert "pathlib 优先" in result
+        assert "待学习" not in result
+        assert "Agent 会" not in result
+        assert "自动维护" not in result
 
 
 class TestCompileAll:
@@ -115,15 +169,15 @@ class TestBuildSystemPrompt:
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "SOUL.md").write_text(
-            "# Soul\n- {{agent_name}} 应该诚实。\n- {{agent_name}} 不放弃。",
+            "# Soul\n- {{agent_name}} 充满好奇。\n- {{agent_name}} 喜欢深入思考。",
             encoding="utf-8",
         )
 
         prompt = build_system_prompt(
             identity_dir=identity_dir, tools_enabled=False, agent_voice="中秋"
         )
-        assert "中秋 应该诚实" in prompt
-        assert "中秋 不放弃" in prompt
+        assert "中秋 充满好奇" in prompt
+        assert "中秋 喜欢深入思考" in prompt
         assert "{{agent_name}}" not in prompt
 
     def test_agent_voice_empty_falls_back_to_openakita(self, tmp_path):
@@ -133,13 +187,13 @@ class TestBuildSystemPrompt:
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "SOUL.md").write_text(
-            "# Soul\n- {{agent_name}} 应该诚实。",
+            "# Soul\n- {{agent_name}} 充满好奇。",
             encoding="utf-8",
         )
 
         prompt = build_system_prompt(identity_dir=identity_dir, tools_enabled=False)
         # default fallback
-        assert "OpenAkita 应该诚实" in prompt
+        assert "OpenAkita 充满好奇" in prompt
         assert "{{agent_name}}" not in prompt
 
     def test_two_agents_get_independent_voices(self, tmp_path):
@@ -149,7 +203,7 @@ class TestBuildSystemPrompt:
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "SOUL.md").write_text(
-            "# Soul\n- {{agent_name}} 应该诚实。",
+            "# Soul\n- {{agent_name}} 充满好奇。",
             encoding="utf-8",
         )
 
@@ -159,9 +213,9 @@ class TestBuildSystemPrompt:
         prompt_b = build_system_prompt(
             identity_dir=identity_dir, tools_enabled=False, agent_voice="码哥"
         )
-        assert "中秋 应该诚实" in prompt_a
+        assert "中秋 充满好奇" in prompt_a
         assert "码哥" not in prompt_a, "Agent A 不应该看到 Agent B 的名字"
-        assert "码哥 应该诚实" in prompt_b
+        assert "码哥 充满好奇" in prompt_b
         assert "中秋" not in prompt_b, "Agent B 不应该看到 Agent A 的名字"
 
     def test_agent_voice_replaces_in_none_mode(self, tmp_path):
@@ -218,14 +272,14 @@ class TestBuildSystemPrompt:
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "SOUL.md").write_text(
-            "# Soul\n- {{agent_name}} 应该诚实。",
+            "# Soul\n- {{agent_name}} 充满好奇。",
             encoding="utf-8",
         )
 
         prompt = build_system_prompt(
             identity_dir=identity_dir, tools_enabled=False, agent_voice="   "
         )
-        assert "OpenAkita 应该诚实" in prompt
+        assert "OpenAkita 充满好奇" in prompt
 
 
 class TestAgentResolveVoice:

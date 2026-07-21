@@ -13,6 +13,7 @@ from openakita.api.routes.pending_approvals import _resume_task
 from openakita.config import settings
 from openakita.core.agent import Agent
 from openakita.core.agent_state import AgentState
+from openakita.core.intent_analyzer import IntentResult, IntentType
 from openakita.core.pending_approvals import (
     get_pending_approvals_store,
     reset_pending_approvals_store,
@@ -73,6 +74,11 @@ def _make_agent(registry: SystemHandlerRegistry, responses: list[MockResponse]) 
     agent._tools = ORG_SETUP_TOOLS
     agent._is_sub_agent_call = False
     agent._agent_tool_names = set()
+    agent._cron_disabled_tools = set()
+    agent._selfcheck_allowed_tools = None
+    agent._discovered_tools = set()
+    agent._get_raw_context_window = lambda: 0
+    agent._resolve_agent_voice = lambda: "OpenAkita"
     agent._suppress_desktop_task_notification = True
     agent.brain = SimpleNamespace(
         model="test-model",
@@ -82,28 +88,59 @@ def _make_agent(registry: SystemHandlerRegistry, responses: list[MockResponse]) 
     )
     agent.agent_state = AgentState()
     agent.agent_state.begin_task(session_id=SESSION_ID, task_id=TASK_ID)
-    agent.reasoning_engine = SimpleNamespace(
-        _drain_steer_before_finish=ReasoningEngine._drain_steer_before_finish
-    )
     agent.tool_executor = ToolExecutor(registry)
     agent.tool_executor._agent_ref = agent
 
-    async def _passthrough_compress(messages, system_prompt=""):
-        return messages
+    async def _build_prompt(*_args, **_kwargs):
+        return "system"
 
-    agent._compress_context = _passthrough_compress
+    agent._build_system_prompt_compiled = _build_prompt
+
+    class _IntentAnalyzer:
+        async def analyze(self, message, **_kwargs):
+            return IntentResult(
+                intent=IntentType.TASK,
+                task_definition=message,
+                requires_tools=True,
+                force_tool=True,
+            )
+
+    agent._intent_analyzer = _IntentAnalyzer()
     queued = iter(responses)
 
-    async def _scripted_llm(cancel_event, **kwargs):
-        response = next(queued)
-        if response.tool_calls:
-            messages = kwargs["messages"]
-            tools = kwargs["tools"]
+    async def _run(messages, **kwargs):
+        for response in queued:
+            if not response.tool_calls:
+                return response.content
             assert NATURAL_REQUEST in str(messages[0]["content"])
-            assert any(tool["name"] == "setup_organization" for tool in tools)
-        return response.to_llm_response()
+            assert any(tool["name"] == "setup_organization" for tool in kwargs["tools"])
+            tool_results, _, _ = await agent.tool_executor.execute_batch(
+                response.tool_calls,
+                state=agent.agent_state.current_task,
+                task_monitor=kwargs.get("task_monitor"),
+                allow_interrupt_checks=False,
+                capture_delivery_receipts=False,
+            )
+            deferred = [
+                result
+                for result in tool_results
+                if isinstance(result, dict) and result.get("_deferred_approval_id")
+            ]
+            if deferred:
+                item = deferred[0]
+                raise DeferredApprovalRequired(
+                    message=str(item.get("content") or "approval required"),
+                    pending_id=item["_deferred_approval_id"],
+                    unattended_strategy=item.get("_deferred_approval_strategy"),
+                )
+        return ""
 
-    agent._cancellable_llm_call = _scripted_llm
+    agent.reasoning_engine = SimpleNamespace(
+        run=_run,
+        _last_react_trace=[],
+        _last_exit_reason="normal",
+        _drain_steer_before_finish=ReasoningEngine._drain_steer_before_finish,
+    )
     return agent
 
 

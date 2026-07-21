@@ -13,25 +13,8 @@ Responsibilities:
   silently update files the user has not customised, while preserving
   user edits and surfacing conflicts as ``pending_upgrades`` for the
   CLI / API to confirm;
-* compose a v2 compiled system prompt (``soul.summary`` +
-  ``agent.core`` + ``user.summary`` + ``policies.md`` + retrieved
-  memory snippets) while keeping a v1 full-injection fallback for
-  backwards compatibility.
-
-Injection strategy (v2 — compiled pipeline):
-
-* compiled outputs: ``soul.summary`` + ``agent.core`` + ``user.summary``
-* hard rules: ``policies.md``
-* memory: semantic retrieval over MEMORY.md sections
-* backwards compatibility: ``get_system_prompt()`` keeps the v1 full
-  injection path.
-
-Legacy strategy (v1 — full injection, deprecated but preserved):
-
-* SOUL.md: injected every turn (condensed core principles)
-* AGENT.md: injected every turn (condensed behaviour spec)
-* USER.md: injected every turn (filled-in preferences)
-* MEMORY.md: loaded on demand (current-task section)
+Compiled prompt assembly belongs to ``openakita.prompt``. This class owns only
+identity source loading, template upgrades, and source-file accessors.
 """
 
 import hashlib

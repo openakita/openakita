@@ -9,7 +9,6 @@ WORKTREE_TOOLS: list[dict] = [
     {
         "name": "enter_worktree",
         "category": "System",
-        "should_defer": True,
         "description": (
             "Create a new git worktree and switch the working directory to it. "
             "Use for isolated experiments or parallel development. Changes in the "
@@ -37,7 +36,6 @@ WORKTREE_TOOLS: list[dict] = [
     {
         "name": "exit_worktree",
         "category": "System",
-        "should_defer": True,
         "description": (
             "Exit the current worktree and return to the main workspace. "
             "Choose to keep the worktree (for later merge) or remove it. "

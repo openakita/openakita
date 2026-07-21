@@ -75,7 +75,6 @@ class PromptAssembler:
         session_context: dict | None = None,
         mode: str = "agent",
         model_id: str = "",
-        skip_catalogs: bool = False,
         user_input_tokens: int = 0,
         prompt_profile: "Any | None" = None,
         prompt_tier: "Any | None" = None,
@@ -100,7 +99,6 @@ class PromptAssembler:
             session_context: 会话元数据
             mode: 当前模式 (ask/plan/agent)
             model_id: 模型标识
-            skip_catalogs: 是否跳过 Catalogs 层（向后兼容，优先使用 prompt_profile）
             prompt_profile: 产品场景 profile
             prompt_tier: 上下文窗口分档
 
@@ -135,7 +133,6 @@ class PromptAssembler:
             session_context=session_context,
             mode=mode,
             model_id=model_id,
-            skip_catalogs=skip_catalogs,
             user_input_tokens=user_input_tokens,
             context_window=context_window,
             prompt_profile=prompt_profile,

@@ -22,7 +22,6 @@ from openakita.core import Agent
 # ``from openakita.core.agent import _format_vision_unavailable_notice`` etc.,
 # so re-export the canonical aliases from ``_agent_legacy``.
 from openakita.core._agent_legacy import (  # noqa: E402
-    _allows_lightweight_fast_reply,
     _format_desktop_attachment_reference,
     _format_vision_unavailable_notice,
     _has_pending_media_or_attachments,
@@ -36,7 +35,6 @@ from openakita.core._agent_legacy import (  # noqa: E402
 __all__ = [
     "Agent",
     "settings",
-    "_allows_lightweight_fast_reply",
     "_format_desktop_attachment_reference",
     "_format_vision_unavailable_notice",
     "_has_pending_media_or_attachments",

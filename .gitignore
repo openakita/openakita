@@ -110,16 +110,14 @@ data/*
 !data/.gitkeep
 !data/*.example
 
-# Identity — 模板/策略/人格/编译产物入库，用户定制文件不入库
+# Identity — 模板/策略/人格入库；用户定制文件和 runtime 派生产物不入库
 identity/SOUL.md
 identity/AGENT.md
 identity/USER.md
 identity/MEMORY.md
 identity/MEMORY.md.bak
 identity/personas/user_custom.md
-identity/runtime/.compiled_at
-identity/runtime/user.summary.md
-identity/runtime/persona.custom.md
+identity/runtime/
 
 # skills/ 目录全部是内置技能，需要被 git 完整跟踪。
 # 用户通过技能市场安装的技能存放在 ~/.openakita/workspaces/default/skills/，

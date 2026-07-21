@@ -41,9 +41,8 @@ from openakita.core.reasoning_engine import ReasoningEngine
 # The reason_stream race-guard (``ensure_ready_for_reasoning`` +
 # ``IllegalReasoningEntry`` counter + content-safety ``agent_voice``) is ported
 # into ``core/_reasoning_engine_legacy`` after the ADR-0003 split (Batch C).
-# Local ``ReasoningEngine`` keeps the monolithic ``reason_stream`` / ``run``
-# methods, so the wiring-contract tests inspect those rather than upstream's
-# ``_reason_stream_impl`` / ``_run_impl`` helpers. All tests below are active.
+# Local ``ReasoningEngine`` keeps ``reason_stream`` as the single loop, while
+# ``run`` only consumes its events for non-streaming callers.
 
 
 class TestTerminalToReasoningContract:
@@ -285,7 +284,7 @@ class TestEnsureReadyForReasoning:
 
 
 class TestS5AAuditFixes:
-    """v1.28.3-pre audit hot-fixes (FIX-S5A-1 + FIX-S5A-2).
+    """Audit the shared stream loop's illegal-state telemetry.
 
     The original S5-A landing covered the main-loop reasoning-entry but
     left two telemetry holes that the audit surfaced:
@@ -297,12 +296,6 @@ class TestS5AAuditFixes:
     ``IllegalReasoningEntry`` BEFORE ``Exception`` so the structured
     error event + counter + pager alarm path is preserved.
 
-    FIX-S5A-2: ``_run_impl`` (IM / CLI path) has three hot-fix sites
-    (main-loop iter / ask_user reply / ask_user timeout) that
-    ``except ValueError: pass`` the REASONING transition.  Without
-    telemetry wiring, the inc_illegal_reasoning_entry counter would
-    stay at zero for IM users — leaving S5-B's gating gate (2 weeks
-    of zero hits) vacuously met irrespective of actual incidence.
     """
 
     def test_outer_except_catches_illegal_reasoning_entry_before_exception(
@@ -361,100 +354,6 @@ class TestS5AAuditFixes:
             "as `reason_stream_outer` so ops can distinguish 'main-loop "
             "race' (expected) from 'unidentified callsite' (alarm)."
         )
-
-    def test_run_impl_main_loop_hot_fix_increments_counter(self) -> None:
-        """FIX-S5A-2: the v1.27.13 hot-fix at the top of _run_impl's
-        main loop now emits inc_illegal_reasoning_entry on the
-        terminal-state branch.  IM users no longer have 100% blind
-        telemetry."""
-        src = inspect.getsource(ReasoningEngine.run)
-        # The label distinguishes from reason_stream so dashboards can
-        # see which channel surfaces races.
-        assert "run_impl_main_loop" in src, (
-            "FIX-S5A-2: the run() main-loop hot-fix must label its "
-            "counter increment as `run_impl_main_loop` so ops can "
-            "distinguish IM/CLI vs SSE race incidence."
-        )
-
-    def test_run_impl_ask_user_reply_hot_fix_increments_counter(self) -> None:
-        src = inspect.getsource(ReasoningEngine.run)
-        assert "run_impl_ask_user_reply" in src, (
-            "FIX-S5A-2: the run() ask_user-reply hot-fix must label "
-            "its counter increment as `run_impl_ask_user_reply`."
-        )
-
-    def test_run_impl_ask_user_timeout_hot_fix_increments_counter(self) -> None:
-        src = inspect.getsource(ReasoningEngine.run)
-        assert "run_impl_ask_user_timeout" in src, (
-            "FIX-S5A-2: the run() ask_user-timeout hot-fix must label "
-            "its counter increment as `run_impl_ask_user_timeout`."
-        )
-
-    def test_all_three_run_impl_hot_fixes_only_count_on_is_terminal(self) -> None:
-        """The counter should only fire when state.is_terminal — a
-        ValueError on a non-terminal source is the belt-and-suspenders
-        case that S5-B will revisit separately.
-
-        For each of the three counter-fire labels (run_impl_main_loop /
-        run_impl_ask_user_reply / run_impl_ask_user_timeout) we find the
-        anchor in source and walk back up to 1000 chars looking for the
-        nearest `if state.is_terminal:` — that guard MUST exist between
-        the `except ValueError:` and the counter call."""
-        src = inspect.getsource(ReasoningEngine.run)
-        for label in (
-            "run_impl_main_loop",
-            "run_impl_ask_user_reply",
-            "run_impl_ask_user_timeout",
-        ):
-            anchor = f'source="{label}"'
-            pos = src.find(anchor)
-            assert pos > 0, (
-                f"FIX-S5A-2: counter label {label!r} not found in "
-                f"_run_impl source — hot-fix wiring is missing."
-            )
-            window = src[max(0, pos - 1500) : pos]
-            assert "if state.is_terminal:" in window, (
-                f"FIX-S5A-2: counter call at {label!r} must be guarded "
-                f"by `if state.is_terminal:` within the nearest 1500 chars "
-                f"upstream — without the guard, the counter fires on "
-                f"every ValueError (including the belt-and-suspenders "
-                f"non-terminal force-write path), masking real race "
-                f"incidence in the dashboard."
-            )
-            assert "except ValueError:" in window, (
-                f"FIX-S5A-2: counter call at {label!r} must live inside "
-                f"the `except ValueError:` block — without that, the "
-                f"counter fires on the happy path and the metric "
-                f"becomes meaningless."
-            )
-
-    def test_run_impl_hot_fixes_use_distinct_source_labels(self) -> None:
-        """All four source labels (reason_stream_iter +
-        reason_stream_outer + 3x run_impl_*) must be unique so ops
-        dashboards can pinpoint which code path the race surfaces in."""
-        from openakita.core import conversation_metrics as metrics
-
-        metrics.reset_for_tests()
-        # Fire each label once.
-        for label in [
-            "reason_stream_iter",
-            "reason_stream_outer",
-            "run_impl_main_loop",
-            "run_impl_ask_user_reply",
-            "run_impl_ask_user_timeout",
-        ]:
-            metrics.inc_illegal_reasoning_entry(source=label)
-        snap = metrics.snapshot()
-        seen_labels = {
-            s["labels"]["source"] for s in snap if s["name"] == "illegal_reasoning_entry"
-        }
-        assert seen_labels == {
-            "reason_stream_iter",
-            "reason_stream_outer",
-            "run_impl_main_loop",
-            "run_impl_ask_user_reply",
-            "run_impl_ask_user_timeout",
-        }
 
 
 class TestIllegalReasoningEntryAlerts:
@@ -549,12 +448,6 @@ class TestAllReasoningTransitionsGuarded:
 
 
 class TestContentSafetyMinimalPromptIdentity:
-    def test_run_impl_accepts_agent_voice_for_content_safety_prompt(self) -> None:
-        src = inspect.getsource(ReasoningEngine.run)
-        assert 'agent_voice: str = ""' in src
-        assert '_content_safety_identity = _content_safety_name or "一个 AI 助手"' in src
-        assert "你是 {_content_safety_identity}" in src
-
     def test_reason_stream_accepts_agent_voice_for_content_safety_prompt(self) -> None:
         src = inspect.getsource(ReasoningEngine.reason_stream)
         assert 'agent_voice: str = ""' in src

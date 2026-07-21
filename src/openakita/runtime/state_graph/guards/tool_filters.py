@@ -1,4 +1,4 @@
-﻿"""Tool-filter guards: mode/intent rulesets and shell-write detection.
+"""Tool-filter guards: mode/intent rulesets and shell-write detection.
 
 Pulled out of legacy ``core/reasoning_engine.py`` (P-RC-5 / P5.8a).
 The six symbols below decide which tools the engine is allowed to
@@ -18,9 +18,7 @@ if TYPE_CHECKING:
     from ....core.permission import Ruleset as PermissionRuleset
 
 __all__ = [
-    "CHAT_INTENT_CORE_TOOLS",
     "SHELL_WRITE_PATTERNS",
-    "filter_tools_by_intent",
     "filter_tools_by_mode",
     "get_mode_ruleset",
     "is_shell_write_command",
@@ -28,17 +26,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-# PR-M1: chat / chit-chat intent trims tools down to a 5-item whitelist
-# (think / minimal Q&A / memory / profile / ask_user); anything that
-# writes a file, runs a command, or calls an external service is dropped.
-CHAT_INTENT_CORE_TOOLS: tuple[str, ...] = (
-    "think",
-    "ask_user",
-    "search_memory",
-    "get_user_profile",
-    "get_session_context",
-)
 
 
 def get_mode_ruleset(mode: str) -> PermissionRuleset:
@@ -49,6 +36,7 @@ def get_mode_ruleset(mode: str) -> PermissionRuleset:
         DEFAULT_RULESET,
         PLAN_MODE_RULESET,
     )
+
     if mode == "plan":
         return PLAN_MODE_RULESET
     if mode == "ask":
@@ -58,58 +46,17 @@ def get_mode_ruleset(mode: str) -> PermissionRuleset:
     return DEFAULT_RULESET
 
 
-def filter_tools_by_intent(
-    tools: list[dict],
-    *,
-    intent_name: str | None,
-    intent_tool_hints: list[str] | None = None,
-    requires_tools: bool = False,
-) -> list[dict]:
-    """Intent-driven secondary trim: chat intent gets a small core list only."""
-    try:
-        from ....core.feature_flags import is_enabled as _ff_enabled
-        if not _ff_enabled("intent_tool_slim_v1"):
-            return tools
-    except Exception:
-        pass
-    if requires_tools or not tools:
-        return tools
-    if (intent_name or "").lower() not in ("chat",):
-        return tools
-    keep_names = set(CHAT_INTENT_CORE_TOOLS) | set(intent_tool_hints or [])
-    filtered: list[dict] = []
-    for tool in tools:
-        name = tool.get("name", "") or tool.get("function", {}).get("name", "")
-        if name in keep_names:
-            filtered.append(tool)
-    if filtered and len(filtered) < len(tools):
-        logger.info(
-            f"[ToolFilter/Intent] chat intent slim: {len(tools)} -> {len(filtered)} tools "
-            f"(kept: {sorted({t.get('name') or t.get('function', {}).get('name', '') for t in filtered})})"
-        )
-    if not filtered:
-        for tool in tools:
-            name = tool.get("name", "") or tool.get("function", {}).get("name", "")
-            if name == "ask_user":
-                filtered.append(tool)
-                break
-    return filtered or tools
-
-
 def filter_tools_by_mode(tools: list[dict], mode: str) -> list[dict]:
     """Filter tool list using the permission ruleset of the active mode."""
     if mode == "agent" or not tools:
         return tools
     from ....core.permission import disabled as permission_disabled
+
     ruleset = get_mode_ruleset(mode)
-    tool_names = [
-        (t.get("name", "") or t.get("function", {}).get("name", "")) for t in tools
-    ]
+    tool_names = [(t.get("name", "") or t.get("function", {}).get("name", "")) for t in tools]
     disabled_set = permission_disabled(tool_names, ruleset)
     filtered = [
-        tool
-        for tool, name in zip(tools, tool_names, strict=False)
-        if name not in disabled_set
+        tool for tool, name in zip(tools, tool_names, strict=False) if name not in disabled_set
     ]
     if disabled_set:
         logger.info(

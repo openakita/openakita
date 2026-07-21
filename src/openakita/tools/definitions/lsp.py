@@ -9,7 +9,6 @@ LSP_TOOLS: list[dict] = [
     {
         "name": "lsp",
         "category": "System",
-        "should_defer": True,
         "description": (
             "Code intelligence via Language Server Protocol. Provides go-to-definition, "
             "find-references, hover type info, document/workspace symbols, implementations, "

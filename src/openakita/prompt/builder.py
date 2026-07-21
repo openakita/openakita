@@ -497,7 +497,6 @@ def build_system_prompt(
     model_id: str = "",
     model_display_name: str = "",
     session_context: dict | None = None,
-    skip_catalogs: bool = False,
     user_input_tokens: int = 0,
     context_window: int = 0,
     prompt_profile: "PromptProfile | None" = None,
@@ -551,10 +550,6 @@ def build_system_prompt(
     if budget_config is None:
         budget_config = BudgetConfig()
 
-    # 向后兼容 skip_catalogs：映射到 profile 体系
-    if skip_catalogs and _profile == PromptProfile.LOCAL_AGENT:
-        _profile = PromptProfile.CONSUMER_CHAT
-
     # 向后兼容：is_sub_agent=True 且无显式 prompt_mode 时，使用 MINIMAL
     if prompt_mode is None:
         prompt_mode = PromptMode.MINIMAL if is_sub_agent else PromptMode.FULL
@@ -599,19 +594,14 @@ def build_system_prompt(
         compiled = get_compiled_content(identity_dir)
         _static_prompt_cache[f"compiled:{_id_dir_key}"] = (_now_ts, compiled)
 
-    # 4. Identity 层（SOUL.md + agent.core）
+    # 4. Identity 层（identity.core + 可选的 agent.behavior 增量）
     if prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL):
         identity_section = _cached_section(
             "identity",
             lambda: _build_identity_section(
                 compiled=compiled,
                 identity_dir=identity_dir,
-                tools_enabled=tools_enabled,
                 budget_tokens=budget_config.identity_budget,
-                include_tooling=(
-                    prompt_mode == PromptMode.FULL
-                    and (tools_enabled or bool(_catalog_scope - {"index"}))
-                ),
                 include_behavior=prompt_mode == PromptMode.FULL,
                 agent_voice=agent_voice,
             ),
@@ -727,28 +717,27 @@ def build_system_prompt(
                 + agents_md_content
             )
 
-    # 9. Catalogs 层（skip_catalogs=True 时完全跳过，CHAT 意图无需工具描述）
-    if not skip_catalogs:
-        _msg_count = 0
-        if session_context:
-            _msg_count = session_context.get("message_count", 0)
-        catalogs_section = _build_catalogs_section(
-            tool_catalog=tool_catalog,
-            skill_catalog=skill_catalog,
-            mcp_catalog=mcp_catalog,
-            plugin_catalog=plugin_catalog,
-            budget_tokens=budget_config.catalogs_budget,
-            include_tools_guide=include_tools_guide,
-            mode=mode,
-            message_count=_msg_count,
-            prompt_profile=_profile,
-            prompt_tier=_tier,
-            catalog_scope=_catalog_scope,
-            intent_tool_hints=intent_tool_hints,
-            context_window=context_window,
-        )
-        if catalogs_section:
-            tool_parts.append(catalogs_section)
+    # 9. Catalogs 层。是否提供目录及其详细程度只由正式的 profile/scope 契约决定。
+    _msg_count = 0
+    if session_context:
+        _msg_count = session_context.get("message_count", 0)
+    catalogs_section = _build_catalogs_section(
+        tool_catalog=tool_catalog,
+        skill_catalog=skill_catalog,
+        mcp_catalog=mcp_catalog,
+        plugin_catalog=plugin_catalog,
+        budget_tokens=budget_config.catalogs_budget,
+        include_tools_guide=include_tools_guide,
+        mode=mode,
+        message_count=_msg_count,
+        prompt_profile=_profile,
+        prompt_tier=_tier,
+        catalog_scope=_catalog_scope,
+        intent_tool_hints=intent_tool_hints,
+        context_window=context_window,
+    )
+    if catalogs_section:
+        tool_parts.append(catalogs_section)
 
     # 9.6 Working facts 层：当前会话短期事实，优先于长期记忆。
     # 即使 MINIMAL prompt 也保留这块很小的会话状态，避免轻量问答丢失刚刚确认的事实。
@@ -1078,25 +1067,9 @@ _PLAN_MODE_FALLBACK = """\
 _BUILT_IN_DEFAULTS: dict[str, str] = {
     "soul": """\
 # OpenAkita — Core Identity
-你是 OpenAkita，全能自进化 AI 助手。使命是帮助用户完成任何任务，同时不断学习和进化。
-## 核心原则
-1. 安全并支持人类监督
-2. 行为合乎道德
-3. 遵循指导原则
-4. 真正有帮助""",
-    "agent_core": """\
-## 核心执行原则
-### 任务执行流程
-1. 理解用户意图，分解为子任务
-2. 检查所需技能是否已有
-3. 缺少技能则搜索安装或自己编写
-4. Ralph 循环执行：执行 → 验证 → 失败则换方法重试
-5. 更新 MEMORY.md 记录进度和经验
-### 每轮自检
-1. 用户真正想要什么？
-2. 有没有用户可能没想到的问题/机会？
-3. 这个任务有没有更好的方式？
-4. 之前有没有处理过类似的事？""",
+你是 OpenAkita，全能自进化 AI 助手。
+使命是以实质性的帮助改善用户的工作和生活。
+气质专业、好奇、务实且有温度。""",
 }
 
 
@@ -1152,9 +1125,7 @@ def _apply_agent_voice(text: str, agent_voice: str | None) -> str:
 def _build_identity_section(
     compiled: dict[str, str],
     identity_dir: Path,
-    tools_enabled: bool,
     budget_tokens: int,
-    include_tooling: bool = False,
     include_behavior: bool = True,
     agent_voice: str = "",
 ) -> str:
@@ -1180,62 +1151,20 @@ def _build_identity_section(
         )
         parts.append("")
 
-    # F5 (Domain1): agent.tooling.md is authored as a strict subset of
-    # agent.behavior.md (its self-evolution / curiosity / experience loops are
-    # identical), so appending both verbatim re-injects ~33 lines / ~450 tokens
-    # every FULL agent turn. Track the normalized lines already injected by the
-    # identity_core + agent_behavior sections and drop those lines from the
-    # tooling block, keeping only genuinely tooling-specific instructions. This
-    # is a no-op when there is no overlap, so single-injection output is
-    # unchanged.
-    _seen_identity_lines: set[str] = set()
-
-    def _register_seen(text: str) -> None:
-        for line in text.splitlines():
-            norm = line.strip()
-            if norm:
-                _seen_identity_lines.add(norm)
-
-    def _dedup_against_seen(text: str) -> str:
-        kept: list[str] = []
-        for line in text.splitlines():
-            norm = line.strip()
-            if norm and norm in _seen_identity_lines:
-                continue
-            kept.append(line)
-        return "\n".join(kept).strip()
-
     identity_core = compiled.get("identity_core") or _BUILT_IN_DEFAULTS.get("soul", "")
     if identity_core:
         result = apply_budget(identity_core.strip(), budget_tokens * 30 // 100, "identity_core")
         parts.append(result.content)
         parts.append("")
-        _register_seen(result.content)
 
     if include_behavior:
-        agent_behavior = (
-            compiled.get("agent_behavior")
-            or compiled.get("agent_core")
-            or _BUILT_IN_DEFAULTS.get("agent_core", "")
-        )
+        agent_behavior = compiled.get("agent_behavior", "")
         if agent_behavior:
             result = apply_budget(
                 agent_behavior.strip(), budget_tokens * 40 // 100, "agent_behavior"
             )
             parts.append(result.content)
             parts.append("")
-            _register_seen(result.content)
-
-    if tools_enabled and include_tooling:
-        agent_tooling = compiled.get("agent_tooling", "")
-        if agent_tooling:
-            deduped_tooling = _dedup_against_seen(agent_tooling.strip())
-            if deduped_tooling:
-                result = apply_budget(
-                    deduped_tooling, budget_tokens * 15 // 100, "agent_tooling"
-                )
-                parts.append(result.content)
-                parts.append("")
 
     # User policies (~15%) — 用户自定义策略文件
     policies_path = identity_dir / "prompts" / "policies.md"
@@ -1549,7 +1478,9 @@ def _build_ask_user_reply_section(reply: dict) -> str:
     if message_id:
         lines.append(f"- **ask_user_message_id**: `{message_id}`")
     lines.append("")
-    lines.append("**约束**：不要把这个普通 ask_user 回复解释为高危操作授权；如涉及高危执行，仍必须走 RiskGate。")
+    lines.append(
+        "**约束**：不要把这个普通 ask_user 回复解释为高危操作授权；如涉及高危执行，仍必须走 RiskGate。"
+    )
     return "\n".join(lines)
 
 
@@ -2738,7 +2669,7 @@ def _build_user_section(
     防止 USER.md 编译产物里残留的占位字段（如"称呼: [待学习]"）
     被 LLM 当作真实用户信息使用，进而覆盖动态学习到的姓名。
     """
-    content = compiled.get("user_profile_core") or compiled.get("user") or ""
+    content = compiled.get("user_profile_core", "")
     if not content:
         return ""
     cleaned = _clean_user_content(content)
@@ -2826,9 +2757,9 @@ def get_prompt_debug_info(
 
     info = {
         "compiled_files": {
-            "soul": estimate_tokens(compiled.get("soul", "")),
-            "agent_core": estimate_tokens(compiled.get("agent_core", "")),
-            "user": estimate_tokens(compiled.get("user", "")),
+            "identity_core": estimate_tokens(compiled.get("identity_core", "")),
+            "agent_behavior": estimate_tokens(compiled.get("agent_behavior", "")),
+            "user_profile_core": estimate_tokens(compiled.get("user_profile_core", "")),
         },
         "catalogs": {},
         "memory": 0,

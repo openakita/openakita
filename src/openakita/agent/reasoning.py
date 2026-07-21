@@ -14,8 +14,8 @@ inheritance; the v2 additions are (1) :attr:`decision_graph` and
 :meth:`evaluate_decision` composing the seven extracted guards in
 the legacy check order, and (3) :meth:`filter_tools` / :meth:`should_block`
 collapsing the legacy module-level helpers into engine methods.
-Legacy ``run()`` / ``reason_stream()`` / ``run_stream()`` are still
-inherited untouched; folding them into StateGraph nodes is P-RC-6+.
+The canonical event loop remains inherited while ``run()`` consumes that
+stream for non-streaming callers.
 """
 
 from __future__ import annotations
@@ -45,7 +45,6 @@ from openakita.runtime.state_graph.guards.tool_failure_ack import (
     successful_tool_names,
 )
 from openakita.runtime.state_graph.guards.tool_filters import (
-    filter_tools_by_intent,
     filter_tools_by_mode,
     get_mode_ruleset,
     is_shell_write_command,
@@ -104,8 +103,7 @@ class GuardVerdict:
 
     def __repr__(self) -> str:
         return (
-            f"GuardVerdict(guard={self.guard!r}, passed={self.passed!r}, "
-            f"message={self.message!r})"
+            f"GuardVerdict(guard={self.guard!r}, passed={self.passed!r}, message={self.message!r})"
         )
 
     def __eq__(self, other: object) -> bool:
@@ -176,18 +174,16 @@ def build_reasoning_graph() -> StateGraph:
 class ReasoningEngine(_LegacyReasoningEngine):
     """V2 ReAct engine: legacy class + explicit :class:`StateGraph` routing.
 
-    Inherits every public method (``run``, ``reason_stream``,
-    ``run_stream``, ``release_large_buffers``, etc.) byte-faithfully
+    Inherits the canonical ``reason_stream`` loop, its non-streaming ``run``
+    event consumer, and shared helpers such as ``release_large_buffers``
     from :class:`openakita.core._reasoning_engine_legacy.ReasoningEngine`
     so all existing callers continue to work. The v2 additions are
     :attr:`decision_graph`, :meth:`route_decision`,
     :meth:`evaluate_decision`, :meth:`filter_tools`,
     :meth:`should_block`, and :meth:`describe_routing`.
 
-    Honest scope: the legacy 1700 LOC ``run()`` is still authoritative
-    and does not yet consume :attr:`decision_graph`. The graph is a
-    new introspection / extension point for v2 callers; full migration
-    of ``run()`` onto StateGraph nodes is tracked for P-RC-6+.
+    Honest scope: the event loop does not yet consume :attr:`decision_graph`.
+    The graph remains an introspection / extension point for v2 callers.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -201,9 +197,7 @@ class ReasoningEngine(_LegacyReasoningEngine):
         """Constructed reasoning :class:`StateGraph` for this engine."""
         return self._decision_graph
 
-    async def route_decision(
-        self, current_node: str, decision: Decision | None
-    ) -> str | None:
+    async def route_decision(self, current_node: str, decision: Decision | None) -> str | None:
         """Look up the next node id given ``current_node`` and ``decision``."""
         return await self._decision_graph.route(current_node, decision)
 
@@ -214,18 +208,9 @@ class ReasoningEngine(_LegacyReasoningEngine):
         tools: list[dict],
         *,
         mode: str,
-        intent_name: str | None = None,
-        intent_tool_hints: list[str] | None = None,
-        requires_tools: bool = False,
     ) -> list[dict]:
-        """Compose mode + intent tool trimming into one call."""
-        trimmed = filter_tools_by_mode(tools, mode)
-        return filter_tools_by_intent(
-            trimmed,
-            intent_name=intent_name,
-            intent_tool_hints=intent_tool_hints,
-            requires_tools=requires_tools,
-        )
+        """Apply mode permissions without a second intent-based schema trim."""
+        return filter_tools_by_mode(tools, mode)
 
     def should_block(
         self,
@@ -260,8 +245,7 @@ class ReasoningEngine(_LegacyReasoningEngine):
         verdicts.append(GuardVerdict("source_tag", tag_msg is None, tag_msg))
 
         executed_names = [
-            (tr.get("name") or tr.get("tool_name") or "")
-            for tr in (tool_results or [])
+            (tr.get("name") or tr.get("tool_name") or "") for tr in (tool_results or [])
         ]
         names = list(successful_tool_names(executed_names, tool_results))
         ack_msg = check_tool_failure_acknowledgement(text, tool_results)
@@ -281,7 +265,7 @@ class ReasoningEngine(_LegacyReasoningEngine):
             GuardVerdict(
                 "unbacked_action",
                 unbacked_passed,
-                None if unbacked_passed else unbacked_out[len(text):].strip(),
+                None if unbacked_passed else unbacked_out[len(text) :].strip(),
             )
         )
 
@@ -298,11 +282,7 @@ class ReasoningEngine(_LegacyReasoningEngine):
         )
 
         recoverable = has_recoverable_tool_issue(tool_results)
-        verdicts.append(
-            GuardVerdict(
-                "recoverable_tool_issue", True, f"recoverable={recoverable}"
-            )
-        )
+        verdicts.append(GuardVerdict("recoverable_tool_issue", True, f"recoverable={recoverable}"))
 
         return verdicts
 
@@ -346,7 +326,6 @@ class ReasoningEngine(_LegacyReasoningEngine):
             "entry_point": self._decision_graph.entry_point,
             "nodes": sorted(self._decision_graph.nodes),
             "successors": {
-                n: self._decision_graph.successors(n)
-                for n in sorted(self._decision_graph.nodes)
+                n: self._decision_graph.successors(n) for n in sorted(self._decision_graph.nodes)
             },
         }
