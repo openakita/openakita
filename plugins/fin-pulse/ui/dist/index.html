@@ -2165,11 +2165,12 @@ function hoursAgoISO(hours) {
   const d = new Date(Date.now() - hours * 3600 * 1000);
   return d.toISOString().replace(/\.\d+Z$/, "Z");
 }
-function datetimeLocalToISO(value) {
+function datetimeLocalToWallClock(value, upperBound) {
   if (!value) return "";
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return "";
-  return d.toISOString().replace(/\.\d+Z$/, "Z");
+  // Article dates are displayed and queried as source wall clocks; UTC conversion shifts the day.
+  var match = String(value).trim().match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::(\d{2}))?$/);
+  if (!match) return "";
+  return match[1] + ":" + (match[2] || (upperBound ? "59" : "00"));
 }
 function copyText(text) {
   try {
@@ -2810,8 +2811,8 @@ function TodayTab() {
     setLoading(true);
     try {
       const qs = {
-        since: filters.window === "custom" ? datetimeLocalToISO(filters.since) : (filters.window ? hoursAgoISO(filters.window) : undefined),
-        until: filters.window === "custom" ? datetimeLocalToISO(filters.until) : undefined,
+        since: filters.window === "custom" ? datetimeLocalToWallClock(filters.since, false) : (filters.window ? hoursAgoISO(filters.window) : undefined),
+        until: filters.window === "custom" ? datetimeLocalToWallClock(filters.until, true) : undefined,
         sort: filters.sort || "time",
         limit: 1000,
       };
