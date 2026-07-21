@@ -90,6 +90,16 @@ def test_index_html_exists_and_nonempty() -> None:
     assert len(html) > 1024, "index.html is suspiciously short"
 
 
+def test_custom_time_filter_keeps_source_wall_clock_boundaries() -> None:
+    """datetime-local values must stay aligned with displayed source dates."""
+    html = INDEX_HTML.read_text("utf-8")
+
+    assert "function datetimeLocalToWallClock(value, upperBound)" in html
+    assert "datetimeLocalToWallClock(filters.since, false)" in html
+    assert "datetimeLocalToWallClock(filters.until, true)" in html
+    assert "function datetimeLocalToISO" not in html
+
+
 def test_rate_limited_renders_as_cooldown_not_error() -> None:
     """NewsNow public cooldown is a retryable wait state, not a failure."""
     html = INDEX_HTML.read_text("utf-8")

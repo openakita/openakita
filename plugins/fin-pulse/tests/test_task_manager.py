@@ -17,7 +17,6 @@ import asyncio
 from pathlib import Path
 
 import pytest
-
 from finpulse_task_manager import DEFAULT_CONFIG, FinpulseTaskManager
 
 
@@ -208,6 +207,37 @@ def test_article_list_window_uses_space_separated_published_at(tm_path: Path) ->
 
             assert total == 0
             assert rows == []
+        finally:
+            await tm.close()
+
+    _run(_body())
+
+
+def test_article_list_custom_day_excludes_previous_local_date(tm_path: Path) -> None:
+    async def _body() -> None:
+        tm = await _init(tm_path)
+        try:
+            for suffix, published_at in (
+                ("previous-evening", "2026-05-11T20:30:00"),
+                ("selected-day", "2026-05-12T00:30:00"),
+            ):
+                await tm.upsert_article(
+                    source_id="yicai",
+                    url=f"https://example.com/{suffix}",
+                    url_hash=f"h_{suffix}",
+                    title=suffix,
+                    fetched_at="2026-05-12T01:00:00Z",
+                    published_at=published_at,
+                )
+
+            rows, total = await tm.list_articles(
+                since="2026-05-12T00:00:00",
+                until="2026-05-12T23:59:59",
+                limit=10,
+            )
+
+            assert total == 1
+            assert [row["title"] for row in rows] == ["selected-day"]
         finally:
             await tm.close()
 
