@@ -373,7 +373,7 @@ class DispatchService:
 
     def _get_adapter(self, channel: str) -> Any | None:
         host = getattr(self._api, "_host", {}) or {}
-        gateway = host.get("gateway") if isinstance(host, dict) else None
+        gateway = host.get("gateway")
         if gateway is None or not hasattr(gateway, "get_adapter"):
             return None
         try:

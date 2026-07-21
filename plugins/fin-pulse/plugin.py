@@ -2196,7 +2196,7 @@ class Plugin(PluginBase):
             in-process (no extra HTTP round-trip).
             """
             host = getattr(self._api, "_host", None) or {}
-            api_app = host.get("api_app") if isinstance(host, dict) else None
+            api_app = host.get("api_app")
             if api_app is None:
                 return {"ok": True, "channels": []}
             try:
@@ -2223,7 +2223,7 @@ class Plugin(PluginBase):
             to a probe list when the gateway hides ``_adapters``.
             """
             host = getattr(self._api, "_host", None) or {}
-            gateway = host.get("gateway") if isinstance(host, dict) else None
+            gateway = host.get("gateway")
             if gateway is None:
                 return {"ok": True, "channels": []}
             names: list[str] = []

@@ -7,12 +7,19 @@ drifted and that every entry carries the fields the dynamic UI relies on.
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from collections import ChainMap
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
+
+from fastapi import APIRouter
 
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
+
+from plugin import Plugin  # noqa: E402
 
 
 def _load_source_defs() -> dict[str, dict[str, object]]:
@@ -97,3 +104,33 @@ def test_plugin_exposes_sources_route() -> None:
     assert '@router.get("/scheduler/channels")' in plugin_src, (
         "GET /scheduler/channels proxy missing from plugin.py"
     )
+
+
+def _route_endpoint(router: APIRouter, path: str):
+    return next(route.endpoint for route in router.routes if route.path == path)
+
+
+def test_channel_routes_accept_chainmap_host_refs(monkeypatch) -> None:
+    """Late-bound PluginAPI host refs use ChainMap rather than dict."""
+    api_app = object()
+    gateway = SimpleNamespace(_adapters={"wechat:bot-1": object()})
+    plugin = Plugin()
+    plugin._api = SimpleNamespace(_host=ChainMap({}, {"api_app": api_app, "gateway": gateway}))
+    router = APIRouter()
+    plugin._register_routes(router)
+
+    expected_channels = [{"channel_id": "wechat:bot-1", "chat_id": "user-1"}]
+
+    async def fake_list_channels(request):
+        assert request.app is api_app
+        return {"channels": expected_channels}
+
+    scheduler_module = ModuleType("openakita.api.routes.scheduler")
+    scheduler_module.list_channels = fake_list_channels
+    monkeypatch.setitem(sys.modules, "openakita.api.routes.scheduler", scheduler_module)
+
+    scheduler_payload = asyncio.run(_route_endpoint(router, "/scheduler/channels")())
+    fallback_payload = asyncio.run(_route_endpoint(router, "/available-channels")())
+
+    assert scheduler_payload == {"ok": True, "channels": expected_channels}
+    assert fallback_payload == {"ok": True, "channels": ["wechat:bot-1"]}

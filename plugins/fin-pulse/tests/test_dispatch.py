@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import ChainMap
 from pathlib import Path
 
 from finpulse_dispatch import DispatchResult, DispatchService
@@ -316,7 +317,7 @@ class _StubGateway:
 class _StubAPIWithAdapter(_StubAPI):
     def __init__(self, adapter: _StubAdapter, **kw) -> None:
         super().__init__(**kw)
-        self._host = {"gateway": _StubGateway(adapter)}
+        self._host = ChainMap({}, {"gateway": _StubGateway(adapter)})
 
 
 async def _stub_render(self, html: str, out_path: Path) -> None:  # noqa: ARG001
