@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -49,6 +50,7 @@ AUTH_EXEMPT_PATHS = frozenset(
     }
 )
 AUTH_EXEMPT_PREFIXES = ("/web/", "/web", "/ws/", "/docs", "/openapi.json", "/redoc", "/user-docs")
+PLUGIN_UI_ASSET_PATH = re.compile(r"^/api/plugins/[^/]+/ui(?:/.*)?$")
 
 # ---------------------------------------------------------------------------
 # Password hashing (scrypt, stdlib)
@@ -439,6 +441,13 @@ def _is_auth_exempt(path: str) -> bool:
     return any(path.startswith(prefix) for prefix in AUTH_EXEMPT_PREFIXES)
 
 
+def _is_public_plugin_ui_asset(request: Request) -> bool:
+    """Allow iframe documents and their static assets without exposing plugin APIs."""
+    return request.method in {"GET", "HEAD"} and bool(
+        PLUGIN_UI_ASSET_PATH.fullmatch(request.url.path)
+    )
+
+
 def create_auth_middleware(config: WebAccessConfig):
     """Create the authentication middleware function."""
 
@@ -449,8 +458,10 @@ def create_auth_middleware(config: WebAccessConfig):
 
         path = request.url.path
 
-        # Static files and auth endpoints are always accessible
-        if _is_auth_exempt(path):
+        # Static files and auth endpoints are always accessible. Plugin UI
+        # documents are loaded by iframe/resource tags, which cannot attach a
+        # Bearer header; only their read-only static mount is public.
+        if _is_auth_exempt(path) or _is_public_plugin_ui_asset(request):
             return await call_next(request)
 
         # Direct local connections bypass auth (Tauri desktop, curl on the

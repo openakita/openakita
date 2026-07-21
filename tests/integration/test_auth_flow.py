@@ -11,6 +11,7 @@
 8. /api/config 需要认证
 9. 记忆管理 API 需要认证（曾有 401 bug）
 10. token 刷新流程
+11. 插件 UI 静态资源免认证，但插件业务 API 仍需认证
 """
 
 from __future__ import annotations
@@ -325,3 +326,42 @@ class TestTokenRefresh:
             },
         )
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# 11. Plugin iframe static assets are public; plugin APIs stay protected
+# ---------------------------------------------------------------------------
+
+
+class TestPluginUiRemoteAuth:
+    async def test_plugin_ui_document_does_not_require_auth(self, client, monkeypatch):
+        monkeypatch.setenv("TRUST_PROXY", "true")
+        resp = await client.get(
+            "/api/plugins/example/ui/",
+            headers={"X-Forwarded-For": "203.0.113.50"},
+        )
+        assert resp.status_code != 401
+
+    async def test_plugin_ui_asset_head_does_not_require_auth(self, client, monkeypatch):
+        monkeypatch.setenv("TRUST_PROXY", "true")
+        resp = await client.head(
+            "/api/plugins/example/ui/_assets/app.js",
+            headers={"X-Forwarded-For": "203.0.113.50"},
+        )
+        assert resp.status_code != 401
+
+    async def test_plugin_business_api_still_requires_auth(self, client, monkeypatch):
+        monkeypatch.setenv("TRUST_PROXY", "true")
+        resp = await client.get(
+            "/api/plugins/example/tasks",
+            headers={"X-Forwarded-For": "203.0.113.50"},
+        )
+        assert resp.status_code == 401
+
+    async def test_plugin_ui_post_still_requires_auth(self, client, monkeypatch):
+        monkeypatch.setenv("TRUST_PROXY", "true")
+        resp = await client.post(
+            "/api/plugins/example/ui/",
+            headers={"X-Forwarded-For": "203.0.113.50"},
+        )
+        assert resp.status_code == 401

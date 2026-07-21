@@ -148,6 +148,10 @@ export class PluginBridgeHost {
         this.handleApiRequest(data);
         break;
 
+      case "bridge:upload":
+        this.handleUpload(data);
+        break;
+
       case "bridge:notification":
         if (this.onNotification && data.payload) {
           this.onNotification(data.payload as { title: string; body: string; type?: string });
@@ -247,11 +251,25 @@ export class PluginBridgeHost {
 
     try {
       const platform = await import("../platform");
+      const { isTauriRemoteMode } = await import("../platform/auth");
       const savedPath = localPath
         ? await platform.copyFileToDownloads(localPath, fname)
         : await (async () => {
             const resolvedUrl = rawUrl!.startsWith("http") ? rawUrl! : `${this.apiBase}${rawUrl}`;
-            return platform.downloadFile(resolvedUrl, fname);
+            if (platform.IS_TAURI && !isTauriRemoteMode()) {
+              return platform.downloadFile(resolvedUrl, fname);
+            }
+
+            const resp = this.isBackendUrl(resolvedUrl)
+              ? await this.authenticatedFetch(resolvedUrl)
+              : await fetch(resolvedUrl);
+            if (!resp.ok) throw new Error(`Download failed: HTTP ${resp.status}`);
+            const objectUrl = URL.createObjectURL(await resp.blob());
+            try {
+              return await platform.downloadFile(objectUrl, fname);
+            } finally {
+              setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+            }
           })();
       this.post({
         type: "bridge:download-ack",
@@ -349,8 +367,8 @@ export class PluginBridgeHost {
       return;
     }
 
-    const url = path.startsWith("http") ? path : `${this.apiBase}${path}`;
     try {
+      const url = this.resolvePluginApiUrl(path);
       const fetchOpts: RequestInit = {
         method,
         headers: { "Content-Type": "application/json" },
@@ -358,7 +376,7 @@ export class PluginBridgeHost {
       if (body && method !== "GET" && method !== "HEAD") {
         fetchOpts.body = JSON.stringify(body);
       }
-      const resp = await fetch(url, fetchOpts);
+      const resp = await this.authenticatedFetch(url, fetchOpts);
       let respBody: unknown;
       const ct = resp.headers.get("content-type") || "";
       if (ct.includes("application/json")) {
@@ -379,5 +397,79 @@ export class PluginBridgeHost {
       });
     }
   }
-}
 
+  private async handleUpload(msg: BridgeMessage) {
+    const { path, entries } = (msg.payload || {}) as {
+      path?: string;
+      entries?: Array<{ name?: string; value?: unknown; filename?: string }>;
+    };
+    if (!path || !Array.isArray(entries)) {
+      this.post({
+        type: "bridge:upload-ack",
+        requestId: msg.requestId,
+        payload: { ok: false, status: 400, error: "Missing upload path or entries" },
+      });
+      return;
+    }
+
+    try {
+      const url = this.resolvePluginApiUrl(path);
+      const formData = new FormData();
+      for (const entry of entries) {
+        if (!entry.name) continue;
+        if (entry.value instanceof Blob) {
+          formData.append(entry.name, entry.value, entry.filename);
+        } else {
+          formData.append(entry.name, String(entry.value ?? ""));
+        }
+      }
+      const resp = await this.authenticatedFetch(url, { method: "POST", body: formData });
+      const contentType = resp.headers.get("content-type") || "";
+      const body = contentType.includes("application/json")
+        ? await resp.json()
+        : await resp.text();
+      this.post({
+        type: "bridge:upload-ack",
+        requestId: msg.requestId,
+        payload: { ok: resp.ok, status: resp.status, body },
+      });
+    } catch (e) {
+      this.post({
+        type: "bridge:upload-ack",
+        requestId: msg.requestId,
+        payload: { ok: false, status: 0, error: String(e) },
+      });
+    }
+  }
+
+  private async authenticatedFetch(url: string, init?: RequestInit): Promise<Response> {
+    const { authFetch } = await import("../platform/auth");
+    let authBase = this.apiBase;
+    try {
+      authBase = new URL(this.apiBase || window.location.origin).origin;
+    } catch { /* relative local-web base */ }
+    return authFetch(url, init, authBase);
+  }
+
+  private isBackendUrl(url: string): boolean {
+    try {
+      const backendOrigin = new URL(this.apiBase || window.location.origin).origin;
+      return new URL(url, backendOrigin).origin === backendOrigin;
+    } catch {
+      return false;
+    }
+  }
+
+  private resolvePluginApiUrl(path: string): string {
+    const backendOrigin = new URL(this.apiBase || window.location.origin).origin;
+    const url = new URL(path, backendOrigin);
+    const pluginPrefix = `/api/plugins/${encodeURIComponent(this.pluginId)}`;
+    if (
+      url.origin !== backendOrigin
+      || (url.pathname !== pluginPrefix && !url.pathname.startsWith(`${pluginPrefix}/`))
+    ) {
+      throw new Error("Plugin bridge requests must target the current plugin API");
+    }
+    return url.toString();
+  }
+}

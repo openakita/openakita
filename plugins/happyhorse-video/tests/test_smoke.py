@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_models_module_imports_clean():
     import happyhorse_models  # noqa: F401
@@ -56,3 +60,20 @@ def test_plugin_module_imports_clean():
 
     mod = load_happyhorse_plugin()
     assert mod.PLUGIN_ID == "happyhorse-video"
+
+
+def test_ui_routes_api_and_uploads_through_host_bridge():
+    html = (PLUGIN_ROOT / "ui" / "dist" / "index.html").read_text(encoding="utf-8")
+
+    assert 'typeof window.OpenAkita.api === "function"' in html
+    assert 'typeof window.OpenAkita.upload === "function"' in html
+    assert "const r = await uploadAsset(file);" in html
+
+
+def test_ui_bootstrap_supports_upload_bridge_messages():
+    bootstrap = (PLUGIN_ROOT / "ui" / "dist" / "_assets" / "bootstrap.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'case "bridge:upload-ack":' in bootstrap
+    assert 'return request("bridge:upload"' in bootstrap

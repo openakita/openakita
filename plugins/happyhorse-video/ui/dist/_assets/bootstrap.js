@@ -79,6 +79,7 @@
         break;
       }
       case "bridge:api-response":
+      case "bridge:upload-ack":
       case "bridge:download-ack":
       case "bridge:open-external-ack":
       case "bridge:show-in-folder-ack":
@@ -119,6 +120,20 @@
     get meta() { return Object.assign({}, meta); },
     api: function (method, path, body) {
       return request("bridge:api-request", { method: method, path: path, body: body });
+    },
+    upload: function (path, formData) {
+      var entries = [];
+      if (!formData || typeof formData.forEach !== "function") {
+        return Promise.resolve({ ok: false, error: "formData is required" });
+      }
+      formData.forEach(function (value, name) {
+        entries.push({
+          name: name,
+          value: value,
+          filename: typeof File !== "undefined" && value instanceof File ? value.name : undefined,
+        });
+      });
+      return request("bridge:upload", { path: path, entries: entries });
     },
     notify: function (opts) { send("bridge:notification", opts || {}); },
     navigate: function (viewId) { send("bridge:navigate", { viewId: viewId }); },

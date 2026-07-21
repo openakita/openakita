@@ -84,6 +84,24 @@ class ApiError extends Error {
 }
 
 async function api(method, path, body) {
+  if (window.OpenAkita && typeof window.OpenAkita.api === "function") {
+    const result = await window.OpenAkita.api(
+      method,
+      `/api/plugins/${PLUGIN_ID}${path}`,
+      body,
+    );
+    const responseBody = result?.body;
+    if (!result?.ok) {
+      const detail = responseBody?.detail ?? responseBody ?? result?.error;
+      const message =
+        (detail && typeof detail === "object" && detail.message)
+        || (typeof detail === "string" && detail)
+        || `${result?.status || 0} request failed`;
+      throw new ApiError(result?.status || 0, message, detail);
+    }
+    return responseBody;
+  }
+
   const opts = { method, headers: {} };
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
@@ -103,6 +121,29 @@ async function api(method, path, body) {
       || `${res.status} ${res.statusText}`;
     throw new ApiError(res.status, message, detail);
   }
+  return res.json();
+}
+
+async function uploadAsset(file) {
+  const fd = new FormData();
+  fd.append("file", file);
+  if (window.OpenAkita && typeof window.OpenAkita.upload === "function") {
+    const result = await window.OpenAkita.upload(
+      `/api/plugins/${PLUGIN_ID}/upload`,
+      fd,
+    );
+    if (!result?.ok) {
+      const detail = result?.body?.detail ?? result?.body ?? result?.error;
+      const message =
+        (detail && typeof detail === "object" && (detail.message || detail.error))
+        || (typeof detail === "string" && detail)
+        || `${result?.status || 0} upload failed`;
+      throw new Error(message);
+    }
+    return result.body;
+  }
+
+  const res = await fetch(apiBase() + "/upload", { method: "POST", body: fd });
   return res.json();
 }
 
@@ -1282,10 +1323,7 @@ function UploadUrlField({ label, value, onChange, accept = "*/*", kind = "image"
     if (!file) return;
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(apiBase() + "/upload", { method: "POST", body: fd });
-      const r = await res.json();
+      const r = await uploadAsset(file);
       if (!r.ok) throw new Error(r.error || "upload failed");
       setAsset(r);
       if (!r.oss_url) {
@@ -1513,10 +1551,7 @@ function FileUploadCard({ accept, kind, value, onUploaded, hint }) {
     if (!file) return;
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(apiBase() + "/upload", { method: "POST", body: fd });
-      const r = await res.json();
+      const r = await uploadAsset(file);
       if (!r.ok) throw new Error(r.error || "upload failed");
       onUploaded(r);
       if (!r.oss_url) {
