@@ -93,17 +93,19 @@ def test_ci_full_build_parallelizes_independent_packagers() -> None:
     steps = workflow["jobs"]["tauri_full_build_check"]["steps"]
     steps_by_name = {step.get("name"): step for step in steps}
 
-    parallel_run = steps_by_name["Build backend, desktop frontend, Rust, and docs in parallel"][
-        "run"
-    ]
+    frontend_run = steps_by_name["Build web and desktop frontend assets"]["run"]
+    assert "npm run build:web" in frontend_run.splitlines()
+    assert "npm run build" in frontend_run.splitlines()
+
+    parallel_run = steps_by_name["Build backend, Rust, and docs in parallel"]["run"]
     assert "python build/build_backend.py --skip-web-build" in parallel_run
-    assert "npm run build" in parallel_run
     assert "cargo build --release --features tauri/custom-protocol" in parallel_run
     assert "wait_for_build" in parallel_run
     assert all(
         f'wait_for_build "${name}_pid" {name}' in parallel_run
-        for name in ("backend", "frontend", "rust", "docs")
+        for name in ("backend", "rust", "docs")
     )
+    assert "frontend_pid" not in parallel_run
 
     tauri_run = steps_by_name["Build Tauri bundles (full build)"]["run"]
     assert "npx tauri bundle" in tauri_run

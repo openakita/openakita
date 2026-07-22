@@ -10,6 +10,12 @@ def test_cache_inputs_separate_backend_and_rust_ownership() -> None:
     assert "src/openakita" not in INPUTS["rust"]
 
 
+def test_rust_cache_tracks_frontend_assets_embedded_by_tauri() -> None:
+    assert "apps/setup-center/src" in INPUTS["rust"]
+    assert "apps/setup-center/package-lock.json" in INPUTS["rust"]
+    assert "apps/setup-center/vite.config.ts" in INPUTS["rust"]
+
+
 def test_fingerprints_are_stable_sha256_values() -> None:
     for kind in INPUTS:
         value = fingerprint(kind)

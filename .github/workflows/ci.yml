@@ -377,9 +377,11 @@ jobs:
         working-directory: apps/setup-center
         run: npm ci
 
-      - name: Build web frontend assets
+      - name: Build web and desktop frontend assets
         working-directory: apps/setup-center
-        run: npm run build:web
+        run: |
+          npm run build:web
+          npm run build
 
       - name: Compute exact build fingerprints
         id: build_keys
@@ -420,7 +422,9 @@ jobs:
             echo "# User Custom Persona (placeholder)" > identity/personas/user_custom.md
           fi
 
-      - name: Build backend, desktop frontend, Rust, and docs in parallel
+      # Tauri's generate_context! macro reads frontendDist at Rust compile time,
+      # so the desktop frontend must exist before this parallel phase starts.
+      - name: Build backend, Rust, and docs in parallel
         shell: bash
         env:
           BACKEND_CACHE_HIT: ${{ steps.backend_cache.outputs.cache-hit }}
@@ -438,14 +442,6 @@ jobs:
             fi
           ) &
           backend_pid=$!
-
-          (
-            echo "[frontend] Starting desktop frontend build"
-            cd apps/setup-center
-            npm run build
-            echo "[frontend] Completed"
-          ) &
-          frontend_pid=$!
 
           (
             if [ "$RUST_BINARY_CACHE_HIT" = "true" ]; then
@@ -481,7 +477,6 @@ jobs:
 
           failed=0
           wait_for_build "$backend_pid" backend || failed=1
-          wait_for_build "$frontend_pid" frontend || failed=1
           wait_for_build "$rust_pid" rust || failed=1
           wait_for_build "$docs_pid" docs || failed=1
           if [ "$failed" -ne 0 ]; then

@@ -34,6 +34,12 @@ INPUTS = {
         "mcps",
     ),
     "rust": (
+        "apps/setup-center/src",
+        "apps/setup-center/index.html",
+        "apps/setup-center/package.json",
+        "apps/setup-center/package-lock.json",
+        "apps/setup-center/vite.config.ts",
+        "apps/setup-center/tsconfig.json",
         "apps/setup-center/src-tauri/Cargo.toml",
         "apps/setup-center/src-tauri/Cargo.lock",
         "apps/setup-center/src-tauri/build.rs",
