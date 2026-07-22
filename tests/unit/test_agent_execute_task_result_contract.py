@@ -3,10 +3,6 @@ from types import SimpleNamespace
 import pytest
 
 from openakita.agent.core import Agent
-from openakita.core._agent_legacy import (
-    _looks_like_progress_only_task_text,
-    _prefer_task_final_response,
-)
 from openakita.core.intent_analyzer import IntentResult, IntentType
 from openakita.core.ralph import TaskResult
 from openakita.llm.types import AllEndpointsFailedError
@@ -117,22 +113,3 @@ async def test_execute_task_does_not_complete_for_non_terminal_stream_exit(exit_
     assert result.success is False
     assert result.data is None
     assert result.iterations == 1
-
-
-def test_task_final_response_prefers_substantive_report_over_meta_summary():
-    full_report = """## 晚间资讯报告
-
-- 中东局势升级，油价波动加剧
-- A 股收盘回落，避险资产走强
-
-### 明日关注
-继续关注能源价格和政策发布。"""
-    meta_summary = "已完成今日晚间资讯播报任务。晚报已整理完毕，系统会自动推送。"
-
-    assert _prefer_task_final_response(full_report, "") is True
-    assert _prefer_task_final_response(meta_summary, full_report) is False
-
-
-def test_task_progress_text_gets_one_gentle_continue_chance():
-    assert _looks_like_progress_only_task_text("我来执行今日资讯播报任务，先访问凤凰网。")
-    assert not _looks_like_progress_only_task_text("## 今日资讯\n\n- 已整理三条关键新闻")

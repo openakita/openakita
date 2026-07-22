@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from openakita.agent.reasoning import Decision, DecisionType, ReasoningEngine
-from openakita.core._reasoning_engine_legacy import _looks_like_waiting_for_user_response
+from openakita.core._reasoning_engine_legacy import (
+    _looks_like_generic_task_completion,
+    _looks_like_waiting_for_user_response,
+)
 from openakita.core.agent_state import AgentState
 
 
@@ -20,6 +23,18 @@ def test_detects_user_handoff_blocker_text():
 def test_does_not_treat_plain_completion_summary_as_handoff():
     assert not _looks_like_waiting_for_user_response(
         "已完成网站操作手册初版，包含首页、患者、预约和设置模块的主要入口。请你查看。"
+    )
+
+
+def test_structured_short_report_is_not_generic_completion_text():
+    assert not _looks_like_generic_task_completion(
+        "## 每小时报告\n\n- 成功: 12\n- 失败: 0\n\n任务已完成。"
+    )
+
+
+def test_short_result_with_data_is_not_generic_completion_text():
+    assert not _looks_like_generic_task_completion(
+        "任务已完成。报告结果：收入 12345，错误 0，状态 healthy。"
     )
 
 
@@ -152,6 +167,196 @@ async def test_verify_incomplete_exhaustion_is_marked_non_normal():
     assert result == reply
     assert engine._last_exit_reason == "verify_incomplete"
     response_handler.verify_task_completion.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scheduled_task_retries_generic_completion_instead_of_accepting_success():
+    response_handler = AsyncMock()
+    response_handler.verify_task_completion = AsyncMock(return_value=True)
+    engine = ReasoningEngine(
+        brain=None,
+        tool_executor=None,
+        context_manager=None,
+        response_handler=response_handler,
+        agent_state=AgentState(),
+    )
+    working_messages: list[dict] = []
+    candidates: list[str] = []
+
+    result = await engine._handle_final_answer(
+        decision=Decision(
+            type=DecisionType.FINAL_ANSWER,
+            text_content="定时报告任务已完成，系统会自动推送。",
+        ),
+        working_messages=working_messages,
+        original_messages=[
+            {
+                "role": "user",
+                "content": "[定时任务执行]\n请执行 report.py 并返回完整 stdout。",
+            }
+        ],
+        tools_executed_in_task=True,
+        executed_tool_names=["run_powershell"],
+        delivery_receipts=[],
+        all_tool_results=[
+            {
+                "type": "tool_result",
+                "tool_use_id": "run-1",
+                "content": "## 每小时报告\n\n- 成功: 12\n- 失败: 0",
+                "is_error": False,
+            }
+        ],
+        no_tool_call_count=0,
+        verify_incomplete_count=0,
+        no_confirmation_text_count=0,
+        max_no_tool_retries=1,
+        max_verify_retries=1,
+        max_confirmation_text_retries=1,
+        base_force_retries=1,
+        conversation_id="issue-73-generic",
+        final_response_candidates=candidates,
+    )
+
+    assert isinstance(result, tuple)
+    assert "完整报告" in working_messages[-1]["content"]
+    assert candidates == ["定时报告任务已完成，系统会自动推送。"]
+    response_handler.verify_task_completion.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduled_task_preserves_report_when_retry_returns_generic_completion():
+    response_handler = AsyncMock()
+    response_handler.verify_task_completion = AsyncMock(side_effect=[False, True])
+    engine = ReasoningEngine(
+        brain=None,
+        tool_executor=None,
+        context_manager=None,
+        response_handler=response_handler,
+        agent_state=AgentState(),
+    )
+    working_messages: list[dict] = []
+    candidates: list[str] = []
+    original_messages = [
+        {
+            "role": "user",
+            "content": "[定时任务执行]\n请执行 report.py 并返回完整 stdout。",
+        }
+    ]
+    tool_results = [
+        {
+            "type": "tool_result",
+            "tool_use_id": "run-1",
+            "content": "脚本执行成功",
+            "is_error": False,
+        }
+    ]
+    report = """## 每小时报告
+
+- 成功任务: 12
+- 失败任务: 0
+
+### 结论
+所有检查均正常。"""
+
+    first = await engine._handle_final_answer(
+        decision=Decision(type=DecisionType.FINAL_ANSWER, text_content=report),
+        working_messages=working_messages,
+        original_messages=original_messages,
+        tools_executed_in_task=True,
+        executed_tool_names=["run_powershell"],
+        delivery_receipts=[],
+        all_tool_results=tool_results,
+        no_tool_call_count=0,
+        verify_incomplete_count=0,
+        no_confirmation_text_count=0,
+        max_no_tool_retries=1,
+        max_verify_retries=2,
+        max_confirmation_text_retries=1,
+        base_force_retries=1,
+        conversation_id="issue-73-preserve",
+        final_response_candidates=candidates,
+    )
+    assert isinstance(first, tuple)
+
+    second = await engine._handle_final_answer(
+        decision=Decision(
+            type=DecisionType.FINAL_ANSWER,
+            text_content="任务已完成，报告已整理完毕。",
+        ),
+        working_messages=working_messages,
+        original_messages=original_messages,
+        tools_executed_in_task=True,
+        executed_tool_names=["run_powershell"],
+        delivery_receipts=[],
+        all_tool_results=tool_results,
+        no_tool_call_count=first[1],
+        verify_incomplete_count=first[2],
+        no_confirmation_text_count=first[3],
+        max_no_tool_retries=first[4],
+        max_verify_retries=2,
+        max_confirmation_text_retries=1,
+        base_force_retries=1,
+        conversation_id="issue-73-preserve",
+        final_response_candidates=candidates,
+    )
+
+    assert second == report
+    assert (
+        response_handler.verify_task_completion.await_args_list[-1].kwargs["assistant_response"]
+        == report
+    )
+
+
+@pytest.mark.asyncio
+async def test_scheduled_task_repeated_generic_completion_is_not_success():
+    response_handler = AsyncMock()
+    response_handler.verify_task_completion = AsyncMock(return_value=True)
+    engine = ReasoningEngine(
+        brain=None,
+        tool_executor=None,
+        context_manager=None,
+        response_handler=response_handler,
+        agent_state=AgentState(),
+    )
+    candidates: list[str] = []
+    kwargs = {
+        "working_messages": [],
+        "original_messages": [
+            {"role": "user", "content": "[定时任务执行]\n执行报告脚本并返回结果。"}
+        ],
+        "tools_executed_in_task": True,
+        "executed_tool_names": ["run_powershell"],
+        "delivery_receipts": [],
+        "all_tool_results": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "run-1",
+                "content": "## 报告\n\n- 正常",
+                "is_error": False,
+            }
+        ],
+        "no_tool_call_count": 0,
+        "verify_incomplete_count": 0,
+        "no_confirmation_text_count": 0,
+        "max_no_tool_retries": 1,
+        "max_verify_retries": 1,
+        "max_confirmation_text_retries": 1,
+        "base_force_retries": 1,
+        "conversation_id": "issue-73-repeat",
+        "final_response_candidates": candidates,
+    }
+    generic = Decision(
+        type=DecisionType.FINAL_ANSWER,
+        text_content="The scheduled report task has completed successfully.",
+    )
+
+    first = await engine._handle_final_answer(decision=generic, **kwargs)
+    second = await engine._handle_final_answer(decision=generic, **kwargs)
+
+    assert isinstance(first, tuple)
+    assert isinstance(second, str)
+    assert engine._last_exit_reason == "verify_incomplete"
+    response_handler.verify_task_completion.assert_not_awaited()
 
 
 @pytest.mark.asyncio

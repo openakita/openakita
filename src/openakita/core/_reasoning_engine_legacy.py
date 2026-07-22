@@ -120,6 +120,81 @@ _TOOL_RESULT_ERROR_PREFIXES = (
     "错误类型:",
 )
 
+_GENERIC_TASK_COMPLETION_MARKERS = (
+    "任务已完成",
+    "已完成任务",
+    "执行完成",
+    "已整理完毕",
+    "呈现如上",
+    "输出如上",
+    "系统会自动",
+    "自动推送",
+    "无需额外操作",
+    "如需调整",
+    "如需其他",
+    "随时告诉我",
+    "the task is complete",
+    "task has completed",
+    "completed successfully",
+    "shown above",
+    "already presented",
+    "automatically send",
+)
+
+
+def _looks_like_generic_task_completion(text: str) -> bool:
+    """Return whether a short response only reports completion instead of the result."""
+    normalized = (text or "").strip()
+    if not normalized or len(normalized) > 240:
+        return False
+    lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+    if any(line.startswith(("#", "-", "*", "1.", "2.", "3.")) for line in lines):
+        return False
+    lower = normalized.lower()
+    matched = [marker for marker in _GENERIC_TASK_COMPLETION_MARKERS if marker in lower]
+    if not matched:
+        return False
+    residual = lower
+    for marker in matched:
+        residual = residual.replace(marker, "")
+    residual = re.sub(r"[^\w]+", "", residual, flags=re.UNICODE)
+    return not any(char.isdigit() for char in residual) and len(residual) < 32
+
+
+def _task_final_response_score(text: str) -> int:
+    """Score visible task results so a retry cannot replace a substantive report."""
+    normalized = (text or "").strip()
+    if not normalized:
+        return -10_000
+
+    lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+    score = min(len(normalized), 6000) // 20
+    score += sum(1 for line in lines if line.startswith(("#", "##", "###"))) * 18
+    score += sum(1 for line in lines if line.startswith(("-", "*", "1.", "2.", "3."))) * 8
+    score += sum(1 for line in lines if "|" in line) * 5
+    if _looks_like_generic_task_completion(normalized):
+        score -= 90
+    return score
+
+
+def _select_task_final_response(current: str, candidates: list[str]) -> str:
+    """Prefer an earlier substantive result only when the current text is generic."""
+    current = (current or "").strip()
+    if not _looks_like_generic_task_completion(current):
+        return current
+
+    substantive = [
+        candidate.strip()
+        for candidate in candidates
+        if candidate.strip() and not _looks_like_generic_task_completion(candidate)
+    ]
+    if not substantive:
+        return current
+    best = max(substantive, key=_task_final_response_score)
+    return (
+        best if _task_final_response_score(best) > _task_final_response_score(current) else current
+    )
+
 
 def _unpack_tool_result_payload(value: Any) -> tuple[str, ConfigHint | None, dict[str, Any]]:
     raw_payload, hint = value
@@ -1913,6 +1988,7 @@ class ReasoningEngine:
             verify_incomplete_count = 0
             no_confirmation_text_count = 0
             tools_executed_in_task = False
+            task_final_candidates: list[str] = []
             _supervisor_intervened = False
             _tool_call_counter: dict[str, int] = {}
             _tool_name_counter: dict[str, int] = {}
@@ -2819,6 +2895,7 @@ class ReasoningEngine:
                         supervisor_intervened=_supervisor_intervened,
                         tool_evidence_required=tool_evidence_required,
                         mode=_effective_mode,
+                        final_response_candidates=task_final_candidates,
                     )
 
                     if isinstance(result, str):
@@ -2863,6 +2940,7 @@ class ReasoningEngine:
                             no_tool_call_count = 0
                             verify_incomplete_count = 0
                             no_confirmation_text_count = 0
+                            task_final_candidates.clear()
                             logger.info(
                                 "[ReAct-Stream][DoneDrain] %d steered message(s) "
                                 "arrived during final-answer generation; folding "
@@ -2944,6 +3022,8 @@ class ReasoningEngine:
 
                 # ==================== TOOL_CALLS ====================
                 elif decision.type == DecisionType.TOOL_CALLS and decision.tool_calls:
+                    # A new tool round can invalidate an earlier report candidate.
+                    task_final_candidates.clear()
                     try:
                         state.transition(TaskStatus.ACTING)
                     except ValueError:  # s5b-allow-force-write
@@ -5846,6 +5926,7 @@ class ReasoningEngine:
         supervisor_intervened: bool = False,
         tool_evidence_required: bool = False,
         mode: str = "agent",
+        final_response_candidates: list[str] | None = None,
     ) -> str | tuple:
         """
         处理纯文本响应（无工具调用）。
@@ -5916,6 +5997,51 @@ class ReasoningEngine:
                     )
                     self._last_exit_reason = "waiting_user"
                     return cleaned_text
+
+                current_is_generic = _looks_like_generic_task_completion(cleaned_text)
+                previous_candidates = list(final_response_candidates or [])
+                selected_text = _select_task_final_response(cleaned_text, previous_candidates)
+                if final_response_candidates is not None:
+                    if current_is_generic or cleaned_text not in final_response_candidates:
+                        final_response_candidates.append(cleaned_text)
+                    del final_response_candidates[:-8]
+
+                is_scheduled_task = (last_user_request or "").lstrip().startswith("[定时任务执行]")
+                if is_scheduled_task and current_is_generic and selected_text == cleaned_text:
+                    generic_attempts = sum(
+                        _looks_like_generic_task_completion(candidate)
+                        for candidate in (final_response_candidates or [cleaned_text])
+                    )
+                    if generic_attempts <= 1:
+                        working_messages.append(
+                            {
+                                "role": "assistant",
+                                "content": [{"type": "text", "text": decision.text_content}],
+                                "reasoning_content": decision.thinking_content or None,
+                            }
+                        )
+                        working_messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "[系统] 这是一项定时任务，上一条回复只有完成状态，"
+                                    "不能作为最终结果。请基于已经产生的 tool_result，"
+                                    "把用户需要看到的完整报告、关键数据和结论写在回复正文中；"
+                                    "不要只说任务已完成，也不要省略脚本输出。"
+                                ),
+                            }
+                        )
+                        return (
+                            working_messages,
+                            no_tool_call_count,
+                            verify_incomplete_count,
+                            no_confirmation_text_count,
+                            max_no_tool_retries,
+                        )
+                    self._last_exit_reason = "verify_incomplete"
+                    return cleaned_text
+
+                cleaned_text = selected_text
                 # 汇总轮（root post-summary 注入的 [用户指令最终汇总] 提示）下，
                 # 本次 ReAct 的目的就是输出汇总文本而非再产出文件，verify 全程绕过。
                 # 与 B1 的关键词白名单互补：B1 修关键词命中根因，B2 兜底全路径。
@@ -5953,7 +6079,9 @@ class ReasoningEngine:
                     )
                     if failure_warning:
                         return cleaned_text + failure_warning
-                    return cleaned_text
+                    return _select_task_final_response(
+                        cleaned_text, final_response_candidates or []
+                    )
 
                 verify_incomplete_count += 1
 
