@@ -35,7 +35,7 @@ jobs:
   release_contract:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v6
         with:

@@ -42,6 +42,9 @@ def test_mobile_release_waits_for_draft_creation_without_an_independent_tag_trig
     assert mobile_job["secrets"] == "inherit"
     assert "github.event_name == 'push'" in mobile_job["if"]
 
+    release_contract_job = mobile_workflow["jobs"]["release_contract"]
+    assert release_contract_job["permissions"] == {"contents": "write"}
+
 
 def test_packaging_verifies_checkout_identity_and_chat_api() -> None:
     workflow_sources = [
