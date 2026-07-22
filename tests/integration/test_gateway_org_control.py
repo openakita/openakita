@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -234,6 +235,18 @@ class TestOrgLastCommand:
 
 
 class TestOrgCommandsDoNotStartTyping:
+    def test_org_manager_uses_process_default(self, gateway):
+        """IM org lookup must follow the manager published by the API composition root."""
+        from openakita.orgs.store import get_default_org_manager, set_default_org_manager
+
+        previous = get_default_org_manager()
+        manager = MagicMock()
+        set_default_org_manager(manager)
+        try:
+            assert gateway._get_org_manager() is manager
+        finally:
+            set_default_org_manager(previous)
+
     async def test_org_list_returns_before_typing_placeholder(self, gateway, session_manager):
         """短组织命令应直接回复，不创建“思考中”占位卡片。"""
         session = create_test_session(chat_id="chat-list", channel="telegram")
@@ -263,6 +276,117 @@ class TestOrgCommandsDoNotStartTyping:
         reply = gateway._send_response.await_args.args[1]
         assert "当前共 1 个组织" in reply
         fake_adapter.send_typing.assert_not_awaited()
+
+    async def test_org_task_awaits_async_submit(self, gateway, session_manager):
+        """IM task submission must await OrgCommandService.submit before reading its result."""
+        session = create_test_session(
+            chat_id="chat-submit",
+            channel="telegram",
+            user_id="user-submit",
+        )
+        session.set_metadata("bound_org_id", "org_content")
+
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+        queue.put_nowait(
+            {
+                "type": "org_command_done",
+                "result": {"result": "组织任务完成", "file_attachments": []},
+            }
+        )
+        fake_svc = MagicMock()
+        fake_svc.submit = AsyncMock(return_value={"command_id": "cmd_submit"})
+        fake_svc.subscribe_summary = MagicMock(return_value=queue)
+        fake_svc.unsubscribe_summary = MagicMock()
+
+        fake_manager = MagicMock()
+        fake_manager.resolve_id_by_name_or_id.return_value = ("org_content", [])
+        fake_manager.get.return_value = SimpleNamespace(name="内容工作室")
+        gateway._get_org_manager = MagicMock(return_value=fake_manager)
+        gateway._send_org_status_card = AsyncMock(return_value=None)
+        gateway._patch_org_status_card = AsyncMock(return_value=True)
+
+        msg = create_channel_message(
+            text="@org 写一段产品文案",
+            chat_id="chat-submit",
+            user_id="user-submit",
+        )
+        from openakita.orgs import command_service as cs_module
+
+        with patch.object(cs_module, "get_command_service", return_value=fake_svc):
+            handled = await gateway._try_handle_org_command(
+                msg,
+                session,
+                "@org 写一段产品文案",
+            )
+
+        assert handled is True
+        fake_svc.submit.assert_awaited_once()
+        assert fake_svc.subscribe_summary.call_args.args[0] == "cmd_submit"
+        fake_svc.unsubscribe_summary.assert_called_once_with("cmd_submit", queue)
+        reply = gateway._send_response.await_args.args[1]
+        assert reply == "组织任务完成"
+
+    async def test_org_task_sends_delivery_manifest_media(self, gateway, session_manager):
+        """Final manifest paths must enter the normal IM media delivery pipeline."""
+        session = create_test_session(
+            chat_id="chat-delivery",
+            channel="telegram",
+            user_id="user-delivery",
+        )
+        session.set_metadata("bound_org_id", "org_content")
+
+        image_path = r"D:\outputs\key-frame.png"
+        video_path = r"D:\outputs\preview.mp4"
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+        queue.put_nowait(
+            {
+                "type": "org_command_done",
+                "result": {
+                    "result": "组织任务完成",
+                    "file_attachments": [{"file_path": image_path}],
+                    "delivery_manifest": {
+                        "artifacts": [
+                            {
+                                "kind": "image",
+                                "name": "关键帧",
+                                "paths": [image_path],
+                            },
+                            {
+                                "kind": "video",
+                                "name": "视频预览",
+                                "paths": [video_path],
+                            },
+                        ]
+                    },
+                },
+            }
+        )
+        fake_svc = MagicMock()
+        fake_svc.submit = AsyncMock(return_value={"command_id": "cmd_delivery"})
+        fake_svc.subscribe_summary = MagicMock(return_value=queue)
+        fake_svc.unsubscribe_summary = MagicMock()
+
+        fake_manager = MagicMock()
+        fake_manager.resolve_id_by_name_or_id.return_value = ("org_content", [])
+        fake_manager.get.return_value = SimpleNamespace(name="内容工作室")
+        gateway._get_org_manager = MagicMock(return_value=fake_manager)
+        gateway._send_org_status_card = AsyncMock(return_value=None)
+        gateway._patch_org_status_card = AsyncMock(return_value=True)
+
+        msg = create_channel_message(
+            text="@org 生成视频",
+            chat_id="chat-delivery",
+            user_id="user-delivery",
+        )
+        from openakita.orgs import command_service as cs_module
+
+        with patch.object(cs_module, "get_command_service", return_value=fake_svc):
+            handled = await gateway._try_handle_org_command(msg, session, "@org 生成视频")
+
+        assert handled is True
+        reply = gateway._send_response.await_args.args[1]
+        assert reply == (f"组织任务完成\n\nMEDIA: {image_path}\nMEDIA: {video_path}")
+        assert reply.count(image_path) == 1
 
 
 class TestPatchOrgStatusCard:

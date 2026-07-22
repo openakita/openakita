@@ -15,6 +15,7 @@ import base64
 import collections
 import contextlib
 import hashlib
+import inspect
 import logging
 import os
 import random
@@ -3227,10 +3228,21 @@ class MessageGateway:
             return False
 
     def _get_org_manager(self):
-        """从 OrgCommandService 链路上取出 OrgManager 单例。
+        """取出进程级 OrgManager 单例。
 
         IM 端按名字/ID 解析组织时用。拿不到（服务未就绪）时返回 None。
         """
+        try:
+            from openakita.orgs.store import get_default_org_manager
+
+            manager = get_default_org_manager()
+            if manager is not None:
+                return manager
+        except Exception:
+            pass
+
+        # 兼容未发布默认 manager 的旧组合根。OrgRuntime 在 v2 重构后将
+        # OrgManager 作为 lookup 注入；更早的实现使用 _manager。
         try:
             from openakita.orgs.command_service import get_command_service
 
@@ -3238,7 +3250,9 @@ class MessageGateway:
             if svc is None:
                 return None
             runtime = getattr(svc, "_runtime", None)
-            return getattr(runtime, "_manager", None) if runtime else None
+            if runtime is None:
+                return None
+            return getattr(runtime, "_lookup", None) or getattr(runtime, "_manager", None)
         except Exception:
             return None
 
@@ -3702,6 +3716,51 @@ class MessageGateway:
         return False
 
     @staticmethod
+    def _extract_org_result_attachments(result: dict) -> list[dict]:
+        """Normalize files exposed by an organization command's terminal result."""
+        attachments: list[dict] = []
+        seen: set[str] = set()
+
+        def add_attachment(raw: dict, path: object) -> None:
+            file_path = str(path or "").strip()
+            if not file_path:
+                return
+            key = file_path.lower().replace("\\", "/")
+            if key in seen:
+                return
+            seen.add(key)
+            attachment = dict(raw)
+            attachment["file_path"] = file_path
+            attachments.append(attachment)
+
+        raw_attachments = result.get("file_attachments") or []
+        if isinstance(raw_attachments, list):
+            for raw in raw_attachments:
+                if not isinstance(raw, dict):
+                    continue
+                add_attachment(raw, raw.get("file_path") or raw.get("path"))
+
+        manifest = result.get("delivery_manifest")
+        artifacts = manifest.get("artifacts") if isinstance(manifest, dict) else []
+        if isinstance(artifacts, list):
+            for artifact in artifacts:
+                if not isinstance(artifact, dict):
+                    continue
+                paths = artifact.get("paths") or []
+                if isinstance(paths, str):
+                    paths = [paths]
+                if not isinstance(paths, list):
+                    continue
+                metadata = {
+                    "kind": artifact.get("kind"),
+                    "name": artifact.get("name"),
+                }
+                for path in paths:
+                    add_attachment(metadata, path)
+
+        return attachments
+
+    @staticmethod
     def _append_attachment_media_lines(final_text: str, attachments: list[dict]) -> str:
         media_lines: list[str] = []
         seen: set[str] = set()
@@ -3834,7 +3893,7 @@ class MessageGateway:
                 return True
 
             chat_type = message.chat_type or "private"
-            started = svc.submit(
+            started = await svc.submit(
                 OrgCommandRequest(
                     org_id=org_id,
                     content=task,
@@ -3916,9 +3975,7 @@ class MessageGateway:
                         attachments: list[dict] = []
                         if isinstance(result, dict):
                             final_text = str(result.get("result") or result.get("error") or result)
-                            raw_attachments = result.get("file_attachments") or []
-                            if isinstance(raw_attachments, list):
-                                attachments = [a for a in raw_attachments if isinstance(a, dict)]
+                            attachments = self._extract_org_result_attachments(result)
                         else:
                             final_text = str(error or result or "组织命令已完成")
                         if attachments:
@@ -5681,6 +5738,21 @@ class MessageGateway:
         """补发从回复文本中解析出的图片/文件"""
         reply_to = original.thread_id or original.channel_message_id
 
+        def reply_kwargs(method: Callable[..., Any]) -> dict[str, str]:
+            if not reply_to:
+                return {}
+            try:
+                parameters = inspect.signature(method).parameters.values()
+            except (TypeError, ValueError):
+                return {}
+            if any(
+                parameter.name == "reply_to"
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            ):
+                return {"reply_to": reply_to}
+            return {}
+
         if adapter.has_capability("send_image"):
             for img in media_result.images:
                 if img.is_url:
@@ -5711,7 +5783,7 @@ class MessageGateway:
                     await adapter.send_file(
                         original.chat_id,
                         file.path,
-                        reply_to=reply_to,
+                        **reply_kwargs(adapter.send_file),
                     )
                 except Exception as e:
                     logger.warning(f"[SendResponse] send extracted file failed: {e}")
@@ -5732,7 +5804,7 @@ class MessageGateway:
                     await adapter.send_voice(
                         original.chat_id,
                         audio.path,
-                        reply_to=reply_to,
+                        **reply_kwargs(adapter.send_voice),
                     )
                 except Exception as e:
                     logger.warning(f"[SendResponse] send extracted audio failed: {e}")

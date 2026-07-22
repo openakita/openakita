@@ -105,6 +105,51 @@ class TestMessageTypes:
         assert mc.videos == []
 
 
+class TestExtractedMediaDelivery:
+    @pytest.mark.asyncio
+    async def test_video_adapter_without_reply_to_receives_real_file(self, tmp_path):
+        from openakita.channels.media_parser import parse_media_from_text
+
+        video_path = tmp_path / "preview.mp4"
+        video_path.write_bytes(b"video")
+
+        class StrictFileAdapter:
+            def __init__(self):
+                self.sent_files: list[tuple[str, str]] = []
+                self.fallback_texts: list[str] = []
+
+            @staticmethod
+            def has_capability(name: str) -> bool:
+                return name == "send_file"
+
+            async def send_file(
+                self,
+                chat_id: str,
+                file_path: str,
+                caption: str | None = None,
+            ) -> str:
+                self.sent_files.append((chat_id, file_path))
+                return "video-message-id"
+
+            async def send_text(self, chat_id: str, text: str, **kwargs) -> str:
+                self.fallback_texts.append(text)
+                return "fallback-message-id"
+
+        gateway = MessageGateway(session_manager=MagicMock())
+        adapter = StrictFileAdapter()
+        original = create_channel_message(
+            channel="wechat:test",
+            chat_id="chat-1",
+        )
+        original.channel_message_id = "source-message-id"
+        media_result = parse_media_from_text(f"MEDIA: {video_path}")
+
+        await gateway._send_extracted_media(adapter, original, media_result, {})
+
+        assert adapter.sent_files == [("chat-1", str(video_path))]
+        assert adapter.fallback_texts == []
+
+
 class TestMessageGatewayBroadcast:
     @pytest.mark.asyncio
     async def test_send_rejects_non_text_payload(self):
