@@ -1846,6 +1846,29 @@ def create_app(
     return app
 
 
+async def _wait_for_uvicorn_started(
+    server: Any,
+    api_thread: Any,
+    thread_error: list[Exception],
+    *,
+    timeout: float,
+) -> None:
+    """Wait until uvicorn reports startup completion without probing a bind host."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+
+    while not bool(getattr(server, "started", False)):
+        if thread_error:
+            raise RuntimeError(f"API thread failed to start: {thread_error[0]}")
+        if not api_thread.is_alive():
+            raise RuntimeError("API thread exited before uvicorn reported startup completion")
+
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise TimeoutError(f"uvicorn did not report startup completion within {timeout:.1f}s")
+        await asyncio.sleep(min(0.05, remaining))
+
+
 async def start_api_server(
     agent: Any = None,
     shutdown_event: asyncio.Event | None = None,
@@ -1985,27 +2008,29 @@ async def start_api_server(
         f"(version: {get_version_string()}, dual-loop: {api_loop is not None})"
     )
 
-    # ── Verify server is listening ───────────────────────────────────
-    for attempt in range(max_retries):
-        await asyncio.sleep(1.5)
+    # ``0.0.0.0`` / ``::`` are valid bind addresses but invalid client probe
+    # targets on some platforms. Uvicorn sets ``started`` only after lifespan
+    # startup completes and the listening server has been created, so wait for
+    # that authoritative signal instead of opening a socket to the bind host.
+    startup_timeout = max(1.5, float(max_retries) * 1.5)
+    try:
+        await _wait_for_uvicorn_started(
+            server,
+            api_thread,
+            thread_error,
+            timeout=startup_timeout,
+        )
+    except (Exception, asyncio.CancelledError):
+        server.should_exit = True
+        await asyncio.to_thread(api_thread.join, 1.0)
+        raise
 
-        if not api_thread.is_alive():
-            err = thread_error[0] if thread_error else RuntimeError("API thread died")
-            raise RuntimeError(f"HTTP API server failed to start: {err}")
-
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(1.0)
-                s.connect((host, port))
-                logger.info(
-                    f"HTTP API server confirmed listening on http://{host}:{port} "
-                    f"(thread={api_thread.name})"
-                )
-                break
-        except (ConnectionRefusedError, OSError, TimeoutError):
-            if attempt < max_retries - 1:
-                logger.debug(f"Server not yet listening (attempt {attempt + 1}), waiting...")
-                continue
+    logger.info(
+        "HTTP API server confirmed started on http://%s:%s (thread=%s)",
+        host,
+        port,
+        api_thread.name,
+    )
 
     # ── Proxy task — cancelling it triggers graceful shutdown ─────────
     async def _proxy() -> None:

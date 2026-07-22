@@ -314,7 +314,10 @@ class SkillEntry:
     def get_body(self) -> str | None:
         """获取技能 body (Level 2)"""
         if self._parsed_skill:
-            return self._parsed_skill.body
+            get_body = getattr(self._parsed_skill, "get_body", None)
+            if callable(get_body):
+                return get_body()
+            return getattr(self._parsed_skill, "body", None)
         return None
 
     def to_capability_descriptor(self) -> CapabilityDescriptor:
@@ -568,7 +571,7 @@ class SkillRegistry:
         # cheap and keeps other tools' caches warm.
         if entry.approval_class:
             self._invalidate_policy_classifier_cache(entry.get_exposed_tool_name())
-        logger.info(f"Registered skill: {entry.skill_id} (name={entry.name})")
+        logger.debug("Registered skill descriptor: %s (name=%s)", entry.skill_id, entry.name)
         return True
 
     @staticmethod

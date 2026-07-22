@@ -390,7 +390,7 @@ class SkillLoader:
                         logger.debug(f"Failed to load cli-anything skill from {name}: {e}")
 
         if loaded:
-            logger.info(f"Loaded {loaded} cli-anything skills from pip packages")
+            logger.info("Indexed %d cli-anything skill descriptors from pip packages", loaded)
         return loaded
 
     @staticmethod
@@ -498,7 +498,7 @@ class SkillLoader:
 
         if flush_runtime_records:
             self._flush_runtime_registry_records(runtime_records)
-        logger.info(f"Loaded {loaded} skills from {directory}")
+        logger.info("Indexed %d skill descriptors from %s", loaded, directory)
         return loaded
 
     @staticmethod
@@ -683,7 +683,7 @@ class SkillLoader:
                     mark_skills_loaded([record])
             except Exception:
                 logger.debug("Failed to update skill runtime registry for %s", sid, exc_info=True)
-            logger.info(f"Loaded skill: {sid} (name={skill.metadata.name})")
+            logger.debug("Indexed skill descriptor: %s (name=%s)", sid, skill.metadata.name)
             return skill
 
         except Exception as e:
@@ -739,7 +739,7 @@ class SkillLoader:
         """
         skill = self._resolve_skill(key)
         if skill:
-            return skill.body
+            return skill.get_body()
         return None
 
     def compute_effective_allowlist(self, external_allowlist: set[str] | None) -> set[str] | None:

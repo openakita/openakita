@@ -1,8 +1,8 @@
 """
 SKILL.md 解析器
 
-遵循 Agent Skills 规范 (agentskills.io/specification)
-解析 SKILL.md 文件的 YAML frontmatter 和 Markdown body
+遵循 Agent Skills 规范 (agentskills.io/specification)。启动时只解析 YAML
+frontmatter；Markdown body 在首次访问时按需读取并缓存。
 """
 
 import copy
@@ -41,6 +41,14 @@ _GLOBAL_PARSE_CACHE_LOCK = threading.Lock()
 _GLOBAL_PARSE_CACHE: dict[tuple[str, float], "ParsedSkill"] = {}
 _GLOBAL_PARSE_CACHE_MAX = 2000
 
+# SKILL.md instructions are substantially larger than their discovery metadata.
+# Keep them out of ParsedSkill until a consumer explicitly asks for the body.
+_GLOBAL_BODY_CACHE_LOCK = threading.Lock()
+_GLOBAL_BODY_CACHE: dict[tuple[str, float], str] = {}
+_GLOBAL_BODY_CACHE_MAX = 2000
+
+_FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
+
 
 def _global_cache_get(key: tuple[str, float]) -> "ParsedSkill | None":
     with _GLOBAL_PARSE_CACHE_LOCK:
@@ -75,18 +83,60 @@ def invalidate_global_parse_cache(path: Path | str | None = None) -> int:
         if path is None:
             n = len(_GLOBAL_PARSE_CACHE)
             _GLOBAL_PARSE_CACHE.clear()
-            return n
-        try:
-            target = str(Path(path).resolve())
-        except Exception:
-            return 0
-        prefix = target + _os.sep
-        keys_to_drop = [
-            k for k in list(_GLOBAL_PARSE_CACHE.keys()) if k[0] == target or k[0].startswith(prefix)
-        ]
-        for k in keys_to_drop:
-            _GLOBAL_PARSE_CACHE.pop(k, None)
-        return len(keys_to_drop)
+        else:
+            try:
+                target = str(Path(path).resolve())
+            except Exception:
+                return 0
+            prefix = target + _os.sep
+            keys_to_drop = [
+                k
+                for k in list(_GLOBAL_PARSE_CACHE.keys())
+                if k[0] == target or k[0].startswith(prefix)
+            ]
+            for k in keys_to_drop:
+                _GLOBAL_PARSE_CACHE.pop(k, None)
+            n = len(keys_to_drop)
+
+    with _GLOBAL_BODY_CACHE_LOCK:
+        if path is None:
+            _GLOBAL_BODY_CACHE.clear()
+        else:
+            body_keys_to_drop = [
+                k
+                for k in list(_GLOBAL_BODY_CACHE.keys())
+                if k[0] == target or k[0].startswith(prefix)
+            ]
+            for k in body_keys_to_drop:
+                _GLOBAL_BODY_CACHE.pop(k, None)
+    return n
+
+
+def _body_cache_key(path: Path) -> tuple[str, float]:
+    resolved = str(path.resolve())
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return resolved, mtime
+
+
+def _load_skill_body(path: Path) -> str:
+    cache_key = _body_cache_key(path)
+    with _GLOBAL_BODY_CACHE_LOCK:
+        cached = _GLOBAL_BODY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    content = path.read_text(encoding="utf-8")
+    match = _FRONTMATTER_PATTERN.match(content)
+    body = (match.group(2) if match else content).strip()
+
+    with _GLOBAL_BODY_CACHE_LOCK:
+        if len(_GLOBAL_BODY_CACHE) >= _GLOBAL_BODY_CACHE_MAX:
+            _GLOBAL_BODY_CACHE.clear()
+        _GLOBAL_BODY_CACHE[cache_key] = body
+    return body
 
 
 def _clone_parsed_skill_for_caller(skill: "ParsedSkill") -> "ParsedSkill":
@@ -97,8 +147,8 @@ def _clone_parsed_skill_for_caller(skill: "ParsedSkill") -> "ParsedSkill":
     back the same object that lives inside ``_GLOBAL_PARSE_CACHE``
     those edits would leak across agents. ``copy.deepcopy`` is fine
     here — a ``ParsedSkill`` only carries the metadata dataclass,
-    short ``Path`` objects, and the markdown body string, so the copy
-    cost is ≪ a fresh YAML parse + disk read.
+    short ``Path`` objects, and an optional in-memory body override, so the
+    copy cost is much smaller than a fresh YAML parse.
     """
     return copy.deepcopy(skill)
 
@@ -229,13 +279,33 @@ class ParsedSkill:
     """
 
     metadata: SkillMetadata
-    body: str  # Markdown body
     path: Path  # SKILL.md 文件路径
 
     # 可选目录
     scripts_dir: Path | None = None
     references_dir: Path | None = None
     assets_dir: Path | None = None
+    _body_override: str | None = field(default=None, repr=False)
+
+    @property
+    def body(self) -> str:
+        """Return full instructions, hydrating SKILL.md on first access."""
+        return self.get_body()
+
+    @property
+    def body_loaded(self) -> bool:
+        """Whether the full instructions are already resident in memory."""
+        if self._body_override is not None:
+            return True
+        cache_key = _body_cache_key(self.path)
+        with _GLOBAL_BODY_CACHE_LOCK:
+            return cache_key in _GLOBAL_BODY_CACHE
+
+    def get_body(self) -> str:
+        """Load and cache the SKILL.md body on demand."""
+        if self._body_override is not None:
+            return self._body_override
+        return _load_skill_body(self.path)
 
     @property
     def skill_dir(self) -> Path:
@@ -273,7 +343,7 @@ class SkillParser:
     """
 
     # YAML frontmatter 正则
-    FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
+    FRONTMATTER_PATTERN = _FRONTMATTER_PATTERN
 
     # F13: mtime-based parse cache — key: (resolved_path, mtime), value: ParsedSkill
     _parse_cache: dict[tuple[str, float], "ParsedSkill"] = {}
@@ -318,8 +388,7 @@ class SkillParser:
             # ``_clone_parsed_skill_for_caller`` for why this matters.
             return _clone_parsed_skill_for_caller(cached)
 
-        content = path.read_text(encoding="utf-8")
-        result = self.parse_content(content, path)
+        result = self._parse_metadata_file(path)
 
         # Store the FRESH-parsed object in both caches, but hand the
         # caller a deep copy so any post-parse mutation (e.g.
@@ -330,6 +399,63 @@ class SkillParser:
         self._parse_cache[cache_key] = result
         _global_cache_put(cache_key, result)
         return _clone_parsed_skill_for_caller(result)
+
+    def _parse_metadata_file(self, path: Path) -> ParsedSkill:
+        """Parse discovery metadata without reading the complete SKILL.md body."""
+        with path.open("r", encoding="utf-8") as handle:
+            first_line = handle.readline()
+            if first_line.strip() != "---":
+                return self.parse_content(path.read_text(encoding="utf-8"), path)
+
+            yaml_lines: list[str] = []
+            for line in handle:
+                if line.strip() == "---":
+                    break
+                yaml_lines.append(line)
+            else:
+                return self.parse_content(path.read_text(encoding="utf-8"), path)
+
+            yaml_content = "".join(yaml_lines)
+            try:
+                data = yaml.safe_load(yaml_content) or {}
+            except yaml.YAMLError:
+                return self.parse_content(path.read_text(encoding="utf-8"), path)
+
+            # A missing description is allowed to fall back to the first body
+            # paragraph without retaining or scanning the remainder of the file.
+            body_preview = ""
+            if not data.get("description"):
+                paragraph: list[str] = []
+                for line in handle:
+                    if not line.strip():
+                        if paragraph:
+                            break
+                        continue
+                    paragraph.append(line.rstrip("\r\n"))
+                body_preview = "\n".join(paragraph)
+
+        metadata = self._build_metadata(data, path, body=body_preview)
+        return self._make_parsed_skill(metadata, path)
+
+    @staticmethod
+    def _make_parsed_skill(
+        metadata: SkillMetadata,
+        path: Path,
+        *,
+        body: str | None = None,
+    ) -> ParsedSkill:
+        skill_dir = path.parent
+        scripts_dir = skill_dir / "scripts"
+        references_dir = skill_dir / "references"
+        assets_dir = skill_dir / "assets"
+        return ParsedSkill(
+            metadata=metadata,
+            path=path,
+            scripts_dir=scripts_dir if scripts_dir.exists() else None,
+            references_dir=references_dir if references_dir.exists() else None,
+            assets_dir=assets_dir if assets_dir.exists() else None,
+            _body_override=body,
+        )
 
     def parse_content(self, content: str, path: Path) -> ParsedSkill:
         """
@@ -365,28 +491,7 @@ class SkillParser:
         # 构建元数据（body 用于 description 自动提取回退）
         metadata = self._build_metadata(data, path, body=body)
 
-        # 验证目录名匹配（命名空间格式取 @ 后部分比较）
-        skill_dir = path.parent
-        expected_dir = metadata.name.split("@", 1)[-1] if "@" in metadata.name else metadata.name
-        if skill_dir.name != expected_dir:
-            logger.warning(
-                f"Skill directory name '{skill_dir.name}' does not match "
-                f"expected '{expected_dir}' (from skill name '{metadata.name}') in {path}"
-            )
-
-        # 查找可选目录
-        scripts_dir = skill_dir / "scripts"
-        references_dir = skill_dir / "references"
-        assets_dir = skill_dir / "assets"
-
-        return ParsedSkill(
-            metadata=metadata,
-            body=body,
-            path=path,
-            scripts_dir=scripts_dir if scripts_dir.exists() else None,
-            references_dir=references_dir if references_dir.exists() else None,
-            assets_dir=assets_dir if assets_dir.exists() else None,
-        )
+        return self._make_parsed_skill(metadata, path, body=body)
 
     @staticmethod
     def _derive_name_from_path(path: Path) -> str:
@@ -648,21 +753,24 @@ class SkillParser:
                 len(meta.name),
             )
 
-        # Directory name vs expected
-        expected_dir = meta.name.split("@", 1)[-1] if "@" in meta.name else meta.name
-        if skill.skill_dir and skill.skill_dir.name != expected_dir:
+        # Plain Agent Skills use their directory name as ``name``. Namespaced
+        # metadata names identify the upstream skill, while OpenAkita uses the
+        # directory as an independent, stable registry ID.
+        if "@" not in meta.name and skill.skill_dir and skill.skill_dir.name != meta.name:
             errors.append(
                 f"Directory name '{skill.skill_dir.name}' should match "
-                f"expected '{expected_dir}' (from skill name '{meta.name}')"
+                f"expected '{meta.name}' (from skill name '{meta.name}')"
             )
 
-        # Body length
-        body_lines = skill.body.count("\n") + 1
-        if body_lines > 500:
-            errors.append(
-                f"SKILL.md body has {body_lines} lines. "
-                f"Recommended: keep under 500 lines for efficient context usage."
-            )
+        # Direct parse_content() callers already supplied the body, so retain
+        # the advisory there. Normal startup validation must not hydrate it.
+        if skill._body_override is not None:
+            body_lines = skill._body_override.count("\n") + 1
+            if body_lines > 500:
+                errors.append(
+                    f"SKILL.md body has {body_lines} lines. "
+                    f"Recommended: keep under 500 lines for efficient context usage."
+                )
 
         # System skill must have handler and tool_name
         if meta.system and not meta.handler:

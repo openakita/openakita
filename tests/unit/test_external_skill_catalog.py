@@ -79,6 +79,21 @@ def test_system_presets_do_not_reference_removed_external_skills() -> None:
     assert external_references <= available_names
 
 
+def test_external_skill_registry_ids_pass_directory_validation() -> None:
+    parser = SkillParser()
+    directory_warnings: dict[str, list[str]] = {}
+
+    for skill_dir in SKILLS_ROOT.iterdir():
+        if not skill_dir.is_dir() or not (skill_dir / "SKILL.md").is_file():
+            continue
+        skill = parser.parse_directory(skill_dir)
+        warnings = [warning for warning in parser.validate(skill) if "Directory name" in warning]
+        if warnings:
+            directory_warnings[skill_dir.name] = warnings
+
+    assert directory_warnings == {}
+
+
 def test_catalog_defaults_apply_but_user_binding_wins(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
     skill_dir = skills_root / "demo-skill"

@@ -30,6 +30,7 @@
 
 import difflib
 import logging
+import re
 from collections import OrderedDict
 
 from .defer_config import STABLE_MAIN_CHAT_CORE_TOOLS
@@ -426,6 +427,77 @@ but with full schema you'll fill arguments more reliably.
             "before calling any tool above."
         )
         return "\n".join(lines)
+
+    def get_progressive_catalog(
+        self,
+        expand_categories: list[str] | tuple[str, ...] | None = None,
+        exclude_high_freq: bool = True,
+    ) -> str:
+        """Return the stable tool index plus details for intent-relevant categories.
+
+        The index keeps every discoverable tool name resident in the prompt.  Category
+        descriptions are the second disclosure stage: callers opt into them with the
+        structured intent analyzer's tool hints, while ``tool_search`` remains the path
+        to full schemas and deferred-tool promotion.
+        """
+        index = self.get_index_catalog(exclude_high_freq=exclude_high_freq)
+        if not index or not expand_categories:
+            return index
+
+        def _category_key(value: object) -> str:
+            return re.sub(r"[^a-z0-9]", "", str(value).casefold())
+
+        requested = {_category_key(category) for category in expand_categories}
+        requested.discard("")
+        if not requested:
+            return index
+
+        # IntentAnalyzer uses a deliberately small category vocabulary.  A few
+        # older tool definitions use narrower labels for the same capability.
+        category_aliases = {
+            "websearch": {"websearch", "web", "search"},
+        }
+        requested = set().union(*(category_aliases.get(key, {key}) for key in requested))
+
+        categories: OrderedDict[str, list[tuple[str, dict]]] = OrderedDict()
+        for name in sorted(self._tools):
+            if exclude_high_freq and name in _CATALOG_EXCLUDED_SET:
+                continue
+            tool = self._tools[name]
+            category = tool.get("category") or infer_category(name)
+            if not category and name in self._tool_sources:
+                category = "Plugin"
+            category = category or "Other"
+            display_name = self.CATEGORY_DISPLAY_NAMES.get(category, category)
+            category_keys = {_category_key(category), _category_key(display_name)}
+            if category_keys & requested:
+                categories.setdefault(category, []).append((name, tool))
+
+        if not categories:
+            return index
+
+        sections: list[str] = []
+        emitted: set[str] = set()
+        for category in self.CATEGORY_ORDER:
+            tools = categories.get(category)
+            if not tools:
+                continue
+            display_name = self.CATEGORY_DISPLAY_NAMES.get(category, category)
+            section = self._format_category_section(display_name, tools)
+            if section:
+                sections.append(section)
+            emitted.add(category)
+        for category, tools in categories.items():
+            if category in emitted:
+                continue
+            display_name = self.CATEGORY_DISPLAY_NAMES.get(category, category)
+            section = self._format_category_section(display_name, tools)
+            if section:
+                sections.append(section)
+
+        if not sections:
+            return index
+        return index + "\n\n## Intent-Relevant Tool Details\n" + "\n".join(sections)
 
     def get_catalog(
         self,

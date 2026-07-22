@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from fastapi import APIRouter
 from httpx import ASGITransport, AsyncClient
 
-from openakita.api.server import create_app, update_runtime_refs
+from openakita.api.server import _wait_for_uvicorn_started, create_app, update_runtime_refs
 from openakita.core.agent import Agent
 
 
@@ -80,3 +80,50 @@ async def test_agent_initialize_is_single_flight(monkeypatch) -> None:
 
     assert calls == 1
     assert agent._initialized is True
+
+
+class _FakeApiThread:
+    def __init__(self, *, alive: bool = True) -> None:
+        self.alive = alive
+
+    def is_alive(self) -> bool:
+        return self.alive
+
+
+async def test_wait_for_uvicorn_started_uses_server_signal() -> None:
+    server = SimpleNamespace(started=False)
+    api_thread = _FakeApiThread()
+
+    async def mark_started() -> None:
+        await asyncio.sleep(0.01)
+        server.started = True
+
+    marker = asyncio.create_task(mark_started())
+    await _wait_for_uvicorn_started(server, api_thread, [], timeout=1.0)
+    await marker
+
+    assert server.started is True
+
+
+async def test_wait_for_uvicorn_started_fails_when_thread_exits() -> None:
+    server = SimpleNamespace(started=False)
+    api_thread = _FakeApiThread(alive=False)
+
+    try:
+        await _wait_for_uvicorn_started(server, api_thread, [], timeout=1.0)
+    except RuntimeError as exc:
+        assert "exited before uvicorn" in str(exc)
+    else:
+        raise AssertionError("dead API thread must fail startup readiness")
+
+
+async def test_wait_for_uvicorn_started_has_bounded_timeout() -> None:
+    server = SimpleNamespace(started=False)
+    api_thread = _FakeApiThread()
+
+    try:
+        await _wait_for_uvicorn_started(server, api_thread, [], timeout=0.01)
+    except TimeoutError as exc:
+        assert "startup completion" in str(exc)
+    else:
+        raise AssertionError("missing uvicorn started signal must time out")

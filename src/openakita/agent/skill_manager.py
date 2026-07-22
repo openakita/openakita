@@ -121,7 +121,7 @@ class SkillManager:
             agent_referenced_skills=agent_skills,
         )
         loaded = self._loader.load_all(settings.project_root, load_filter=load_filter)
-        logger.info(f"Loaded {loaded} skills from standard directories")
+        logger.info("Indexed %d skill descriptors from standard directories", loaded)
 
         try:
             if effective is None:

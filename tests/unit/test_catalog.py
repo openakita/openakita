@@ -139,3 +139,82 @@ class TestCatalogGeneration:
         catalog = ToolCatalog(_sample_tools())
         schemas = catalog.get_direct_tool_schemas()
         assert isinstance(schemas, list)
+
+
+def test_progressive_catalog_keeps_index_and_expands_only_requested_category():
+    catalog = ToolCatalog(
+        [
+            {
+                "name": "read_project_file",
+                "category": "File System",
+                "description": "Read a file from the current project.",
+                "input_schema": {},
+            },
+            {
+                "name": "search_public_web",
+                "category": "Web Search",
+                "description": "Search public web pages for current information.",
+                "input_schema": {},
+            },
+        ]
+    )
+
+    output = catalog.get_progressive_catalog(["File System"], exclude_high_freq=False)
+
+    assert "read_project_file" in output
+    assert "search_public_web" in output
+    assert "Intent-Relevant Tool Details" in output
+    assert "Read a file from the current project." in output
+    assert "Search public web pages for current information." not in output
+
+
+def test_progressive_catalog_without_intent_is_index_only():
+    catalog = ToolCatalog(
+        [
+            {
+                "name": "search_public_web",
+                "category": "Web Search",
+                "description": "Search public web pages for current information.",
+                "input_schema": {},
+            }
+        ]
+    )
+
+    output = catalog.get_progressive_catalog(exclude_high_freq=False)
+
+    assert "search_public_web" in output
+    assert "Search public web pages for current information." not in output
+
+
+def test_progressive_catalog_normalizes_category_spelling():
+    catalog = ToolCatalog(
+        [
+            {
+                "name": "read_project_file",
+                "category": "filesystem",
+                "description": "Read a file from the current project.",
+                "input_schema": {},
+            }
+        ]
+    )
+
+    output = catalog.get_progressive_catalog(["File System"], exclude_high_freq=False)
+
+    assert "Read a file from the current project." in output
+
+
+def test_progressive_catalog_expands_legacy_web_category_aliases():
+    catalog = ToolCatalog(
+        [
+            {
+                "name": "fetch_web_page",
+                "category": "Web",
+                "description": "Fetch a public web page.",
+                "input_schema": {},
+            }
+        ]
+    )
+
+    output = catalog.get_progressive_catalog(["Web Search"], exclude_high_freq=False)
+
+    assert "Fetch a public web page." in output
