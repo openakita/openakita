@@ -1022,6 +1022,39 @@ class TestAgentOrchestrator:
         mock_pool.get_or_create.assert_awaited()
 
     @pytest.mark.asyncio
+    async def test_top_level_im_security_confirm_is_forwarded_to_gateway(
+        self, orchestrator, mock_pool
+    ):
+        session = _make_session(session_id="sess-feishu-confirm")
+        session.channel = "feishu:owner"
+        session.set_metadata("_current_message", object())
+        gateway = MagicMock()
+        gateway.handle_agent_security_confirm = AsyncMock(return_value=True)
+        orchestrator.set_gateway(gateway)
+
+        confirm_event = {
+            "type": "security_confirm",
+            "tool": "run_shell",
+            "id": "confirm-feishu-1",
+            "reason": "test",
+            "options": ["allow_once", "deny"],
+        }
+
+        async def fake_stream(**kwargs):
+            yield confirm_event
+            yield {"type": "text_delta", "content": "done"}
+            yield {"type": "done"}
+
+        mock_agent = mock_pool.get_or_create.return_value
+        mock_agent.chat_with_session_stream = fake_stream
+
+        result = await orchestrator.handle_message(session, "run a command")
+
+        assert result == "done"
+        gateway.handle_agent_security_confirm.assert_awaited_once_with(session, confirm_event)
+        mock_agent.chat_with_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_sub_agent_dispatch_keeps_structured_tool_response(self, orchestrator):
         session = _make_session()
 

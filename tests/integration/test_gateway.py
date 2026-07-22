@@ -334,6 +334,36 @@ class TestMessageGatewayBroadcast:
         assert actions == ["security_allow", "security_deny"]
 
     @pytest.mark.asyncio
+    async def test_orchestrator_security_confirm_uses_source_im_adapter(self, monkeypatch):
+        import openakita.core.policy_v2 as policy_v2_module
+
+        monkeypatch.setattr(policy_v2_module, "read_permission_mode_label", lambda: "default")
+
+        adapter = MagicMock()
+        adapter.build_simple_card.side_effect = lambda **kwargs: kwargs
+        adapter.send_card = AsyncMock(return_value="message-1")
+        gateway = MessageGateway(session_manager=MagicMock())
+        gateway._adapters["feishu:owner"] = adapter
+        session = create_test_session(channel="feishu:owner", chat_id="chat-1", user_id="user-1")
+        message = create_channel_message(channel="feishu:owner", chat_id="chat-1", user_id="user-1")
+        session.set_metadata("_current_message", message)
+
+        handled = await gateway.handle_agent_security_confirm(
+            session,
+            {
+                "type": "security_confirm",
+                "tool": "run_shell",
+                "id": "confirm-feishu-1",
+                "reason": "needs confirmation",
+                "options": ["allow_once", "deny"],
+            },
+        )
+
+        assert handled is True
+        adapter.send_card.assert_awaited_once()
+        assert adapter.send_card.await_args.args[0] == "chat-1"
+
+    @pytest.mark.asyncio
     async def test_broadcast_sends_normal_text(self):
         session = MagicMock()
         session.id = "session-1"

@@ -6354,6 +6354,15 @@ class MessageGateway:
             except Exception as exc:
                 logger.warning(f"[Security] IM confirm resolve failed: {exc}")
 
+    async def handle_agent_security_confirm(self, session: "Session", event: dict) -> bool:
+        """Render an orchestrator-consumed security confirmation in its source IM channel."""
+        adapter = self._adapters.get(session.channel)
+        message = session.get_metadata("_current_message")
+        if adapter is None or message is None:
+            return False
+        await self._handle_im_security_confirm(session, event, adapter, message)
+        return True
+
     async def _wait_for_interrupt(self, session_key: str) -> "InterruptMessage | None":
         """Block until an interrupt message arrives for the session."""
         queue = self._interrupt_queues.get(session_key)

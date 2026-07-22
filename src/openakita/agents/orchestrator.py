@@ -210,9 +210,10 @@ async def _call_agent_streaming(
     *,
     gateway: Any,
     mode: str,
-    stream_meta: dict[str, Any],
+    stream_meta: dict[str, Any] | None,
+    forward_gateway_events: bool = False,
 ) -> str:
-    """Consume a sub-agent stream, forwarding events while preserving final text."""
+    """Consume an agent stream, forwarding selected events while preserving final text."""
     stream_method = getattr(agent, "chat_with_session_stream", None)
     if not inspect.isasyncgenfunction(stream_method):
         raise _SubAgentStreamingUnavailable(
@@ -240,7 +241,12 @@ async def _call_agent_streaming(
             reply_text = event.get("content", "") or ""
         elif event_type == "ask_user" and not reply_text:
             reply_text = event.get("question", "") or ""
-        await _broadcast_sub_stream_event(stream_meta, event)
+        if forward_gateway_events and event_type == "security_confirm":
+            handler = getattr(gateway, "handle_agent_security_confirm", None)
+            if handler is not None:
+                await handler(session, event)
+        if stream_meta is not None:
+            await _broadcast_sub_stream_event(stream_meta, event)
     return reply_text
 
 
@@ -851,6 +857,9 @@ class AgentOrchestrator:
         self._broadcast_sub_state_change(state_key, "starting", self._sub_agent_states[state_key])
 
         gw = self._gateway if pass_gateway else None
+        forward_gateway_events = bool(
+            gw is not None and session.get_metadata("_current_message") is not None
+        )
 
         task = asyncio.create_task(
             self._call_agent(
@@ -860,6 +869,7 @@ class AgentOrchestrator:
                 gateway=gw,
                 is_sub_agent=(depth > 0),
                 stream_meta=stream_meta if depth > 0 else None,
+                forward_gateway_events=forward_gateway_events,
             )
         )
 
@@ -1169,6 +1179,7 @@ class AgentOrchestrator:
         gateway: Any = None,
         is_sub_agent: bool = True,
         stream_meta: dict[str, Any] | None = None,
+        forward_gateway_events: bool = False,
     ) -> str:
         """Thin wrapper around agent.chat_with_session for use as a task target.
 
@@ -1217,7 +1228,7 @@ class AgentOrchestrator:
             _start = time.time()
             exit_reason = "completed"
             try:
-                if is_sub_agent and stream_meta:
+                if (is_sub_agent and stream_meta) or forward_gateway_events:
                     try:
                         result = await _call_agent_streaming(
                             agent,
@@ -1225,7 +1236,8 @@ class AgentOrchestrator:
                             message,
                             gateway=gateway,
                             mode=_mode,
-                            stream_meta=stream_meta,
+                            stream_meta=stream_meta if is_sub_agent else None,
+                            forward_gateway_events=forward_gateway_events,
                         )
                     except _SubAgentStreamingUnavailable:
                         session_messages = session.context.get_messages()
