@@ -1835,9 +1835,9 @@ def _build_catalogs_section(
     _tier = prompt_tier or PromptTier.LARGE
     _scope = {str(item).lower() for item in (catalog_scope or set())}
 
-    # Progressive disclosure: use index-only tool catalog for lightweight
-    # scenarios (CONSUMER_CHAT, SMALL tier, early conversation turns, or
-    # non-agent modes) to significantly reduce token consumption.
+    # Other catalogs still use this signal to choose their compact form.  The
+    # tool catalog itself is always progressive: a resident name index plus
+    # intent-relevant category details.
     _index_only = (
         _profile == PromptProfile.CONSUMER_CHAT
         or _tier == PromptTier.SMALL
@@ -1850,10 +1850,9 @@ def _build_catalogs_section(
 
     if tool_catalog:
         try:
-            if _index_only:
-                tools_text = tool_catalog.get_index_catalog()
-            else:
-                tools_text = tool_catalog.get_catalog()
+            tools_text = tool_catalog.get_progressive_catalog(
+                expand_categories=intent_tool_hints,
+            )
             if mode in ("plan", "ask"):
                 mode_note = (
                     "\n> ⚠️ **当前为 {} 模式** — 以下工具清单仅供规划参考。\n"

@@ -204,6 +204,28 @@ def test_catalog_builder_passes_context_window_to_stable_skill_metadata_catalog(
     assert captured["priority_categories"] == ("file-tools", "filesystem", "file")
 
 
+def test_catalog_builder_uses_progressive_tool_catalog_with_intent_hints():
+    captured = {}
+
+    class _CapturingToolCatalog:
+        def get_progressive_catalog(self, **kwargs):
+            captured.update(kwargs)
+            return "## Available System Tools (index)\n**File System**: read_file"
+
+        def get_catalog(self):
+            raise AssertionError("full tool catalog must not be loaded into the prompt")
+
+    output = _build_catalogs_section(
+        tool_catalog=_CapturingToolCatalog(),
+        skill_catalog=None,
+        mcp_catalog=None,
+        intent_tool_hints=["File System"],
+    )
+
+    assert "read_file" in output
+    assert captured["expand_categories"] == ["File System"]
+
+
 def test_skill_catalog_marks_instructions_as_guidance():
     catalog = _make_catalog(
         [_FakeSkill("brainstorming", "Must ask one question first", category="workflow")]
