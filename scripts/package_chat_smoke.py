@@ -22,6 +22,17 @@ async def _run(internal_dir: Path) -> None:
     imported_from = Path(openakita.__file__).resolve()
     if not imported_from.is_relative_to(internal_dir):
         raise RuntimeError(f"openakita imported from {imported_from}, not bundle {internal_dir}")
+    if internal_dir.name != "src":
+        import requests_toolbelt
+
+        bundled_toolbelt = internal_dir / "requests_toolbelt"
+        toolbelt_from = Path(requests_toolbelt.__file__).resolve()
+        if not bundled_toolbelt.is_dir():
+            raise RuntimeError(f"bundled requests_toolbelt missing from {internal_dir}")
+        if not toolbelt_from.is_relative_to(internal_dir):
+            raise RuntimeError(
+                f"requests_toolbelt imported from {toolbelt_from}, not bundle {internal_dir}"
+            )
 
     agent = MagicMock()
     agent.initialized = True

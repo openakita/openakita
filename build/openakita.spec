@@ -247,7 +247,8 @@ hidden_imports_core = [
     "requests.sessions",
     "requests.structures",
     "requests.utils",
-    "requests_toolbelt",        # lark_oapi 依赖: multipart 上传等
+    # requests_toolbelt is copied as loose data below for lark_oapi. Adding it
+    # here as well makes PyInstaller analyze and archive the same package twice.
     "urllib3",                  # requests 依赖: HTTP 连接池 (可能已由 httpx 间接引入)
     "charset_normalizer",       # requests 依赖: 编码检测
     "dingtalk_stream",          # DingTalk Stream (~2MB)
@@ -647,61 +648,8 @@ try:
 except ImportError:
     print("[spec] WARNING: playwright not installed, driver not bundled")
 
-# Playwright Chromium browser binary (bundled to avoid user needing 'playwright install chromium')
-# 构建时需预先运行: playwright install chromium
-# Chromium 默认位于 PLAYWRIGHT_BROWSERS_PATH 或 playwright 包内的 .local-browsers
-#
-# macOS is intentionally excluded here. Chromium is distributed as a nested
-# ``Google Chrome for Testing.app`` bundle; when PyInstaller sees the Mach-O
-# executable inside datas during COLLECT, it tries to ad-hoc codesign the
-# nested app and fails with "bundle format unrecognized" before Tauri's own
-# app signing/notarization step can run. macOS users can still install the
-# browser runtime through the in-app dependency panel.
-try:
-    _pw_browsers_bundled = False
-    if sys.platform == "darwin":
-        print("[spec] Skipping Playwright Chromium bundle on macOS (nested .app codesign)")
-    else:
-        # 优先检查 playwright 包内的浏览器（playwright install --with-deps 后的位置）
-        _pw_local_browsers = _pw_pkg_dir / ".local-browsers"
-        if _pw_local_browsers.exists():
-            datas.append((str(_pw_local_browsers), "playwright/.local-browsers"))
-            _pw_browsers_bundled = True
-            print(f"[spec] Bundling Playwright local browsers: {_pw_local_browsers}")
-        else:
-            # 检查默认浏览器安装路径
-            import subprocess as _sp2
-            try:
-                _pw_browser_path = _sp2.check_output(
-                    [sys.executable, "-c",
-                     "from playwright._impl._driver import compute_driver_executable; "
-                     "import os; print(os.environ.get('PLAYWRIGHT_BROWSERS_PATH', ''))"],
-                    text=True, stderr=_sp2.DEVNULL
-                ).strip()
-            except Exception:
-                _pw_browser_path = ""
-
-            if not _pw_browser_path:
-                # 使用 playwright 默认路径
-                if sys.platform == "win32":
-                    _pw_browser_path = str(Path.home() / "AppData" / "Local" / "ms-playwright")
-                else:
-                    _pw_browser_path = str(Path.home() / ".cache" / "ms-playwright")
-
-            _pw_browser_dir = Path(_pw_browser_path)
-            if _pw_browser_dir.exists():
-                # 只打包 chromium 目录（不打包其他浏览器）
-                for _chromium_dir in _pw_browser_dir.iterdir():
-                    if _chromium_dir.is_dir() and "chromium" in _chromium_dir.name.lower():
-                        datas.append((str(_chromium_dir), f"playwright-browsers/{_chromium_dir.name}"))
-                        _pw_browsers_bundled = True
-                        print(f"[spec] Bundling Playwright Chromium: {_chromium_dir}")
-                        break
-
-    if not _pw_browsers_bundled:
-        print("[spec] WARNING: Playwright Chromium not found. Run 'playwright install chromium' before building.")
-except Exception as _pw_err:
-    print(f"[spec] WARNING: Failed to detect Playwright browsers: {_pw_err}")
+# Chromium is intentionally not bundled. BrowserManager downloads the revision
+# matching this Playwright driver after user confirmation, or uses an installed Chrome.
 
 # Built-in MCP server configs (chrome-browser, desktop-control, web-search, etc.)
 mcps_dir = PROJECT_ROOT / "mcps"
@@ -732,12 +680,21 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=hidden_imports,
-    hookspath=[],
+    hookspath=[str(PROJECT_ROOT / "scripts" / "pyinstaller_hooks")],
     hooksconfig={},
     runtime_hooks=[],
     excludes=excludes,
     noarchive=False,
 )
+
+# Defense in depth for package-provided hooks and future Playwright layouts:
+# never allow a developer-local browser cache into the distributable.
+a.datas = [
+    entry
+    for entry in a.datas
+    if ".local-browsers" not in entry[0].replace("\\", "/")
+    and not entry[0].replace("\\", "/").startswith("playwright-browsers/")
+]
 
 # Add importable source for bridge subprocesses, but keep the build-owned
 # VERSION+commit file as the sole _bundled_version.txt provider. Supplying the

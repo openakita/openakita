@@ -32,6 +32,13 @@ _MACHO_MAGICS = frozenset(
 )
 
 _LAUNCH_TIMEOUT = 30  # seconds
+_CHROMIUM_INSTALL_TIMEOUT = 15 * 60
+_CHROMIUM_INSTALL_LOCK = asyncio.Lock()
+_CHROMIUM_INSTALL_REQUIRED_MESSAGE = (
+    "未安装浏览器自动化所需的 Chromium（约 400 MB）。"
+    "请先询问用户是否下载安装；只有用户明确确认后，才能调用 "
+    'browser_open({"install_chromium": true})。'
+)
 
 _COMMON_CHROMIUM_ARGS = [
     "--disable-blink-features=AutomationControlled",
@@ -137,6 +144,73 @@ def _ensure_macos_executability(target: Path) -> None:
                 pass
     if fixed:
         logger.info(f"[Browser] Fixed execute permissions for {fixed} binaries in {target.name}")
+
+
+def _managed_browsers_dir() -> Path:
+    """Return the user-owned Playwright browser directory."""
+    configured = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    root = os.environ.get("OPENAKITA_ROOT", "").strip()
+    base = Path(root).expanduser() if root else Path.home() / ".openakita"
+    return base / "modules" / "browser" / "browsers"
+
+
+def _has_managed_chromium(browsers_dir: Path) -> bool:
+    return any(path.is_dir() for path in browsers_dir.glob("chromium-*"))
+
+
+async def _download_managed_chromium(browsers_dir: Path) -> None:
+    """Download the Chromium revision matching the bundled Playwright driver."""
+    from playwright._impl._driver import compute_driver_executable
+
+    node, cli = compute_driver_executable()
+    browsers_dir.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_dir)
+
+    kwargs: dict[str, Any] = {}
+    if platform.system() == "Windows":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    logger.info("[Browser] Downloading Chromium after explicit user confirmation")
+    process = await asyncio.create_subprocess_exec(
+        str(node),
+        str(cli),
+        "install",
+        "--no-shell",
+        "chromium",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        env=env,
+        **kwargs,
+    )
+    try:
+        output, _ = await asyncio.wait_for(
+            process.communicate(),
+            timeout=_CHROMIUM_INSTALL_TIMEOUT,
+        )
+    except asyncio.CancelledError:
+        process.kill()
+        await process.communicate()
+        raise
+    except TimeoutError as exc:
+        process.kill()
+        await process.communicate()
+        raise RuntimeError("Chromium download timed out after 15 minutes") from exc
+
+    details = output.decode("utf-8", errors="replace").strip()
+    for line in details.splitlines():
+        logger.info("[Browser install] %s", line)
+    if process.returncode != 0:
+        tail = details[-2000:] if details else "no installer output"
+        raise RuntimeError(f"Chromium download failed (exit {process.returncode}): {tail}")
+    if not _has_managed_chromium(browsers_dir):
+        raise RuntimeError(
+            f"Chromium installer succeeded but no runtime was found in {browsers_dir}"
+        )
+    _ensure_macos_executability(browsers_dir)
+    logger.info("[Browser] Chromium runtime installed in %s", browsers_dir)
 
 
 def _find_bundled_browser_executable() -> str | None:
@@ -341,6 +415,9 @@ class BrowserManager:
         self._cdp_url: str | None = None
         self._last_successful_strategy: StartupStrategy | None = None
         self._startup_errors: list[str] = []
+        self._chromium_install_error: str | None = None
+        self._chromium_install_allowed = False
+        self.chromium_install_required = False
         self._startup_lock = asyncio.Lock()
         self._is_server = _is_server_environment()
 
@@ -414,7 +491,7 @@ class BrowserManager:
 
     # ── 启动 / 停止 ────────────────────────────────────
 
-    async def start(self, visible: bool = True) -> bool:
+    async def start(self, visible: bool = True, *, install_chromium: bool = False) -> bool:
         async with self._startup_lock:
             if self.state == BrowserState.READY:
                 if visible != self.visible:
@@ -426,6 +503,9 @@ class BrowserManager:
             self.state = BrowserState.STARTING
             self.visible = visible
             self._startup_errors.clear()
+            self._chromium_install_error = None
+            self._chromium_install_allowed = install_chromium
+            self.chromium_install_required = False
 
             headless = not visible
 
@@ -454,6 +534,8 @@ class BrowserManager:
                         f"[Browser] Strategy {strategy.value} failed: {e}",
                         exc_info=True,
                     )
+                    if self.chromium_install_required:
+                        break
                     if self._is_driver_pipe_broken(e) or await self._is_driver_dead():
                         logger.warning(
                             "[Browser] Playwright driver died/pipe broken, "
@@ -463,7 +545,7 @@ class BrowserManager:
                         if not await self._start_playwright_driver():
                             break
 
-            if not headless:
+            if not headless and not self.chromium_install_required:
                 logger.info(
                     "[Browser] All headed strategies failed, restarting driver for headless retry..."
                 )
@@ -655,9 +737,7 @@ class BrowserManager:
                         logger.info(f"[Browser] Using bundled {pw_name}: {bundled}")
                         return
 
-        _root = os.environ.get("OPENAKITA_ROOT", "").strip()
-        _base = Path(_root) if _root else Path.home() / ".openakita"
-        browsers_dir = _base / "modules" / "browser" / "browsers"
+        browsers_dir = _managed_browsers_dir()
         if browsers_dir.is_dir():
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_dir)
             logger.info(f"[Browser] Using external Chromium: {browsers_dir}")
@@ -828,9 +908,10 @@ class BrowserManager:
         return None
 
     async def _try_bundled_chromium(self, headless: bool) -> bool:
-        """使用 Chromium 启动。
+        """Use the bundled-or-managed Chromium runtime.
 
         策略（按顺序）：
+        0. Download the matching managed Chromium revision after user confirmation
         1. persistent_context — 原子式创建浏览器 + 上下文 + 页面，避免进程间隙崩溃
         2. launch + new_context + new_page — 传统方式兜底
         """
@@ -841,7 +922,31 @@ class BrowserManager:
         else:
             preflight_err = self._preflight_chromium()
             if preflight_err:
-                raise RuntimeError(preflight_err)
+                if not self._chromium_install_allowed:
+                    self.chromium_install_required = True
+                    raise RuntimeError(_CHROMIUM_INSTALL_REQUIRED_MESSAGE)
+                if self._chromium_install_error:
+                    raise RuntimeError(self._chromium_install_error)
+                browsers_dir = _managed_browsers_dir()
+                try:
+                    async with _CHROMIUM_INSTALL_LOCK:
+                        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_dir)
+                        # The CLI is idempotent and checks the exact revision. Do
+                        # not treat an older chromium-* directory as a cache hit.
+                        await _download_managed_chromium(browsers_dir)
+                except Exception as exc:
+                    self._chromium_install_error = str(exc)
+                    raise
+
+                # The driver captures PLAYWRIGHT_BROWSERS_PATH when it starts.
+                # Restart it after installation so executable_path is resolved
+                # against the managed directory rather than the default cache.
+                await self._cleanup_playwright()
+                if not await self._start_playwright_driver():
+                    raise RuntimeError("Playwright driver failed to restart after Chromium install")
+                preflight_err = self._preflight_chromium()
+                if preflight_err:
+                    raise RuntimeError(preflight_err)
 
         effective_headless = headless
         if self._is_server and not headless:

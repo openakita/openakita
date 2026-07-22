@@ -373,28 +373,137 @@ jobs:
           pip install ./openakita-plugin-sdk
           pip install build "pyinstaller>=6.18.0"
 
+      - name: Install frontend dependencies
+        working-directory: apps/setup-center
+        run: npm ci
+
+      - name: Build web and desktop frontend assets
+        working-directory: apps/setup-center
+        run: |
+          npm run build:web
+          npm run build
+
+      - name: Compute exact build fingerprints
+        id: build_keys
+        shell: bash
+        run: |
+          BACKEND_KEY=$(python scripts/build_cache_key.py backend)
+          RUST_KEY=$(python scripts/build_cache_key.py rust)
+          echo "backend=${BACKEND_KEY}" >> "$GITHUB_OUTPUT"
+          echo "rust=${RUST_KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore exact PyInstaller output
+        id: backend_cache
+        uses: actions/cache@v4
+        with:
+          path: dist/openakita-server
+          key: desktop-backend-v2-ci-full-ubuntu-latest-${{ runner.os }}-${{ runner.arch }}-${{ steps.build_keys.outputs.backend }}
+
+      - name: Restore exact Rust desktop binary
+        id: rust_binary_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/setup-center/src-tauri/target/release/openakita-desktop
+            apps/setup-center/src-tauri/target/release/openakita_setup_center.pdb
+          key: desktop-rust-binary-v2-ci-full-ubuntu-latest-${{ runner.os }}-${{ runner.arch }}-${{ steps.build_keys.outputs.rust }}
+
       - name: Clean previous PyInstaller output
+        if: steps.backend_cache.outputs.cache-hit != 'true'
         run: |
           rm -rf dist/
           rm -rf build/openakita-server
           rm -rf build/pyinstaller_work
 
-      - name: Package Python backend (PyInstaller)
-        run: python build/build_backend.py
-
-      - name: Install frontend dependencies
-        working-directory: apps/setup-center
-        run: npm ci
-
-      - name: Build web frontend assets
-        working-directory: apps/setup-center
-        run: npm run build:web
-
-      - name: Build user docs assets
-        working-directory: docs-site
+      - name: Create gitignored placeholders
         run: |
-          npm ci
-          npm run build
+          mkdir -p identity/personas
+          if [ ! -f identity/personas/user_custom.md ]; then
+            echo "# User Custom Persona (placeholder)" > identity/personas/user_custom.md
+          fi
+
+      # Tauri's generate_context! macro reads frontendDist at Rust compile time,
+      # so the desktop frontend must exist before this parallel phase starts.
+      - name: Build backend, Rust, and docs in parallel
+        shell: bash
+        env:
+          BACKEND_CACHE_HIT: ${{ steps.backend_cache.outputs.cache-hit }}
+          RUST_BINARY_CACHE_HIT: ${{ steps.rust_binary_cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+
+          (
+            if [ "$BACKEND_CACHE_HIT" = "true" ]; then
+              echo "[backend] Reusing exact cached PyInstaller output"
+            else
+              echo "[backend] Starting PyInstaller"
+              python build/build_backend.py --skip-web-build
+              echo "[backend] Completed"
+            fi
+          ) &
+          backend_pid=$!
+
+          (
+            if [ "$RUST_BINARY_CACHE_HIT" = "true" ]; then
+              echo "[rust] Reusing exact cached desktop binary"
+            else
+              echo "[rust] Starting release build"
+              cd apps/setup-center/src-tauri
+              cargo build --release --features tauri/custom-protocol
+              echo "[rust] Completed"
+            fi
+          ) &
+          rust_pid=$!
+
+          (
+            echo "[docs] Starting dependency install and build"
+            cd docs-site
+            npm ci
+            npm run build
+            echo "[docs] Completed"
+          ) &
+          docs_pid=$!
+
+          wait_for_build() {
+            local pid="$1"
+            local name="$2"
+            if wait "$pid"; then
+              echo "[$name] Parallel task succeeded"
+            else
+              echo "::error::$name parallel task failed"
+              return 1
+            fi
+          }
+
+          failed=0
+          wait_for_build "$backend_pid" backend || failed=1
+          wait_for_build "$rust_pid" rust || failed=1
+          wait_for_build "$docs_pid" docs || failed=1
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Prepare Cargo binary for Tauri bundler
+        run: python scripts/prepare_tauri_binary.py
+
+      - name: Refresh cached backend build identity
+        shell: bash
+        run: |
+          export OPENAKITA_BUILD_GIT_HASH="$(git rev-parse HEAD)"
+          python scripts/write_build_version.py \
+            --target dist/openakita-server/_internal/openakita/_bundled_version.txt \
+            --require-git
+
+      - name: Upload PyInstaller analysis reports
+        if: ${{ always() && steps.backend_cache.outputs.cache-hit != 'true' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: pyinstaller-analysis-ci-linux-x64
+          path: |
+            build/pyinstaller_work/**/warn-*.txt
+            build/pyinstaller_work/**/xref-*.html
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Prepare bootstrap resources (wheel + uv + standalone Python seed)
         run: |
@@ -439,21 +548,16 @@ jobs:
             --expected-git-hash "$(git rev-parse HEAD)" \
             --check-chat-api
 
-      - name: Create gitignored placeholders
-        run: |
-          mkdir -p identity/personas
-          if [ ! -f identity/personas/user_custom.md ]; then
-            echo "# User Custom Persona (placeholder)" > identity/personas/user_custom.md
-          fi
-
       - name: Build Tauri bundles (full build)
         working-directory: apps/setup-center
         env:
           NO_STRIP: true
         # Fork PRs do not receive repository secrets. Disable updater artifact
         # signing in CI; release/dryrun workflows still sign updater artifacts.
+        # The desktop frontend and Rust binary were built in parallel above;
+        # this stage only packages the existing binary and resources.
         run: >
-          npx tauri build
+          npx tauri bundle
           --bundles "deb"
           --config '{"bundle":{"createUpdaterArtifacts":false}}'
 

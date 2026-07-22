@@ -36,6 +36,7 @@ BROWSER_TOOLS = [
             params_desc={
                 "visible": "True=有界面/headed 自动化模式，False=后台/headless 模式；True 不等于已验证窗口在桌面前台",
                 "user_confirmed": "当浏览器之前被用户关闭后，只有用户明确确认继续时才传 True 重新打开前台浏览器",
+                "install_chromium": "仅当工具提示 Chromium 缺失且用户明确同意约 400 MB 下载后才传 True",
             },
             notes=[
                 "⚠️ 每次浏览器任务前建议调用此工具确认状态",
@@ -44,6 +45,7 @@ BROWSER_TOOLS = [
                 "默认使用有界面/headed 模式，但工具结果不代表窗口已在用户桌面前台",
                 "如果用户说看不到浏览器，必须使用桌面截图/窗口工具验证并切换；不要只根据 browser_open 的 headed/visible 断言已在前台",
                 "如果工具提示浏览器可能被用户关闭，不要自动重开；先询问用户，得到明确确认后传 user_confirmed=True",
+                "如果工具提示 Chromium 缺失，不要自动安装；先询问用户，得到明确确认后传 install_chromium=True",
             ],
         ),
         "triggers": [
@@ -91,6 +93,11 @@ BROWSER_TOOLS = [
                 "user_confirmed": {
                     "type": "boolean",
                     "description": "仅当用户明确确认重新打开前台浏览器时传 True；用于浏览器被用户关闭后的重启保护",
+                    "default": False,
+                },
+                "install_chromium": {
+                    "type": "boolean",
+                    "description": "仅当用户明确确认下载约 400 MB 的 Chromium 后传 True",
                     "default": False,
                 },
             },

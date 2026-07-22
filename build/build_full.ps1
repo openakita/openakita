@@ -23,20 +23,31 @@ if ($Fast) {
     Write-Host "============================================" -ForegroundColor Cyan
 }
 
-# Step 1: Package Python backend (full mode)
-Write-Host "`n[1/4] Packaging Python backend (full mode)..." -ForegroundColor Yellow
-$backendArgs = @("$ScriptDir\build_backend.py", "--mode", "full")
+# Step 1: Build the shared web frontend once before either packager consumes it
+Write-Host "`n[1/5] Building web frontend..." -ForegroundColor Yellow
+Push-Location $SetupCenterDir
+try {
+    if (-not (Test-Path "node_modules")) { npm install }
+    npm run build:web
+    if ($LASTEXITCODE -ne 0) { throw "Web frontend build failed" }
+} finally {
+    Pop-Location
+}
+
+# Step 2: Package Python backend (full mode)
+Write-Host "`n[2/5] Packaging Python backend (full mode)..." -ForegroundColor Yellow
+$backendArgs = @("$ScriptDir\build_backend.py", "--mode", "full", "--skip-web-build")
 if ($Fast) { $backendArgs += "--fast" }
 python @backendArgs
 if ($LASTEXITCODE -ne 0) { throw "Python backend packaging failed" }
 
-# Step 2: Pre-bundle optional modules
-Write-Host "`n[2/4] Pre-bundling optional modules..." -ForegroundColor Yellow
+# Step 3: Pre-bundle optional modules
+Write-Host "`n[3/5] Pre-bundling optional modules..." -ForegroundColor Yellow
 python "$ScriptDir\bundle_modules.py"
 if ($LASTEXITCODE -ne 0) { throw "Module pre-bundling failed" }
 
-# Step 3: Copy to Tauri resources
-Write-Host "`n[3/4] Copying backend and modules to Tauri resources..." -ForegroundColor Yellow
+# Step 4: Copy to Tauri resources
+Write-Host "`n[4/5] Copying backend and modules to Tauri resources..." -ForegroundColor Yellow
 $DistServerDir = Join-Path $ProjectRoot "dist\openakita-server"
 $ModulesDir = Join-Path $ScriptDir "modules"
 $TargetServerDir = Join-Path $ResourceDir "openakita-server"
@@ -52,8 +63,8 @@ if (Test-Path $ModulesDir) {
 Write-Host "  Backend: $TargetServerDir"
 Write-Host "  Modules: $TargetModulesDir"
 
-# Step 4: Build Tauri app (add modules resource via TAURI_CONFIG)
-Write-Host "`n[4/4] Building Tauri app..." -ForegroundColor Yellow
+# Step 5: Build Tauri app (add modules resource via TAURI_CONFIG)
+Write-Host "`n[5/5] Building Tauri app..." -ForegroundColor Yellow
 Push-Location $SetupCenterDir
 try {
     # Full package needs additional modules resource directory

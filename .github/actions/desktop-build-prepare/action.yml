@@ -36,6 +36,14 @@ inputs:
     required: false
     default: '3.11'
 
+outputs:
+  backend_cache_hit:
+    description: 'Whether the exact-input PyInstaller output cache was restored.'
+    value: ${{ steps.backend_cache.outputs.cache-hit }}
+  rust_binary_cache_hit:
+    description: 'Whether the exact-input Rust desktop binary cache was restored.'
+    value: ${{ steps.rust_binary_cache.outputs.cache-hit }}
+
 runs:
   using: composite
   steps:
@@ -90,6 +98,24 @@ runs:
         prefix-key: ${{ inputs.rust_cache_prefix }}
         cache-bin: false
 
+    - name: Compute Rust desktop fingerprint
+      id: rust_key
+      shell: bash
+      run: python scripts/build_cache_key.py rust --github-output
+
+    - name: Restore exact Rust desktop binary
+      id: rust_binary_cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          apps/setup-center/src-tauri/target/release/openakita-desktop
+          apps/setup-center/src-tauri/target/release/openakita-desktop.exe
+          apps/setup-center/src-tauri/target/release/openakita_setup_center.pdb
+          apps/setup-center/src-tauri/target/${{ inputs.rust_target }}/release/openakita-desktop
+          apps/setup-center/src-tauri/target/${{ inputs.rust_target }}/release/openakita-desktop.exe
+          apps/setup-center/src-tauri/target/${{ inputs.rust_target }}/release/openakita_setup_center.pdb
+        key: desktop-rust-binary-v2-${{ inputs.rust_cache_prefix }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rust_target }}-${{ steps.rust_key.outputs.fingerprint }}
+
     - name: Build web frontend for remote browser access
       shell: bash
       working-directory: apps/setup-center
@@ -129,12 +155,44 @@ runs:
           find "${TMPDIR:-/tmp}" -maxdepth 1 -name "_MEI*" -type d -exec rm -rf {} + 2>/dev/null || true
         fi
 
+    - name: Compute backend build fingerprint
+      id: backend_key
+      shell: bash
+      run: python scripts/build_cache_key.py backend --github-output
+
+    - name: Restore exact PyInstaller output
+      id: backend_cache
+      uses: actions/cache@v4
+      with:
+        path: dist/openakita-server
+        key: desktop-backend-v2-${{ inputs.rust_cache_prefix }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.backend_key.outputs.fingerprint }}
+
     - name: Package Python backend (PyInstaller)
+      if: steps.backend_cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         set -euo pipefail
         export OPENAKITA_BUILD_GIT_HASH="$(git rev-parse HEAD)"
-        python build/build_backend.py
+        python build/build_backend.py --skip-web-build
+
+    - name: Refresh cached backend build identity
+      shell: bash
+      run: |
+        export OPENAKITA_BUILD_GIT_HASH="$(git rev-parse HEAD)"
+        python scripts/write_build_version.py \
+          --target dist/openakita-server/_internal/openakita/_bundled_version.txt \
+          --require-git
+
+    - name: Upload PyInstaller analysis reports
+      if: ${{ always() && steps.backend_cache.outputs.cache-hit != 'true' }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: pyinstaller-analysis-${{ inputs.target_platform }}
+        path: |
+          build/pyinstaller_work/**/warn-*.txt
+          build/pyinstaller_work/**/xref-*.html
+        if-no-files-found: warn
+        retention-days: 7
 
     - name: Read bootstrap pins (PBS / uv version)
       id: bootstrap_pins

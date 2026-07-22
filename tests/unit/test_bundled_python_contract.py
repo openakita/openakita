@@ -34,8 +34,24 @@ def test_bundled_chat_smoke_exercises_request_without_mode() -> None:
     _run_bundled_chat_smoke(Path("src").resolve())
 
 
+def test_bundled_chat_smoke_checks_loose_toolbelt_import() -> None:
+    smoke_source = (Path("scripts") / "package_chat_smoke.py").read_text(encoding="utf-8")
+
+    assert 'if internal_dir.name != "src":' in smoke_source
+    assert "import requests_toolbelt" in smoke_source
+    assert "requests_toolbelt imported from" in smoke_source
+
+
 def test_pyinstaller_source_tree_excludes_build_owned_version_file() -> None:
     spec_source = (Path("build") / "openakita.spec").read_text(encoding="utf-8")
 
     assert 'excludes=["_bundled_version.txt"]' in spec_source
     assert 'datas.append((str(_openakita_src), "openakita"))' not in spec_source
+
+
+def test_pyinstaller_does_not_analyze_loose_requests_toolbelt_copy_twice() -> None:
+    spec_source = (Path("build") / "openakita.spec").read_text(encoding="utf-8")
+
+    hidden_imports = spec_source.split("hidden_imports_core = [", 1)[1].split("]", 1)[0]
+    assert '"requests_toolbelt"' not in hidden_imports
+    assert 'datas.append((_rt_dir, "requests_toolbelt"))' in spec_source

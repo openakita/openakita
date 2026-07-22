@@ -307,6 +307,7 @@ jobs:
       # .github/actions/desktop-build-prepare/action.yml。dryrun 与 release
       # 使用同一份 composite action，避免漂移。
       - name: Desktop build prepare
+        id: desktop_prepare
         uses: ./.github/actions/desktop-build-prepare
         with:
           target_platform: ${{ matrix.target_platform }}
@@ -457,63 +458,42 @@ jobs:
             echo "# User Custom Persona (placeholder)" > identity/personas/user_custom.md
           fi
 
-      - name: Install frontend dependencies
+      - name: Build desktop frontend
         working-directory: apps/setup-center
-        run: npm ci
+        run: npm run build
 
       # macOS runners ship Homebrew Rust shims that can shadow rustup's real cargo.
       - name: Prefer rustup Cargo on PATH
         shell: bash
         run: echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
 
-      - name: Preflight Rust dependency check
+      - name: Compile Rust desktop binary
+        if: steps.desktop_prepare.outputs.rust_binary_cache_hit != 'true'
         working-directory: apps/setup-center/src-tauri
+        timeout-minutes: 120
         shell: bash
-        env:
-          CARGO_HTTP_MULTIPLEXING: "false"
         run: |
-          set -euo pipefail
-          CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
-          # Clear cached build-scripts to avoid glibc mismatch across Ubuntu versions
-          rm -rf target/debug/build
-          "$CARGO_BIN/cargo" fetch --locked
-          CHECK_ARGS=""
-          if [ -n "${{ matrix.rust_target }}" ]; then
-            CHECK_ARGS="--target ${{ matrix.rust_target }}"
-          fi
-          MAX_ATTEMPTS=3
-          ATTEMPT=1
-          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-            echo "=== Preflight attempt $ATTEMPT/$MAX_ATTEMPTS ==="
-            if "$CARGO_BIN/cargo" check $CHECK_ARGS; then
-              echo "Preflight succeeded"
+          set +e
+          cargo fetch --locked || exit $?
+          for attempt in 1 2; do
+            echo "=== Rust build attempt ${attempt}/2 ==="
+            cargo build --release --features tauri/custom-protocol ${{ matrix.args }}
+            exit_code=$?
+            if [ "$exit_code" -eq 0 ]; then
               exit 0
             fi
-            echo "Preflight failed (attempt $ATTEMPT)"
-            if [ $ATTEMPT -eq 1 ]; then
-              echo "::warning::Stale cache detected, running cargo clean before retry"
-              "$CARGO_BIN/cargo" clean
+            if [ "$attempt" -eq 1 ]; then
+              echo "::warning::Rust build failed; clearing stale cache before retry"
+              cargo clean
+              sleep 30
             fi
-            ATTEMPT=$((ATTEMPT + 1))
-            [ $ATTEMPT -le $MAX_ATTEMPTS ] && { echo "Retrying in 30s..."; sleep 30; }
           done
-          echo "All preflight attempts failed"
-          exit 1
+          exit "$exit_code"
 
-      - name: Clean Rust release intermediates for current target
-        shell: bash
-        run: |
-          set -euo pipefail
-          TARGET_BASE="apps/setup-center/src-tauri/target"
-          if [ -n "${{ matrix.rust_target }}" ]; then
-            RELEASE_DIR="${TARGET_BASE}/${{ matrix.rust_target }}/release"
-          else
-            RELEASE_DIR="${TARGET_BASE}/release"
-          fi
-          rm -rf "${RELEASE_DIR}/deps" "${RELEASE_DIR}/build" "${RELEASE_DIR}/.fingerprint"
-          mkdir -p "${RELEASE_DIR}"
+      - name: Prepare Cargo binary for Tauri bundler
+        run: python scripts/prepare_tauri_binary.py --target "${{ matrix.rust_target }}"
 
-      - name: Build Tauri bundles
+      - name: Bundle Tauri installers
         working-directory: apps/setup-center
         timeout-minutes: 150
         env:
@@ -531,14 +511,14 @@ jobs:
           MAX_ATTEMPTS=2
           ATTEMPT=1
           while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-            echo "=== Build attempt $ATTEMPT/$MAX_ATTEMPTS ==="
-            npx tauri build --bundles "${{ matrix.bundles }}" ${{ matrix.args }}
+            echo "=== Bundle attempt $ATTEMPT/$MAX_ATTEMPTS ==="
+            npx tauri bundle --bundles "${{ matrix.bundles }}" ${{ matrix.args }}
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 0 ]; then
-              echo "Build succeeded on attempt $ATTEMPT"
+              echo "Bundle succeeded on attempt $ATTEMPT"
               exit 0
             fi
-            echo "Build failed (exit $EXIT_CODE) on attempt $ATTEMPT"
+            echo "Bundle failed (exit $EXIT_CODE) on attempt $ATTEMPT"
             ATTEMPT=$((ATTEMPT + 1))
             if [ $ATTEMPT -le $MAX_ATTEMPTS ]; then
               echo "Waiting 30s before retry..."
@@ -737,7 +717,9 @@ jobs:
           echo "Building DMG: ${dmg_file}"
           echo "  source app : ${app}"
 
-          brew install create-dmg 2>/dev/null || true
+          if [ "${{ matrix.suffix }}" != "macos-x64" ]; then
+            brew install create-dmg 2>/dev/null || true
+          fi
 
           # Detach any leftover volumes from a previous run that share
           # the volname; otherwise hdiutil/create-dmg can fail with
@@ -751,7 +733,14 @@ jobs:
           DMG_STAGE="$(mktemp -d)"
           cp -a "${app}" "${DMG_STAGE}/"
 
-          if command -v create-dmg &>/dev/null; then
+          if [ "${{ matrix.suffix }}" = "macos-x64" ]; then
+            echo "Intel runner: using hdiutil directly to avoid known create-dmg AppleScript hangs"
+            ln -sf /Applications "${DMG_STAGE}/Applications"
+            hdiutil create -volname "${app_name}" \
+              -srcfolder "${DMG_STAGE}" -ov -format UDRW "/tmp/_rw_$$.dmg"
+            hdiutil convert "/tmp/_rw_$$.dmg" -format UDZO -o "${dmg_file}"
+            rm -f "/tmp/_rw_$$.dmg"
+          elif command -v create-dmg &>/dev/null; then
             # Polished layout: App (left) → arrow → Applications (right)
             DMG_BG="/tmp/dmg_bg_$$.png"
             if command -v magick &>/dev/null; then

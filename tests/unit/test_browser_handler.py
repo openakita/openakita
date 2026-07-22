@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -60,9 +61,10 @@ class _StartableBrowserManager:
         self.page = None
         self.reset_count += 1
 
-    async def start(self, visible=True):
+    async def start(self, visible=True, *, install_chromium=False):
         self.started = True
         self.visible = visible
+        self.install_chromium = install_chromium
         self.is_ready = True
         self.page = _FakePage()
         self.context = SimpleNamespace(pages=[self.page])
@@ -168,6 +170,83 @@ async def test_user_confirmed_browser_open_clears_closed_gate():
     assert "status" in result
     assert manager.started is True
     assert agent._browser_user_closed is False
+
+
+@pytest.mark.asyncio
+async def test_browser_open_reports_chromium_confirmation_requirement():
+    manager = _StartableBrowserManager()
+    manager.chromium_install_required = True
+
+    async def fail_start(visible=True, *, install_chromium=False):
+        return False
+
+    manager.start = fail_start
+    agent = SimpleNamespace(
+        name="tester",
+        browser_manager=manager,
+        pw_tools=_FakePlaywrightTools(),
+    )
+
+    result = await BrowserHandler(agent).handle("browser_open", {"visible": True})
+
+    assert "本次不会自动下载" in result
+    assert 'browser_open({"install_chromium": true})' in result
+
+
+@pytest.mark.asyncio
+async def test_browser_open_passes_explicit_chromium_install_confirmation():
+    manager = _StartableBrowserManager()
+    agent = SimpleNamespace(
+        name="tester",
+        browser_manager=manager,
+        pw_tools=_FakePlaywrightTools(),
+    )
+
+    result = await BrowserHandler(agent).handle(
+        "browser_open",
+        {"visible": True, "install_chromium": True},
+    )
+
+    assert "status" in result
+    assert manager.install_chromium is True
+
+
+@pytest.mark.asyncio
+async def test_browser_open_rejects_truthy_non_boolean_install_confirmation():
+    manager = _StartableBrowserManager()
+    agent = SimpleNamespace(
+        name="tester",
+        browser_manager=manager,
+        pw_tools=_FakePlaywrightTools(),
+    )
+
+    await BrowserHandler(agent).handle(
+        "browser_open",
+        {"visible": True, "install_chromium": "true"},
+    )
+
+    assert manager.install_chromium is False
+
+
+@pytest.mark.asyncio
+async def test_implicit_browser_start_also_requests_install_confirmation():
+    manager = _StartableBrowserManager()
+    manager.chromium_install_required = True
+    agent = SimpleNamespace(
+        name="tester",
+        browser_manager=manager,
+        pw_tools=SimpleNamespace(
+            navigate=AsyncMock(return_value={"success": False, "error": "浏览器启动失败"})
+        ),
+    )
+
+    result = await BrowserHandler(agent).handle(
+        "browser_navigate",
+        {"url": "https://example.com"},
+    )
+
+    assert "本次不会自动下载" in result
+    assert 'browser_open({"install_chromium": true})' in result
 
 
 @pytest.mark.asyncio

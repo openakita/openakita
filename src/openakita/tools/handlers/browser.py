@@ -144,6 +144,12 @@ class BrowserHandler:
 
         result = await self._dispatch_with_lock(actual_tool_name, params)
 
+        if (
+            not result.get("success")
+            and getattr(self.agent.browser_manager, "chromium_install_required", False)
+        ):
+            result = self._chromium_install_confirmation_result()
+
         if actual_tool_name == "browser_get_content" and result.get("success"):
             output = self._format_get_content_result(result, params)
         elif result.get("success"):
@@ -401,7 +407,13 @@ class BrowserHandler:
             logger.warning("[Browser] Incomplete browser state, resetting")
             await manager.reset_state()
 
-        success = await manager.start(visible=visible)
+        # This flag authorizes a large network download, so require the schema's
+        # literal boolean true rather than accepting arbitrary truthy values.
+        install_chromium = params.get("install_chromium") is True
+        success = await manager.start(
+            visible=visible,
+            install_chromium=install_chromium,
+        )
 
         if success:
             if params.get("user_confirmed") or not visible:
@@ -439,6 +451,9 @@ class BrowserHandler:
 
             return {"success": True, "result": result_data}
         else:
+            if getattr(manager, "chromium_install_required", False):
+                return self._chromium_install_confirmation_result()
+
             hints: list[str] = []
             try:
                 from ..browser.chrome_finder import (
@@ -492,6 +507,19 @@ class BrowserHandler:
                 "result": {"is_open": False, "status": "failed"},
                 "error": error_msg,
             }
+
+    @staticmethod
+    def _chromium_install_confirmation_result() -> dict:
+        return {
+            "success": False,
+            "result": {"is_open": False, "status": "install_confirmation_required"},
+            "error": (
+                "未安装浏览器自动化所需的 Chromium（约 400 MB）。"
+                "本次不会自动下载。请先询问用户是否安装；只有用户明确确认后，"
+                "才能再次调用 "
+                'browser_open({"install_chromium": true})。'
+            ),
+        }
 
     @staticmethod
     def _build_open_status_result(

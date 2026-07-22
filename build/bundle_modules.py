@@ -37,8 +37,8 @@ model = SentenceTransformer("shibing624/text2vec-base-chinese")
 print(f"Model downloaded to: {model._model_card_text if hasattr(model, '_model_card_text') else 'cache'}")
 """,
     },
-    # browser (playwright + browser-use + langchain-openai) 已内置到 core 包，
-    # 不再作为外置模块。构建前需运行 'playwright install chromium'。
+    # browser Python packages and the Playwright driver are built into core;
+    # Chromium itself is downloaded to the managed runtime only after the user confirms.
     "whisper": {
         "description": "Offline speech-to-text (OpenAI Whisper, ~2.5GB with PyTorch)",
         "packages": [

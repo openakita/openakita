@@ -22,19 +22,29 @@ else
     echo "============================================"
 fi
 
-# Step 1: Package Python backend (full mode)
+# Step 1: Build the shared web frontend once before either packager consumes it
 echo ""
-echo "[1/4] Packaging Python backend (full mode)..."
-python3 "$SCRIPT_DIR/build_backend.py" --mode full $FAST_FLAG
+echo "[1/5] Building web frontend..."
+cd "$SETUP_CENTER_DIR"
+if [[ ! -d node_modules ]]; then
+    npm install
+fi
+npm run build:web
 
-# Step 2: Pre-bundle optional modules
+# Step 2: Package Python backend (full mode)
 echo ""
-echo "[2/4] Pre-bundling optional modules..."
+echo "[2/5] Packaging Python backend (full mode)..."
+cd "$PROJECT_ROOT"
+python3 "$SCRIPT_DIR/build_backend.py" --mode full --skip-web-build $FAST_FLAG
+
+# Step 3: Pre-bundle optional modules
+echo ""
+echo "[3/5] Pre-bundling optional modules..."
 python3 "$SCRIPT_DIR/bundle_modules.py"
 
-# Step 3: Copy to Tauri resources
+# Step 4: Copy to Tauri resources
 echo ""
-echo "[3/4] Copying backend and modules to Tauri resources..."
+echo "[4/5] Copying backend and modules to Tauri resources..."
 DIST_SERVER_DIR="$PROJECT_ROOT/dist/openakita-server"
 MODULES_DIR="$SCRIPT_DIR/modules"
 TARGET_SERVER_DIR="$RESOURCE_DIR/openakita-server"
@@ -49,9 +59,9 @@ fi
 echo "  Backend: $TARGET_SERVER_DIR"
 echo "  Modules: $TARGET_MODULES_DIR"
 
-# Step 4: Build Tauri app (add modules resource via TAURI_CONFIG)
+# Step 5: Build Tauri app (add modules resource via TAURI_CONFIG)
 echo ""
-echo "[4/4] Building Tauri app..."
+echo "[5/5] Building Tauri app..."
 cd "$SETUP_CENTER_DIR"
 # Full package needs additional modules resource directory
 export TAURI_CONFIG='{"bundle":{"resources":["resources/openakita-server/","resources/modules/"]}}'
