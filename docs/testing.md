@@ -151,7 +151,7 @@ pytest tests/e2e/ -v
 pytest tests/quality/ -v
 
 # Legacy 测试
-pytest tests/legacy/ -v -k "not TestVectorStore"
+pytest tests/regression/ -v -k "not TestVectorStore"
 ```
 
 ### 带覆盖率
@@ -198,7 +198,7 @@ LLM_TEST_MODE=record pytest tests/e2e/ -v
 ```bash
 export TELEGRAM_BOT_TOKEN="..."
 export TELEGRAM_CHAT_ID="..."
-pytest tests/legacy/test_telegram_simple.py -v
+pytest tests/regression/test_telegram_simple.py -v
 ```
 
 ---
@@ -244,4 +244,3 @@ pytest tests/component/test_context_manager.py -v -s
 # 调试模式
 LOG_LEVEL=DEBUG pytest tests/integration/test_api_chat.py -v -s
 ```
-

@@ -1,7 +1,6 @@
 """Verb / tool name -> backing-tool fragment maps.
 
-Extracted from ``core/reasoning_engine.py`` (P-RC-5 P5.5) as a
-shared data table used by the unbacked-action-claim guard.
+Shared data tables used by the unbacked-action-claim guard.
 
 * :data:`CLAIMED_TOOL_TO_FRAGMENTS` -- direct tool-name claim: when the
   LLM text mentions ``write_file``, the guard expects a backing
@@ -11,10 +10,7 @@ shared data table used by the unbacked-action-claim guard.
   发送 ...), the guard expects at least one backing tool whose
   name contains any of the listed fragments.
 
-Both dicts are byte-identical to the legacy versions; the
-``unbacked-action-claim`` guard extracted in P5.6 will import them
-from here, and ``core/reasoning_engine.py`` re-imports them under
-the legacy private names for backward compatibility.
+The unbacked-action-claim guard imports both dictionaries from here.
 """
 
 from __future__ import annotations

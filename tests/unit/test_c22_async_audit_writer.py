@@ -356,7 +356,7 @@ class TestStopDrain:
 class TestAuditLoggerIntegration:
     @pytest.mark.asyncio
     async def test_log_routes_through_async_writer_when_running(self, audit_path: Path) -> None:
-        from openakita.core.audit_logger import AuditLogger
+        from openakita.agent.audit import AuditLogger
 
         await start_global_audit_writer(str(audit_path))
         try:
@@ -392,7 +392,7 @@ class TestAuditLoggerIntegration:
     def test_log_sync_path_works_when_no_async_writer(self, audit_path: Path) -> None:
         """No global writer started → AuditLogger sync-writes via
         ChainedJsonlWriter directly (= pre-C22 behaviour)."""
-        from openakita.core.audit_logger import AuditLogger
+        from openakita.agent.audit import AuditLogger
 
         # Ensure no singleton up
         reset_for_testing()

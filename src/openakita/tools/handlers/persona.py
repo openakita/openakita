@@ -175,7 +175,7 @@ class PersonaHandler:
 
     def _update_persona_trait(self, params: dict) -> str:
         """更新人格偏好特质"""
-        from ...core.persona import PersonaTrait
+        from openakita.agent.persona import PersonaTrait
 
         if not hasattr(self.agent, "persona_manager") or not self.agent.persona_manager:
             return "❌ 人格系统未初始化"
@@ -200,7 +200,7 @@ class PersonaHandler:
         self.agent.persona_manager.add_trait(trait)
 
         if hasattr(self.agent, "memory_manager") and self.agent.memory_manager:
-            from ...core.persona import persist_trait_to_memory
+            from openakita.agent.persona import persist_trait_to_memory
 
             persist_trait_to_memory(self.agent.memory_manager, trait)
 

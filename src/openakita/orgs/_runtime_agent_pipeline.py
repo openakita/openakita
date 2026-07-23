@@ -75,9 +75,7 @@ MAX_DISPATCH_BLOCKS = 5
 """Hard cap on dispatch blocks parsed per LLM reply, regardless of how
 many the model emits."""
 
-dispatch_depth_var: ContextVar[int] = ContextVar(
-    "openakita_orgs_v2_dispatch_depth", default=0
-)
+dispatch_depth_var: ContextVar[int] = ContextVar("openakita_orgs_v2_dispatch_depth", default=0)
 """Per-task depth marker. Set by
 :meth:`AgentPipelineExecutor.activate_and_run` before invoking the
 cached node agent; read by
@@ -86,9 +84,7 @@ cached node agent; read by
 :meth:`AgentPipelineExecutor.dispatch_subtask` (to derive the child
 depth)."""
 
-current_command_id_var: ContextVar[str] = ContextVar(
-    "openakita_orgs_v2_command_id", default=""
-)
+current_command_id_var: ContextVar[str] = ContextVar("openakita_orgs_v2_command_id", default="")
 """Per-task command-id marker. Set by
 :meth:`AgentPipelineExecutor.activate_and_run` so the child-dispatch
 callback wired into :class:`DefaultAgentBuilder` can re-attribute
@@ -97,9 +93,7 @@ thread it through ``agent.run(content)``. Children share the parent's
 command id by design: outcomes / cancellation / status are tracked at
 the user-command granularity, not per-node."""
 
-current_chain_id_var: ContextVar[str] = ContextVar(
-    "openakita_orgs_v2_chain_id", default=""
-)
+current_chain_id_var: ContextVar[str] = ContextVar("openakita_orgs_v2_chain_id", default="")
 """Per-run chain-id marker. Unlike ``current_command_id_var`` (shared
 by every node of one user command) this is UNIQUE per agent run, so a
 delegation tree can be reconstructed exactly: the root entry run mints
@@ -200,7 +194,7 @@ class AgentBuilderProtocol(Protocol):
     """Builds and caches one agent per ``(org_id, node_id)``.
 
     Implementations in ``openakita.agents.factory`` /
-    ``openakita.core.agent`` wire concrete Agent / Brain
+    ``openakita.agent`` wire concrete Agent / Brain
     types; the runtime composes the builder via
     :meth:`OrgRuntime.__init__` (P9.6i).
     """
@@ -451,9 +445,7 @@ class ProfileResolver:
         return bool(value)
 
     @staticmethod
-    def _available_nodes_for(
-        org: Any, current_node_id: str
-    ) -> tuple[tuple[str, str], ...]:
+    def _available_nodes_for(org: Any, current_node_id: str) -> tuple[tuple[str, str], ...]:
         """Enumerate THIS node's DIRECT hierarchy children for dispatch.
 
         ★ Multi-level routing fix (test6 越级 bug): the pre-fix version
@@ -486,9 +478,7 @@ class ProfileResolver:
             return ()
         # Index node_id -> label once.
         labels: dict[str, str] = {}
-        iter_nodes: Iterable[Any] = (
-            nodes.values() if isinstance(nodes, Mapping) else nodes
-        )
+        iter_nodes: Iterable[Any] = nodes.values() if isinstance(nodes, Mapping) else nodes
         for node in iter_nodes:
             node_id = getattr(node, "id", None) or getattr(node, "node_id", None)
             if not isinstance(node_id, str) or not node_id:
@@ -514,6 +504,7 @@ class ProfileResolver:
             seen.add(tgt)
             children.append(tgt)
         return tuple((cid, labels.get(cid, "")) for cid in children)
+
 
 # P-RC-10 P10.5a re-export: keep the public import path stable.
 from ._runtime_agent_pipeline_executor import (  # noqa: E402

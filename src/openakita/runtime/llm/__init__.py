@@ -1,7 +1,7 @@
-"""V2 LLM helpers extracted from ``core.brain`` (continuation plan section 5).
+"""Focused LLM runtime helpers composed by :mod:`openakita.agent.brain`.
 
 Each submodule here is a focused, independently-testable piece of the
-legacy Brain god-class:
+public Brain:
 
 * :class:`failover.EndpointFailoverView` -- endpoint health, fallback
   model selection, and live-priority controls over an ``LLMClient``.
@@ -13,8 +13,7 @@ legacy Brain god-class:
 * :mod:`stream` -- thin streaming primitive over ``LLMClient.chat_stream``
   with a separable token-tracking context manager.
 
-The agent rewrite in P-RC-4 (``openakita.agent.brain``) composes these
-helpers rather than inheriting from the giant.
+``openakita.agent.brain`` composes these helpers around its private runtime base.
 """
 
 from __future__ import annotations

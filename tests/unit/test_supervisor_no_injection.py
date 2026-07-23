@@ -5,14 +5,12 @@
 导致模型行为退化（缩短回答、减少工具调用）。已移除全部注入逻辑。
 """
 
-from openakita.core._supervisor_legacy import (
-    Intervention,
-    InterventionLevel,
+from openakita.agent.resource_budget import BudgetConfig, ResourceBudget
+from openakita.core._supervisor_runtime import (
+    TOKEN_ANOMALY_THRESHOLD,
     PatternType,
     RuntimeSupervisor,
-    TOKEN_ANOMALY_THRESHOLD,
 )
-from openakita.core.resource_budget import ResourceBudget, BudgetConfig
 
 
 class TestTokenAnomalyNoInjection:

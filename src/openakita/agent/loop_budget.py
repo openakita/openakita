@@ -1,14 +1,6 @@
 """Shared hard-budget guard for ReAct loops.
 
-Ported from :mod:`openakita.core.loop_budget_guard` per ADR-0003
-and the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``.
-The legacy path stays as a re-export shim until Phase 8. The
-audit renames the legacy ``loop_budget_guard`` module to the
-shorter ``loop_budget`` under ``agent/`` (per the new home
-column in the audit's MOVE table).
-
-Behaviour is unchanged; only the import location moved. The
-module exposes:
+The module exposes:
 
 * :class:`READONLY_EXPLORATION_TOOLS` — frozen set of safe-read
   tool names that count toward stagnation detection;
@@ -27,21 +19,23 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 
-READONLY_EXPLORATION_TOOLS = frozenset({
-    "read_file",
-    "list_directory",
-    "grep",
-    "glob",
-    "web_fetch",
-    "web_search",
-    "news_search",
-    "get_tool_info",
-    "list_skills",
-    "get_skill_info",
-    "search_memory",
-    "get_memory_stats",
-    "get_session_context",
-})
+READONLY_EXPLORATION_TOOLS = frozenset(
+    {
+        "read_file",
+        "list_directory",
+        "grep",
+        "glob",
+        "web_fetch",
+        "web_search",
+        "news_search",
+        "get_tool_info",
+        "list_skills",
+        "get_skill_info",
+        "search_memory",
+        "get_memory_stats",
+        "get_session_context",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -143,9 +137,7 @@ class LoopBudgetGuard:
         # Clamp to a sensible range so a misconfigured value cannot produce
         # nonsense (e.g. negative or >1).
         eff_ratio = (
-            near_context_ratio
-            if near_context_ratio is not None
-            else self.near_context_ratio
+            near_context_ratio if near_context_ratio is not None else self.near_context_ratio
         )
         try:
             eff_ratio = float(eff_ratio)
@@ -153,9 +145,8 @@ class LoopBudgetGuard:
             eff_ratio = 0.98
         eff_ratio = min(max(eff_ratio, 0.5), 0.99)
 
-        near_context_limit = (
-            bool(max_context_tokens)
-            and total_tokens >= int(max_context_tokens * eff_ratio)
+        near_context_limit = bool(max_context_tokens) and total_tokens >= int(
+            max_context_tokens * eff_ratio
         )
 
         # A large prompt is not necessarily context bloat. Long-running tasks can
@@ -167,9 +158,8 @@ class LoopBudgetGuard:
         if recovered:
             self.token_anomaly_recoveries += 1
             return LoopBudgetDecision(False)
-        if (
-            total_tokens > self.token_anomaly_threshold
-            and self.total_tool_calls_seen >= max(5, self.max_total_tool_calls // 2)
+        if total_tokens > self.token_anomaly_threshold and self.total_tool_calls_seen >= max(
+            5, self.max_total_tool_calls // 2
         ):
             logger.info(
                 "[LoopBudget] token anomaly: input=%s output=%s ctx_max=%s "
@@ -208,7 +198,9 @@ class LoopBudgetGuard:
             if not isinstance(result, dict):
                 continue
             content = str(result.get("content", ""))
-            parts.append(hashlib.md5(content[:4000].encode("utf-8", errors="ignore")).hexdigest()[:10])
+            parts.append(
+                hashlib.md5(content[:4000].encode("utf-8", errors="ignore")).hexdigest()[:10]
+            )
         return "|".join(parts)
 
     @staticmethod

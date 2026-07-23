@@ -30,15 +30,23 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from openakita.agent.errors import UserCancelledError
+from openakita.agent.loop_budget import READONLY_EXPLORATION_TOOLS, LoopBudgetGuard
+from openakita.agent.resource_budget import (
+    BudgetAction,
+    ResourceBudget,
+    create_budget_from_settings,
+)
+
 from ..api.routes.websocket import broadcast_event
 from ..config import settings
 from ..llm.converters.tools import PARSE_ERROR_KEY
 from ..tools.tool_hints import ConfigHint
 from ..tools.tool_result import split_tool_result_payload
 from ..tracing.tracer import get_tracer
-from ._context_manager_legacy import ContextManager
-from ._context_manager_legacy import _CancelledError as _CtxCancelledError
-from ._supervisor_legacy import TOKEN_ANOMALY_THRESHOLD, RuntimeSupervisor
+from ._context_runtime import ContextManager
+from ._context_runtime import _CancelledError as _CtxCancelledError
+from ._supervisor_runtime import TOKEN_ANOMALY_THRESHOLD, RuntimeSupervisor
 from .abort_scope import current_abort_scope
 from .agent_state import AgentState, IllegalReasoningEntry, TaskState, TaskStatus
 from .cancel_cleanup import (
@@ -51,10 +59,7 @@ from .cancel_cleanup import (
     persisted_age_seconds,
     synthesize_tool_results_for_orphans,
 )
-from .errors import UserCancelledError
-from .loop_budget_guard import READONLY_EXPLORATION_TOOLS, LoopBudgetGuard
 from .policy_v2.exceptions import DeferredApprovalRequired
-from .resource_budget import BudgetAction, ResourceBudget, create_budget_from_settings
 from .response_handler import (
     ResponseHandler,
     clean_llm_response,
@@ -108,7 +113,7 @@ _PER_TOOL_NAME_TASK_LIMITS: dict[str, int] = {
 }
 
 
-from ._tool_executor_legacy import ToolExecutor
+from ._tool_runtime import ToolExecutor
 from .token_tracking import TokenTrackingContext, reset_tracking_context, set_tracking_context
 
 logger = logging.getLogger(__name__)
@@ -232,7 +237,7 @@ def _unpack_tool_result(value: Any) -> tuple[str, ConfigHint | None]:
 
     All ``ToolExecutor`` paths are supposed to return ``(text, hint)`` after
     the type sweep. This helper accepts both the new tuple shape and the
-    legacy plain-string shape (in case any callsite outside this module
+    previous plain-string shape (in case any callsite outside this module
     hasn't migrated yet) and normalizes to ``(str, ConfigHint | None)``.
     Centralizing the unwrap keeps the 5+ tool-call sites in this file short
     and consistent.
@@ -540,7 +545,7 @@ def _apply_tool_result_budget(
     max_total: int | None = None,
 ) -> list[dict]:
     """Proportionally truncate tool results if total exceeds budget."""
-    from ._tool_executor_legacy import OVERFLOW_MARKER, save_overflow
+    from ._tool_runtime import OVERFLOW_MARKER, save_overflow
 
     if max_total is None:
         max_total = int(getattr(settings, "context_tool_results_total_chars", 80_000) or 80_000)
@@ -605,7 +610,7 @@ def _compact_cached_tool_content(tool_name: str, content: str) -> str:
 # ---------------------------------------------------------------------------
 
 # --- mode/intent/shell-write guards extracted to runtime.state_graph.guards.tool_filters ---
-# Legacy private aliases kept for backward compatibility with downstream
+# Previous private aliases kept for backward compatibility with downstream
 # code that still touches the private spellings (incl. reasoning_engine
 # internals patched in P-RC-5). See runtime/state_graph/guards/tool_filters.py
 # for the canonical implementations.
@@ -658,19 +663,19 @@ class Checkpoint:
 
 
 # Extracted to runtime/state_graph/guards/unbacked_action.py (P-RC-5 P5.6);
-# re-exported here under the legacy private names for backward compat.
+# re-exported here under the previous private names for backward compat.
 # Extracted to runtime/state_graph/guards/_text_patterns.py (P-RC-5 P5.2);
-# re-exported here under the legacy private name for backward compat.
+# re-exported here under the previous private name for backward compat.
 from openakita.runtime.state_graph.guards._text_patterns import (  # noqa: E402
     action_done_re as _get_action_done_re,
 )
 
 # Extracted to runtime/state_graph/guards/_text_patterns.py (P-RC-5 P5.2);
-# re-exported here under the legacy private name for backward compat.
+# re-exported here under the previous private name for backward compat.
 # Extracted to runtime/state_graph/guards/_verb_tool_map.py (P-RC-5 P5.5);
-# re-exported here under the legacy private names for backward compat.
+# re-exported here under the previous private names for backward compat.
 # Extracted to runtime/state_graph/guards/conversation_state.py (P-RC-5 P5.7);
-# re-exported here under the legacy private names for backward compat.
+# re-exported here under the previous private names for backward compat.
 from openakita.runtime.state_graph.guards.conversation_state import (
     has_recoverable_tool_issue as _has_recoverable_tool_issue,
 )
@@ -682,15 +687,15 @@ from openakita.runtime.state_graph.guards.recap_context import (  # noqa: E402
 )
 
 # Extracted to runtime/state_graph/guards/recap_context.py (P-RC-5 P5.4);
-# re-exported here under the legacy private name for backward compat.
+# re-exported here under the previous private name for backward compat.
 # Extracted to runtime/state_graph/guards/source_tag.py (P-RC-5 P5.2);
-# re-exported here under the legacy private name for backward compat.
+# re-exported here under the previous private name for backward compat.
 from openakita.runtime.state_graph.guards.source_tag import (  # noqa: E402
     check_source_tag_consistency as _check_source_tag_consistency,
 )
 
 # Extracted to runtime/state_graph/guards/tool_failure_ack.py (P-RC-5 P5.3);
-# re-exported here under the legacy private name for backward compat.
+# re-exported here under the previous private name for backward compat.
 # 工具失败 vs 助手乐观措辞 一致性检测（参考 OpenClaw MUTATING_FAILURE_ACTION_PATTERN）。
 #
 # 设计动机：现有 _check_source_tag_consistency 只检"声明 [来源:工具] 但未调工具"；
@@ -706,15 +711,15 @@ from openakita.runtime.state_graph.guards.source_tag import (  # noqa: E402
 #    - 全部未命中 → 追加 ⚠️ 提示，让用户警惕"工具失败但措辞乐观"的幻觉。
 #
 # Extracted to runtime/state_graph/guards/tool_failure_ack.py (P-RC-5 P5.3);
-# re-exported here under the legacy private name for backward compat.
+# re-exported here under the previous private name for backward compat.
 # Extracted to runtime/state_graph/guards/tool_failure_ack.py (P-RC-5 P5.3);
-# re-exported here under the legacy private name for backward compat.
+# re-exported here under the previous private name for backward compat.
 from openakita.runtime.state_graph.guards.tool_failure_ack import (  # noqa: E402
     check_tool_failure_acknowledgement as _check_tool_failure_acknowledgement,
 )
 
 # Extracted to runtime/state_graph/guards/tool_failure_ack.py (P-RC-5 P5.3);
-# re-exported here under the legacy private name for backward compat.
+# re-exported here under the previous private name for backward compat.
 from openakita.runtime.state_graph.guards.unbacked_action import (  # noqa: E402
     action_claim_re as _get_action_claim_re,
 )
@@ -3097,10 +3102,11 @@ class ReasoningEngine:
                             # C8b-6a: 直接消费 v2 ``PolicyDecisionV2`` + ``DecisionAction``，
                             # 不再过 v1 PolicyResult/PolicyDecision shim；config 读 v2
                             # ``get_config_v2().confirmation``。
+                            from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
+
                             from .policy_v2 import get_config_v2
                             from .policy_v2.adapter import evaluate_via_v2
                             from .policy_v2.enums import DecisionAction
-                            from .ui_confirm_bus import get_ui_confirm_bus
 
                             _v2_conf = get_config_v2().confirmation
                             _bus = get_ui_confirm_bus()
@@ -3587,13 +3593,14 @@ class ReasoningEngine:
                         # 由 ``DeathSwitchTracker`` 承载（process-wide singleton），与
                         # v1 ``pe.readonly_mode`` 同源。
                         # C8b-6a: 直接消费 v2 ``PolicyDecisionV2`` + ``DecisionAction``。
+                        from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
+
                         from .policy_v2 import (
                             get_config_v2,
                             get_death_switch_tracker,
                         )
                         from .policy_v2.adapter import evaluate_via_v2
                         from .policy_v2.enums import DecisionAction
-                        from .ui_confirm_bus import get_ui_confirm_bus
 
                         _v2_conf = get_config_v2().confirmation
                         _ds_tracker = get_death_switch_tracker()
@@ -3915,52 +3922,6 @@ class ReasoningEngine:
                                 result_text, _stream_hint = _unpack_tool_result(
                                     tool_exec_task.result()
                                 )
-                                from openakita.optional_features import (
-                                    create_install_request,
-                                    parse_optional_feature_marker,
-                                    wait_for_install_request,
-                                )
-
-                                _optional_request = parse_optional_feature_marker(result_text)
-                                if _optional_request is not None:
-                                    _install_request = create_install_request(
-                                        conversation_id,
-                                        visible=_optional_request.get("visible", True),
-                                    )
-                                    yield {
-                                        "type": "optional_feature_install",
-                                        **_install_request,
-                                    }
-                                    _install_result = await wait_for_install_request(
-                                        _install_request["request_id"]
-                                    )
-                                    if (
-                                        _install_result
-                                        and _install_result.get("status") == "installed"
-                                    ):
-                                        _retry_raw = (
-                                            await self._tool_executor.execute_tool_with_policy(
-                                                tool_name=tool_name,
-                                                tool_input=(
-                                                    tool_args if isinstance(tool_args, dict) else {}
-                                                ),
-                                                policy_result=_pr,
-                                                session_id=conversation_id,
-                                            )
-                                        )
-                                        result_text, _stream_hint = _unpack_tool_result(_retry_raw)
-                                    elif (
-                                        _install_result
-                                        and _install_result.get("status") == "failed"
-                                    ):
-                                        result_text = "浏览器自动化组件安装失败：" + str(
-                                            _install_result.get("message") or "未知错误"
-                                        )
-                                    else:
-                                        result_text = (
-                                            "浏览器自动化组件尚未安装。安装卡片已保留在会话中，"
-                                            "用户稍后仍可直接点击安装。"
-                                        )
                                 self._remember_readonly_tool_result(
                                     tool_name,
                                     tool_args,
@@ -6747,7 +6708,7 @@ class ReasoningEngine:
         当单条消息的文本内容超过 max_single_tokens 估算值时，
         保留开头和结尾各一半，中间截断并插入提示。
         """
-        from ._context_manager_legacy import ContextManager
+        from ._context_runtime import ContextManager
 
         truncated = False
         result = []
@@ -6811,7 +6772,7 @@ class ReasoningEngine:
         较早的消息，直到估算 token 数降到 target_tokens 以下。
         返回 True 表示确实做了截断。
         """
-        from ._context_manager_legacy import ContextManager
+        from ._context_runtime import ContextManager
 
         total = ContextManager.static_estimate_tokens(
             str([m.get("content", "") for m in working_messages])
@@ -7630,10 +7591,10 @@ class ReasoningEngine:
 ReasoningEngine.reason_stream.__wrapped__ = ReasoningEngine._reason_stream_impl
 
 
-# P11.2b: restore legacy private aliases dropped during P-RC-5 reasoning-engine trim.
+# P11.2b: restore previous private aliases dropped during P-RC-5 reasoning-engine trim.
 # Canonical homes now live under runtime/state_graph/guards/*; tests in
 # tests/runtime/state_graph/guards/* still access them via
-# openakita.core._reasoning_engine_legacy.<_private_name>.
+# openakita.core._reasoning_runtime.<_private_name>.
 from openakita.runtime.state_graph.guards._verb_tool_map import (
     CLAIMED_TOOL_TO_FRAGMENTS as _CLAIMED_TOOL_TO_FRAGMENTS,  # noqa: F401
 )

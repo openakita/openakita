@@ -1,15 +1,14 @@
-"""Cooperative cancellation primitive for the v2 runtime.
+"""Cooperative cancellation primitive for the runtime.
 
-The legacy runtime cancels tasks by raising :class:`asyncio.CancelledError`
-through ``asyncio.wait_for``. This is *coercive*: a plugin in the middle
-of a long DashScope upload has no chance to save mid-task state, ack the
+Raising :class:`asyncio.CancelledError` through ``asyncio.wait_for`` is
+*coercive*: a plugin in the middle of a long DashScope upload has no chance to
+save mid-task state, acknowledge the
 cancel, or write a final checkpoint. Every cancel therefore looked to
 the parent producer node like a hard failure, which then triggered the
-duplicate-delegate cascade that this revamp exists to remove
-(see ADR-0001 and ADR-0004).
+duplicate-delegate cascade described by ADR-0001 and ADR-0004.
 
-``CancellationToken`` is the v2 replacement: a *cooperative* primitive
-modelled on AutoGen's ``CancellationToken`` (autogen-core). A consumer
+``CancellationToken`` is a *cooperative* primitive modelled on AutoGen's
+``CancellationToken`` (autogen-core). A consumer
 explicitly checks :meth:`is_cancelled` at safe points; producers attach
 callbacks via :meth:`add_callback` to be notified the moment cancel
 happens (so they can flip a flag, close a network handle, write a final

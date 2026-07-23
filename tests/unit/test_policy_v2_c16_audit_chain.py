@@ -264,7 +264,7 @@ def test_threaded_appends_preserve_chain(tmp_path: Path):
 
 
 def test_audit_logger_writes_chained_rows_and_promotes_safety_immune(tmp_path: Path, monkeypatch):
-    from openakita.core import audit_logger as al
+    from openakita.agent import audit as al
 
     audit_path = tmp_path / "policy_decisions.jsonl"
     logger = al.AuditLogger(path=str(audit_path), enabled=True, include_chain=True)
@@ -287,7 +287,7 @@ def test_audit_logger_writes_chained_rows_and_promotes_safety_immune(tmp_path: P
 
 
 def test_audit_logger_include_chain_false_skips_chain(tmp_path: Path):
-    from openakita.core import audit_logger as al
+    from openakita.agent import audit as al
 
     audit_path = tmp_path / "policy_decisions.jsonl"
     logger = al.AuditLogger(path=str(audit_path), enabled=True, include_chain=False)

@@ -5,7 +5,7 @@ Why this script exists
 The post-RC continuation plan
 (`openakita_revamp_continuation_plan_d6192647.plan.md` §0.1)
 makes a single hard rule the entire phase enforcement hangs on:
-the legacy giants under `src/openakita/core/` and
+the active runtime giants under `src/openakita/core/` and
 `src/openakita/orgs/` may **never** grow line-wise, and the v2
 facades / real implementations under `src/openakita/agent/`
 must shrink monotonically once they leave facade-land in P-RC-4
@@ -55,16 +55,15 @@ BASELINE_PATH = ROOT / "docs" / "revamp" / "LOC_BASELINE.json"
 # Files we track. Order matters only for the printed table; the
 # rules below are keyed by path prefix.
 TRACKED_FILES: list[str] = [
-    # Legacy renames preserved during the phased rewrite -- listed here
-    # for visibility only (N11 P-RC-6 audit fix). The audit prints their
-    # current LOC in the table but never enforces a cap on them; they
-    # are deleted wholesale in P-RC-7 / P-RC-8.
-    "src/openakita/core/_brain_legacy.py",
-    "src/openakita/core/_tool_executor_legacy.py",
-    "src/openakita/core/_context_manager_legacy.py",
-    "src/openakita/core/_reasoning_engine_legacy.py",
-    "src/openakita/core/_agent_legacy.py",
-    "src/openakita/core/_supervisor_legacy.py",
+    # Active internal runtime modules are listed for visibility. Their
+    # public API lives under openakita.agent; these files are implementation
+    # details until their responsibilities are split into smaller modules.
+    "src/openakita/core/_brain_runtime.py",
+    "src/openakita/core/_tool_runtime.py",
+    "src/openakita/core/_context_runtime.py",
+    "src/openakita/core/_reasoning_runtime.py",
+    "src/openakita/core/_agent_runtime.py",
+    "src/openakita/core/_supervisor_runtime.py",
     "src/openakita/orgs/runtime.py",
     "src/openakita/orgs/tool_handler.py",
     "src/openakita/orgs/templates.py",
@@ -86,16 +85,15 @@ AGENT_GROWTH_BUDGET = 50
 # Files that are tracked for visibility only -- the audit prints their
 # current LOC in the rendered table but never compares against the
 # baseline (an informational "infinite cap" so they never fail the gate).
-# Per N11 (G-RC-5 P-RC-5 audit fix) the four legacy renames preserved
-# during P-RC-4 and P-RC-5 are surfaced here so an external reader can
-# see how much of the legacy giants is still in-tree at a glance.
+# The runtime modules are surfaced here so an external reader can see how
+# much implementation remains in the internal core package at a glance.
 INFO_ONLY_FILES: set[str] = {
-    "src/openakita/core/_brain_legacy.py",
-    "src/openakita/core/_tool_executor_legacy.py",
-    "src/openakita/core/_context_manager_legacy.py",
-    "src/openakita/core/_reasoning_engine_legacy.py",
-    "src/openakita/core/_agent_legacy.py",
-    "src/openakita/core/_supervisor_legacy.py",
+    "src/openakita/core/_brain_runtime.py",
+    "src/openakita/core/_tool_runtime.py",
+    "src/openakita/core/_context_runtime.py",
+    "src/openakita/core/_reasoning_runtime.py",
+    "src/openakita/core/_agent_runtime.py",
+    "src/openakita/core/_supervisor_runtime.py",
 }
 
 # Sentinel for the informational-only budget: large enough that any
@@ -148,9 +146,7 @@ def measure(root: Path = ROOT) -> dict[str, int]:
 
 def load_baseline(path: Path = BASELINE_PATH) -> dict[str, int]:
     if not path.exists():
-        raise FileNotFoundError(
-            f"LOC baseline not found at {path}; run with --init to seed it."
-        )
+        raise FileNotFoundError(f"LOC baseline not found at {path}; run with --init to seed it.")
     raw = json.loads(path.read_text(encoding="utf-8"))
     files = raw.get("files")
     if not isinstance(files, dict):
@@ -211,7 +207,9 @@ def audit(verbose: bool = False) -> int:
     if over:
         print("\nLOC audit FAILED for:")
         for r in over:
-            print(f"  - {r.path}: {r.current} > cap {r.cap} (baseline {r.baseline} + budget {r.budget})")
+            print(
+                f"  - {r.path}: {r.current} > cap {r.cap} (baseline {r.baseline} + budget {r.budget})"
+            )
         return 1
     return 0
 

@@ -1,9 +1,5 @@
 """Docker 执行后端。
 
-Ported from :mod:`openakita.core.docker_backend` per ADR-0003
-and the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``.
-The legacy path stays as a re-export shim until Phase 8.
-
 在 Docker 容器中执行命令，提供比 subprocess 更强的隔离：
 
 * ``--cap-drop ALL``: 移除所有 Linux capabilities

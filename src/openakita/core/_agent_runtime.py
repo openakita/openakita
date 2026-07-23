@@ -38,18 +38,22 @@ if TYPE_CHECKING:
     # smoke-F0/F6: keep these names visible to type checkers + ruff F821
     # without triggering the runtime cycle (the real imports live inside
     # ``Agent.__init__`` further down).
-    from ._brain_legacy import Brain
+    from ._brain_runtime import Brain
 
 # NOTE: ``get_confirmation_store`` is imported lazily at each call site below
 # (smoke-F0/F6) -- importing ``openakita.agent.confirmation`` at module-top
 # triggers ``openakita.agent.__init__`` which immediately re-enters this very
-# module via ``agent.core -> openakita.core._agent_legacy``.
+# module via ``agent.core -> openakita.core._agent_runtime``.
 
 # Import Identity from the canonical home (not the ``core.identity`` re-export
-# shim) so a cold ``import openakita.core.identity`` entry point cannot deadlock
+# shim) so a cold ``import openakita.agent.identity`` entry point cannot deadlock
 # on a partially-initialised shim (shim -> agent.identity -> agent.__init__ ->
-# agent.core -> _agent_legacy -> shim). See ADR-0003.
+# agent.core -> _agent_runtime -> shim). See ADR-0003.
+from openakita.agent.errors import UserCancelledError
 from openakita.agent.identity import Identity
+from openakita.agent.ralph import RalphLoop, Task, TaskResult
+from openakita.agent.skill_manager import SkillManager
+from openakita.agent.user_profile import get_profile_manager
 
 from ..config import settings
 
@@ -62,7 +66,7 @@ from ..memory.json_utils import coerce_text
 # NOTE: SkillCatalog / SkillLoader / SkillRegistry are imported lazily inside
 # Agent.__init__ to break the circular import discovered in the 80-round
 # smoke (F-0 / F-6): prompt -> builder -> skills.__init__ -> registry ->
-# core.capabilities -> agent.__init__ -> agent.core -> core._agent_legacy ->
+# core.capabilities -> agent.__init__ -> agent.core -> core._agent_runtime ->
 # ..skills (re-entry while skills/__init__ is still mid-init).
 # 系统工具目录（渐进式披露）
 from ..tools.catalog import ToolCatalog
@@ -125,22 +129,20 @@ from ..tools.shell import ShellTool
 from ..tools.web import WebTool
 
 # NOTE: ``Brain`` + ``Context`` are imported lazily inside Agent.__init__
-# (smoke-F0/F6) -- importing ``_brain_legacy`` at module top would trigger
-# the ``llm.client -> core.errors -> agent.errors -> agent.brain -> _brain_legacy``
+# (smoke-F0/F6) -- importing ``_brain_runtime`` at module top would trigger
+# the ``llm.client -> core.errors -> agent.errors -> agent.brain -> _brain_runtime``
 # cycle whenever this module is loaded BEFORE ``openakita.agent``.
-from ._context_manager_legacy import ContextManager
-from ._context_manager_legacy import _CancelledError as _CtxCancelledError
+from ._context_runtime import ContextManager
+from ._context_runtime import _CancelledError as _CtxCancelledError
 
 # NOTE: ``ReasoningEngine`` is imported lazily inside Agent.__init__
-# (smoke-F0/F6) -- ``_reasoning_engine_legacy`` top-loads ``api.routes.websocket``
+# (smoke-F0/F6) -- ``_reasoning_runtime`` top-loads ``api.routes.websocket``
 # which back-edges into ``api.auth`` and other partially-initialized siblings.
-from ._tool_executor_legacy import ToolExecutor
+from ._tool_runtime import ToolExecutor
 from .agent_state import AgentState
 from .context_utils import get_max_context_tokens as _shared_get_max_context_tokens
 from .context_utils import get_raw_context_window as _shared_get_raw_context_window
-from .errors import UserCancelledError
 from .prompt_assembler import PromptAssembler
-from .ralph import RalphLoop, Task, TaskResult
 from .response_handler import (
     INTERNAL_TRACE_MARKERS,
     INTERNAL_TRACE_SECTION_PREFIXES,
@@ -148,7 +150,6 @@ from .response_handler import (
     ResponseHandler,
     strip_thinking_tags,
 )
-from .skill_manager import SkillManager
 from .task_monitor import RETROSPECT_PROMPT, TaskMonitor
 from .token_tracking import (
     TokenTrackingContext,
@@ -156,7 +157,6 @@ from .token_tracking import (
     reset_tracking_context,
     set_tracking_context,
 )
-from .user_profile import get_profile_manager
 
 _DESKTOP_AVAILABLE: bool | None = None  # None = not yet checked
 _desktop_tool_handler = None
@@ -339,11 +339,11 @@ def _apply_previous_answer_replay_hint(message: str) -> str:
 
 
 # Desktop / IM attachment routing -- helpers moved to
-# runtime.desktop.attachments (P-RC-6 P6.1a). The legacy private
+# runtime.desktop.attachments (P-RC-6 P6.1a). The previous private
 # names below are aliases for backward compatibility with the
 # tests/unit/test_desktop_attachment_*.py units that import them
-# directly as ``from openakita.core.agent import _format_desktop_attachment_reference``.
-# The aliases drop in P-RC-7 alongside the wider core/ legacy removal.
+# directly from their canonical runtime module.
+# The aliases drop in P-RC-7 alongside the wider core/ previous removal.
 from ..runtime.desktop.attachments import (
     LOCAL_UPLOAD_RE as _LOCAL_UPLOAD_RE,
 )
@@ -361,7 +361,7 @@ from ..runtime.desktop.attachments import (
 )
 
 # 上下文管理常量（部分迁移至 context_manager.py，压缩相关仍需就地定义）
-from ._context_manager_legacy import CHARS_PER_TOKEN, CHUNK_MAX_TOKENS
+from ._context_runtime import CHARS_PER_TOKEN, CHUNK_MAX_TOKENS
 
 COMPRESSION_RATIO = 0.15
 LARGE_TOOL_RESULT_THRESHOLD = 5000
@@ -412,11 +412,10 @@ class PromptStrategy:
 
 
 # Pre-LLM destructive-intent / risk-authorization gate -- helpers moved
-# to agent.safety.destructive_intent (P-RC-6 P6.2a). The legacy private
+# to agent.safety.destructive_intent (P-RC-6 P6.2a). The previous private
 # names below are aliases for backward compatibility with the 5 unit
 # tests under tests/unit that import them via
-# ``from openakita.core.agent import _classify_risk_intent`` etc. The
-# aliases drop in P-RC-7 alongside the wider core/ legacy removal.
+# private aliases remain local implementation details.
 from ..agent.safety.destructive_intent import (
     build_destructive_intent_question as _build_destructive_intent_question,
 )
@@ -522,8 +521,8 @@ class Agent:
 
     # 说明：历史上这里用类变量保存 IM 上下文，存在并发串台风险。
     # 现在改为使用 `openakita.core.im_context` 中的 contextvars（协程隔离）。
-    _current_im_session = None  # legacy: 保留字段避免外部引用崩溃（不再使用）
-    _current_im_gateway = None  # legacy: 保留字段避免外部引用崩溃（不再使用）
+    _current_im_session = None  # previous: 保留字段避免外部引用崩溃（不再使用）
+    _current_im_gateway = None  # previous: 保留字段避免外部引用崩溃（不再使用）
 
     # 停止任务的指令列表（用户发送这些指令时会立即停止当前任务）
     STOP_COMMANDS = {
@@ -641,8 +640,8 @@ class Agent:
         # 初始化核心组件
         # NOTE: ``Brain`` / ``Context`` / ``ReasoningEngine`` imported lazily here
         # (smoke-F0/F6) -- see top-of-file comment blocks for cycle rationale.
-        from ._brain_legacy import Brain, Context  # noqa: F401
-        from ._reasoning_engine_legacy import ReasoningEngine  # noqa: F401
+        from ._brain_runtime import Brain, Context  # noqa: F401
+        from ._reasoning_runtime import ReasoningEngine  # noqa: F401
 
         self.identity = Identity()
         self.brain = brain or Brain(api_key=api_key)
@@ -762,10 +761,11 @@ class Agent:
         self.memory_manager.profile_manager = self.profile_manager
 
         # ==================== 人格系统 + 活人感 + 表情包 ====================
+        from openakita.agent.persona import PersonaManager
+        from openakita.agent.trait_miner import TraitMiner
+
         from ..tools.sticker import StickerEngine
-        from .persona import PersonaManager
         from .proactive import ProactiveConfig, ProactiveEngine
-        from .trait_miner import TraitMiner
 
         # 人格管理器
         self.persona_manager = PersonaManager(
@@ -980,7 +980,7 @@ class Agent:
 
         Agent instances are initialized before AgentFactory applies profile
         filters. This hook lets the factory attach the stable profile id and an
-        optional managed agent venv without changing legacy shared behavior.
+        optional managed agent venv without changing previous shared behavior.
         """
         self._agent_profile = profile
         self._agent_profile_id = getattr(profile, "id", "default") or "default"
@@ -2787,7 +2787,7 @@ class Agent:
         """Return the display name that SOUL.md's ``{{agent_name}}`` should expand to.
 
         Priority: profile's localized display name → profile.name → self.name →
-        ``settings.agent_name`` (legacy fallback). The string is what the LLM
+        ``settings.agent_name`` (previous fallback). The string is what the LLM
         will read as its own self-reference inside SOUL.md, so it should match
         what the user sees in the chat header and the Agents list.
         """
@@ -3790,7 +3790,7 @@ class Agent:
         逐条扫描，tokens > threshold 的 tool_result 调 LLM 压缩为精简摘要，
         保留结构（role/type 等不变）。
         """
-        from ._tool_executor_legacy import OVERFLOW_MARKER
+        from ._tool_runtime import OVERFLOW_MARKER
 
         result = []
         for msg in messages:
@@ -4011,7 +4011,7 @@ class Agent:
                     if item.get("type") == "text":
                         texts.append(item.get("text", ""))
                     elif item.get("type") == "tool_use":
-                        from ._tool_executor_legacy import smart_truncate as _st
+                        from ._tool_runtime import smart_truncate as _st
 
                         name = item.get("name", "unknown")
                         input_data = item.get("input", {})
@@ -4021,7 +4021,7 @@ class Agent:
                         )
                         texts.append(f"[调用工具: {name}, 参数: {input_summary}]")
                     elif item.get("type") == "tool_result":
-                        from ._tool_executor_legacy import smart_truncate as _st
+                        from ._tool_runtime import smart_truncate as _st
 
                         raw_content = item.get("content", "")
                         if isinstance(raw_content, list):
@@ -4263,7 +4263,7 @@ class Agent:
             logger.warning(f"[HardTruncate] Dropped earliest message (role={removed_role})")
 
         if dropped_messages:
-            from ._context_manager_legacy import ContextManager
+            from ._context_runtime import ContextManager
 
             ContextManager._enqueue_dropped_for_extraction(dropped_messages, self.memory_manager)
 
@@ -4404,7 +4404,7 @@ class Agent:
                 self.trait_miner.mine_from_message(message, role="user"),
                 timeout=10,
             )
-            from .persona import persist_trait_to_memory
+            from openakita.agent.persona import persist_trait_to_memory
 
             for trait in mined_traits:
                 persist_trait_to_memory(self.memory_manager, trait)
@@ -4626,7 +4626,7 @@ class Agent:
         self.memory_manager.record_turn("user", message)
         if session and hasattr(session, "context"):
             try:
-                from .working_facts import extract_working_facts, merge_working_facts
+                from openakita.agent.working_facts import extract_working_facts, merge_working_facts
 
                 turn_no = len(getattr(session.context, "messages", []) or [])
                 updates = extract_working_facts(message, source_turn=turn_no)
@@ -5752,8 +5752,9 @@ class Agent:
         # C8b-3：v1 ``pe.cleanup_session()`` 拆为 v2 两件事
         # （bus 删 pending + SessionAllowlistManager 清 session 临时白名单）
         try:
+            from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
+
             from .policy_v2 import get_session_allowlist_manager
-            from .ui_confirm_bus import get_ui_confirm_bus
 
             _bus = get_ui_confirm_bus()
             _sess_mgr = get_session_allowlist_manager()
@@ -6811,7 +6812,7 @@ class Agent:
         调用方将返回值存入消息的 ``tool_summary`` 元数据字段（不要拼入 content）。
         空字符串表示无工具调用。
         """
-        from ._tool_executor_legacy import save_overflow, smart_truncate
+        from ._tool_runtime import save_overflow, smart_truncate
 
         trace = (
             getattr(self, "_last_finalized_trace", None)
@@ -7129,12 +7130,12 @@ class Agent:
                 getattr(session.context, "summary", None) if hasattr(session, "context") else None
             )
             if summary:
-                from ._tool_executor_legacy import smart_truncate as _st
+                from ._tool_runtime import smart_truncate as _st
 
                 summary_trunc, _ = _st(summary, 600, save_full=False, label="topic_summary")
                 context_parts.append(f"对话摘要: {summary_trunc}")
 
-        from ._tool_executor_legacy import smart_truncate as _st
+        from ._tool_runtime import smart_truncate as _st
 
         recent = session_messages[-6:]
         dialog_lines: list[str] = []
@@ -8204,7 +8205,7 @@ class Agent:
                         getattr(current_session, "channel", "cli") if current_session else "cli"
                     )
                     if channel in ("cli", "desktop"):
-                        from .desktop_notify import notify_task_completed_async
+                        from openakita.agent.desktop_notify import notify_task_completed_async
 
                         asyncio.create_task(
                             notify_task_completed_async(

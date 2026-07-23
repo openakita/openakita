@@ -13,11 +13,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any
 
-import pytest
-
-from openakita.core.resource_budget import (
+from openakita.agent.resource_budget import (
     BudgetAction,
     BudgetConfig,
     ResourceBudget,

@@ -1,21 +1,8 @@
-"""V2 ReasoningEngine driven by ``runtime.state_graph.StateGraph``.
+"""Canonical ReasoningEngine driven by ``runtime.state_graph.StateGraph``.
 
-Per ADR-0001 (fork-style rewrite), ADR-0002 (runtime architecture),
-and continuation plan section 6 (P-RC-5), this is the v2 canonical
-home for the ReAct reasoning loop. The 8000+ LOC monolith lives at
-:mod:`openakita.core._reasoning_engine_legacy`; :class:`ReasoningEngine`
-here subclasses it and wires a :class:`StateGraph` on top to make
-the Decision -> next-node routing explicit.
-
-Honest scope (G-RC-5 review): this is **not** a from-scratch rewrite
-of the 8000+ LOC loop. Backward compatibility is byte-faithful via
-inheritance; the v2 additions are (1) :attr:`decision_graph` and
-:meth:`route_decision` exposing the explicit topology, (2)
-:meth:`evaluate_decision` composing the seven extracted guards in
-the legacy check order, and (3) :meth:`filter_tools` / :meth:`should_block`
-collapsing the legacy module-level helpers into engine methods.
-The canonical event loop remains inherited while ``run()`` consumes that
-stream for non-streaming callers.
+The public class uses the complete private runtime loop and wires a
+:class:`StateGraph` on top to make Decision-to-node routing explicit. It also
+composes the extracted guards and tool filters into engine methods.
 """
 
 from __future__ import annotations
@@ -23,13 +10,15 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from openakita.core._reasoning_engine_legacy import (
+from openakita.core._reasoning_runtime import (
     Checkpoint,
     Decision,
     DecisionType,
+    _execute_riskgate_tool_confirmation,
+    _open_riskgate_tool_confirmation,
 )
-from openakita.core._reasoning_engine_legacy import (
-    ReasoningEngine as _LegacyReasoningEngine,
+from openakita.core._reasoning_runtime import (
+    ReasoningEngine as _RuntimeReasoningBase,
 )
 from openakita.runtime.state_graph import END, START, StateGraph
 from openakita.runtime.state_graph.guards.conversation_state import (
@@ -60,6 +49,8 @@ __all__ = [
     "DecisionType",
     "GuardVerdict",
     "ReasoningEngine",
+    "_execute_riskgate_tool_confirmation",
+    "_open_riskgate_tool_confirmation",
     "build_reasoning_graph",
     "get_mode_ruleset",
     "is_shell_write_command",
@@ -76,10 +67,10 @@ NODE_FINALIZE = "finalize"
 
 # Routing label map keyed off ``DecisionType.value`` strings.
 _DECISION_TO_LABEL: dict[str, str] = {
-    # Real DecisionType.value strings from the legacy enum.
+    # Real DecisionType.value strings from the runtime enum.
     "tool_calls": "act",
     "final_answer": "verify",
-    # Extended exit-reason tokens the legacy ``_last_exit_reason`` uses.
+    # Extended exit-reason tokens used by ``_last_exit_reason``.
     # Not DecisionType values, but the routing map accepts them so a
     # caller can pass either form.
     "tool_use": "act",
@@ -171,19 +162,19 @@ def build_reasoning_graph() -> StateGraph:
     return g
 
 
-class ReasoningEngine(_LegacyReasoningEngine):
-    """V2 ReAct engine: legacy class + explicit :class:`StateGraph` routing.
+class ReasoningEngine(_RuntimeReasoningBase):
+    """Canonical ReAct engine with explicit :class:`StateGraph` routing.
 
     Inherits the canonical ``reason_stream`` loop, its non-streaming ``run``
     event consumer, and shared helpers such as ``release_large_buffers``
-    from :class:`openakita.core._reasoning_engine_legacy.ReasoningEngine`
-    so all existing callers continue to work. The v2 additions are
+    from :class:`openakita.core._reasoning_runtime.ReasoningEngine`
+    as its private implementation. The public additions are
     :attr:`decision_graph`, :meth:`route_decision`,
     :meth:`evaluate_decision`, :meth:`filter_tools`,
     :meth:`should_block`, and :meth:`describe_routing`.
 
     Honest scope: the event loop does not yet consume :attr:`decision_graph`.
-    The graph remains an introspection / extension point for v2 callers.
+    The graph remains an introspection and extension point for callers.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -232,11 +223,11 @@ class ReasoningEngine(_LegacyReasoningEngine):
         tool_results: list[dict] | None = None,
         recent_messages: list[dict] | None = None,
     ) -> list[GuardVerdict]:
-        """Run the seven extracted guards in legacy check order.
+        """Run the seven extracted guards in previous check order.
 
         Returns a list of :class:`GuardVerdict`; a caller can
         short-circuit on the first ``passed=False`` to mirror the
-        legacy in-line behaviour.
+        previous in-line behaviour.
         """
         verdicts: list[GuardVerdict] = []
 
@@ -256,7 +247,7 @@ class ReasoningEngine(_LegacyReasoningEngine):
             executed_tool_names=names,
             tool_results=tool_results,
         )
-        # The legacy guard returns the input text unchanged when clean
+        # The previous guard returns the input text unchanged when clean
         # and the text+warning suffix when it flagged an unbacked claim.
         # The guard "passes" iff the returned text is identical to the
         # input; otherwise the appended suffix is the warning message.
@@ -289,9 +280,9 @@ class ReasoningEngine(_LegacyReasoningEngine):
     # ----- Convenience helpers ---------------------------------------
 
     def classify_exit_reason(self, decision: Decision | None) -> str:
-        """Map a ``Decision`` to the legacy ``_last_exit_reason`` token.
+        """Map a ``Decision`` to the previous ``_last_exit_reason`` token.
 
-        Mirrors the if/elif cascade the legacy ``run()`` performs at
+        Mirrors the if/elif cascade the previous ``run()`` performs at
         loop termination so v2 callers can derive the same exit token
         without re-implementing the mapping.
         """

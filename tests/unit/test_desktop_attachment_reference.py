@@ -1,10 +1,10 @@
 import base64
 
 from openakita.api.routes import upload
-from openakita.core.agent import (
-    _format_desktop_attachment_reference,
-    _format_vision_unavailable_notice,
-    _has_pending_media_or_attachments,
+from openakita.runtime.desktop.attachments import (
+    format_desktop_attachment_reference,
+    format_vision_unavailable_notice,
+    has_pending_media_or_attachments,
 )
 
 
@@ -13,7 +13,7 @@ def test_non_media_data_uri_attachment_is_saved_not_inlined(monkeypatch, tmp_pat
     raw = b"hello,xlsx"
     encoded = base64.b64encode(raw).decode("ascii")
 
-    text = _format_desktop_attachment_reference(
+    text = format_desktop_attachment_reference(
         att_type="document",
         att_name="report.xlsx",
         att_mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -30,7 +30,7 @@ def test_non_media_data_uri_attachment_is_saved_not_inlined(monkeypatch, tmp_pat
 
 
 def test_uploaded_attachment_url_is_kept_as_short_reference():
-    text = _format_desktop_attachment_reference(
+    text = format_desktop_attachment_reference(
         att_type="document",
         att_name="report.xlsx",
         att_mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -45,7 +45,7 @@ def test_uploaded_attachment_url_is_kept_as_short_reference():
 
 
 def test_vision_unavailable_notice_tells_model_not_to_guess_image_content():
-    text = _format_vision_unavailable_notice(
+    text = format_vision_unavailable_notice(
         count=1,
         names=["hippo.png"],
         paths=["C:/tmp/hippo.png"],
@@ -61,6 +61,6 @@ def test_vision_unavailable_notice_tells_model_not_to_guess_image_content():
 
 
 def test_pending_media_or_attachments_are_detected():
-    assert _has_pending_media_or_attachments(attachments=[{"type": "image"}]) is True
-    assert _has_pending_media_or_attachments(pending_images=[{"local_path": "x.png"}]) is True
-    assert _has_pending_media_or_attachments() is False
+    assert has_pending_media_or_attachments(attachments=[{"type": "image"}]) is True
+    assert has_pending_media_or_attachments(pending_images=[{"local_path": "x.png"}]) is True
+    assert has_pending_media_or_attachments() is False

@@ -1,13 +1,4 @@
-"""OpenAkita v2 agent package.
-
-Replaces the legacy ``src/openakita/core/`` per ADR-0003. The package
-is populated incrementally during Phase 2; the per-file plan lives in
-``docs/revamp/core_audit.md``.
-
-Public symbols are exported lazily as their modules land. The
-canonical :class:`Agent` and :class:`AgentState` will be re-exported
-from :mod:`openakita.agent.facade` once the rewrite slices land.
-"""
+"""Public agent runtime APIs for OpenAkita."""
 
 from __future__ import annotations
 
@@ -131,9 +122,8 @@ from .ralph import RalphLoop, StopHook, Task, TaskResult, TaskStatus
 
 # NOTE: ``.reasoning`` is intentionally NOT eagerly imported here -- it is
 # exposed lazily via ``__getattr__`` (bottom of this module). Eagerly importing
-# it re-introduces an import cycle whenever ``openakita.core._reasoning_engine_legacy``
-# is imported BEFORE ``openakita.agent`` (e.g. a unit test that imports the legacy
-# module directly). See the ``__getattr__`` docstring below for the full chain.
+# it re-introduces an import cycle whenever the private reasoning runtime is
+# imported before ``openakita.agent``. See the notes beside ``__getattr__`` below.
 if TYPE_CHECKING:
     from .reasoning import Checkpoint, DecisionType, ReasoningEngine
     from .reasoning import Decision as ReasoningDecision
@@ -428,26 +418,21 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Lazy re-export of the reasoning symbols (PEP 562) -- breaks an import cycle.
+# Lazy publication of the reasoning symbols (PEP 562) breaks an import cycle.
 #
-# Root cause (2026-06): a unit test importing
-# ``openakita.core._reasoning_engine_legacy`` DIRECTLY, before
-# ``openakita.agent`` is in ``sys.modules``, triggered:
+# Importing ``openakita.core._reasoning_runtime`` directly before
+# ``openakita.agent`` enters ``sys.modules`` would otherwise trigger:
 #
-#   _reasoning_engine_legacy (line ``from .errors import UserCancelledError``)
-#     -> core.errors.__getattr__("UserCancelledError")   [PEP 562 shim]
-#     -> ``from openakita.agent.errors import UserCancelledError``
+#   _reasoning_runtime -> ``from openakita.agent.errors import UserCancelledError``
 #     -> runs THIS ``openakita/agent/__init__`` for the first time
-#     -> (old) eager ``from .reasoning import Checkpoint, ...``
-#     -> agent.reasoning ``from openakita.core._reasoning_engine_legacy import Checkpoint``
-#     -> legacy module is only PARTIALLY initialised (still on its own import
-#        line above) -> ``ImportError: cannot import name 'Checkpoint'``.
+#     -> eager ``from .reasoning import Checkpoint, ...``
+#     -> agent.reasoning ``from openakita.core._reasoning_runtime import Checkpoint``
+#     -> the runtime module is only partially initialized
+#     -> ``ImportError: cannot import name 'Checkpoint'``.
 #
-# The legacy module was fine in production only because something imported
-# ``openakita.agent`` first; pytest collection order made the legacy module the
-# entry point and exposed the latent cycle. Deferring the ``.reasoning`` import
-# to first attribute access means ``agent/__init__`` no longer re-enters the
-# half-built legacy module, so the cycle cannot form regardless of import order.
+# Deferring the ``.reasoning`` import to first attribute access prevents
+# ``agent/__init__`` from re-entering the half-built runtime module, so the
+# cycle cannot form regardless of import order.
 _LAZY_REASONING_EXPORTS = {
     "Checkpoint": "Checkpoint",
     "DecisionType": "DecisionType",

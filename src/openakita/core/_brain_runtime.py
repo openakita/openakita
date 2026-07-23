@@ -1219,7 +1219,7 @@ class Brain:
                     full_tools.append({"raw": str(t)})
 
             # ── 3. Token 估算（中英混合感知：中文 ~1.5字符/token，英文/JSON ~4字符/token）──
-            from ._context_manager_legacy import ContextManager as _CM
+            from ._context_runtime import ContextManager as _CM
 
             _est = _CM.static_estimate_tokens
             system_length = len(system) if system else 0

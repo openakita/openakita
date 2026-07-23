@@ -1,7 +1,6 @@
-"""Budget + size helpers extracted from ``core.context_manager`` (P-RC-4 P4.13).
+"""Context budget and payload-size helpers.
 
-The legacy ContextManager carried three small pure helpers for sizing
-decisions:
+The runtime uses three small pure helpers for sizing decisions:
 
 * ``_calc_context_budget`` -- derive an effective context budget
   from an endpoint's declared window + output reserve;
@@ -9,9 +8,8 @@ decisions:
 * ``_payload_size_bytes`` -- JSON-serialised byte size of a message
   list.
 
-This module re-anchors those three as module-level functions so v2
-callers don't have to instantiate a ``ContextManager`` to do simple
-arithmetic.
+They are module-level functions so callers do not have to instantiate a
+``ContextManager`` for simple arithmetic.
 """
 
 from __future__ import annotations
@@ -27,7 +25,7 @@ DEFAULT_MAX_CONTEXT_TOKENS = 100_000
 def calc_context_budget(endpoint: Any, fallback_window: int) -> int:
     """Return the effective context-window budget for ``endpoint``.
 
-    Mirrors the legacy ``ContextManager._calc_context_budget``:
+    Implements the ``ContextManager._calc_context_budget`` contract:
 
     * declared ``context_window`` < 8192 -> fall back to
       ``fallback_window`` (typically the model's default);
@@ -56,8 +54,7 @@ def estimate_tokens(text: str) -> int:
 def payload_size_bytes(messages: list[dict]) -> int:
     """Return the JSON-serialised byte size of a message list."""
     return sum(
-        len(json.dumps(msg, ensure_ascii=False, default=str).encode("utf-8"))
-        for msg in messages
+        len(json.dumps(msg, ensure_ascii=False, default=str).encode("utf-8")) for msg in messages
     )
 
 

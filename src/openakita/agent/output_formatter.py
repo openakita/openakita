@@ -1,9 +1,5 @@
 """Multi-format output for headless / non-interactive runs.
 
-Ported from ``openakita.core.output_formatter`` per ADR-0003 and the
-Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. Behaviour
-unchanged. The legacy path is now a re-export shim until Phase 8.
-
 Three formatters cover the use cases the CLI / SDK consumers need:
 
 * :class:`TextFormatter` — emoji-prefixed human-readable output for
@@ -45,9 +41,7 @@ class OutputFormatter(ABC):
         """Format a tool invocation."""
 
     @abstractmethod
-    def format_tool_result(
-        self, tool_name: str, result: str, is_error: bool = False
-    ) -> str:
+    def format_tool_result(self, tool_name: str, result: str, is_error: bool = False) -> str:
         """Format the tool's result (possibly an error)."""
 
     @abstractmethod
@@ -59,18 +53,14 @@ class TextFormatter(OutputFormatter):
     """Emoji-prefixed plain-text formatter (default)."""
 
     def format_message(self, role: str, content: str, **kwargs) -> str:
-        prefix = {"assistant": "🤖", "user": "👤", "system": "⚙️"}.get(
-            role, "📝"
-        )
+        prefix = {"assistant": "🤖", "user": "👤", "system": "⚙️"}.get(role, "📝")
         return f"{prefix} {content}"
 
     def format_tool_use(self, tool_name: str, tool_input: dict) -> str:
         args = json.dumps(tool_input, ensure_ascii=False, indent=2)
         return f"🔧 {tool_name}({args})"
 
-    def format_tool_result(
-        self, tool_name: str, result: str, is_error: bool = False
-    ) -> str:
+    def format_tool_result(self, tool_name: str, result: str, is_error: bool = False) -> str:
         icon = "❌" if is_error else "✅"
         preview = result[:500] if len(result) > 500 else result
         return f"{icon} {tool_name}: {preview}"
@@ -88,15 +78,11 @@ class JSONFormatter(OutputFormatter):
     def format_tool_use(self, tool_name: str, tool_input: dict) -> str:
         return ""
 
-    def format_tool_result(
-        self, tool_name: str, result: str, is_error: bool = False
-    ) -> str:
+    def format_tool_result(self, tool_name: str, result: str, is_error: bool = False) -> str:
         return ""
 
     def format_final(self, conversation: list[dict]) -> str:
-        return json.dumps(
-            conversation, ensure_ascii=False, indent=2, default=str
-        )
+        return json.dumps(conversation, ensure_ascii=False, indent=2, default=str)
 
 
 class StreamJSONFormatter(OutputFormatter):
@@ -127,9 +113,7 @@ class StreamJSONFormatter(OutputFormatter):
             }
         )
 
-    def format_tool_result(
-        self, tool_name: str, result: str, is_error: bool = False
-    ) -> str:
+    def format_tool_result(self, tool_name: str, result: str, is_error: bool = False) -> str:
         return self._emit(
             {
                 "type": "tool_result",

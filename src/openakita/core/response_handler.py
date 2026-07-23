@@ -625,7 +625,11 @@ class ResponseHandler:
         # === Deterministic Validation (Agent Harness) ===
         plan_fail_reason = ""
         try:
-            from .validators import ValidationContext, ValidationResult, create_default_registry
+            from openakita.agent.validators import (
+                ValidationContext,
+                ValidationResult,
+                create_default_registry,
+            )
 
             val_context = ValidationContext(
                 user_request=user_request,
@@ -845,7 +849,7 @@ class ResponseHandler:
             return False
 
         # LLM 判断
-        from ._tool_executor_legacy import smart_truncate
+        from ._tool_runtime import smart_truncate
 
         user_display, _ = smart_truncate(user_request, 3000, save_full=False, label="verify_user")
         response_display, _ = smart_truncate(
@@ -965,7 +969,7 @@ NEXT: 建议的下一步"""
     @staticmethod
     def get_last_user_request(messages: list[dict]) -> str:
         """获取最后一条用户请求"""
-        from ._tool_executor_legacy import smart_truncate
+        from ._tool_runtime import smart_truncate
 
         def _strip_context_prefix(text: str) -> str:
             """移除对话历史前缀，提取真正的用户输入。"""

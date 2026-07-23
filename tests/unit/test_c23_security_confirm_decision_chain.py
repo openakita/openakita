@@ -225,9 +225,7 @@ class TestPayloadIntegration:
     def test_yield_points_include_decision_chain(self) -> None:
         from pathlib import Path
 
-        engine_src = Path("src/openakita/core/_reasoning_engine_legacy.py").read_text(
-            encoding="utf-8"
-        )
+        engine_src = Path("src/openakita/core/_reasoning_runtime.py").read_text(encoding="utf-8")
         channel_src = Path("src/openakita/core/security_confirm_channel.py").read_text(
             encoding="utf-8"
         )
@@ -242,9 +240,7 @@ class TestPayloadIntegration:
             f"Expected ≥2 security_confirm yield points, got {confirm_yields}. "
             "If you split / refactored the yield sites, update this guard."
         )
-        assert chain_emits >= 2, (
-            f"Expected ≥2 decision_chain emit sites, got {chain_emits}."
-        )
+        assert chain_emits >= 2, f"Expected ≥2 decision_chain emit sites, got {chain_emits}."
 
         assert "security_confirm_display" not in engine_src
         assert "register_policy_confirm(" in channel_src

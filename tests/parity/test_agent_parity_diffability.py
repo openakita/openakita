@@ -3,7 +3,7 @@
 The N-G6-2 nit (G-RC-6 P-RC-6 audit) raised the same self-consistency
 hole for the Agent parity suite that N10 raised for the
 ReasoningEngine parity suite: because :class:`openakita.agent.core.Agent`
-inherits from :class:`openakita.core._agent_legacy.Agent`, every deep
+inherits from :class:`openakita.core._agent_runtime.Agent`, every deep
 method the parity sweep does not override is byte-faithfully equal to
 the legacy implementation by attribute lookup on the parent class. The
 12 + 2 fixtures landed by P-RC-6 / P-RC-7 P7.0b pin the v2-only surface

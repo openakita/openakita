@@ -74,9 +74,9 @@ def test_turn_authorization_defaults_to_operation_matching():
 
 
 def test_confirmation_store_tracks_multiple_pending_in_one_conversation():
+    from openakita.agent.ui_confirm_bus import reset_ui_confirm_bus
     from openakita.core.confirmation_state import get_confirmation_store
     from openakita.core.risk_gate_workflow import get_risk_gate_workflow
-    from openakita.core.ui_confirm_bus import reset_ui_confirm_bus
 
     reset_ui_confirm_bus()
     store = get_confirmation_store()
@@ -186,8 +186,8 @@ def test_confirmation_store_evicts_resolved_terminal_records(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_risk_gate_workflow_owns_tool_call_state_and_waiter():
+    from openakita.agent.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
     from openakita.core.risk_gate_workflow import get_risk_gate_workflow
-    from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
     reset_ui_confirm_bus()
     bus = get_ui_confirm_bus()
@@ -227,9 +227,9 @@ async def test_risk_gate_workflow_owns_tool_call_state_and_waiter():
 
 @pytest.mark.asyncio
 async def test_security_confirm_endpoint_resolves_riskgate_tool_call():
+    from openakita.agent.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
     from openakita.api.routes import config as config_mod
     from openakita.core.confirmation_state import get_confirmation_store
-    from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
     reset_ui_confirm_bus()
     bus = get_ui_confirm_bus()
@@ -263,9 +263,9 @@ async def test_security_confirm_endpoint_resolves_riskgate_tool_call():
 
 @pytest.mark.asyncio
 async def test_security_confirmation_resolver_wakes_riskgate_tool_waiter():
+    from openakita.agent.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
     from openakita.core.confirmation_state import get_confirmation_store
     from openakita.core.security_confirmation import resolve_security_confirmation
-    from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
     reset_ui_confirm_bus()
     bus = get_ui_confirm_bus()
@@ -291,10 +291,10 @@ async def test_security_confirmation_resolver_wakes_riskgate_tool_waiter():
 
 @pytest.mark.asyncio
 async def test_security_confirm_endpoint_reports_terminal_riskgate_tool_call():
+    from openakita.agent.ui_confirm_bus import reset_ui_confirm_bus
     from openakita.api.routes import config as config_mod
     from openakita.core.confirmation_state import get_confirmation_store
     from openakita.core.security_confirmation import resolve_security_confirmation
-    from openakita.core.ui_confirm_bus import reset_ui_confirm_bus
 
     reset_ui_confirm_bus()
     store = get_confirmation_store()
@@ -323,9 +323,9 @@ async def test_security_confirm_endpoint_reports_terminal_riskgate_tool_call():
 
 @pytest.mark.asyncio
 async def test_riskgate_tool_wait_timeout_marks_store_terminal():
+    from openakita.agent.ui_confirm_bus import reset_ui_confirm_bus
     from openakita.core.confirmation_state import get_confirmation_store
     from openakita.core.risk_gate_tools import resolve_riskgate_tool_decision
-    from openakita.core.ui_confirm_bus import reset_ui_confirm_bus
 
     reset_ui_confirm_bus()
     store = get_confirmation_store()
@@ -351,13 +351,13 @@ async def test_riskgate_tool_wait_timeout_marks_store_terminal():
 
 @pytest.mark.asyncio
 async def test_riskgate_tool_prompt_result_centralizes_confirmed_execution():
-    from openakita.core.confirmation_state import get_confirmation_store
-    from openakita.core.reasoning_engine import (
+    from openakita.agent.reasoning import (
         _execute_riskgate_tool_confirmation,
         _open_riskgate_tool_confirmation,
     )
+    from openakita.agent.ui_confirm_bus import reset_ui_confirm_bus
+    from openakita.core.confirmation_state import get_confirmation_store
     from openakita.core.risk_gate_workflow import get_risk_gate_workflow
-    from openakita.core.ui_confirm_bus import reset_ui_confirm_bus
 
     class FakeExecutor:
         def __init__(self):

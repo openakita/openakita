@@ -1,6 +1,6 @@
 """Agent-level state for the v2 runtime.
 
-The legacy ``core/agent_state.py`` (431 lines) absorbed many concerns
+The previous ``core/agent_state.py`` (431 lines) absorbed many concerns
 that the v2 architecture now solves elsewhere:
 
 * cancel mechanics moved to :class:`runtime.cancel_token.CancellationToken`;
@@ -60,9 +60,7 @@ _VALID_PHASE_TRANSITIONS: dict[ReasoningPhase, frozenset[ReasoningPhase]] = {
     ReasoningPhase.IDLE: frozenset(
         {ReasoningPhase.COMPILING, ReasoningPhase.THINK, ReasoningPhase.DONE}
     ),
-    ReasoningPhase.COMPILING: frozenset(
-        {ReasoningPhase.THINK, ReasoningPhase.DONE}
-    ),
+    ReasoningPhase.COMPILING: frozenset({ReasoningPhase.THINK, ReasoningPhase.DONE}),
     ReasoningPhase.THINK: frozenset(
         {
             ReasoningPhase.ACT,
@@ -81,12 +79,8 @@ _VALID_PHASE_TRANSITIONS: dict[ReasoningPhase, frozenset[ReasoningPhase]] = {
     ReasoningPhase.OBSERVE: frozenset(
         {ReasoningPhase.THINK, ReasoningPhase.VERIFY, ReasoningPhase.DONE}
     ),
-    ReasoningPhase.VERIFY: frozenset(
-        {ReasoningPhase.DONE, ReasoningPhase.THINK}
-    ),
-    ReasoningPhase.AWAITING_USER: frozenset(
-        {ReasoningPhase.THINK, ReasoningPhase.DONE}
-    ),
+    ReasoningPhase.VERIFY: frozenset({ReasoningPhase.DONE, ReasoningPhase.THINK}),
+    ReasoningPhase.AWAITING_USER: frozenset({ReasoningPhase.THINK, ReasoningPhase.DONE}),
     ReasoningPhase.DONE: frozenset({ReasoningPhase.IDLE}),
 }
 
@@ -126,7 +120,7 @@ class TaskState:
     def transition(self, target: ReasoningPhase) -> None:
         """Move to ``target``, validating the transition.
 
-        Raises ``ValueError`` on illegal transitions. The legacy code
+        Raises ``ValueError`` on illegal transitions. The previous code
         logged a warning and forced the move; v2 raises so bugs surface
         in tests rather than corrupting state silently.
         """
@@ -172,9 +166,7 @@ class TaskState:
     # ------------------------------------------------------------------
 
     def mark_done(self, *, success: bool) -> None:
-        self.lifecycle = (
-            TaskLifecycleState.DONE if success else TaskLifecycleState.FAILED
-        )
+        self.lifecycle = TaskLifecycleState.DONE if success else TaskLifecycleState.FAILED
         self.phase = ReasoningPhase.DONE
         self.finished_at = datetime.now(UTC)
 
@@ -200,9 +192,7 @@ class TaskState:
             "tools_executed": list(self.tools_executed),
             "last_tool_signature": self.last_tool_signature,
             "started_at": self.started_at.isoformat(),
-            "finished_at": (
-                self.finished_at.isoformat() if self.finished_at else None
-            ),
+            "finished_at": (self.finished_at.isoformat() if self.finished_at else None),
             "is_cancelled": self.is_cancelled,
         }
 
@@ -220,7 +210,7 @@ class AgentState:
     """Per-agent state holding a registry of in-flight tasks by session.
 
     A single :class:`Agent` instance can serve many sessions
-    concurrently; we key tasks by ``session_id``. The legacy code added
+    concurrently; we key tasks by ``session_id``. The previous code added
     a ``current_task`` shim for back-compat; v2 drops the shim because
     callers always know which session they are in (the supervisor and
     messenger pass it through).
@@ -246,7 +236,7 @@ class AgentState:
         """Register a new TaskState for ``session_id``.
 
         Replaces any pre-existing task for the same session (same
-        semantic as the legacy code, but explicit rather than
+        semantic as the previous code, but explicit rather than
         background-cleared).
         """
         state = TaskState(

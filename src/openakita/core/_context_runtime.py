@@ -31,7 +31,7 @@ from openakita.runtime.context.continuity import (
 from openakita.utils.url_safety import safe_urlparse
 
 from ..tracing.tracer import get_tracer
-from ._tool_executor_legacy import OVERFLOW_MARKER
+from ._tool_runtime import OVERFLOW_MARKER
 from .context_utils import DEFAULT_MAX_CONTEXT_TOKENS
 from .context_utils import estimate_tokens as _shared_estimate_tokens
 from .context_utils import get_max_context_tokens as _shared_get_max_context_tokens
@@ -546,10 +546,10 @@ class ContextManager:
             return [], groups
         from ..config import settings as _settings
 
-        legacy_cap = int(getattr(_settings, "context_min_recent_turns", 12) or 12)
+        fallback_cap = int(getattr(_settings, "context_min_recent_turns", 12) or 12)
         max_groups = min(
-            legacy_cap,
-            int(getattr(_settings, "context_recent_tail_max_groups", legacy_cap) or legacy_cap),
+            fallback_cap,
+            int(getattr(_settings, "context_recent_tail_max_groups", fallback_cap) or fallback_cap),
         )
         budget = self._recent_tail_budget(hard_limit)
         selected = 0
@@ -1339,7 +1339,7 @@ class ContextManager:
                     if item.get("type") == "text":
                         texts.append(item.get("text", ""))
                     elif item.get("type") == "tool_use":
-                        from ._tool_executor_legacy import smart_truncate as _st
+                        from ._tool_runtime import smart_truncate as _st
 
                         name = item.get("name", "unknown")
                         input_data = item.get("input", {})
@@ -1349,7 +1349,7 @@ class ContextManager:
                         )
                         texts.append(f"[调用工具: {name}, 参数: {input_summary}]")
                     elif item.get("type") == "tool_result":
-                        from ._tool_executor_legacy import smart_truncate as _st
+                        from ._tool_runtime import smart_truncate as _st
 
                         result_text = str(item.get("content", ""))
                         result_text, _ = _st(

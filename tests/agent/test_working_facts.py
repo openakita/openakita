@@ -1,6 +1,6 @@
 """Tests for ``openakita.agent.working_facts``.
 
-Anchors the move from ``openakita.core.working_facts``. The legacy
+Anchors the move from ``openakita.agent.working_facts``. The legacy
 shim must produce the same callables as the new module so existing
 prompt-builder / session-manager / intent-gate code paths see no
 behaviour change. Behavioural correctness (regex matches, merge
@@ -81,9 +81,7 @@ def test_format_empty_returns_empty_string() -> None:
 
 
 def test_format_renders_value_and_source_turn() -> None:
-    rendered = format_working_facts(
-        {"test_code": {"value": "Maple-42", "source_turn": 20}}
-    )
+    rendered = format_working_facts({"test_code": {"value": "Maple-42", "source_turn": 20}})
     assert "Session Working Facts" in rendered
     assert "test_code: Maple-42" in rendered
     assert "source_turn=20" in rendered
@@ -93,25 +91,3 @@ def test_format_handles_plain_string_payload() -> None:
     rendered = format_working_facts({"foo": "bar"})
     assert "foo: bar" in rendered
     assert "source_turn=" not in rendered
-
-
-# ---------------------------------------------------------------------------
-# Move-compat
-# ---------------------------------------------------------------------------
-
-
-def test_legacy_path_re_exports_same_callables() -> None:
-    """``openakita.core.working_facts`` must alias the new module."""
-    from openakita.core.working_facts import (
-        extract_working_facts as legacy_extract,
-    )
-    from openakita.core.working_facts import (
-        format_working_facts as legacy_format,
-    )
-    from openakita.core.working_facts import (
-        merge_working_facts as legacy_merge,
-    )
-
-    assert legacy_extract is extract_working_facts
-    assert legacy_format is format_working_facts
-    assert legacy_merge is merge_working_facts

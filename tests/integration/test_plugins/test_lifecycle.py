@@ -314,8 +314,12 @@ async def test_tool_definitions_chain(tmp_path):
         def __init__(self):
             self.registered: dict[str, Any] = {}
 
-        def register(self, handler_name, handler, tool_names=None):
-            self.registered[handler_name] = {"handler": handler, "tool_names": tool_names}
+        def register(self, handler_name, handler, tool_names=None, **kwargs):
+            self.registered[handler_name] = {
+                "handler": handler,
+                "tool_names": tool_names,
+                **kwargs,
+            }
 
         def unregister(self, handler_name):
             self.registered.pop(handler_name, None)

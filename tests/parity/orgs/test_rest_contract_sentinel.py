@@ -7,12 +7,12 @@ invariant the gate enforces with **active** (non-xfail) assertions.
 Three invariants:
 
 1. **Route count parity** -- the v2 OpenAPI surface lands exactly
-   85 routes under ``/api/v2/orgs/*`` (84 mint per
-   ``docs/revamp/P-RC-9-P9.7-ENDPOINT-INVENTORY.md`` section 3 +
-   1 ``GET /_p97/health`` wiring stub) plus 9 routes under
+   88 method-routes under ``/api/v2/orgs/*`` (85 B-marked endpoints +
+   1 ``GET /_p97/health`` wiring stub + the SSE alias + the operational
+   start-readiness endpoint) plus 9 routes under
    ``/api/v2/orgs-spec/*`` (Group A relocated by P9.7a-2a per
    D-1 R3 LOCKED). On top of those 93 in-schema entries, the
-   ``_orgs_v2_legacy_redirects`` router contributes 9 308 shims
+   ``_orgs_v2_deprecated_redirects`` router contributes 9 308 shims
    that live in ``app.routes`` but are excluded from the OpenAPI
    schema (``include_in_schema=False``).
 2. **Coverage matrix** -- every minted B-marker (B1-B84) has at
@@ -43,7 +43,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
 from openakita.api.routes import (
-    _orgs_v2_legacy_redirects,
+    _orgs_v2_deprecated_redirects,
     orgs_v2,
     orgs_v2_runtime,
     orgs_v2_stream,
@@ -60,7 +60,7 @@ _MINT_ENDPOINTS = 85  # B1-B85 (B84 = PATCH partial-update [smoke-F5]; B85 = min
 # new capability), so it is counted here rather than inflating
 # ``_MINT_ENDPOINTS`` (which the coverage-matrix test maps 1:1 to
 # ``test_b<N>_`` functions).
-_MINT_ALIASES = 1
+_MINT_ALIASES = 2  # SSE stream alias + start-readiness operational endpoint
 _HEALTH_STUBS = 1  # GET /_p97/health
 _SPEC_ENDPOINTS = 9  # Group A relocated (8 CRUD + 1 SSE)
 _SHIM_ROUTES = 9  # 308 legacy redirects
@@ -77,7 +77,7 @@ def _build_app() -> FastAPI:
     # mint router second -- prefix /api/v2/orgs
     app.include_router(orgs_v2_runtime.router)
     # redirect shim last so collisions resolve mint-first
-    app.include_router(_orgs_v2_legacy_redirects.router)
+    app.include_router(_orgs_v2_deprecated_redirects.router)
     return app
 
 
@@ -123,7 +123,8 @@ def test_route_counts_match_inventory() -> None:
     expected_mint = _MINT_ENDPOINTS + _HEALTH_STUBS + _MINT_ALIASES
     assert counts["mint"] == expected_mint, (
         f"Expected {expected_mint} mint method-routes "
-        f"({_MINT_ENDPOINTS} mint + {_HEALTH_STUBS} health + {_MINT_ALIASES} SSE alias), "
+        f"({_MINT_ENDPOINTS} mint + {_HEALTH_STUBS} health + "
+        f"{_MINT_ALIASES} auxiliary routes), "
         f"got {counts['mint']}; spec={counts['spec']}, shim={counts['shim']}"
     )
     assert counts["spec"] == _SPEC_ENDPOINTS, (

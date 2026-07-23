@@ -49,9 +49,7 @@ def test_p0_1_user_dirs_default_to_mutating_scoped_class():
     )
     from openakita.core.policy_v2.schema import ConfirmationConfig
 
-    cfg = PolicyConfigV2(
-        confirmation=ConfirmationConfig(mode=ConfirmationMode.DEFAULT)
-    )
+    cfg = PolicyConfigV2(confirmation=ConfirmationConfig(mode=ConfirmationMode.DEFAULT))
     set_engine_v2(build_engine_from_config(cfg), cfg)
     try:
         # 用户桌面是默认 controlled 区——delete_file 必须 CONFIRM
@@ -96,23 +94,20 @@ def test_p0_2_phase0_no_hard_exit_reason():
     """
     import re
 
-    src = Path("src/openakita/core/reasoning_engine.py").read_text(encoding="utf-8")
+    src = Path("src/openakita/core/_reasoning_runtime.py").read_text(encoding="utf-8")
     # 移除注释行后再检查赋值
-    code_only_lines = [
-        ln for ln in src.splitlines()
-        if not ln.lstrip().startswith("#")
-    ]
+    code_only_lines = [ln for ln in src.splitlines() if not ln.lstrip().startswith("#")]
     code_only = "\n".join(code_only_lines)
     bad_pattern = re.compile(r"_last_exit_reason\s*=\s*[\"']tool_evidence_missing[\"']")
     assert not bad_pattern.search(code_only), (
-        "reasoning_engine.py 不允许再写入 _last_exit_reason='tool_evidence_missing' 赋值，"
+        "_reasoning_runtime.py 不允许再写入 _last_exit_reason='tool_evidence_missing' 赋值，"
         "否则 P0-3 组织死锁会回归。"
     )
 
 
 def test_p0_2_phase0_action_done_regex_matches_chinese():
     """阶段 0：兜底正则必须能识别"已查到/已读到/我刚才执行"这类典型动作完成短语。"""
-    from openakita.core._reasoning_engine_legacy import _get_action_done_re
+    from openakita.core._reasoning_runtime import _get_action_done_re
 
     rx = _get_action_done_re()
     for sample in [
@@ -152,7 +147,7 @@ def test_p0_2_phase2_intent_result_has_evidence_recommended_field():
 
 def test_p0_2_phase3_source_tag_inconsistency_warns():
     """阶段 3：声称 [来源:工具] 但 tools_executed=0 时必须返回告警字符串。"""
-    from openakita.core._reasoning_engine_legacy import _check_source_tag_consistency
+    from openakita.core._reasoning_runtime import _check_source_tag_consistency
 
     text_claims_tool = "好的，我已经检查了文件 [来源:工具]，里面有 3 行代码。"
     warn = _check_source_tag_consistency(text_claims_tool, tools_executed_count=0)
@@ -164,7 +159,7 @@ def test_p0_2_phase3_source_tag_inconsistency_warns():
 
 def test_p0_2_phase3_source_tag_consistent_passes():
     """阶段 3：标签为 [来源:常识] 时，tools_executed=0 不应当告警。"""
-    from openakita.core._reasoning_engine_legacy import _check_source_tag_consistency
+    from openakita.core._reasoning_runtime import _check_source_tag_consistency
 
     text = "太阳系第三颗行星是地球。[来源:常识]"
     assert _check_source_tag_consistency(text, tools_executed_count=0) is None
@@ -248,13 +243,21 @@ async def test_p1_7_org_list_delegated_tasks_backoff(tmp_path: Path, monkeypatch
             OrgToolHandler,
         )
     except ImportError:
-        pytest.skip(
-            "[P-RC-10] OrgToolHandler 尚未吸收进 runtime.orgs._runtime_agent_pipeline"
-        )
+        pytest.skip("[P-RC-10] OrgToolHandler 尚未吸收进 runtime.orgs._runtime_agent_pipeline")
 
-    fake_runtime = type("R", (), {"_manager": type("M", (), {
-        "_org_dir": staticmethod(lambda _oid: tmp_path),
-    })()})()
+    fake_runtime = type(
+        "R",
+        (),
+        {
+            "_manager": type(
+                "M",
+                (),
+                {
+                    "_org_dir": staticmethod(lambda _oid: tmp_path),
+                },
+            )()
+        },
+    )()
 
     h = OrgToolHandler.__new__(OrgToolHandler)
     h._runtime = fake_runtime  # type: ignore[attr-defined]

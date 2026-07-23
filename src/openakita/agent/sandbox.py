@@ -1,9 +1,5 @@
 """Bash 沙箱: 命令执行权限控制。
 
-Ported from :mod:`openakita.core.sandbox` per ADR-0003 and the
-Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy path stays as a re-export shim until Phase 8.
-
 参考 Claude Code 的 sandbox 设计:
 
 * 限制文件系统访问范围
@@ -138,9 +134,7 @@ class CommandSandbox:
             elif "dangerous pattern" in verdict.reason:
                 verdict = SandboxVerdict(allowed=False, reason="检测到危险命令模式，已拦截")
             elif "denied directory" in verdict.reason:
-                verdict = SandboxVerdict(
-                    allowed=False, reason="命令涉及受保护的系统目录，禁止访问"
-                )
+                verdict = SandboxVerdict(allowed=False, reason="命令涉及受保护的系统目录，禁止访问")
             elif "not in allowed list" in verdict.reason:
                 verdict = SandboxVerdict(
                     allowed=False,

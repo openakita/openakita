@@ -31,7 +31,8 @@ from .compiler import check_compiled_outdated, compile_all, get_compiled_content
 from .retriever import retrieve_memory
 
 if TYPE_CHECKING:
-    from ..core.persona import PersonaManager
+    from openakita.agent.persona import PersonaManager
+
     from ..memory import MemoryManager
     from ..plugins.catalog import PluginCatalog
     from ..skills.catalog import SkillCatalog
@@ -743,7 +744,7 @@ def build_system_prompt(
     # 即使 MINIMAL prompt 也保留这块很小的会话状态，避免轻量问答丢失刚刚确认的事实。
     if prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL) and session_context:
         try:
-            from ..core.working_facts import format_working_facts
+            from openakita.agent.working_facts import format_working_facts
 
             working_facts_section = format_working_facts(session_context.get("working_facts"))
             if working_facts_section:

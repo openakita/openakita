@@ -405,7 +405,7 @@ async def _check_audit_chain() -> dict[str, Any] | None:
     those cases instead of returning None.
     """
     try:
-        from openakita.core.audit_logger import get_audit_logger
+        from openakita.agent.audit import get_audit_logger
 
         logger_inst = get_audit_logger()
         if not getattr(logger_inst, "_enabled", True):
@@ -593,11 +593,11 @@ async def last_link_diagnostic(request: Request):
 
 
 @router.get("/api/diagnostics/legacy-shim-stats")
-async def legacy_shim_stats() -> dict[str, Any]:
+async def deprecated_redirect_stats() -> dict[str, Any]:
     """Read-only counter for legacy 308 shim hits.
 
     Used to decide whether the
-    ``src/openakita/api/routes/_orgs_v2_legacy_redirects.py`` shim can
+    ``src/openakita/api/routes/_orgs_v2_deprecated_redirects.py`` shim can
     be removed in the 2.1.0 minor. See
     ``docs/follow-ups/skipped-items-roadmap.md`` §A.3 for the full
     exit criterion. RCA cross-ref: ``_skip_items_rca_v11.md`` §3.
@@ -605,10 +605,12 @@ async def legacy_shim_stats() -> dict[str, Any]:
     The counter is in-process and resets on restart — pair this
     endpoint with log scraping for long-window evidence.
     """
-    from openakita.api.routes._orgs_v2_legacy_redirects import get_shim_hit_stats
+    from openakita.api.routes._orgs_v2_deprecated_redirects import (
+        get_deprecated_redirect_stats,
+    )
 
     return {
-        "hits": get_shim_hit_stats(),
+        "hits": get_deprecated_redirect_stats(),
         "removal_target": "2.1.0",
         "sunset_header": "2026-12-01",
         "advice": (
@@ -651,14 +653,14 @@ async def clear_session_caches_endpoint(request: Request, conversation_id: str |
 @router.get("/api/diagnostics/domain-rules")
 async def domain_rules(conversation_id: str = ""):
     """Return blocked / approved hosts for a conversation."""
-    from openakita.core.domain_allowlist import get_domain_allowlist
+    from openakita.agent.domain_allowlist import get_domain_allowlist
 
     return {"conversation_id": conversation_id, **get_domain_allowlist().list_for(conversation_id)}
 
 
 @router.post("/api/diagnostics/domain-block")
 async def domain_block(conversation_id: str, host: str):
-    from openakita.core.domain_allowlist import get_domain_allowlist
+    from openakita.agent.domain_allowlist import get_domain_allowlist
 
     if not conversation_id or not host:
         return {"ok": False, "error": "conversation_id and host are required"}
@@ -668,7 +670,7 @@ async def domain_block(conversation_id: str, host: str):
 
 @router.post("/api/diagnostics/domain-unblock")
 async def domain_unblock(conversation_id: str, host: str):
-    from openakita.core.domain_allowlist import get_domain_allowlist
+    from openakita.agent.domain_allowlist import get_domain_allowlist
 
     if not conversation_id or not host:
         return {"ok": False, "error": "conversation_id and host are required"}

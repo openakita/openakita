@@ -31,8 +31,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from openakita import config as config_mod
+from openakita.agent import Agent
 from openakita.core import conversation_metrics as metrics
-from openakita.core.agent import Agent
 from openakita.core.agent_state import AgentState, TaskState, TaskStatus
 from openakita.core.tool_interrupt_behavior import (
     DEFAULT_BEHAVIOR,
@@ -46,7 +46,7 @@ from openakita.core.tool_interrupt_behavior import (
 
 # The agent-layer preempt orchestration (``Agent._preempt_or_queue_prev_task``
 # + INTERRUPT→QUEUE downgrade + QUEUE block-tool timeout extension + the
-# tool-executor begin/end source wiring) is ported into ``core/_agent_legacy``
+# tool-executor begin/end source wiring) is ported into ``core/_agent_runtime``
 # after the ADR-0003 split (Batch C). All tests below are active.
 
 # ── Fixtures ─────────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ class TestToolExecutorBeginEndWiring:
     def test_execute_tool_source_contains_begin_and_end(self) -> None:
         import inspect
 
-        from openakita.core.tool_executor import ToolExecutor
+        from openakita.agent import ToolExecutor
 
         src = inspect.getsource(ToolExecutor.execute_tool)
         # Begin in try, end in finally — both must be present.  The
@@ -185,7 +185,7 @@ class TestToolExecutorBeginEndWiring:
         turn."""
         import inspect
 
-        from openakita.core.tool_executor import ToolExecutor
+        from openakita.agent import ToolExecutor
 
         src = inspect.getsource(ToolExecutor.execute_tool_with_policy)
         assert "task.begin_tool(in_flight_name)" in src, (
@@ -198,7 +198,7 @@ class TestToolExecutorBeginEndWiring:
         assert "_resolve_task" in src
 
     def test_resolve_task_helper_returns_session_task(self) -> None:
-        from openakita.core.tool_executor import ToolExecutor
+        from openakita.agent import ToolExecutor
 
         executor = ToolExecutor.__new__(ToolExecutor)
         agent_stub = MagicMock()
@@ -210,7 +210,7 @@ class TestToolExecutorBeginEndWiring:
         assert resolved is task
 
     def test_resolve_task_falls_back_to_current_when_no_session(self) -> None:
-        from openakita.core.tool_executor import ToolExecutor
+        from openakita.agent import ToolExecutor
 
         executor = ToolExecutor.__new__(ToolExecutor)
         agent_stub = MagicMock()
@@ -222,7 +222,7 @@ class TestToolExecutorBeginEndWiring:
         assert resolved is task
 
     def test_resolve_task_returns_none_when_no_agent_state(self) -> None:
-        from openakita.core.tool_executor import ToolExecutor
+        from openakita.agent import ToolExecutor
 
         executor = ToolExecutor.__new__(ToolExecutor)
         agent_stub = MagicMock()
@@ -231,7 +231,7 @@ class TestToolExecutorBeginEndWiring:
         assert executor._resolve_task("s1") is None
 
     def test_resolve_task_handles_missing_agent_ref(self) -> None:
-        from openakita.core.tool_executor import ToolExecutor
+        from openakita.agent import ToolExecutor
 
         executor = ToolExecutor.__new__(ToolExecutor)
         executor._agent_ref = None
@@ -246,7 +246,7 @@ class TestToolExecutorBeginEndWiring:
         Before the fix, this test would catch in_flight == [] at the
         observe point — proving the original v1.28.2 ship was a no-op in
         the execute_batch path."""
-        from openakita.core.tool_executor import ToolExecutor
+        from openakita.agent import ToolExecutor
 
         executor = ToolExecutor.__new__(ToolExecutor)
         agent_stub = MagicMock()
@@ -811,7 +811,7 @@ class TestMcpSubToolEncoding:
 
     def test_in_flight_name_helper(self) -> None:
         """ToolExecutor._in_flight_name encodes call_mcp_tool inputs."""
-        from openakita.core.tool_executor import ToolExecutor
+        from openakita.agent import ToolExecutor
 
         assert (
             ToolExecutor._in_flight_name(

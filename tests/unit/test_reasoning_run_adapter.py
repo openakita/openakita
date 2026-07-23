@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from openakita.core._reasoning_engine_legacy import ReasoningEngine
+from openakita.core._reasoning_runtime import ReasoningEngine
 
 
 def _engine_with_events(events):

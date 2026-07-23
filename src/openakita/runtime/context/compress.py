@@ -1,6 +1,6 @@
-"""Compress + sanitize helpers extracted from ``core.context_manager``.
+"""Context compression and sanitization helpers.
 
-P-RC-4 P4.13. The leaf-level helpers extracted here:
+The leaf-level helpers here are:
 
 * :func:`pre_request_cleanup` -- thin wrapper over
   :func:`openakita.core.microcompact.microcompact`, used by
@@ -11,11 +11,6 @@ P-RC-4 P4.13. The leaf-level helpers extracted here:
   truncation pass; orphans would otherwise cause the Anthropic
   ``tool_use_id`` validation to reject the next request.
 
-The deep compression methods (``compress_if_needed``,
-``_compress_across_boundary``, ``_llm_compress_text``,
-``_summarize_messages_chunked``, ...) remain in the legacy module
-for now; they will move to ``runtime.context`` in P-RC-7 as part of
-the legacy ``core/`` tree deletion.
 """
 
 from __future__ import annotations

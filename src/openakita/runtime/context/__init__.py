@@ -1,7 +1,6 @@
-"""V2 context helpers extracted from ``core.context_manager`` (P-RC-4 P4.13).
+"""Focused context grouping, budgeting, compression, and continuity helpers.
 
-Three focused submodules host the leaf-level concerns lifted from
-the legacy 1799-LOC ContextManager:
+Three submodules host the leaf-level concerns:
 
 * :mod:`runtime.context.grouping` -- :func:`group_messages`
 * :mod:`runtime.context.budget_trace` -- :func:`calc_context_budget`,

@@ -4,7 +4,7 @@ diagnosis card downgrade (B5).
 
 import pytest
 
-from openakita.core.validators import (
+from openakita.agent.validators import (
     OrgDelegationValidator,
     ValidationContext,
     ValidationResult,
@@ -18,6 +18,7 @@ from openakita.core.validators import (
 def _summarize_or_skip():
     try:
         from openakita.orgs._runtime_watchdog import summarize  # type: ignore[attr-defined]
+
         return summarize
     except ImportError as _absorb_err:
         pytest.skip(f"v2 summarize absorption pending: {_absorb_err}")

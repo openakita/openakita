@@ -1,9 +1,5 @@
 """Token-consumption budget.
 
-Ported from :mod:`openakita.core.token_budget` per ADR-0003 and
-the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy path remains as a re-export shim until Phase 8.
-
 Inspired by Claude Code's token-budget UX:
 
 * the user can write a ``+500k`` (or ``+1m`` / ``+100000``) suffix

@@ -1,7 +1,6 @@
-"""Tool overflow file persistence + cleanup.
+"""Tool overflow file persistence and cleanup.
 
-Extracted from :func:`openakita.core.tool_executor.save_overflow` /
-``_cleanup_overflow_files`` in P-RC-4. Pure I/O helpers: ``save_overflow``
+Pure I/O helpers: ``save_overflow``
 writes the dropped tool output to a timestamped file under
 ``data/tool_overflow/``; ``cleanup_overflow_files`` evicts the oldest
 files beyond a configurable cap to bound disk growth.
@@ -35,7 +34,7 @@ def get_overflow_max_files() -> int:
     """Cap on the number of overflow files kept on disk.
 
     Reads ``settings.tool_overflow_max_files`` with a floor of 10.
-    Mirrors the legacy ``_get_tool_overflow_max_files``.
+    Implements the runtime overflow-file limit contract.
     """
     try:
         return max(

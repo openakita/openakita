@@ -10,12 +10,9 @@ OpenAkita 架构重构功能自检测试
 """
 
 import asyncio
-import copy
-import json
 import os
 import sys
 import tempfile
-import time
 
 # 确保项目根目录在 path 上
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +25,7 @@ errors = []
 
 def check(name):
     """测试装饰器"""
+
     def decorator(fn):
         global passed, failed
         try:
@@ -38,11 +36,13 @@ def check(name):
             print(f"  ❌ {name}: {e}")
             failed += 1
             errors.append((name, str(e)))
+
     return decorator
 
 
 def async_check(name):
     """异步测试装饰器"""
+
     def decorator(fn):
         global passed, failed
         try:
@@ -63,6 +63,7 @@ def async_check(name):
             print(f"  ❌ {name}: {e}")
             failed += 1
             errors.append((name, str(e)))
+
     return decorator
 
 
@@ -72,7 +73,7 @@ print("\n📦 Phase 1: 基础设施")
 
 @check("AgentState 导入和状态机")
 def _():
-    from openakita.core.agent_state import AgentState, TaskState, TaskStatus
+    from openakita.core.agent_state import AgentState, TaskStatus
 
     state = AgentState()
     assert not state.initialized
@@ -112,7 +113,7 @@ def _():
 
 @check("Tracing 框架基本功能")
 def _():
-    from openakita.tracing.tracer import AgentTracer, SpanType, SpanStatus, get_tracer, set_tracer
+    from openakita.tracing.tracer import AgentTracer, set_tracer
 
     tracer = AgentTracer(enabled=True)
     set_tracer(tracer)
@@ -141,14 +142,15 @@ def _():
 
 @check("Tracing Exporter")
 def _():
-    from openakita.tracing.exporter import FileExporter, ConsoleExporter, TraceExporter
+    from openakita.tracing.exporter import ConsoleExporter, FileExporter, TraceExporter
+
     assert issubclass(FileExporter, TraceExporter)
     assert issubclass(ConsoleExporter, TraceExporter)
 
 
 @check("ToolError 结构化错误")
 def _():
-    from openakita.tools.errors import ToolError, ErrorType, classify_error
+    from openakita.tools.errors import ErrorType, ToolError, classify_error
 
     # 测试直接创建
     err = ToolError(
@@ -180,6 +182,7 @@ print("\n🔧 Phase 2: Agent 子模块拆分")
 @check("ToolExecutor 导入")
 def _():
     from openakita.agent.tools import ToolExecutor
+
     assert ToolExecutor is not None
 
 
@@ -208,9 +211,9 @@ def _():
 @check("ResponseHandler 导入")
 def _():
     from openakita.core.response_handler import (
-        ResponseHandler, clean_llm_response,
-        strip_thinking_tags, strip_tool_simulation_text,
+        strip_thinking_tags,
     )
+
     # 测试 clean_llm_response
     text = "<thinking>内部思考</thinking>最终答案"
     cleaned = strip_thinking_tags(text)
@@ -220,19 +223,22 @@ def _():
 
 @check("SkillManager 导入")
 def _():
-    from openakita.core.skill_manager import SkillManager
+    from openakita.agent.skill_manager import SkillManager
+
     assert SkillManager is not None
 
 
 @check("PromptAssembler 导入")
 def _():
     from openakita.core.prompt_assembler import PromptAssembler
+
     assert PromptAssembler is not None
 
 
 @check("ReasoningEngine 和 Checkpoint")
 def _():
-    from openakita.agent.reasoning import ReasoningEngine, Decision, DecisionType, Checkpoint
+    from openakita.agent.reasoning import Checkpoint, Decision, DecisionType, ReasoningEngine
+
     assert ReasoningEngine is not None
     assert Checkpoint is not None
 
@@ -308,6 +314,7 @@ def _():
         storage.close()
     finally:
         import shutil
+
         try:
             shutil.rmtree(tmpdir, ignore_errors=True)
         except Exception:
@@ -316,7 +323,8 @@ def _():
 
 @check("高频工具直接注入 (catalog)")
 def _():
-    from openakita.tools.catalog import HIGH_FREQ_TOOLS, ToolCatalog
+    from openakita.tools.catalog import HIGH_FREQ_TOOLS
+
     assert len(HIGH_FREQ_TOOLS) == 4
     assert "run_shell" in HIGH_FREQ_TOOLS
     assert "read_file" in HIGH_FREQ_TOOLS
@@ -326,7 +334,6 @@ def _():
 
 # ==================== Phase 4: 高级功能 ====================
 print("\n🚀 Phase 4: 高级功能")
-
 
 
 @check("评估框架 - Metrics")
@@ -387,10 +394,10 @@ def _():
 
 @check("评估框架 - Judge")
 def _():
-    from openakita.evaluation.judge import Judge, JudgeResult
+    from openakita.evaluation.judge import JudgeResult
 
     # 测试 JudgeResult 解析
-    raw = '''```json
+    raw = """```json
     {
         "scores": {"task_understanding": 0.9, "tool_usage": 0.8},
         "overall_score": 0.85,
@@ -398,7 +405,7 @@ def _():
         "suggestions": ["可以优化工具选择"],
         "failure_patterns": []
     }
-    ```'''
+    ```"""
     result = JudgeResult.from_llm_response("test", raw)
     assert result.overall_score == 0.85
     assert "表现不错" in result.reasoning
@@ -407,10 +414,10 @@ def _():
 
 @check("评估框架 - Optimizer")
 def _():
-    from openakita.evaluation.optimizer import (
-        FeedbackAnalyzer, FeedbackOptimizer, OptimizationAction,
-    )
     from openakita.evaluation.metrics import EvalMetrics, EvalResult, TraceMetrics
+    from openakita.evaluation.optimizer import (
+        FeedbackAnalyzer,
+    )
 
     analyzer = FeedbackAnalyzer()
 
@@ -433,7 +440,9 @@ def _():
 
     # 低完成率应触发 memory 反馈
     memory_actions = [a for a in actions if a.action_type == "memory"]
-    assert len(memory_actions) > 0, f"Expected memory action for low completion rate ({metrics.task_completion_rate})"
+    assert len(memory_actions) > 0, (
+        f"Expected memory action for low completion rate ({metrics.task_completion_rate})"
+    )
 
 
 # ==================== 集成测试 ====================
@@ -457,6 +466,7 @@ def _():
 @check("main.py 追踪初始化")
 def _():
     from openakita.tracing.tracer import get_tracer
+
     tracer = get_tracer()
     # main.py 的 _init_tracing 在 import 时已执行
     # tracing_enabled 默认 True（Agent Harness 轻量追踪模式）
@@ -466,10 +476,11 @@ def _():
 @check("Agent 子模块初始化检查")
 def _():
     """验证 Agent 类有初始化所有子模块的代码"""
-    from openakita.agent.core import Agent
-
     # 通过检查 __init__ 源码来验证
     import inspect
+
+    from openakita.agent.core import Agent
+
     source = inspect.getsource(Agent.__init__)
     assert "AgentState" in source, "agent_state 未在 __init__ 中初始化"
     assert "ToolExecutor" in source, "tool_executor 未在 __init__ 中初始化"
@@ -483,39 +494,26 @@ def _():
 @check("Agent._chat_with_tools_and_context 委托给 ReasoningEngine")
 def _():
     """验证核心方法已委托"""
-    from openakita.agent.core import Agent
     import inspect
+
+    from openakita.agent.core import Agent
+
     source = inspect.getsource(Agent._chat_with_tools_and_context)
-    assert "self.reasoning_engine.run" in source, \
+    assert "self.reasoning_engine.run" in source, (
         "_chat_with_tools_and_context 未委托给 reasoning_engine.run()"
+    )
 
 
 @check("全模块导入链完整性")
 def _():
     """验证所有新模块的完整导入链"""
     # Phase 1
-    from openakita.core.agent_state import AgentState, TaskState, TaskStatus
-    from openakita.tracing import AgentTracer, Span, SpanType, SpanStatus, Trace, get_tracer, set_tracer
-    from openakita.tracing.exporter import FileExporter, ConsoleExporter
-    from openakita.tools.errors import ToolError, ErrorType, classify_error
 
     # Phase 2
-    from openakita.agent.tools import ToolExecutor
-    from openakita.agent.context import ContextManager
-    from openakita.core.response_handler import ResponseHandler
-    from openakita.core.skill_manager import SkillManager
-    from openakita.core.prompt_assembler import PromptAssembler
-    from openakita.agent.reasoning import ReasoningEngine, Checkpoint, Decision
 
     # Phase 3
-    from openakita.memory.storage import MemoryStorage
 
     # Phase 4
-    from openakita.evaluation.metrics import EvalMetrics, EvalResult, TraceMetrics
-    from openakita.evaluation.judge import Judge, JudgeResult
-    from openakita.evaluation.runner import EvalRunner
-    from openakita.evaluation.reporter import Reporter
-    from openakita.evaluation.optimizer import FeedbackAnalyzer, FeedbackOptimizer, DailyEvaluator
 
 
 # ==================== 汇总 ====================
@@ -530,4 +528,3 @@ if errors:
 
 if __name__ == "__main__":
     sys.exit(1 if failed > 0 else 0)
-

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .permission import PermissionDecision
+    from openakita.agent.permission import PermissionDecision
 
 from ..config import settings
 from ..tools.errors import ToolError, classify_error
@@ -605,7 +605,7 @@ class ToolExecutor:
             return None
 
     def _resolve_parent_scope(self, session_id: str | None) -> AbortScope | None:
-        """Legacy helper retained for callers that only need the abort scope
+        """Previous helper retained for callers that only need the abort scope
         (not the task).  Internally delegates to :meth:`_resolve_task`.
         Returns ``None`` if no active task — execute_tool then runs without
         scope tracking (still works; just loses sub-tool fan-out)."""
@@ -892,8 +892,7 @@ class ToolExecutor:
                         result_content = [*result_content, {"type": "text", "text": log_text}]
                     else:
                         result_content = (
-                            f"{'' if result_content is None else str(result_content)}"
-                            f"{log_text}"
+                            f"{'' if result_content is None else str(result_content)}{log_text}"
                         )
 
                 # ★ 通用截断守卫：工具自身未做截断时的安全网
@@ -1157,7 +1156,7 @@ class ToolExecutor:
         if tool_name in ("run_shell", "run_powershell") and getattr(
             policy_result, "metadata", {}
         ).get("needs_sandbox"):
-            from .sandbox import get_sandbox_executor
+            from openakita.agent.sandbox import get_sandbox_executor
 
             sandbox = get_sandbox_executor()
             command = tool_input.get("command", "")
@@ -1747,7 +1746,7 @@ class ToolExecutor:
         This is the single choke-point for all permission decisions.
         Callers should inspect `decision.behavior` ("allow" / "deny" / "confirm").
         """
-        from .permission import PermissionDecision, check_permission
+        from openakita.agent.permission import PermissionDecision, check_permission
 
         self._prune_stale_confirms()
 
@@ -1790,7 +1789,7 @@ class ToolExecutor:
 
         # Audit log for every decision
         try:
-            from .audit_logger import get_audit_logger
+            from openakita.agent.audit import get_audit_logger
 
             get_audit_logger().log(
                 tool_name=tool_name,
@@ -1977,7 +1976,8 @@ class ToolExecutor:
         - Catch + log + return a deny-shaped tool_result with reason. Never
           fall back to the §2.1 "lying" path.
         """
-        from .pending_approvals import get_pending_approvals_store
+        from openakita.agent.pending_approvals import get_pending_approvals_store
+
         from .policy_v2.context import get_current_context
 
         ctx = get_current_context()

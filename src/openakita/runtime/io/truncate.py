@@ -1,7 +1,6 @@
 """Smart-truncate helper for oversized tool output.
 
-Extracted from :func:`openakita.core.tool_executor.smart_truncate`
-in P-RC-4. Pure function: takes a string, returns a (possibly
+Pure function: takes a string, returns a (possibly
 truncated) string + a was-truncated flag. The truncation strategy
 keeps a configurable head fraction + a tail fraction so the LLM
 sees both the start (intent + first errors) and the end (final
@@ -26,7 +25,7 @@ def get_tool_result_max_chars() -> int:
 
     Reads ``settings.tool_result_max_chars`` with a floor of 1000 and
     falls back to :data:`DEFAULT_TOOL_RESULT_MAX_CHARS` on parse error.
-    Mirrors the legacy ``_get_tool_result_max_chars`` exactly.
+    Implements the runtime tool-result size limit contract.
     """
     try:
         return max(
@@ -71,6 +70,7 @@ def smart_truncate(
     if save_full:
         if save_overflow_fn is None:
             from .overflow import save_overflow as _default_save_overflow
+
             save_overflow_fn = _default_save_overflow
         path = save_overflow_fn(label, content)
         overflow_ref = f", 完整内容: {path}, 可用 read_file 查看"

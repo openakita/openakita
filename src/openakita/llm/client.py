@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ..core.errors import UserCancelledError
+from openakita.agent.errors import UserCancelledError
+
 from .config import get_default_config_path, load_endpoints_config
 from .normalize import normalize_messages_for_api
 from .providers.anthropic import AnthropicProvider
@@ -1264,7 +1265,9 @@ class LLMClient:
         )
         return providers_sorted
 
-    def _get_effective_override(self, conversation_id: str | None = None) -> EndpointOverride | None:
+    def _get_effective_override(
+        self, conversation_id: str | None = None
+    ) -> EndpointOverride | None:
         """Return the active endpoint override for this request, if any."""
         if conversation_id:
             ov = self._conversation_overrides.get(conversation_id)

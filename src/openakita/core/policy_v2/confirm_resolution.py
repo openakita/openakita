@@ -69,8 +69,9 @@ def apply_resolution(confirm_id: str, decision: str) -> bool:
           + save_to_yaml（YAML 写失败仅 warn 不抛，与 v1 silent-fail 对齐）
         - decision == ``allow_once`` / ``deny`` / ``timeout`` → 仅唤醒，无 allowlist 写
     """
+    from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
+
     from ..security_confirm_channel import require_security_confirm_decision
-    from ..ui_confirm_bus import get_ui_confirm_bus
     from .global_engine import get_engine_v2
     from .session_allowlist import get_session_allowlist_manager
 

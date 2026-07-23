@@ -1,8 +1,6 @@
 """Unbacked-action-claim guard.
 
-Extracted from ``core/reasoning_engine.py`` (P-RC-5 P5.6) as the
-largest module-level reasoning-engine helper. Detects two
-hallucination patterns the legacy engine flagged before yielding
+Detects two hallucination patterns before yielding
 the LLM’s final answer:
 
 1. **"I already did X" with no tool ran at all.** The LLM uses an
@@ -186,7 +184,7 @@ def extract_unbacked_verbs(
             continue
         unbacked.append(verb)
 
-    # Legacy tool-name fragment fallback when no structured effects exist.
+    # Tool-name fragment fallback when no structured effects exist.
     if not effect_actions:
         for tool_name, fragments in CLAIMED_TOOL_TO_FRAGMENTS.items():
             tool_claim_pat = re.compile(
@@ -243,7 +241,7 @@ def guard_unbacked_action_claim(
 
     Two layers of defence:
     1. If the message contains an action-claim phrase but **no** tool ran at all,
-       fall back to a non-deceptive notice (legacy behaviour).
+       fall back to a non-deceptive notice (established behaviour).
     2. If tools did run but their names don't match the claimed verbs (e.g. text
        says "已删除 X" but only ``get_tool_info`` was called), append a warning
        and refuse to corroborate the claim. This catches the most common

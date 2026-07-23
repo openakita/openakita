@@ -91,7 +91,7 @@ tests/                  # Test suite
 - **Prompt pipeline**: `prompt/compiler.py` compiles identity files → `prompt/builder.py` assembles system prompt in layers: Identity → Persona → Runtime → Session Rules → AGENTS.md → Catalogs → Memory → User.
 - **Multi-agent**: `agents/orchestrator.py` routes messages, `agents/factory.py` creates instances from `AgentProfile`. Sub-agents share the same `PromptAssembler` and session.
 - **Delegation model**: The main agent can spawn sub-agents via `delegate_to_agent` / `delegate_parallel` / `delegate_to_pool` / `delegate_to_role`. Sub-agents do NOT receive these delegation tools (single-hop delegation), so grandchildren are not possible. The "max_delegation_depth = 5" mentioned in older docs is an architectural target tracked by RCA v11 §4.4; the current implementation is single-hop. See `core/_agent_legacy.py` `_agent_tool_names` for the sub-agent tool blacklist.
-- **Ralph Loop**: The core execution loop in `core/ralph.py` — never gives up, retries with analysis on failure.
+- **Ralph Loop**: The core execution loop in `agent/ralph.py` — never gives up, retries with analysis on failure.
 - **Tool system**: Each tool has a handler in `tools/handlers/` and a definition in `tools/definitions/`. Skills are SKILL.md-based (declarative), loaded by `skills/loader.py`.
 - **AGENTS.md injection**: `prompt/builder.py` auto-reads `AGENTS.md` from CWD into the system prompt (developer section). All agents (including sub-agents) get project context automatically.
 

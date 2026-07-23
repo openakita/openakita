@@ -1,11 +1,14 @@
 from types import SimpleNamespace
 
+from openakita.agent.loop_budget import LoopBudgetGuard
 from openakita.agent.safety.destructive_intent import (
     build_destructive_intent_question as _build_destructive_intent_question,
+)
+from openakita.agent.safety.destructive_intent import (
     classify_risk_intent as _classify_risk_intent,
 )
+from openakita.agent.working_facts import extract_working_facts, format_working_facts
 from openakita.core.confirmation_state import ConfirmationDecision, get_confirmation_store
-from openakita.core.loop_budget_guard import LoopBudgetGuard
 from openakita.core.risk_intent import (
     ORG_SYNTH_PREFIXES,
     OperationKind,
@@ -13,7 +16,6 @@ from openakita.core.risk_intent import (
     TargetKind,
     classify_risk_intent,
 )
-from openakita.core.working_facts import extract_working_facts, format_working_facts
 
 
 def test_destructive_intent_detects_policy_allowlist_delete():
@@ -390,7 +392,7 @@ def test_affirmative_reply_variants_all_exempted():
         assert result.reason == "affirmative_reply_to_prior_turn", reply
 
 
-def test_affirmative_reply_with_extra_text_is_NOT_exempted():
+def test_affirmative_reply_with_extra_text_is_not_exempted():
     """如果"确认继续"后面跟了实质性新动作，不应豁免。"""
     intent = SimpleNamespace(complexity=SimpleNamespace(destructive_potential=False))
 

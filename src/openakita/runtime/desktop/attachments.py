@@ -1,10 +1,5 @@
 """Desktop / IM attachment routing -- runtime helpers.
 
-Extracted from ``core/agent.py`` (P-RC-6 P6.1) as the first
-self-contained block in the 9602 LOC ``Agent`` god-module. The four
-public helpers replace the legacy private names; the legacy module
-re-imports them via aliases for byte-faithful backward compatibility.
-
 * :data:`LOCAL_UPLOAD_RE` -- matches ``/api/uploads/<name>`` URLs that
   point at the local FastAPI server (private IP or no host).
 * :data:`INLINE_IMAGE_MAX_BYTES` -- 5 MB cap on inlining local images
@@ -21,9 +16,8 @@ re-imports them via aliases for byte-faithful backward compatibility.
   safe text the agent should inject in place of binary content for
   documents / audio / generic attachments.
 
-All four functions are byte-faithful copies of the legacy private
-helpers; the parity tests in ``tests/runtime/test_desktop_attachments.py``
-(landed in P6.1b) pin this. They are intentionally pure functions
+The parity tests in ``tests/runtime/test_desktop_attachments.py`` pin their
+behavior. They are intentionally pure functions
 modulo filesystem and HTTP-upload helper IO, which makes them safe to
 unit-test in isolation.
 """
@@ -101,8 +95,8 @@ def maybe_inline_local_image(att_url: str, att_mime: str) -> str | None:
 def safe_attachment_stem(filename: str) -> str:
     """Return an ASCII-safe, 80-char-capped filename stem.
 
-    The legacy helper normalises arbitrary user filenames into a form
-    safe for filesystem persistence on Windows / macOS / Linux.
+    Normalises arbitrary user filenames into a form safe for filesystem
+    persistence on Windows, macOS, and Linux.
     """
     stem = Path(filename or "attachment").stem or "attachment"
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._")

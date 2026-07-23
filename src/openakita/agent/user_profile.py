@@ -1,9 +1,5 @@
 """用户档案管理模块。
 
-Ported from :mod:`openakita.core.user_profile` per ADR-0003 and
-the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``.
-The legacy path stays as a re-export shim until Phase 8.
-
 负责:
 - 跟踪用户信息收集状态
 - 首次使用引导
@@ -765,7 +761,15 @@ class UserProfileManager:
 
         summary = f"已收集 {collected}/{total} 项用户信息\n\n"
 
-        for category in ["basic", "tech", "communication", "habits", "business", "personal", "persona"]:
+        for category in [
+            "basic",
+            "tech",
+            "communication",
+            "habits",
+            "business",
+            "personal",
+            "persona",
+        ]:
             category_items = [item for item in self.items.values() if item.category == category]
             summary += f"**{category.title()}**:\n"
             for item in category_items:

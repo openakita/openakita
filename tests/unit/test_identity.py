@@ -9,7 +9,7 @@ import pytest
 # must target the module where ``_sync_identity_file`` actually looks the helper
 # up, i.e. the canonical agent module — patching the shim would be a no-op.
 import openakita.agent.identity as identity_mod
-from openakita.core.identity import (
+from openakita.agent.identity import (
     Identity,
     _file_hash,
     _save_hashes,

@@ -28,15 +28,17 @@ from pathlib import Path
 
 import pytest
 
-from openakita.core import reasoning_engine as re_mod
+from openakita.agent import ReasoningEngine
+from openakita.config import settings
 from openakita.core.agent_state import TaskState
 from openakita.core.cancel_cleanup import (
+    DEFAULT_TTL_SECONDS,
+    RESUME_HINT_FRESHNESS_SECONDS,
     find_orphan_tool_uses,
     has_tool_blocks,
     persist_working_messages,
     synthesize_tool_results_for_orphans,
 )
-from openakita.core.reasoning_engine import ReasoningEngine
 
 
 @pytest.fixture()
@@ -52,8 +54,8 @@ def data_dir(monkeypatch):
     # ``settings.data_dir`` is a read-only computed property (== project_root /
     # "data"); redirect it by pointing project_root at a temp dir.
     with tempfile.TemporaryDirectory() as d:
-        monkeypatch.setattr(re_mod.settings, "project_root", Path(d))
-        yield re_mod.settings.data_dir
+        monkeypatch.setattr(settings, "project_root", Path(d))
+        yield settings.data_dir
 
 
 def _tool_turn() -> list[dict]:
@@ -369,7 +371,7 @@ class TestLoadAndMerge:
         # as a crash leftover and not resumed (return None → text-history fallback).
         persist_working_messages("conv-old", _tool_turn(), base_dir=data_dir)
         f = data_dir / "working_messages" / "conv-old.json"
-        long_ago = time.time() - (re_mod.DEFAULT_TTL_SECONDS + 600)
+        long_ago = time.time() - (DEFAULT_TTL_SECONDS + 600)
         import os
 
         os.utime(f, (long_ago, long_ago))
@@ -388,7 +390,7 @@ class TestLoadAndMerge:
         freshness, matching the reference projects (none discard tools by age)."""
         persist_working_messages("conv-stale", _tool_turn(), base_dir=data_dir)
         f = data_dir / "working_messages" / "conv-stale.json"
-        stale = time.time() - (re_mod.RESUME_HINT_FRESHNESS_SECONDS + 600)
+        stale = time.time() - (RESUME_HINT_FRESHNESS_SECONDS + 600)
         import os
 
         os.utime(f, (stale, stale))

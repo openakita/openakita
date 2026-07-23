@@ -64,7 +64,7 @@ class ProfileHandler:
           ``profile_fallback`` 全局 fact 记忆（那条路径是跨会话身份污染的元凶，
           见 2026-05-09 P0-2）。返回明确错误并提示 LLM 用其它工具记录。
         """
-        from ...core.user_profile import resolve_profile_key
+        from openakita.agent.user_profile import resolve_profile_key
 
         try:
             from ...core.feature_flags import is_enabled as _ff_enabled

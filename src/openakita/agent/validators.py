@@ -1,12 +1,5 @@
 """Deterministic validators for the Agent harness.
 
-Ported from :mod:`openakita.core.validators` per ADR-0003 and the
-Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy module path is retained as a re-export shim until Phase 8
-mechanical cleanup so the live test suite (``tests/unit/test_filesystem_move_file.py``,
-``tests/unit/test_org_delegation_validator.py``) keeps working
-unchanged.
-
 Mix deterministic checks with the optional LLM judge so verify
 does not over-rely on the LLM. The validators here use rules,
 file checks, exit codes — no LLM calls.
@@ -225,9 +218,7 @@ class ArtifactValidator(BaseValidator):
             r for r in context.delivery_receipts if r.get("status") in self._SUCCESS_STATUSES
         ]
         failed = [
-            r
-            for r in context.delivery_receipts
-            if r.get("status") not in self._SUCCESS_STATUSES
+            r for r in context.delivery_receipts if r.get("status") not in self._SUCCESS_STATUSES
         ]
 
         if failed:

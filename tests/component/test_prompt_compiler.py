@@ -287,7 +287,7 @@ class TestAgentResolveVoice:
 
     def _make_stub_agent(self):
         """Return a bare-Agent instance bypassing __init__ for helper-only tests."""
-        from openakita.core.agent import Agent
+        from openakita.agent import Agent
 
         return Agent.__new__(Agent)
 

@@ -10,12 +10,11 @@ from pathlib import Path
 # 确保项目在 path 中 (脚本在 scripts/ 目录下)
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from openakita.tools.shell import ShellTool
-from openakita.tools.file import FileTool
-from openakita.tools.web import WebTool
-from openakita.testing.judge import Judge
-from openakita.core.agent import Agent
+from openakita.agent import Agent
 from openakita.prompt.retriever import retrieve_memory
+from openakita.testing.judge import Judge
+from openakita.tools.file import FileTool
+from openakita.tools.shell import ShellTool
 
 
 async def test_shell():
@@ -59,7 +58,6 @@ async def test_file():
     print("=" * 60)
 
     file = FileTool()
-    judge = Judge()
 
     passed = 0
     total = 3

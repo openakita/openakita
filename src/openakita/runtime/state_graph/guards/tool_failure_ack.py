@@ -1,7 +1,6 @@
 """Tool-failure acknowledgement guard + successful-tool name aggregator.
 
-Extracted from ``core/reasoning_engine.py`` (P-RC-5 P5.3) as the
-second self-contained guard. Both helpers share the same concern --
+Both helpers share the same concern --
 filtering tool-call receipts and matching them against the LLM’s
 final-answer text -- so they live in one module.
 
@@ -14,12 +13,7 @@ final-answer text -- so they live in one module.
   to those whose latest receipt was NOT an error (a tool that failed
   then succeeded on retry counts as "succeeded").
 
-Both functions are intentionally byte-for-byte equivalent to their
-legacy counterparts (``_FAILURE_ACKNOWLEDGE_ZH`` /
-``_FAILURE_ACKNOWLEDGE_EN`` tuples are identical word lists, and the
-banner string is identical); the parity tests pin this against the
-legacy private aliases that ``core/reasoning_engine.py`` re-imports
-from here.
+The parity tests pin the acknowledgement word lists and banner text.
 """
 
 from __future__ import annotations
@@ -146,6 +140,7 @@ def check_tool_failure_acknowledgement(
         "请你核对结果，必要时让我重试或换种方式。"
     )
 
+
 def successful_tool_names(
     executed_tool_names: list[str],
     tool_results: list[dict] | None,
@@ -170,5 +165,3 @@ def successful_tool_names(
     # receipt as backing evidence, while tools without result entries keep the
     # historical optimistic behavior.
     return {name for name in executed if name not in seen or name in succeeded}
-
-

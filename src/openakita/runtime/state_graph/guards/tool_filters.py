@@ -1,6 +1,5 @@
 """Tool-filter guards: mode/intent rulesets and shell-write detection.
 
-Pulled out of legacy ``core/reasoning_engine.py`` (P-RC-5 / P5.8a).
 The six symbols below decide which tools the engine is allowed to
 show or invoke based on the active mode and intent, plus a shell-
 write detector for the ``ask``/``plan`` guard. Permission imports
@@ -15,7 +14,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ....core.permission import Ruleset as PermissionRuleset
+    from openakita.agent.permission import Ruleset as PermissionRuleset
 
 __all__ = [
     "SHELL_WRITE_PATTERNS",
@@ -30,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 def get_mode_ruleset(mode: str) -> PermissionRuleset:
     """Get the permission ruleset for the given mode."""
-    from ....core.permission import (
+    from openakita.agent.permission import (
         ASK_MODE_RULESET,
         COORDINATOR_MODE_RULESET,
         DEFAULT_RULESET,
@@ -50,7 +49,7 @@ def filter_tools_by_mode(tools: list[dict], mode: str) -> list[dict]:
     """Filter tool list using the permission ruleset of the active mode."""
     if mode == "agent" or not tools:
         return tools
-    from ....core.permission import disabled as permission_disabled
+    from openakita.agent.permission import disabled as permission_disabled
 
     ruleset = get_mode_ruleset(mode)
     tool_names = [(t.get("name", "") or t.get("function", {}).get("name", "")) for t in tools]

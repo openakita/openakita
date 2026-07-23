@@ -1,8 +1,4 @@
-"""文件历史与回滚系统
-
-Ported from :mod:`openakita.core.file_history` per ADR-0003 and
-the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy path stays as a re-export shim until Phase 8.
+"""文件历史与回滚系统。
 
 参考 Claude Code 的 fileHistory.ts 设计:
 

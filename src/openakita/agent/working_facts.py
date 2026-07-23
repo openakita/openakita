@@ -1,6 +1,6 @@
 """Session-scoped short-term working facts.
 
-Ported from ``openakita.core.working_facts`` per ADR-0003 and the
+Ported from ``openakita.agent.working_facts`` per ADR-0003 and the
 Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The module
 is intentionally tiny and side-effect-free: extract user-asserted
 facts (a "test code", a temporary name, ...) from a single message
@@ -29,9 +29,7 @@ __all__ = [
 _FACT_PATTERNS = [
     (
         "test_code",
-        re.compile(
-            r"(?:测试代号|测试代码|代号)\s*(?:是|为|=|:)\s*([A-Za-z0-9_.-]{2,64})"
-        ),
+        re.compile(r"(?:测试代号|测试代码|代号)\s*(?:是|为|=|:)\s*([A-Za-z0-9_.-]{2,64})"),
     ),
     (
         "temporary_name",
@@ -43,9 +41,7 @@ _FACT_PATTERNS = [
 ]
 
 
-def extract_working_facts(
-    message: str, *, source_turn: int = 0
-) -> dict[str, dict[str, Any]]:
+def extract_working_facts(message: str, *, source_turn: int = 0) -> dict[str, dict[str, Any]]:
     """Pull short-term working facts out of a single user message.
 
     Returns ``{key: {value, source_turn, updated_at}}`` for every

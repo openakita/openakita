@@ -14,6 +14,11 @@ from typing import Any
 
 import pytest
 
+from openakita.agent.trusted_paths import (
+    SESSION_KEY,
+    consume_session_trust,
+    grant_session_trust,
+)
 from openakita.core.policy_v2 import (
     BUILTIN_SAFETY_IMMUNE_BY_CATEGORY,
     BUILTIN_SAFETY_IMMUNE_PATHS,
@@ -29,11 +34,6 @@ from openakita.core.policy_v2 import (
     ToolCallEvent,
     build_policy_context,
     expand_builtin_immune_paths,
-)
-from openakita.core.trusted_paths import (
-    SESSION_KEY,
-    consume_session_trust,
-    grant_session_trust,
 )
 
 # ---------------------------------------------------------------------------
@@ -416,7 +416,7 @@ class TestImPrefixSseFlow:
         C8b-3: PolicyEngine no longer exposes prepare/cleanup facade — test
         directly against ``UIConfirmBus``.
         """
-        from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
+        from openakita.agent.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
         reset_ui_confirm_bus()
         bus = get_ui_confirm_bus()
@@ -429,7 +429,7 @@ class TestImPrefixSseFlow:
 
     def test_prepare_ui_confirm_reissues_after_resolution(self) -> None:
         """If id was already resolved, prepare should issue a fresh Event."""
-        from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
+        from openakita.agent.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
         reset_ui_confirm_bus()
         bus = get_ui_confirm_bus()
@@ -446,7 +446,7 @@ class TestImPrefixSseFlow:
 
     def test_is_im_conversation_helper_still_recognizes_prefixes(self) -> None:
         """Helper is now used for timeout heuristic, not for early-exit."""
-        from openakita.core._reasoning_engine_legacy import _is_im_conversation
+        from openakita.core._reasoning_runtime import _is_im_conversation
 
         assert _is_im_conversation("telegram:1234") is True
         assert _is_im_conversation("feishu:abc") is True

@@ -8,7 +8,7 @@ Sprint-5 left half-wired. The Sprint-5 commit (5960bf3e) routed
 v1 to have populated that global with 20 system handlers. v17 audit
 proved the assumption wrong: every ``register_handler(...)`` call in
 the codebase points at **per-Agent** ``self.handler_registry`` (see
-``core/_agent_legacy.py:1099-1101 + 2216-2285``); the global was an
+``core/_agent_runtime.py:1099-1101 + 2216-2285``); the global was an
 empty :class:`SystemHandlerRegistry` lookup cache used by
 ``policy_v2`` for approval-class metadata only. Result: every D4
 ``execute_by_tool`` call raised ``ValueError: No handler mapped for

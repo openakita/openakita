@@ -33,7 +33,7 @@ class TestUserCancelledError:
 
     def test_basic_creation(self):
         """基本创建"""
-        from openakita.core.errors import UserCancelledError
+        from openakita.agent.errors import UserCancelledError
 
         err = UserCancelledError(reason="停止", source="llm_call")
         assert err.reason == "停止"
@@ -43,7 +43,7 @@ class TestUserCancelledError:
 
     def test_default_values(self):
         """默认值"""
-        from openakita.core.errors import UserCancelledError
+        from openakita.agent.errors import UserCancelledError
 
         err = UserCancelledError()
         assert err.reason == ""
@@ -51,7 +51,7 @@ class TestUserCancelledError:
 
     def test_is_exception(self):
         """是 Exception 子类"""
-        from openakita.core.errors import UserCancelledError
+        from openakita.agent.errors import UserCancelledError
 
         assert issubclass(UserCancelledError, Exception)
 
@@ -149,7 +149,7 @@ class TestCancellableLlmCall:
     @pytest.mark.asyncio
     async def test_normal_completion(self):
         """LLM 正常返回时 _cancellable_llm_call 返回结果"""
-        from openakita.core.errors import UserCancelledError
+        from openakita.agent.errors import UserCancelledError
 
         mock_response = MagicMock()
         mock_response.content = [MagicMock(type="text", text="回复内容")]
@@ -173,7 +173,7 @@ class TestCancellableLlmCall:
     @pytest.mark.asyncio
     async def test_cancel_interrupts(self):
         """cancel_event 触发时 _cancellable_llm_call 抛出 UserCancelledError"""
-        from openakita.core.errors import UserCancelledError
+        from openakita.agent.errors import UserCancelledError
 
         async def slow_llm(**kwargs):
             await asyncio.sleep(10)
@@ -323,7 +323,7 @@ class TestReasonWithHeartbeatCancel:
     @pytest.mark.asyncio
     async def test_cancel_during_reason(self):
         """LLM 推理期间取消应抛出 UserCancelledError"""
-        from openakita.core.errors import UserCancelledError
+        from openakita.agent.errors import UserCancelledError
         from openakita.core.agent_state import AgentState, TaskStatus
 
         agent_state = AgentState()

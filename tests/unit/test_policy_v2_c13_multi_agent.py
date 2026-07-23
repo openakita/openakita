@@ -31,11 +31,10 @@ from pathlib import Path
 
 import pytest
 
+from openakita.agent.ui_confirm_bus import UIConfirmBus
+from openakita.core._reasoning_runtime import _compute_confirm_dedup_key
 from openakita.core.policy_v2 import PolicyContext
 from openakita.core.policy_v2.adapter import build_policy_context
-from openakita.core._reasoning_engine_legacy import _compute_confirm_dedup_key
-from openakita.core.ui_confirm_bus import UIConfirmBus
-
 
 # ---------------------------------------------------------------------------
 # Phase A: parent_ctx inheritance in build_policy_context
@@ -434,7 +433,7 @@ def test_tool_executor_security_confirm_marker_has_no_c13_fields() -> None:
     contributor 不会重蹈覆辙。"""
     import inspect
 
-    import openakita.core._tool_executor_legacy as te
+    import openakita.core._tool_runtime as te
 
     src = inspect.getsource(te)
     # 找到 _security_confirm 块

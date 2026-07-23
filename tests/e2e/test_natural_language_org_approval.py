@@ -9,15 +9,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from openakita.api.routes.pending_approvals import _resume_task
-from openakita.config import settings
-from openakita.core.agent import Agent
-from openakita.core.agent_state import AgentState
-from openakita.core.intent_analyzer import IntentResult, IntentType
-from openakita.core.pending_approvals import (
+from openakita.agent import Agent, ReasoningEngine, ToolExecutor
+from openakita.agent.pending_approvals import (
     get_pending_approvals_store,
     reset_pending_approvals_store,
 )
+from openakita.api.routes.pending_approvals import _resume_task
+from openakita.config import settings
+from openakita.core.agent_state import AgentState
+from openakita.core.intent_analyzer import IntentResult, IntentType
 from openakita.core.policy_v2 import (
     ConfirmationMode,
     PolicyConfigV2,
@@ -31,8 +31,6 @@ from openakita.core.policy_v2 import (
     set_engine_v2,
 )
 from openakita.core.policy_v2.exceptions import DeferredApprovalRequired
-from openakita.core.reasoning_engine import ReasoningEngine
-from openakita.core.tool_executor import ToolExecutor
 from openakita.orgs.manager import OrgManager
 from openakita.orgs.store import get_default_org_manager, set_default_org_manager
 from openakita.scheduler.task import ScheduledTask, TaskStatus, TriggerType

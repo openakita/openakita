@@ -10,8 +10,8 @@
 7. 技能重载
 """
 
-import pytest
 import httpx
+import pytest
 
 from openakita.api.server import create_app
 
@@ -76,7 +76,8 @@ class TestSkillWithSlashName:
 
     async def test_nested_slash_skill_name(self, client):
         resp = await client.get("/api/skills/content/org/sub/skill-name")
-        assert resp.status_code != 404
+        assert resp.status_code == 404
+        assert "not found" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -104,9 +105,8 @@ class TestGetSkillContent:
 
     async def test_get_nonexistent_skill_returns_error(self, client):
         resp = await client.get("/api/skills/content/__nonexistent_skill_xyz__")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "error" in data
+        assert resp.status_code == 404
+        assert "not found" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

@@ -1647,7 +1647,7 @@ async def generate_title(request: Request, body: GenerateTitleRequest):
 async def active_confirms(conversation_id: str):
     _validate_id(conversation_id, "conversation_id")
     try:
-        from openakita.core.ui_confirm_bus import get_ui_confirm_bus
+        from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
 
         bus = get_ui_confirm_bus()
         return {"confirms": bus.active_confirms_for_session(conversation_id)}

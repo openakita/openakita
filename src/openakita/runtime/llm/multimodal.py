@@ -1,13 +1,7 @@
 """Multimodal block conversion between LLM-client types and Anthropic types.
 
-The legacy ``openakita.core.brain.Brain`` carried three large helpers
-(``_convert_messages_to_llm`` 213 LOC, ``_convert_tools_to_llm`` 125 LOC,
-``_convert_response_to_anthropic`` 87 LOC) that bridged the unified
-``openakita.llm.types`` block representation with the Anthropic API
-shape. They were stapled to Brain only because Brain owned the
-``Anthropic*`` imports; the conversion itself is pure data shuffling.
-
-This module is the v2 home for those conversions. Three goals:
+This module bridges the unified ``openakita.llm.types`` block representation
+with the Anthropic API shape. Three goals:
 
 * keep the conversion *pure* -- no Brain dependencies, no I/O;
 * be the single source of truth for the
@@ -17,10 +11,7 @@ This module is the v2 home for those conversions. Three goals:
   that already plagued duplicate-storyboard bugs in v1);
 * be unit-testable against synthetic ``LLMResponse`` fixtures.
 
-The agent rewrite in P-RC-4 (``openakita.agent.brain``) calls into
-this module directly; the legacy ``core.brain.Brain`` delegates
-``_convert_response_to_anthropic`` here so the round-trip stays
-byte-faithful through the cutover.
+``openakita.agent.brain`` calls this module directly.
 """
 
 from __future__ import annotations
@@ -40,8 +31,7 @@ from openakita.llm.types import (
     ToolUseBlock,
 )
 
-# Canonical map. The legacy Brain duplicated this dict three times in
-# three different shapes; we centralise it here so a new ``StopReason``
+# Canonical map. A new ``StopReason``
 # (added e.g. for a new provider) needs one edit in one place.
 _STOP_REASON_MAP: dict[StopReason, str] = {
     StopReason.END_TURN: "end_turn",
@@ -54,9 +44,8 @@ _STOP_REASON_MAP: dict[StopReason, str] = {
 def map_stop_reason(stop_reason: StopReason) -> str:
     """Project an :class:`openakita.llm.types.StopReason` to the Anthropic string.
 
-    Unknown reasons fall back to ``"end_turn"`` -- this matches the
-    legacy default and keeps API consumers from seeing surprise
-    enum values.
+    Unknown reasons fall back to ``"end_turn"`` so API consumers do not see
+    unexpected enum values.
     """
     return _STOP_REASON_MAP.get(stop_reason, "end_turn")
 

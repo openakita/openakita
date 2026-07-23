@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from openakita.core.validators import FileValidator, ValidationContext, ValidationResult
+from openakita.agent.validators import FileValidator, ValidationContext, ValidationResult
 from openakita.tools.file import FileTool
 from openakita.tools.handlers.filesystem import FilesystemHandler
 

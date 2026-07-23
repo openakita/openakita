@@ -27,8 +27,8 @@ from __future__ import annotations
 import inspect
 import re
 
+from openakita.agent import ReasoningEngine
 from openakita.core.agent_state import TaskState
-from openakita.core.reasoning_engine import ReasoningEngine
 
 
 class TestBuildUserInsertMessage:

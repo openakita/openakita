@@ -241,7 +241,7 @@ class TemplateRegistry:
 
         # Derive parent_id from HIERARCHY edges *before* constructing
         # NodeV2s so OrgV2.children_of() and OrgV2.root_nodes() return
-        # correct trees on the produced org. The legacy v1 schema
+        # correct trees on the produced org. The v1 schema
         # carried parent_id as the canonical hierarchy field; v2 made
         # edges canonical but kept ``NodeV2.parent_id`` as a cache for
         # fast tree traversals (used by the IM dispatcher and the

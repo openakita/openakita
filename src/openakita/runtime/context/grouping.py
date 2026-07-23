@@ -1,15 +1,12 @@
 """Group flat messages into tool-call interaction units.
 
-Extracted from :func:`openakita.core.context_manager.ContextManager.group_messages`
-in P-RC-4 (P4.13). The legacy version was a 60-LOC staticmethod that
-walked the message list and combined an ``assistant`` message with
+The helper walks the message list and combines an ``assistant`` message with
 ``tool_use`` blocks together with its following ``tool_result``
 messages into a single "group". Summariser and truncator passes use
 the grouping to avoid splitting a tool call from its result -- an
 LLM contract violation.
 
-Pure function: no side effects, no I/O, no dependency on the legacy
-class.
+It is a pure function with no side effects or I/O.
 """
 
 from __future__ import annotations
@@ -18,12 +15,12 @@ from __future__ import annotations
 def group_messages(messages: list[dict]) -> list[list[dict]]:
     """Partition ``messages`` into tool-interaction groups.
 
-    Rules (byte-faithful with the legacy implementation):
+    Rules:
 
     * an ``assistant`` message carrying any ``tool_use`` blocks
       starts a group; subsequent ``user`` messages whose content is
       a list of ``tool_result`` blocks (only) are appended to it;
-      ``tool`` role messages (legacy OpenAI shape) are also
+      ``tool`` role messages (older OpenAI shape) are also
       appended;
     * any other message stands alone as a single-element group.
     """
@@ -41,8 +38,7 @@ def group_messages(messages: list[dict]) -> list[list[dict]]:
         has_tool_calls = False
         if role == "assistant" and isinstance(content, list):
             has_tool_calls = any(
-                isinstance(item, dict) and item.get("type") == "tool_use"
-                for item in content
+                isinstance(item, dict) and item.get("type") == "tool_use" for item in content
             )
 
         if has_tool_calls:
@@ -55,8 +51,7 @@ def group_messages(messages: list[dict]) -> list[list[dict]]:
 
                 if next_role == "user" and isinstance(next_content, list):
                     all_tool_results = all(
-                        isinstance(item, dict)
-                        and item.get("type") == "tool_result"
+                        isinstance(item, dict) and item.get("type") == "tool_result"
                         for item in next_content
                         if isinstance(item, dict)
                     )

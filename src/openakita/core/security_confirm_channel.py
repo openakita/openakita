@@ -89,7 +89,7 @@ def register_policy_confirm(
         policy_metadata=policy_metadata,
     )
 
-    from .ui_confirm_bus import get_ui_confirm_bus
+    from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
 
     bus = get_ui_confirm_bus()
     event.update(
@@ -132,10 +132,7 @@ def build_security_confirm_event(
     kind: str | None = None,
 ) -> dict[str, Any]:
     default_on_timeout = require_security_confirm_timeout_default(default_on_timeout)
-    options = [
-        require_security_confirm_decision(option, allow_timeout=False)
-        for option in options
-    ]
+    options = [require_security_confirm_decision(option, allow_timeout=False) for option in options]
     event: dict[str, Any] = {
         "type": "security_confirm",
         "source": source,

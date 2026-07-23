@@ -1,9 +1,8 @@
 """L1 Unit Tests: PersonaManager preset loading and trait management."""
 
 import pytest
-from pathlib import Path
 
-from openakita.core.persona import PersonaManager
+from openakita.agent.persona import PersonaManager
 
 
 @pytest.fixture

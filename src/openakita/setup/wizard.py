@@ -63,7 +63,7 @@ def _resolve_identity_template(rel_name: str) -> Path | None:
     Thin wrapper over ``core.identity._resolve_bundled_identity_template`` so
     wizard-time and runtime template lookup share a single source of truth.
     """
-    from openakita.core.identity import _resolve_bundled_identity_template
+    from openakita.agent.identity import _resolve_bundled_identity_template
 
     return _resolve_bundled_identity_template(rel_name)
 
@@ -1301,9 +1301,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         # Scheduler timezone (the scheduler is always available)
         console.print("\n[bold]Scheduler Configuration:[/bold]")
         defaults = getattr(self, "_defaults", {})
-        tz = Prompt.ask(
-            "  Timezone", default=defaults.get("SCHEDULER_TIMEZONE", "Asia/Shanghai")
-        )
+        tz = Prompt.ask("  Timezone", default=defaults.get("SCHEDULER_TIMEZONE", "Asia/Shanghai"))
         self.config["SCHEDULER_TIMEZONE"] = tz
 
         # Network proxy

@@ -1,9 +1,4 @@
-"""Controlled service layer for security and skill allowlist actions.
-
-Ported from :mod:`openakita.core.security_actions` per ADR-0003
-and the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``.
-The legacy path stays as a re-export shim until Phase 8.
-"""
+"""Controlled service layer for security and skill allowlist actions."""
 
 from __future__ import annotations
 

@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from openakita.api.routes import (
-    _orgs_v2_legacy_redirects,
+    _orgs_v2_deprecated_redirects,
     orgs_v2,
     orgs_v2_runtime,
     orgs_v2_stream,
@@ -45,7 +45,7 @@ def shim_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[TestClien
     app.include_router(orgs_v2.router)
     app.include_router(orgs_v2_stream.router)
     app.include_router(orgs_v2_runtime.router)
-    app.include_router(_orgs_v2_legacy_redirects.router)
+    app.include_router(_orgs_v2_deprecated_redirects.router)
     with TestClient(app, follow_redirects=False) as c:
         yield c
 
@@ -60,7 +60,7 @@ def spec_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[TestClien
     app.include_router(orgs_v2.router)
     app.include_router(orgs_v2_stream.router)
     app.include_router(orgs_v2_runtime.router)
-    app.include_router(_orgs_v2_legacy_redirects.router)
+    app.include_router(_orgs_v2_deprecated_redirects.router)
     with TestClient(app) as c:
         yield c
 
@@ -113,7 +113,10 @@ def test_legacy_instantiate_post_returns_308_preserves_method(
     assert resp.headers["Location"] == "/api/v2/orgs-spec/templates/software_team/instantiate"
 
 
-@pytest.mark.xfail(reason="308 redirect shim returns 503 in v2.0.0; retirement locked for v2.1.0 per ADR-0015", strict=False)
+@pytest.mark.xfail(
+    reason="308 redirect shim returns 503 in v2.0.0; retirement locked for v2.1.0 per ADR-0015",
+    strict=False,
+)
 def test_legacy_patch_org_returns_308(shim_client: TestClient) -> None:
     resp = shim_client.patch("/api/v2/orgs/org_dummy", json={"name": "x"})
     assert resp.status_code == 308
@@ -137,14 +140,20 @@ def test_legacy_create_post_now_claimed_by_mint(shim_client: TestClient) -> None
     assert "Location" not in resp.headers
 
 
-@pytest.mark.xfail(reason="308 redirect shim returns 503 in v2.0.0; retirement locked for v2.1.0 per ADR-0015", strict=False)
+@pytest.mark.xfail(
+    reason="308 redirect shim returns 503 in v2.0.0; retirement locked for v2.1.0 per ADR-0015",
+    strict=False,
+)
 def test_legacy_stream_returns_308(shim_client: TestClient) -> None:
     resp = shim_client.get("/api/v2/orgs/org_dummy/stream")
     assert resp.status_code == 308
     assert resp.headers["Location"] == "/api/v2/orgs-spec/org_dummy/stream"
 
 
-@pytest.mark.xfail(reason="308 redirect shim returns 503 in v2.0.0; retirement locked for v2.1.0 per ADR-0015", strict=False)
+@pytest.mark.xfail(
+    reason="308 redirect shim returns 503 in v2.0.0; retirement locked for v2.1.0 per ADR-0015",
+    strict=False,
+)
 def test_redirect_preserves_query_string_for_unclaimed_path(
     shim_client: TestClient,
 ) -> None:
@@ -177,9 +186,7 @@ def test_legacy_unclaimed_path_followed_yields_same_shape_as_spec(
     The redirect identity assertion now runs on ``/templates/X/instantiate``
     which the mint does NOT claim and still falls through to Group A."""
     old = spec_client.post("/api/v2/orgs/templates/software_team/instantiate", json={})
-    new = spec_client.post(
-        "/api/v2/orgs-spec/templates/software_team/instantiate", json={}
-    )
+    new = spec_client.post("/api/v2/orgs-spec/templates/software_team/instantiate", json={})
     assert old.status_code == new.status_code
     assert old.json() == new.json()
 

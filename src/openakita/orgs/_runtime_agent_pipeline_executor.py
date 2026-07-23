@@ -283,12 +283,12 @@ class _AgentRunCallable(Protocol):
     v2 stays decoupled from concrete Agent / Brain types: the
     executor only calls ``await agent.run(content)`` and
     expects a string-coercible response. Concrete agents
-    (e.g. ``openakita.core.agent.Agent``) already match.
+    (e.g. ``openakita.agent.Agent``) already match.
 
     Sprint-13 H1: production agents may optionally accept a
     ``cancel_event`` keyword. The executor probes the runtime
-    signature so legacy implementations without the kwarg keep
-    working byte-for-byte; only callables that opt in receive the
+    signature so implementations without the kwarg keep working; only
+    callables that opt in receive the
     event and are expected to thread it down to
     ``Brain.messages_create_async`` and ``LLMClient.chat``.
     """
@@ -607,9 +607,7 @@ class AgentPipelineExecutor:
         # empty-text node from its on-disk deliverable.
         run_start_ts = time.time()
         rendered_upstream = _render_upstream_context(resolved_upstream_context)
-        run_content = (
-            f"{content}\n\n{rendered_upstream}" if rendered_upstream else content
-        )
+        run_content = f"{content}\n\n{rendered_upstream}" if rendered_upstream else content
         try:
             # Sprint-13 H1 (RC-4 §6 H1): forward ``cancel_event`` so
             # the agent's ``run`` (and through it
@@ -1282,9 +1280,7 @@ class AgentPipelineExecutor:
                     output=last_output,
                     reason_code="delivery_state_in_progress",
                     delivery_manifest=(
-                        dict(delivery_manifest)
-                        if isinstance(delivery_manifest, Mapping)
-                        else None
+                        dict(delivery_manifest) if isinstance(delivery_manifest, Mapping) else None
                     ),
                 )
             evidence_failures = validate_manifest_runtime_evidence(
@@ -1360,9 +1356,7 @@ class AgentPipelineExecutor:
                 return DelegationExecutionResult.completed(
                     last_output,
                     delivery_manifest=(
-                        dict(delivery_manifest)
-                        if isinstance(delivery_manifest, Mapping)
-                        else None
+                        dict(delivery_manifest) if isinstance(delivery_manifest, Mapping) else None
                     ),
                 )
             if attempt >= rework_max:
@@ -1391,9 +1385,7 @@ class AgentPipelineExecutor:
                     reason=reason,
                     output=last_output,
                     delivery_manifest=(
-                        dict(delivery_manifest)
-                        if isinstance(delivery_manifest, Mapping)
-                        else None
+                        dict(delivery_manifest) if isinstance(delivery_manifest, Mapping) else None
                     ),
                 )
             attempt += 1

@@ -258,8 +258,8 @@ _NON_ACTION_DISCUSSION_RE = re.compile(
 # 来源：
 #   - openakita/orgs/runtime.py::_format_incoming_message  (13 种 [收到xxx])
 #   - openakita/orgs/runtime.py::_push_summary_command_to_root ([用户指令最终汇总])
-#   - openakita/core/reasoning_engine.py 多处自注入  ([系统] / [系统提示])
-#   - openakita/core/agent.py::_prepare_session_context  ([以上是之前的对话历史)
+#   - openakita/core/_reasoning_runtime.py 多处自注入  ([系统] / [系统提示])
+#   - openakita/core/_agent_runtime.py::_prepare_session_context  ([以上是之前的对话历史)
 ORG_SYNTH_PREFIXES: tuple[str, ...] = (
     # reasoning_engine / agent 自注入
     "[系统]",

@@ -1,9 +1,5 @@
 """LSP 集成: 语言服务器诊断作为被动反馈。
 
-Ported from :mod:`openakita.core.lsp_feedback` per ADR-0003 and
-the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy path stays as a re-export shim until Phase 8.
-
 参考 Claude Code 的诊断反馈设计:
 
 * 工具执行后自动收集相关文件的 lint/type-check 信息

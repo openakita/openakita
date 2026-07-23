@@ -1,10 +1,5 @@
 """Permission system — code-level tool and path access control.
 
-Ported from :mod:`openakita.core.permission` per ADR-0003 and the
-Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. Behaviour
-is unchanged; only the import location moved. The legacy path is
-now a re-export shim and stays in place until Phase 8 cleanup.
-
 The module implements OpenCode's PermissionNext architecture:
 
 * **Rules**: ``(permission, pattern, action)`` triples.
@@ -19,7 +14,7 @@ The permission system is layered on top of existing tool filtering
 filter**), and the unified entry point :func:`check_permission`
 walks mode rules → AgentProfile extra rules → PolicyEngine v2.
 
-The ``policy_v2`` sub-package stays at its legacy ``core/`` home
+The ``policy_v2`` sub-package stays at its previous ``core/`` home
 (it is in the "KEEP" bucket of ``core_audit.md``), so the
 ``from openakita.core.policy_v2.*`` imports here are deliberate
 and not subject to the Phase 8 import-path sweep.
@@ -317,7 +312,7 @@ def check_permission(
     try:
         from openakita.core.policy_v2.adapter import (
             V2_TO_V1_DECISION,
-            build_metadata_for_legacy_callers,
+            build_policy_metadata,
             build_policy_name,
             evaluate_via_v2,
         )
@@ -337,7 +332,7 @@ def check_permission(
             reason=decision.reason,
             reason_detail=f"policy={_policy_label}",
             policy_name=_policy_label,
-            metadata=build_metadata_for_legacy_callers(decision),
+            metadata=build_policy_metadata(decision),
             decision_chain=chain,
         )
     except Exception as e:

@@ -1,6 +1,6 @@
 import pytest
 
-from openakita.core._reasoning_engine_legacy import ReasoningEngine
+from openakita.core._reasoning_runtime import ReasoningEngine
 from openakita.llm.providers.openai import (
     REMOTE_STREAM_READ_TIMEOUT_CAP_SECONDS,
     OpenAIProvider,

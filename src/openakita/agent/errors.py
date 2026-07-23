@@ -1,11 +1,5 @@
 """Agent-package exceptions for the v2 stack.
 
-Ported from ``openakita.core.errors`` per ADR-0003 and the Phase 2
-sub-commit plan in ``docs/revamp/core_audit.md``. The legacy module
-becomes a thin re-export shim until Phase 8 mechanically removes it,
-so every existing caller (``llm/client.py``, ``orgs/runtime.py``, the
-test suite, etc.) keeps working without an import-graph edit.
-
 Only one exception lives here: :class:`UserCancelledError`. The richer
 :class:`openakita.tools.errors.ToolError` taxonomy is unrelated and
 stays in :mod:`openakita.tools.errors`.

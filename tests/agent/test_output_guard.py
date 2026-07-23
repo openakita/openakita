@@ -67,7 +67,8 @@ def test_detect_numeric_output_positive(text: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "text", ["完成", "我已经分析了你的需求", ""],
+    "text",
+    ["完成", "我已经分析了你的需求", ""],
 )
 def test_detect_numeric_output_negative(text: str) -> None:
     assert detect_numeric_output(text) is False
@@ -117,16 +118,3 @@ def test_empty_output_short_circuits() -> None:
     )
     assert triggered is False
     assert augmented == ""
-
-
-# ---------------------------------------------------------------------------
-# Move-compat
-# ---------------------------------------------------------------------------
-
-
-def test_legacy_path_re_exports_same_callables() -> None:
-    from openakita.core.agent_output_guard import (
-        validate_no_fabricated_numbers as legacy,
-    )
-
-    assert legacy is validate_no_fabricated_numbers

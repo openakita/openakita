@@ -1,10 +1,5 @@
 """Sub-agent output guard for hallucinated numerical conclusions.
 
-Ported from ``openakita.core.agent_output_guard`` per ADR-0003 and
-the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-behaviour is unchanged; the legacy path is now a re-export shim
-until Phase 8 mechanically removes the legacy ``core/`` tree.
-
 The guard performs a *conservative* runtime check on
 ``delegate_to_agent`` / ``spawn_agent`` outputs to catch the
 "announced a probability without running any code" failure mode.
@@ -22,7 +17,7 @@ A short disclaimer is appended so the parent agent (or a human
 reviewer) can decide whether to ask for verification.
 
 Rationale and design notes are deliberately kept verbatim from the
-legacy module: this is the kind of lightweight heuristic that needs
+previous module: this is the kind of lightweight heuristic that needs
 to look the same in code review and in CI smoke output, otherwise
 operators will not trust it.
 """

@@ -41,14 +41,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from openakita.api.routes import _orgs_v2_legacy_redirects, orgs_v2
+from openakita.api.routes import _orgs_v2_deprecated_redirects, orgs_v2
 from openakita.channels.gateway import MessageGateway
 from openakita.config import settings
+from openakita.orgs import reset_default_store
 from openakita.runtime import channel_routing as cr_module
-from openakita.runtime import supervisor as sup_module
 from openakita.runtime.cancel_token import CancelledByToken
 from openakita.runtime.checkpoint import CheckpointStatus, MemoryCheckpointer
-from openakita.orgs import reset_default_store
 from openakita.runtime.supervisor import SupervisorBrain
 from tests.fixtures.factories import create_channel_message
 
@@ -71,14 +70,17 @@ class _SatisfyingBrain(SupervisorBrain):
 
     async def emit_progress_ledger(self, **kw: Any) -> str:
         import json
+
         self.progress_calls += 1
-        return json.dumps({
-            "is_request_satisfied":    {"answer": True,  "reason": "done"},
-            "is_progress_being_made":  {"answer": True,  "reason": "-"},
-            "is_in_loop":              {"answer": False, "reason": "-"},
-            "instruction_or_question": {"answer": "ok",  "reason": "-"},
-            "next_speaker":            {"answer": "supervisor", "reason": "-"},
-        })
+        return json.dumps(
+            {
+                "is_request_satisfied": {"answer": True, "reason": "done"},
+                "is_progress_being_made": {"answer": True, "reason": "-"},
+                "is_in_loop": {"answer": False, "reason": "-"},
+                "instruction_or_question": {"answer": "ok", "reason": "-"},
+                "next_speaker": {"answer": "supervisor", "reason": "-"},
+            }
+        )
 
 
 class _CancellingBrain(SupervisorBrain):
@@ -105,7 +107,7 @@ def v2_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[TestC
     app = FastAPI()
     app.include_router(orgs_v2.router)
     # P9.7.nit-a: mount 308 shim so TestClient auto-follows legacy /api/v2/orgs/* to /api/v2/orgs-spec/*.
-    app.include_router(_orgs_v2_legacy_redirects.router)
+    app.include_router(_orgs_v2_deprecated_redirects.router)
     with TestClient(app) as c:
         yield c
     reset_default_store()
@@ -126,8 +128,9 @@ def _instantiate_and_persist(client: TestClient) -> str:
 
 def _make_gateway_with_bound_session(session_key: str, org_id: str) -> MessageGateway:
     session = MagicMock()
-    session.get_metadata = MagicMock(side_effect=lambda k, default=None:
-                                     org_id if k == "bound_org_id" else default)
+    session.get_metadata = MagicMock(
+        side_effect=lambda k, default=None: org_id if k == "bound_org_id" else default
+    )
     sm = MagicMock()
     sm._sessions = {session_key: session}
     sm.build_session_key = MagicMock(return_value=session_key)
@@ -147,11 +150,16 @@ async def test_canary_org_runs_through_supervisor_then_cancel_then_resume(
     # ---- 1. Mint a canary org via the v2 HTTP facade. ---------------
     org_id = _instantiate_and_persist(v2_client)
     monkeypatch.setattr(
-        settings, "runtime_v2_canary_orgs", {org_id}, raising=False,
+        settings,
+        "runtime_v2_canary_orgs",
+        {org_id},
+        raising=False,
     )
 
     # ---- 2. Spy on Supervisor so we can prove run() fired. ----------
-    real_supervisor = sup_module.Supervisor
+    from openakita.runtime.supervisor import Supervisor
+
+    real_supervisor = Supervisor
     spy_instances: list[Any] = []
     spy_run_calls: list[int] = []
 
@@ -164,18 +172,19 @@ async def test_canary_org_runs_through_supervisor_then_cancel_then_resume(
             spy_run_calls.append(1)
             return await self._inner.run()
 
-    monkeypatch.setattr(sup_module, "Supervisor", _SpySupervisor)
-
     # ---- 3. Share a single checkpointer across all three dispatches.
     shared_checkpointer = MemoryCheckpointer()
     real_dispatch = cr_module.dispatch_inbound_message_to_v2
 
     async def dispatch_with_shared_checkpointer(**kwargs: Any):
         kwargs.setdefault("checkpointer", shared_checkpointer)
+        kwargs.setdefault("supervisor_cls", _SpySupervisor)
         return await real_dispatch(**kwargs)
 
     monkeypatch.setattr(
-        cr_module, "dispatch_inbound_message_to_v2", dispatch_with_shared_checkpointer,
+        cr_module,
+        "dispatch_inbound_message_to_v2",
+        dispatch_with_shared_checkpointer,
     )
 
     # ---- 4. Build a gateway whose session is bound to org_id.
@@ -206,7 +215,9 @@ async def test_canary_org_runs_through_supervisor_then_cancel_then_resume(
         return await dispatch_with_shared_checkpointer(**kwargs)
 
     monkeypatch.setattr(
-        cr_module, "dispatch_inbound_message_to_v2", dispatch_with_brain,
+        cr_module,
+        "dispatch_inbound_message_to_v2",
+        dispatch_with_brain,
     )
 
     # ---- 5. Happy-path dispatch through the gateway. ----------------
@@ -231,11 +242,14 @@ async def test_canary_org_runs_through_supervisor_then_cancel_then_resume(
         return await dispatch_with_shared_checkpointer(**kwargs)
 
     monkeypatch.setattr(
-        cr_module, "dispatch_inbound_message_to_v2", dispatch_with_cancel_brain,
+        cr_module,
+        "dispatch_inbound_message_to_v2",
+        dispatch_with_cancel_brain,
     )
 
     # Pre-cancel the token so the cancelling brain's raise short-circuits.
     from openakita.runtime.cancel_token import CancellationToken
+
     gw._v2_cancel_tokens[session_key] = CancellationToken()
     gw._v2_cancel_tokens[session_key].cancel("user_cancel_via_im")
 
@@ -249,9 +263,9 @@ async def test_canary_org_runs_through_supervisor_then_cancel_then_resume(
     cancelled_ckpts = [
         c async for c in shared_checkpointer.alist(spy_instances[-1]._inner.command_id)
     ]
-    assert any(
-        c.status is CheckpointStatus.CANCELLED for c in cancelled_ckpts
-    ), "a final CANCELLED checkpoint must be saved on cancel"
+    assert any(c.status is CheckpointStatus.CANCELLED for c in cancelled_ckpts), (
+        "a final CANCELLED checkpoint must be saved on cancel"
+    )
 
     n_after_cancel = shared_checkpointer.total()
     assert n_after_cancel > n_after_happy
@@ -265,7 +279,9 @@ async def test_canary_org_runs_through_supervisor_then_cancel_then_resume(
         return await dispatch_with_shared_checkpointer(**kwargs)
 
     monkeypatch.setattr(
-        cr_module, "dispatch_inbound_message_to_v2", dispatch_with_resume_brain,
+        cr_module,
+        "dispatch_inbound_message_to_v2",
+        dispatch_with_resume_brain,
     )
 
     resume_msg = create_channel_message(text="continue")

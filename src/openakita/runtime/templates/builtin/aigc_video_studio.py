@@ -1,6 +1,6 @@
 """Built-in template: AIGC Video Studio.
 
-A 7-node creative-agency layout that mirrors the legacy
+A 7-node creative-agency layout that mirrors the pre-v2
 ``aigc-video-studio`` template (``orgs/templates.py`` ~lines 741-1160)
 but expressed in the v2 schema:
 
@@ -24,7 +24,7 @@ but expressed in the v2 schema:
       wb_video     -> wb_long            (per-shot mp4 task_ids)
       wb_human     -> wb_long            (digital-human task_ids)
 
-This is not a literal port. The legacy schema had ~80 free-form keys
+This is not a literal port. The pre-v2 schema had ~80 free-form keys
 per node (``avatar``, ``position``, ``custom_prompt``, ``department``,
 …) that were never enforced and frequently bit-rotted. The v2 schema
 keeps only what the supervisor actually consumes: ``role`` + ``label``
@@ -32,7 +32,7 @@ keeps only what the supervisor actually consumes: ``role`` + ``label``
 runtime overrides + declarative ``guardrails``.
 
 Personas remain in Chinese to match the user-facing character of the
-legacy template. We summarise the 800-line legacy ``custom_prompt``
+pre-v2 template. We summarise the 800-line pre-v2 ``custom_prompt``
 strings down to the routing rules that *actually matter at runtime*;
 fine-tuning a persona stays a single-file diff because of the
 one-template-per-module layout.
@@ -202,7 +202,7 @@ def aigc_video_studio() -> TemplateSpec:
             "producer drives a screenwriter (storyboard decomposition) and an "
             "art director who routes shots across image / video / digital-human "
             "workbenches and finally stitches the master cut. Mirrors the "
-            "legacy aigc-video-studio template but in the v2 schema."
+            "pre-v2 aigc-video-studio template but in the v2 schema."
         ),
         version=1,
         defaults=DefaultsSpec(max_turns=60, max_stalls=4, suspect_secs=120),

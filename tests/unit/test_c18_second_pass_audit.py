@@ -41,7 +41,7 @@ from pathlib import Path
 
 import pytest
 
-from openakita.core import audit_logger as al
+from openakita.agent import audit as al
 from openakita.core.policy_v2 import audit_chain, global_engine, hot_reload
 from openakita.core.policy_v2.hot_reload import PolicyHotReloader
 

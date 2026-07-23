@@ -5,25 +5,23 @@ Telegram Bot 服务
 使用 channels 框架组件，但采用更简单的启动方式
 """
 
-import asyncio
 import logging
-import sys
 import re
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
 
 # 添加项目路径 (脚本在 scripts/ 目录下)
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from telegram import Bot, Update
-from telegram.ext import Application, MessageHandler, CommandHandler, filters
-
-from openakita.config import settings
-from openakita.channels.types import UnifiedMessage, MessageContent, MediaFile
-from openakita.sessions import SessionManager, Session
-
 # 配置 - 从环境变量或 settings 读取
 import os
+
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
+
+from openakita.config import settings
+from openakita.sessions import Session, SessionManager
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or settings.telegram_bot_token
 if not BOT_TOKEN:
@@ -47,7 +45,7 @@ async def init_components():
     # 1. 初始化 Agent
     if agent is None:
         logger.info("正在初始化 Agent...")
-        from openakita.core.agent import Agent
+        from openakita.agent import Agent
 
         agent = Agent()
         await agent.initialize()
@@ -168,7 +166,7 @@ async def handle_status(update: Update, context):
     status = "📊 **Agent 状态**\n\n"
 
     if agent and agent._initialized:
-        status += f"✅ Agent: 已初始化\n"
+        status += "✅ Agent: 已初始化\n"
         status += f"🧠 模型: {agent.brain.model}\n"
         status += f"📚 技能: {agent.skill_registry.count}\n"
 
@@ -261,7 +259,7 @@ async def post_init(application):
 
     print("=" * 50)
     print("🚀 OpenAkita Telegram Bot 已启动!")
-    print(f"   Bot: @Jarvisuen_bot")
+    print("   Bot: @Jarvisuen_bot")
     print(f"   Agent 技能: {agent.skill_registry.count}")
     print("   按 Ctrl+C 停止")
     print("=" * 50)

@@ -1,9 +1,7 @@
 """Presentation and waiter primitives for ``security_confirm`` events.
 
-Ported from :mod:`openakita.core.ui_confirm_bus` per ADR-0003; the legacy
-``core`` import path remains a re-export shim. Behaviour matches the
-RiskGate/PolicyV2 continuation contract (presentation queue + confirm_event
-sidecar).
+The implementation follows the RiskGate/PolicyV2 continuation contract
+(presentation queue + confirm_event sidecar).
 
 ``UIConfirmBus`` owns only the UI-facing sidecar, presentation queue, and
 async waiter wakeups for a confirmation id. Domain lifecycle remains outside:
@@ -108,7 +106,7 @@ class UIConfirmBus:
         """Return the queue scope for a confirm.
 
         Real conversation ids queue together. Empty session ids are isolated
-        per confirm to preserve legacy CLI/tests that did not pass a session.
+        per confirm to preserve previous CLI/tests that did not pass a session.
         """
         return session_id or f"__confirm__:{confirm_id}"
 
@@ -156,9 +154,7 @@ class UIConfirmBus:
         else:
             state = "queued"
             queued_ids = [cid for cid in order if cid != active_id]
-            queue_position = (
-                queued_ids.index(confirm_id) + 1 if confirm_id in queued_ids else None
-            )
+            queue_position = queued_ids.index(confirm_id) + 1 if confirm_id in queued_ids else None
         return {
             "presentation_state": state,
             "ui_state": state,

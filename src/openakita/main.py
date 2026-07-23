@@ -1520,9 +1520,7 @@ def main(
         from .core.working_directory import normalize_working_directory
 
         try:
-            _cli_working_directory = str(
-                normalize_working_directory(candidate, must_exist=True)
-            )
+            _cli_working_directory = str(normalize_working_directory(candidate, must_exist=True))
         except ValueError as exc:
             raise typer.BadParameter(str(exc), param_hint="--cwd") from exc
 
@@ -1672,8 +1670,9 @@ def run(
             )
 
         # 桌面通知
+        from openakita.agent.desktop_notify import notify_task_completed
+
         from .config import settings
-        from .core.desktop_notify import notify_task_completed
 
         if settings.desktop_notify_enabled:
             notify_task_completed(
@@ -1720,12 +1719,8 @@ def stop(
         "--host",
         help="后端监听地址（默认 127.0.0.1，与 settings.api_host 一致）",
     ),
-    port: int = typer.Option(
-        18900, "--port", help="后端监听端口（默认 18900）"
-    ),
-    timeout: float = typer.Option(
-        5.0, "--timeout", help="HTTP 调用超时秒数（默认 5）"
-    ),
+    port: int = typer.Option(18900, "--port", help="后端监听端口（默认 18900）"),
+    timeout: float = typer.Option(5.0, "--timeout", help="HTTP 调用超时秒数（默认 5）"),
 ):
     """向运行中的后端发送 graceful shutdown 信号。
 
@@ -1885,7 +1880,7 @@ def prompt_debug(
 
         else:
             # 使用全文版本
-            from .core.identity import Identity
+            from openakita.agent.identity import Identity
 
             identity = Identity()
             identity.load()

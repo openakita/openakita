@@ -1,35 +1,7 @@
-"""V2 Brain implementation -- canonical home for ``Brain`` + ``SupervisorBrain``.
+"""Canonical public ``Brain`` and ``SupervisorBrain`` implementations.
 
-This module replaces the P-RC-0..3 facade. After P-RC-4 the canonical
-import path for the agent LLM gateway is :mod:`openakita.agent.brain`;
-the legacy ``openakita.core.brain.Brain`` will be a thin re-export
-shim once P4.6 lands.
-
-Architecture:
--------------
-The legacy ``Brain`` was a ~2000 LOC god-class that mixed multi-endpoint
-failover, compiler-LLM circuit breaking, multimodal block conversion,
-streaming, debug-dump, and token-tracking concerns. P-RC-4 extracted
-each of those concerns into a focused helper under
-:mod:`openakita.runtime.llm`:
-
-* :class:`runtime.llm.EndpointFailoverView` -- the nine endpoint /
-  failover wrappers as a single composable view.
-* :class:`runtime.llm.CompilerCircuitBreaker` -- 5-strike auth-aware
-  breaker for the Prompt-Compiler endpoint, fully testable in
-  isolation with an injected clock.
-* :mod:`runtime.llm.multimodal` -- pure
-  :func:`response_to_anthropic_message` + thinking interleaving.
-* :mod:`runtime.llm.stream` -- :func:`stream_llm_events` async
-  iterator + :func:`llm_stream_tracking` context manager.
-
-The v2 :class:`Brain` below composes these helpers from a fresh
-constructor. To preserve byte-faithful behaviour for the ~30 existing
-``openakita.core.brain.Brain`` callers during the P4.6 cutover, the
-v2 Brain currently inherits the deep methods (``think``,
-``messages_create*``, ``compiler_think``, ``_dump_llm_*``, ...) from
-the legacy class. Those will be re-implemented inline in P-RC-7
-when the legacy ``core/`` tree is removed.
+The public class composes focused helpers from :mod:`openakita.runtime.llm`
+while the internal runtime base retains the deep provider methods.
 """
 
 from __future__ import annotations
@@ -37,9 +9,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any, Protocol, runtime_checkable
 
-from openakita.core._brain_legacy import Brain as _LegacyBrainImpl
-from openakita.core._brain_legacy import Context as _LegacyContext
-from openakita.core._brain_legacy import Response as _LegacyResponse
+from openakita.core._brain_runtime import Brain as _RuntimeBrainBase
+from openakita.core._brain_runtime import Context as _RuntimeContext
+from openakita.core._brain_runtime import Response as _RuntimeResponse
 from openakita.runtime.llm import (
     CompilerCircuitBreaker,
     EndpointFailoverView,
@@ -55,11 +27,9 @@ __all__ = [
 ]
 
 
-# Re-export the public data classes from the legacy module. These are
-# pure dataclasses (no methods) so re-export here keeps the public
-# import path stable without forcing a parallel definition.
-Context = _LegacyContext
-Response = _LegacyResponse
+# Publish the runtime data classes from the canonical agent namespace.
+Context = _RuntimeContext
+Response = _RuntimeResponse
 
 
 @runtime_checkable
@@ -69,9 +39,8 @@ class SupervisorBrain(Protocol):
     Implementing this protocol -- via the v2 :class:`Brain` below or a
     future ``runtime/llm/SupervisorLLM`` -- is enough to drive a
     :class:`openakita.runtime.state_graph.StateGraph` step. The
-    protocol is :func:`runtime_checkable` so the legacy ``Brain`` (and
-    the new one) pass ``isinstance(brain, SupervisorBrain)`` checks
-    without explicit inheritance.
+    protocol is :func:`runtime_checkable` so compatible implementations pass
+    ``isinstance(brain, SupervisorBrain)`` checks without explicit inheritance.
     """
 
     async def think_lightweight(
@@ -96,23 +65,14 @@ class SupervisorBrain(Protocol):
         """
 
 
-class Brain(_LegacyBrainImpl):
+class Brain(_RuntimeBrainBase):
     """V2 Brain -- canonical entry point for LLM access in the agent layer.
 
-    The class composes the four ``runtime.llm.*`` helpers and inherits
-    deep methods (think loop, messages_create variants, compiler call,
-    debug dump) from the legacy implementation under
-    :mod:`openakita.core.brain`. The inheritance is a transitional
-    seam removed in P-RC-7 when the legacy tree is deleted; the
-    helpers themselves are owned by ``runtime.llm`` and are the
-    canonical home for that behaviour today.
+    The class composes the ``runtime.llm.*`` helpers and inherits provider-facing
+    methods from the private runtime base. Construction supports both ``Brain()``
+    and ``Brain(api_key=..., max_tokens=...)``.
 
-    Construction is identical to the legacy Brain's so existing
-    callers
-    (``Brain()`` / ``Brain(api_key=..., max_tokens=...)``) keep
-    working through the cutover.
-
-    What the v2 Brain adds on top of the legacy class:
+    The public surface adds:
 
     * a :attr:`failover_view` accessor returning the composed
       :class:`EndpointFailoverView` -- avoids reaching into
@@ -121,13 +81,10 @@ class Brain(_LegacyBrainImpl):
       :class:`CompilerCircuitBreaker`;
     * :meth:`stream_chat` -- thin wrapper around
       :func:`runtime.llm.stream_llm_events` that feeds raw provider
-      events to the caller, with no debug-dump / token-tracking
-      side-effects (the legacy
-      :meth:`messages_create_stream` retains those for
-      compatibility);
+      events to the caller, with no debug-dump or token-tracking side effects;
     * explicit :class:`SupervisorBrain` protocol conformance with the
       :meth:`think_lightweight` and :meth:`get_current_endpoint_info`
-      methods already inherited from the legacy class.
+      methods inherited from the runtime base.
     """
 
     # ------------------------------------------------------------------
@@ -139,8 +96,7 @@ class Brain(_LegacyBrainImpl):
         """Return the composed :class:`EndpointFailoverView`.
 
         Prefer this accessor over ``brain._failover_view``;
-        the private attribute is implementation detail and will move
-        to a clean field name in P-RC-7.
+        the private attribute is an implementation detail.
         """
         return self._failover_view
 
@@ -158,8 +114,7 @@ class Brain(_LegacyBrainImpl):
 
         The ``runtime.supervisor.Supervisor`` and several internal
         helpers need this; exposing it via a property removes the
-        ``# type: ignore`` access through the legacy ``_llm_client``
-        private attribute.
+        ``# type: ignore`` access through the private ``_llm_client`` attribute.
         """
         return self._llm_client
 
@@ -181,12 +136,12 @@ class Brain(_LegacyBrainImpl):
     ) -> AsyncIterator[Any]:
         """Async-iterate raw provider events for the v2 supervisor.
 
-        Unlike :meth:`messages_create_stream` (legacy), this primitive
+        Unlike :meth:`messages_create_stream`, this primitive
         does NOT write a debug-dump and does NOT push a
         ``TokenTrackingContext``. The v2 caller composes those
         concerns explicitly via :func:`runtime.llm.llm_stream_tracking`
         when needed; the runtime supervisor logs streaming progress
-        through its own ``StreamBus`` so the legacy dump call is
+        through its own ``StreamBus`` so an additional dump call is
         redundant on that path.
         """
         return stream_llm_events(
@@ -202,8 +157,7 @@ class Brain(_LegacyBrainImpl):
         )
 
     # ------------------------------------------------------------------
-    # SupervisorBrain protocol implementations (re-anchored from the
-    # legacy class for explicit documentation)
+    # SupervisorBrain protocol implementations
     # ------------------------------------------------------------------
 
     async def think_lightweight(
@@ -216,15 +170,14 @@ class Brain(_LegacyBrainImpl):
         temperature: float = 0.0,
         **kwargs: Any,
     ) -> Response:
-        """Lightweight one-shot completion -- inherits the legacy impl.
+        """Lightweight one-shot completion.
 
         Two calling conventions are accepted for backward compatibility:
 
         * ``think_lightweight(prompt_text, max_tokens=...)`` -- the
-          legacy positional form still used by
+          positional form still used by
           :meth:`scheduler.executor._system_memory_nudge_review`,
-          several plugins (e.g. ``fin-pulse``). Routed straight through
-          the legacy implementation.
+          several plugins (e.g. ``fin-pulse``). Routed through the runtime base.
         * ``think_lightweight(system=..., messages=[...])`` -- the v2
           :class:`SupervisorBrain` protocol surface.
 
@@ -234,7 +187,7 @@ class Brain(_LegacyBrainImpl):
         every interval (Issue #9 in exploratory v10 report).
         """
         if prompt is not None and not messages:
-            return await _LegacyBrainImpl.think_lightweight(
+            return await _RuntimeBrainBase.think_lightweight(
                 self,
                 prompt,
                 system=(system or None),
@@ -252,7 +205,7 @@ class Brain(_LegacyBrainImpl):
         """Return ``{name, model, healthy}`` for the active endpoint.
 
         Delegates to :class:`EndpointFailoverView` (composed in the
-        legacy ``__init__``); re-anchored here for the
+        runtime initialization) and exposed here for the
         :class:`SupervisorBrain` protocol.
         """
         return self._failover_view.current_endpoint_info()
@@ -267,7 +220,7 @@ class Brain(_LegacyBrainImpl):
 
         Exposed on the class so v2 callers do not need to import from
         ``runtime.llm.multimodal`` separately; the result is identical
-        to the legacy ``brain._convert_response_to_anthropic``.
+        to the runtime conversion helper.
         """
         return response_to_anthropic_message(response)
 
@@ -279,8 +232,7 @@ class Brain(_LegacyBrainImpl):
         """Async health-probe every endpoint.
 
         Delegates to :class:`EndpointFailoverView`; documented here so
-        the v2 surface is the canonical reference (the legacy method
-        was a one-line wrapper on the Brain class).
+        this public surface remains the canonical reference.
         """
         return await self._failover_view.health_check()
 
@@ -339,7 +291,7 @@ class Brain(_LegacyBrainImpl):
     def reload_compiler_client(self) -> bool:
         """Reload compiler endpoint config; resets the breaker on success.
 
-        Delegates to the legacy implementation but documents the v2
+        Delegates to the runtime implementation and documents the public
         contract: success returns ``True``; the breaker is force-reset
         so a freshly-fixed API key recovers without a process restart.
         """
@@ -364,7 +316,7 @@ class Brain(_LegacyBrainImpl):
     def drain_usage_accumulator(self) -> dict[str, int]:
         """Drain and return the per-session LLM call accumulator.
 
-        Mirrors the legacy method; the accumulator is reset to zero
+        The accumulator is reset to zero
         after the drain so consecutive calls do not double-count.
         """
         return super().drain_usage_accumulator()

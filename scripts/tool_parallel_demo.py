@@ -18,7 +18,7 @@ import time
 
 async def main() -> None:
     # 延迟导入：确保从环境变量读取 TOOL_MAX_PARALLEL
-    from openakita.core.agent import Agent
+    from openakita.agent import Agent
 
     agent = Agent()
     await agent.initialize(start_scheduler=False)

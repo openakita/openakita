@@ -43,7 +43,7 @@ this module a manager-backed shim:
   is enforced by construction: this module owns no writer.
 
 Roadmap A.3 308-shim red line: this commit does NOT touch
-``api/routes/_orgs_v2_legacy_redirects.py``. The 308
+``api/routes/_orgs_v2_deprecated_redirects.py``. The 308
 sunset (2026-12-01 + 30 d hits=0) is independent of the
 write-side unification landed here.
 
@@ -242,8 +242,7 @@ class JsonOrgStore:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning(
-                "[orgs_v2 store shim] failed to read legacy fallback %s (%s); "
-                "returning empty",
+                "[orgs_v2 store shim] failed to read legacy fallback %s (%s); returning empty",
                 self._path,
                 exc,
             )

@@ -138,28 +138,3 @@ def test_create_formatter_dispatches_known_types() -> None:
 
 def test_create_formatter_unknown_falls_back_to_text() -> None:
     assert isinstance(create_formatter("nonsense"), TextFormatter)
-
-
-# ---------------------------------------------------------------------------
-# Move-compat
-# ---------------------------------------------------------------------------
-
-
-def test_legacy_path_re_exports_same_classes() -> None:
-    from openakita.core.output_formatter import (
-        JSONFormatter as LegacyJSON,
-    )
-    from openakita.core.output_formatter import (
-        StreamJSONFormatter as LegacyStream,
-    )
-    from openakita.core.output_formatter import (
-        TextFormatter as LegacyText,
-    )
-    from openakita.core.output_formatter import (
-        create_formatter as legacy_create,
-    )
-
-    assert LegacyText is TextFormatter
-    assert LegacyJSON is JSONFormatter
-    assert LegacyStream is StreamJSONFormatter
-    assert legacy_create is create_formatter

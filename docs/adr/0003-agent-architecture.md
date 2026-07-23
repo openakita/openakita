@@ -27,6 +27,12 @@ than three times the upstream baselines.
 
 ## Decision
 
+> **Import-surface amendment (2026-07-23):** the transitional
+> `openakita.core.*` re-exports described below have been removed.
+> `openakita.agent.*` is now the only supported public agent import surface.
+> Internal execution code may remain under `openakita.core._*_runtime` while
+> it is decomposed, but those underscored modules are not compatibility APIs.
+
 The new agent lives under `src/openakita/agent/`. Strict
 single-responsibility split:
 

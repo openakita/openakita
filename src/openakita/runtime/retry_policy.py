@@ -1,8 +1,6 @@
 """Retry policy with retriable error taxonomy.
 
-The legacy runtime treats all errors uniformly: any exception inside a
-node's tool call escalates to the supervisor, which may then trigger a
-re-delegate. That is too aggressive for transient network blips and
+Uniform error escalation is too aggressive for transient network blips and
 too lenient for terminal contract violations. ADR-0004 calls for a
 LangGraph-style retry policy that classifies errors into:
 
@@ -144,10 +142,7 @@ def is_retriable_tool_error(exc: BaseException) -> bool:
     because they signal contract violations, not transient faults.
     Everything else delegates to the general predicate.
 
-    Refs: continuation plan section 5 (P-RC-4, P4.9). The legacy
-    ``core.tool_executor`` decided "retry vs. fail" ad-hoc inside
-    ``execute_tool_with_policy``; lifting the decision here means
-    the v2 ``agent.tools`` rewrite (P4.10) can compose
+    Centralising the decision here lets ``agent.tools`` compose
     ``RetryPolicy(retry_predicate=is_retriable_tool_error)`` instead
     of carrying its own ladder.
     """
@@ -191,8 +186,7 @@ class RetryGaveUp(Exception):
 
     def __init__(self, attempts: int, last_exc: BaseException) -> None:
         super().__init__(
-            f"retry exhausted after {attempts} attempts: "
-            f"{type(last_exc).__name__}: {last_exc}"
+            f"retry exhausted after {attempts} attempts: {type(last_exc).__name__}: {last_exc}"
         )
         self.attempts = attempts
         self.__cause__ = last_exc
@@ -294,8 +288,7 @@ class RetryPolicy:
                     raise
                 last_error = exc
                 logger.debug(
-                    "RetryPolicy: attempt %d failed with %s; will retry "
-                    "(remaining=%d)",
+                    "RetryPolicy: attempt %d failed with %s; will retry (remaining=%d)",
                     attempt,
                     type(exc).__name__,
                     self.max_attempts - attempt,
@@ -306,9 +299,7 @@ class RetryPolicy:
         # RetryGaveUp on the last attempt.
         raise RuntimeError("RetryPolicy.run reached an unreachable branch")
 
-    async def _sleep(
-        self, delay: float, cancel_token: CancellationToken | None
-    ) -> None:
+    async def _sleep(self, delay: float, cancel_token: CancellationToken | None) -> None:
         """Sleep for ``delay`` seconds, honouring cooperative cancel."""
         if cancel_token is None:
             await asyncio.sleep(delay)

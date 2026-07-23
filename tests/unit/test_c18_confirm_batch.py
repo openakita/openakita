@@ -21,11 +21,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from openakita.agent.ui_confirm_bus import UIConfirmBus, reset_ui_confirm_bus
 from openakita.api.routes import config as config_routes
 from openakita.core.policy_v2 import global_engine
 from openakita.core.policy_v2.engine import build_engine_from_config
 from openakita.core.policy_v2.schema import ConfirmationConfig, PolicyConfigV2
-from openakita.core.ui_confirm_bus import UIConfirmBus, reset_ui_confirm_bus
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -187,7 +187,7 @@ def api_client(monkeypatch: pytest.MonkeyPatch):
 
 class TestBatchEndpoint:
     def test_endpoint_resolves_session_confirms(self, api_client: TestClient) -> None:
-        from openakita.core.ui_confirm_bus import get_ui_confirm_bus
+        from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
 
         bus = get_ui_confirm_bus()
         bus.store_pending("c1", "write_file", {}, session_id="s1")
@@ -228,22 +228,26 @@ class TestBatchEndpoint:
             "tool_input": tool_input,
             "riskgate_scope": {"query": "OPENAKITA_RISKGATE_689_REPRO_TEST"},
         }
-        pending = get_risk_gate_workflow().open_tool_confirmation(
-            conversation_id=conv,
-            original_message="tool:declared_delete_tool",
-            classification=classification,
-            request_id="req-riskgate-batch",
-            tool_name="declared_delete_tool",
-            tool_args=tool_input,
-            reason="tool commit requires RiskGate",
-            timeout_seconds=60,
-            channel="desktop",
-            approval_class="destructive",
-            policy_version=2,
-            decision_chain=[],
-            delegate_chain=[],
-            root_user_id=None,
-        ).pending
+        pending = (
+            get_risk_gate_workflow()
+            .open_tool_confirmation(
+                conversation_id=conv,
+                original_message="tool:declared_delete_tool",
+                classification=classification,
+                request_id="req-riskgate-batch",
+                tool_name="declared_delete_tool",
+                tool_args=tool_input,
+                reason="tool commit requires RiskGate",
+                timeout_seconds=60,
+                channel="desktop",
+                approval_class="destructive",
+                policy_version=2,
+                decision_chain=[],
+                delegate_chain=[],
+                root_user_id=None,
+            )
+            .pending
+        )
 
         r = api_client.post(
             "/api/chat/security-confirm/batch",
@@ -261,7 +265,7 @@ class TestBatchEndpoint:
     def test_endpoint_clamps_to_config_window(self, api_client: TestClient) -> None:
         """Server config says window=2; even if client requests window=300,
         only confirms in the 2s window should resolve."""
-        from openakita.core.ui_confirm_bus import get_ui_confirm_bus
+        from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
 
         bus = get_ui_confirm_bus()
         bus.store_pending("c_old", "write_file", {}, session_id="s2")

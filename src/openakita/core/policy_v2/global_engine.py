@@ -203,7 +203,7 @@ def _audit_env_overrides(report, cfg: PolicyConfigV2 | None = None) -> None:
         return
     try:
         if cfg is not None:
-            from ..audit_logger import DEFAULT_AUDIT_PATH, AuditLogger
+            from openakita.agent.audit import DEFAULT_AUDIT_PATH, AuditLogger
 
             logger_inst: Any = AuditLogger(
                 path=cfg.audit.log_path or DEFAULT_AUDIT_PATH,
@@ -211,7 +211,7 @@ def _audit_env_overrides(report, cfg: PolicyConfigV2 | None = None) -> None:
                 include_chain=getattr(cfg.audit, "include_chain", True),
             )
         else:
-            from ..audit_logger import get_audit_logger
+            from openakita.agent.audit import get_audit_logger
 
             logger_inst = get_audit_logger()
 
@@ -445,7 +445,7 @@ def rebuild_engine_v2(
         )
         if old_audit_cfg is None or old_audit_cfg != new_audit_cfg:
             try:
-                from ..audit_logger import reset_audit_logger
+                from openakita.agent.audit import reset_audit_logger
 
                 reset_audit_logger()
             except Exception:
@@ -518,7 +518,7 @@ def reset_policy_v2_layer(scope: str = "all") -> None:
         # 测试 fixture 调用本函数后也能拿到干净状态。
         _clear_last_known_good()
         try:
-            from ..audit_logger import reset_audit_logger
+            from openakita.agent.audit import reset_audit_logger
 
             reset_audit_logger()
         except Exception:

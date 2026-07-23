@@ -105,9 +105,7 @@ def _scan_legacy_imports() -> list[tuple[str, int, str]]:
     deprecated dotted path is therefore a hard failure.
     """
     hits: list[tuple[str, int, str]] = []
-    files: list[Path] = sorted(
-        list(_SRC_ROOT.rglob("*.py")) + list(_SRC_ROOT.rglob("*.pyi"))
-    )
+    files: list[Path] = sorted(list(_SRC_ROOT.rglob("*.py")) + list(_SRC_ROOT.rglob("*.pyi")))
     for file in files:
         rel = file.relative_to(_REPO).as_posix()
         try:
@@ -166,7 +164,7 @@ def test_v1_src_directory_retired() -> None:
     "no abs ``from openakita.runtime.orgs.X`` import" invariant
     (post-P10.4 polarity; tightened at P10.6 with shim removal +
     directory non-existence guard). The 308 shim under
-    ``src/openakita/api/routes/_orgs_v2_legacy_redirects.py``
+    ``src/openakita/api/routes/_orgs_v2_deprecated_redirects.py``
     remains the only v1-tagged surface (ADR-0015 option (b); v2.1.0).
     """
     if not _V1_DIR.exists():
@@ -183,7 +181,7 @@ def test_v1_src_directory_retired() -> None:
         "(13 public + 12 private incl. ``__init__.py``) land together. "
         "If you intended to revert to a v1-style layout, that is forbidden "
         "by P-RC-9 P9.9epsilon-2b (commit ``90a7d77f``); the 308 shim "
-        "under ``api/routes/_orgs_v2_legacy_redirects.py`` is the only "
+        "under ``api/routes/_orgs_v2_deprecated_redirects.py`` is the only "
         "v1-tagged surface that legitimately survives (ADR-0015)."
     )
 

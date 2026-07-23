@@ -17,7 +17,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from ..core.capabilities import (
+from openakita.agent.capabilities import (
     CapabilityDescriptor,
     CapabilityKind,
     CapabilityOrigin,
@@ -25,6 +25,7 @@ from ..core.capabilities import (
     build_capability_id,
     build_namespace,
 )
+
 from ..utils.atomic_io import atomic_json_write
 
 logger = logging.getLogger(__name__)
@@ -799,7 +800,9 @@ class ProfileStore:
     def _persist_categories(self) -> None:
         atomic_json_write(self._categories_file, self._custom_categories)
 
-    def list_categories(self, profiles: Iterable[AgentProfile] | None = None) -> list[dict[str, Any]]:
+    def list_categories(
+        self, profiles: Iterable[AgentProfile] | None = None
+    ) -> list[dict[str, Any]]:
         """返回所有分类（内置 + 自定义），每项含 agent_count。"""
         if profiles is None:
             with self._lock:

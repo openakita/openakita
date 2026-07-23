@@ -108,7 +108,7 @@ class TestSubsystemsReadV2Config:
     def test_audit_logger_reads_v2_audit_config(self, tmp_path) -> None:
         """构造一个 PolicyConfigV2，audit.enabled=True + log_path 指向
         临时目录，验证 ``get_audit_logger()`` 返回的对象 path/enabled 正确。"""
-        from openakita.core.audit_logger import reset_audit_logger
+        from openakita.agent.audit import reset_audit_logger
         from openakita.core.policy_v2.global_engine import reset_engine_v2
         from openakita.core.policy_v2.schema import AuditConfig, PolicyConfigV2
 
@@ -119,7 +119,7 @@ class TestSubsystemsReadV2Config:
         try:
             self._install_v2_config(cfg)
             reset_audit_logger()
-            from openakita.core.audit_logger import get_audit_logger
+            from openakita.agent.audit import get_audit_logger
 
             log = get_audit_logger()
             assert str(log._path) == custom_path
@@ -129,7 +129,7 @@ class TestSubsystemsReadV2Config:
             reset_engine_v2()
 
     def test_audit_logger_disabled_when_v2_audit_disabled(self, tmp_path) -> None:
-        from openakita.core.audit_logger import reset_audit_logger
+        from openakita.agent.audit import reset_audit_logger
         from openakita.core.policy_v2.global_engine import reset_engine_v2
         from openakita.core.policy_v2.schema import AuditConfig, PolicyConfigV2
 
@@ -139,7 +139,7 @@ class TestSubsystemsReadV2Config:
         try:
             self._install_v2_config(cfg)
             reset_audit_logger()
-            from openakita.core.audit_logger import get_audit_logger
+            from openakita.agent.audit import get_audit_logger
 
             log = get_audit_logger()
             assert log._enabled is False
@@ -187,7 +187,7 @@ class TestResetPolicyV2Layer:
         assert is_initialized() is False
 
     def test_reset_clears_audit_logger_singleton(self) -> None:
-        from openakita.core.audit_logger import get_audit_logger
+        from openakita.agent.audit import get_audit_logger
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
         # warm up audit

@@ -120,8 +120,8 @@ class Subscription:
             When ``True`` (the default in P-RC-2 and beyond), the
             owning :class:`StreamBus` waits for this subscription's
             queue to drain to zero pending items before signalling
-            its ``closed`` event in :meth:`StreamBus.close`. Legacy
-            callers that prefer the original eager-close behaviour
+            its ``closed`` event in :meth:`StreamBus.close`. Callers
+            that prefer the original eager-close behaviour
             (close fires immediately, in-flight events are lost)
             pass ``drain_on_close=False`` to
             :meth:`StreamBus.subscribe`. Closes G-RC-1 residual
@@ -199,7 +199,7 @@ class StreamBus:
             drain_on_close: when ``True`` (default), :meth:`close` waits
                 up to the close-time timeout for this subscription's
                 queue to drain to zero before unblocking the consumer.
-                Pass ``False`` to opt into legacy eager-close
+                Pass ``False`` to opt into eager-close
                 semantics (in-flight events are lost on close).
         """
         if not channels:
@@ -281,7 +281,7 @@ class StreamBus:
         """Block until every drain-eligible subscription's queue is empty.
 
         Eager subscriptions (``drain_on_close=False``) are skipped so
-        the legacy fast-close path is unaffected. Returns early on
+        the eager-close path is unaffected. Returns early on
         timeout; callers that care log a warning when this happens.
         """
         eligible = [s for s in subs if s.drain_on_close]
@@ -298,7 +298,8 @@ class StreamBus:
                 logger.warning(
                     "StreamBus.close: drain timed out with %d event(s) still "
                     "queued across %d subscriber(s); proceeding to close",
-                    pending, len(eligible),
+                    pending,
+                    len(eligible),
                 )
                 return
             # Yield once per micro-tick. ``asyncio.sleep(0)`` re-enters

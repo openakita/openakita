@@ -36,7 +36,7 @@ def clear_session_caches(
         cleared["web_fetch"] = False
 
     try:
-        from .domain_allowlist import get_domain_allowlist
+        from openakita.agent.domain_allowlist import get_domain_allowlist
 
         cid = conversation_id or (
             getattr(agent, "_current_conversation_id", "")

@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from openakita.core.sse_replay import (
+from openakita.agent.sse_replay import (
     MAX_SESSIONS,
     SSEEvent,
     SSESession,
@@ -28,7 +28,7 @@ from openakita.core.sse_replay import (
     parse_last_event_id,
     reset_registry_for_testing,
 )
-from openakita.core.ui_confirm_bus import UIConfirmBus, reset_ui_confirm_bus
+from openakita.agent.ui_confirm_bus import UIConfirmBus, reset_ui_confirm_bus
 
 # ---------------------------------------------------------------------------
 # SSESession

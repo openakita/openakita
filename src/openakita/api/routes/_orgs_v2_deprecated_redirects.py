@@ -55,7 +55,7 @@ from threading import Lock
 
 from fastapi import APIRouter, Request, Response
 
-__all__ = ["router", "get_shim_hit_stats"]
+__all__ = ["router", "get_deprecated_redirect_stats"]
 
 
 _SPEC_PREFIX = "/api/v2/orgs-spec"
@@ -90,7 +90,7 @@ def _record_shim_hit(path: str) -> None:
         _SHIM_HIT_COUNTER[path] += 1
 
 
-def get_shim_hit_stats() -> dict[str, int]:
+def get_deprecated_redirect_stats() -> dict[str, int]:
     """Expose shim hit counts so the diagnostics route can read them.
 
     See ``docs/follow-ups/skipped-items-roadmap.md`` §A.3 — when this
