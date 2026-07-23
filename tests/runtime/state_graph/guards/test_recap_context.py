@@ -1,4 +1,4 @@
-﻿"""Tests for runtime/state_graph/guards/recap_context."""
+"""Tests for runtime/state_graph/guards/recap_context."""
 
 from __future__ import annotations
 
@@ -12,7 +12,8 @@ from openakita.runtime.state_graph.guards.recap_context import (
 
 def _legacy():
     import openakita.agent.brain  # noqa: F401
-    from openakita.core._reasoning_engine_legacy import _is_recap_context as legacy
+    from openakita.core._reasoning_runtime import _is_recap_context as legacy
+
     return legacy
 
 
@@ -47,7 +48,9 @@ def test_is_recap_context_window_around_verb() -> None:
 
 
 def test_is_recap_context_not_a_recap_when_verb_isolated() -> None:
-    text = "\u6211\u5c06\u5220\u9664\u8be5\u6587\u4ef6"  # "I will delete the file" - no recap markers
+    text = (
+        "\u6211\u5c06\u5220\u9664\u8be5\u6587\u4ef6"  # "I will delete the file" - no recap markers
+    )
     assert is_recap_context(text, "\u5220\u9664") is False
 
 

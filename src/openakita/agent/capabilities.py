@@ -1,8 +1,4 @@
-"""Unified capability descriptor for skills / plugins / agents / tools / task sources.
-
-Ported from :mod:`openakita.core.capabilities` per ADR-0003 and
-the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy path stays as a re-export shim until Phase 8.
+"""Unified capability descriptor for skills, plugins, agents, tools, and task sources.
 
 This module provides a small, stable schema so each extensibility
 surface can answer the same questions:

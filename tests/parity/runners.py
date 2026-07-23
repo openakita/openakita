@@ -27,7 +27,7 @@ from .harness import ParityCase, ParityResult
 
 
 def _permission_v1(case: ParityCase) -> ParityResult:
-    from openakita.core.permission import check_mode_permission
+    from openakita.agent.permission import check_mode_permission
 
     decision = check_mode_permission(
         tool_name=case.inputs["tool_name"],
@@ -71,7 +71,7 @@ def _permission_to_result(decision) -> ParityResult:
 
 
 def _token_budget_v1(case: ParityCase) -> ParityResult:
-    from openakita.core.token_budget import TokenBudget
+    from openakita.agent.token_budget import TokenBudget
 
     return _token_budget_drive(TokenBudget, case)
 
@@ -104,7 +104,7 @@ def _token_budget_drive(token_budget_cls, case: ParityCase) -> ParityResult:
 
 
 def _working_facts_v1(case: ParityCase) -> ParityResult:
-    from openakita.core.working_facts import (
+    from openakita.agent.working_facts import (
         extract_working_facts,
         format_working_facts,
         merge_working_facts,
@@ -149,7 +149,7 @@ def _working_facts_eval(extract_fn, merge_fn, format_fn, case: ParityCase) -> Pa
 
 
 def _loop_budget_v1(case: ParityCase) -> ParityResult:
-    from openakita.core.loop_budget_guard import LoopBudgetGuard
+    from openakita.agent.loop_budget import LoopBudgetGuard
 
     return _loop_budget_drive(LoopBudgetGuard, case)
 
@@ -187,7 +187,7 @@ def _loop_budget_drive(guard_cls, case: ParityCase) -> ParityResult:
 
 
 def _trusted_paths_v1(case: ParityCase) -> ParityResult:
-    from openakita.core.trusted_paths import is_trusted_workspace_path
+    from openakita.agent.trusted_paths import is_trusted_workspace_path
 
     return _trusted_paths_eval(is_trusted_workspace_path, case)
 
@@ -421,7 +421,7 @@ def _confirm_normalize_eval(normalize_fn, case: ParityCase) -> ParityResult:
 
 
 def _domain_allowlist_v1(case: ParityCase) -> ParityResult:
-    from openakita.core.domain_allowlist import DomainAllowlist
+    from openakita.agent.domain_allowlist import DomainAllowlist
 
     return _domain_allowlist_eval(DomainAllowlist, case)
 
@@ -458,7 +458,7 @@ def _domain_allowlist_eval(domain_cls, case: ParityCase) -> ParityResult:
 
 
 def _user_profile_resolve_v1(case: ParityCase) -> ParityResult:
-    from openakita.core.user_profile import resolve_profile_key
+    from openakita.agent.user_profile import resolve_profile_key
 
     return _user_profile_resolve_eval(resolve_profile_key, case)
 
@@ -484,7 +484,7 @@ def _user_profile_resolve_eval(resolve_fn, case: ParityCase) -> ParityResult:
 
 
 def _capability_id_v1(case: ParityCase) -> ParityResult:
-    from openakita.core.capabilities import build_capability_id, build_namespace, normalize_slug
+    from openakita.agent.capabilities import build_capability_id, build_namespace, normalize_slug
 
     return _capability_id_eval(build_capability_id, build_namespace, normalize_slug, case)
 
@@ -565,20 +565,20 @@ V2_RUNNERS: dict[str, RunnerFn] = {
 # ---------------------------------------------------------------------------
 
 KIND_MODULES: dict[str, tuple[str, str]] = {
-    "permission_mode": ("openakita.core.permission", "openakita.agent.permission"),
-    "token_budget": ("openakita.core.token_budget", "openakita.agent.token_budget"),
-    "working_facts": ("openakita.core.working_facts", "openakita.agent.working_facts"),
-    "loop_budget": ("openakita.core.loop_budget_guard", "openakita.agent.loop_budget"),
-    "trusted_paths": ("openakita.core.trusted_paths", "openakita.agent.trusted_paths"),
-    "smart_truncate": ("openakita.core._tool_executor_legacy", "openakita.agent.tools"),
+    "permission_mode": ("openakita.agent.permission", "openakita.agent.permission"),
+    "token_budget": ("openakita.agent.token_budget", "openakita.agent.token_budget"),
+    "working_facts": ("openakita.agent.working_facts", "openakita.agent.working_facts"),
+    "loop_budget": ("openakita.agent.loop_budget", "openakita.agent.loop_budget"),
+    "trusted_paths": ("openakita.agent.trusted_paths", "openakita.agent.trusted_paths"),
+    "smart_truncate": ("openakita.core._tool_runtime", "openakita.agent.tools"),
     "context_estimate_tokens": ("openakita.core.context_utils", "openakita.agent.context"),
-    "brain_response": ("openakita.core._brain_legacy", "openakita.agent.brain"),
-    "reasoning_decision": ("openakita.core._reasoning_engine_legacy", "openakita.agent.reasoning"),
-    "primary_agent": ("openakita.core._agent_legacy", "openakita.agent.core"),
+    "brain_response": ("openakita.core._brain_runtime", "openakita.agent.brain"),
+    "reasoning_decision": ("openakita.core._reasoning_runtime", "openakita.agent.reasoning"),
+    "primary_agent": ("openakita.core._agent_runtime", "openakita.agent.core"),
     "confirm_normalize": ("openakita.core.confirmation_state", "openakita.agent.confirmation"),
-    "domain_allowlist": ("openakita.core.domain_allowlist", "openakita.agent.domain_allowlist"),
-    "user_profile_resolve": ("openakita.core.user_profile", "openakita.agent.user_profile"),
-    "capability_id": ("openakita.core.capabilities", "openakita.agent.capabilities"),
+    "domain_allowlist": ("openakita.agent.domain_allowlist", "openakita.agent.domain_allowlist"),
+    "user_profile_resolve": ("openakita.agent.user_profile", "openakita.agent.user_profile"),
+    "capability_id": ("openakita.agent.capabilities", "openakita.agent.capabilities"),
 }
 
 

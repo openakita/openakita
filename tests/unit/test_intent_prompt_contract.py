@@ -2,12 +2,12 @@ import inspect
 from types import SimpleNamespace
 
 from openakita.agent.core import Agent
-from openakita.core._agent_legacy import (
+from openakita.core._agent_runtime import (
     _apply_previous_answer_replay_hint,
     _looks_like_previous_answer_replay_request,
     _resolve_force_tool_policy,
 )
-from openakita.core._brain_legacy import (
+from openakita.core._brain_runtime import (
     Brain,
     Response,
     _classify_compiler_access_error,
@@ -191,7 +191,9 @@ def test_compiler_hint_requires_slow_main_fallback():
 
 def test_compiler_configuration_reason_distinguishes_missing_and_disabled(tmp_path, monkeypatch):
     config_path = tmp_path / "llm_endpoints.json"
-    monkeypatch.setattr("openakita.core._brain_legacy.get_default_config_path", lambda: config_path)
+    monkeypatch.setattr(
+        "openakita.core._brain_runtime.get_default_config_path", lambda: config_path
+    )
 
     config_path.write_text('{"compiler_endpoints": []}', encoding="utf-8")
     assert _compiler_configuration_fallback_reason()[0] == "not_configured"

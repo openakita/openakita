@@ -42,7 +42,7 @@ def resolve_security_confirmation(confirm_id: str, decision: str) -> dict[str, A
 def _attach_resolution_ui_update(response: dict[str, Any], confirm_id: str) -> None:
     """Attach backend-owned presentation updates produced by UIConfirmBus."""
     try:
-        from .ui_confirm_bus import get_ui_confirm_bus
+        from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
 
         ui_update = get_ui_confirm_bus().consume_resolution_ui_update(confirm_id)
     except Exception:  # noqa: BLE001

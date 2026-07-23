@@ -53,7 +53,7 @@ class TestReadyzAuditPathFix:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Probe must read the *same* file the writer uses."""
-        from openakita.core import audit_logger as al
+        from openakita.agent import audit as al
 
         # Build an isolated logger pointing at tmp.
         log_path = tmp_path / "audit.jsonl"
@@ -72,7 +72,7 @@ class TestReadyzAuditPathFix:
     def test_probe_flags_corrupt_tail(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from openakita.core import audit_logger as al
+        from openakita.agent import audit as al
 
         log_path = tmp_path / "audit.jsonl"
         # Trailing line is bad JSON.
@@ -90,7 +90,7 @@ class TestReadyzAuditPathFix:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """File exists with non-zero size but is all whitespace → NOT OK."""
-        from openakita.core import audit_logger as al
+        from openakita.agent import audit as al
 
         log_path = tmp_path / "audit.jsonl"
         log_path.write_text("\n\n\n   \n", encoding="utf-8")  # whitespace only
@@ -107,7 +107,7 @@ class TestReadyzAuditPathFix:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Operator explicitly turned audit off → readyz must NOT 503."""
-        from openakita.core import audit_logger as al
+        from openakita.agent import audit as al
 
         fake_logger = al.AuditLogger(
             path=str(tmp_path / "irrelevant.jsonl"), enabled=False, include_chain=False
@@ -122,7 +122,7 @@ class TestReadyzAuditPathFix:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Fresh install: file doesn't exist → OK (no entries yet)."""
-        from openakita.core import audit_logger as al
+        from openakita.agent import audit as al
 
         fake_logger = al.AuditLogger(
             path=str(tmp_path / "never_written.jsonl"),

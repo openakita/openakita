@@ -6,11 +6,11 @@ Python backend for the OpenAkita multi-agent AI assistant.
 
 | Module | Purpose |
 |--------|---------|
-| `core/agent.py` | Main Agent class — orchestrates brain, tools, identity, memory |
-| `core/brain.py` | LLM interaction layer (streaming, tool calls, retries) |
-| `core/ralph.py` | Ralph Loop — never-give-up execution with failure analysis |
-| `core/reasoning_engine.py` | ReAct reasoning engine (stream-based) |
-| `core/identity.py` | Loads SOUL.md, AGENT.md, USER.md, MEMORY.md |
+| `agent/core.py` | Main Agent class — orchestrates brain, tools, identity, memory |
+| `agent/brain.py` | LLM interaction layer (streaming, tool calls, retries) |
+| `agent/ralph.py` | Ralph Loop — never-give-up execution with failure analysis |
+| `agent/reasoning.py` | ReAct reasoning engine (stream-based) |
+| `agent/identity.py` | Loads SOUL.md, AGENT.md, USER.md, MEMORY.md |
 | `prompt/builder.py` | Assembles system prompt in layers (identity → runtime → catalogs → memory) |
 | `prompt/compiler.py` | Compiles identity files to `identity/runtime/` optimized fragments |
 | `agents/orchestrator.py` | Multi-agent message routing, delegation, timeout, health monitoring |

@@ -25,10 +25,15 @@ def shutdown_event():
 
 @pytest.fixture
 def app(shutdown_event):
-    return create_app(
+    app = create_app(
         agent=MagicMock(initialized=True),
         shutdown_event=shutdown_event,
     )
+    yield app
+
+    force_exit_task = getattr(app.state, "_force_exit_task", None)
+    if force_exit_task is not None:
+        force_exit_task.cancel()
 
 
 @pytest.fixture

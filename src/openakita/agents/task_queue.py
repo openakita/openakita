@@ -82,7 +82,7 @@ class TaskQueue:
     @staticmethod
     def _audit_task(event: str, task: QueuedTask, reason: str = "") -> None:
         try:
-            from openakita.core.audit_logger import get_audit_logger
+            from openakita.agent.audit import get_audit_logger
 
             get_audit_logger().log_event(
                 "task_transition",

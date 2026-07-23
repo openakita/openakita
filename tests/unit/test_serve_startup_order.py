@@ -4,8 +4,8 @@ from types import SimpleNamespace
 from fastapi import APIRouter
 from httpx import ASGITransport, AsyncClient
 
+from openakita.agent import Agent
 from openakita.api.server import _wait_for_uvicorn_started, create_app, update_runtime_refs
-from openakita.core.agent import Agent
 
 
 async def test_update_runtime_refs_attaches_late_agent_plugin_routes() -> None:

@@ -8,7 +8,15 @@ import pytest
 
 from openakita.agent.safety.destructive_intent import (
     check_trust_mode_skip as _check_trust_mode_skip,
+)
+from openakita.agent.safety.destructive_intent import (
     check_trusted_path_skip as _check_trusted_path_skip,
+)
+from openakita.agent.trusted_paths import (
+    SESSION_KEY,
+    consume_session_trust,
+    grant_session_trust,
+    is_trusted_workspace_path,
 )
 from openakita.core.risk_intent import (
     AccessMode,
@@ -16,12 +24,6 @@ from openakita.core.risk_intent import (
     RiskIntentResult,
     RiskLevel,
     TargetKind,
-)
-from openakita.core.trusted_paths import (
-    SESSION_KEY,
-    consume_session_trust,
-    grant_session_trust,
-    is_trusted_workspace_path,
 )
 
 # ---------------------------------------------------------------------------

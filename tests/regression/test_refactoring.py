@@ -220,7 +220,7 @@ def _():
 
 @test("SkillManager 导入")
 def _():
-    from openakita.core.skill_manager import SkillManager
+    from openakita.agent.skill_manager import SkillManager
     assert SkillManager is not None
 
 
@@ -502,7 +502,7 @@ def _():
     from openakita.agent.tools import ToolExecutor
     from openakita.agent.context import ContextManager
     from openakita.core.response_handler import ResponseHandler
-    from openakita.core.skill_manager import SkillManager
+    from openakita.agent.skill_manager import SkillManager
     from openakita.core.prompt_assembler import PromptAssembler
     from openakita.agent.reasoning import ReasoningEngine, Checkpoint, Decision
 

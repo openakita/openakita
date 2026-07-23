@@ -3,8 +3,8 @@ from types import SimpleNamespace
 import pytest
 
 from openakita.agent.core import Agent
+from openakita.agent.ralph import TaskResult
 from openakita.core.intent_analyzer import IntentResult, IntentType
-from openakita.core.ralph import TaskResult
 from openakita.llm.types import AllEndpointsFailedError
 
 

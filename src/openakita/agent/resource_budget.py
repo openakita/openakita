@@ -1,9 +1,5 @@
 """Task-level resource budget manager.
 
-Ported from :mod:`openakita.core.resource_budget` per ADR-0003 and
-the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy path stays as a re-export shim until Phase 8.
-
 Like an OS managing process resources, this module allocates and
 enforces budgets per task. When the budget nears exhaustion the
 guard takes graduated action.
@@ -24,7 +20,7 @@ Strategy:
 * Pause (100 %): pause execution, notify the user, allow continue
   or budget bump.
 
-Two internal absolute imports replace the legacy relative ones so
+Two internal absolute imports replace the previous relative ones so
 the module can live under ``agent/``:
 
 * ``from openakita.tracing.tracer import get_tracer`` (was

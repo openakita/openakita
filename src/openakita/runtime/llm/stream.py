@@ -1,19 +1,8 @@
-"""LLM-side streaming helper extracted from ``core.brain`` (P-RC-4).
+"""LLM streaming and token-tracking helpers.
 
-Note: the continuation plan literal calls for ``runtime/stream/llm.py``,
-but ``runtime/stream.py`` already exists as the StreamBus module
-(ADR-0006). Adding a ``runtime/stream/`` package next to it would
-collide with that import path; we place this submodule inside the
-``runtime/llm/`` package instead -- the deviation is captured in the
-G-RC-4 gate review.
-
-The legacy ``Brain`` streaming entry point wrapped
-``LLMClient.chat_stream`` with a
-``TokenTrackingContext`` set/reset, a debug-dump call, and the v1
-multimodal conversion. The conversion is the heavy part; this helper
-exposes the lightweight streaming primitive itself so the v2 agent
-rewrite can compose its own dump / tracking concerns instead of
-inheriting them from the giant.
+This module exposes a lightweight ``LLMClient.chat_stream`` primitive and a
+separate token-tracking context manager so callers can compose only the
+concerns they need.
 """
 
 from __future__ import annotations
@@ -40,13 +29,10 @@ async def llm_stream_tracking(
     iteration: int = 0,
     agent_profile_id: str = "default",
 ):
-    """Token-tracking context manager mirroring the legacy Brain wrapping.
+    """Apply and reliably reset token tracking around a streaming call.
 
-    The legacy ``Brain`` always called ``set_tracking_context(...)``
-    before the streaming generator and ``reset_tracking_context(...)``
-    in the ``finally`` block. We accept the two functions as injection
-    points so this helper depends only on the public token-tracking
-    surface, not on the legacy module path.
+    The setter and resetter are injection points so this helper depends only
+    on the public token-tracking surface.
     """
     from openakita.core.token_tracking import TokenTrackingContext
 
@@ -81,9 +67,7 @@ async def stream_llm_events(
 
     Pure wrapper around ``LLMClient.chat_stream`` -- no token tracking,
     no debug dump, no multimodal conversion. Callers that need those
-    concerns layer them around this primitive (the v2 agent rewrite
-    will compose :func:`llm_stream_tracking` and a debug-dump callable;
-    the legacy Brain keeps its inline composition until the shim swap).
+    concerns layer them around this primitive.
 
     Args:
         client: any object that implements ``async def chat_stream(...)``.

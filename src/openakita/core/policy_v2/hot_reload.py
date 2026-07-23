@@ -274,7 +274,7 @@ class PolicyHotReloader:
 
     def _write_audit(self, *, ok: bool, reason: str, engine_id: int | None) -> None:
         try:
-            from ..audit_logger import get_audit_logger
+            from openakita.agent.audit import get_audit_logger
 
             get_audit_logger().log(
                 tool_name="<policy_hot_reload>",

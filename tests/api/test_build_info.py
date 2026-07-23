@@ -1,4 +1,4 @@
-﻿"""P-RC-2 P2.8 -- backend build-info endpoint test.
+"""P-RC-2 P2.8 -- backend build-info endpoint test.
 
 We mount the router on a stand-alone FastAPI app to avoid pulling
 the full ``openakita.api.server.create_app`` graph (which triggers
@@ -47,5 +47,4 @@ def test_build_info_falls_back_to_dev_when_pkg_missing(
 def test_build_info_route_is_mounted_on_minimal_app() -> None:
     app = FastAPI()
     app.include_router(build_info.router)
-    paths = {r.path for r in app.routes}  # type: ignore[attr-defined]
-    assert "/api/build-info" in paths
+    assert "/api/build-info" in app.openapi()["paths"]

@@ -1,6 +1,6 @@
 """Built-in template: Software Engineering Team.
 
-Ten-node engineering org that mirrors the legacy ``software-team``
+Ten-node engineering org that mirrors the pre-v2 ``software-team``
 template (``orgs/templates.py`` lines 357-545):
 
 ::
@@ -21,14 +21,14 @@ template (``orgs/templates.py`` lines 357-545):
 
     Consult edges: qa → fe_lead, qa → be_lead (test feedback).
 
-The legacy schema carried positional fields (x/y), department
+The pre-v2 schema carried positional fields (x/y), department
 strings, and avatars that the supervisor never read. The v2 spec
 strips them; if a user wants those for layout they can add them
 at instantiation overrides time once the editor lands in Phase 6.
 
 The ten role-handles are normalised to lowercase + underscores per
 the role-handle regex in ADR-0008. Display labels stay Chinese to
-match the legacy template's audience.
+match the pre-v2 template's audience.
 """
 
 from __future__ import annotations
@@ -121,7 +121,7 @@ def software_team() -> TemplateSpec:
         description=(
             "Ten-node engineering organisation: a tech lead, paired "
             "frontend / backend leads each owning two developers, plus QA, "
-            "DevOps, and a technical writer. Mirrors the legacy "
+            "DevOps, and a technical writer. Mirrors the pre-v2 "
             "software-team template in the v2 schema."
         ),
         version=1,

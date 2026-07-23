@@ -1,9 +1,5 @@
 """桌面通知模块 - 跨平台系统通知（Windows/macOS/Linux）。
 
-Ported from :mod:`openakita.core.desktop_notify` per ADR-0003
-and the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``.
-The legacy path stays as a re-export shim until Phase 8.
-
 任务完成时通过操作系统原生通知提醒用户。
 Windows Toast / macOS Notification Center / Linux notify-send。
 系统通知自带音效，无需额外音频文件。
@@ -280,7 +276,7 @@ def notify_task_completed(
         title = "\u2705 OpenAkita 任务完成"
         body = task_name
     else:
-        title = "\u274C OpenAkita 任务失败"
+        title = "\u274c OpenAkita 任务失败"
         body = task_name
 
     if duration_seconds > 0:

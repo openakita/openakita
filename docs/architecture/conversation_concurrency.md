@@ -271,7 +271,7 @@ force-cancel escape hatch discussion.
 
 ### INTERRUPT auto-downgrade decision
 
-`_preempt_or_queue_prev_task` in `core/agent.py` checks the
+`_preempt_or_queue_prev_task` in `core/_agent_runtime.py` checks the
 previous task's `in_flight_tools` list:
 
 ```python

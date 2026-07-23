@@ -1,24 +1,15 @@
-"""Regression tests for the ``openakita.core`` public import surface.
-
-These guards lock in the smoke-fix-1 (F-0 / F-6 / F-7) repairs landed in
-sub-commits ``smoke-fix-1a`` (circular-import break) and ``smoke-fix-1c``
-(``ReasoningEngine`` lazy export).  They are intentionally tiny: each test
-performs a single import round-trip so a regression in either fix shows
-up as an immediate failing assertion rather than a downstream attribute
-error.
-
-Findings reference: ``tmp_p10/_smoke_report.md`` (Round F-0, F-6, F-7) and
-the per-fix commit bodies (``smoke-F0-F6`` / ``smoke-F7``).
-"""
+"""Regression tests for the canonical agent import surface."""
 
 from __future__ import annotations
 
+import importlib.util
+
 
 def test_prompt_compiler_import_surface() -> None:
-    """F-0: ``openakita.prompt.compiler.check_compiled_outdated`` must import.
+    """``openakita.prompt.compiler.check_compiled_outdated`` must import.
 
     Pre-fix this raised ``ImportError`` because the ``prompt -> builder ->
-    skills -> agent -> core._agent_legacy -> ..skills (re-entry)`` cycle
+    skills -> agent -> core._agent_runtime -> ..skills (re-entry)`` cycle
     aborted ``skills/__init__`` mid-load.
     """
     from openakita.prompt.compiler import check_compiled_outdated
@@ -26,28 +17,48 @@ def test_prompt_compiler_import_surface() -> None:
     assert callable(check_compiled_outdated)
 
 
-def test_core_brain_lazy_export() -> None:
-    """F-6: ``from openakita.core import Brain`` must succeed.
+def test_agent_brain_export() -> None:
+    """``from openakita.agent import Brain`` must succeed.
 
-    Same root cause as F-0; the lazy ``__getattr__`` in
-    ``openakita/core/__init__.py`` now pre-loads ``openakita.agent`` so the
-    ``_brain_legacy -> llm.client -> core.errors -> agent.errors`` chain
-    resolves in the safe order.
+    The canonical package must load without re-entering the runtime module
+    during package initialization.
     """
-    from openakita.core import Brain
+    from openakita.agent import Brain
 
     assert isinstance(Brain, type)
     assert Brain.__name__ == "Brain"
 
 
-def test_core_reasoning_engine_lazy_export() -> None:
-    """F-7: ``from openakita.core import ReasoningEngine`` must succeed.
+def test_agent_reasoning_engine_export() -> None:
+    """``from openakita.agent import ReasoningEngine`` must succeed.
 
-    Pre-fix the lazy ``_LAZY_IMPORTS`` mapping omitted ``ReasoningEngine``,
-    so attribute access raised ``AttributeError``.  Closed by sub-commit
-    ``smoke-fix-1c`` (single mapping entry).
+    The reasoning engine is exported only from the canonical agent package.
     """
-    from openakita.core import ReasoningEngine
+    from openakita.agent import ReasoningEngine
 
     assert isinstance(ReasoningEngine, type)
     assert ReasoningEngine.__name__ == "ReasoningEngine"
+
+
+def test_removed_core_agent_modules_do_not_resolve() -> None:
+    removed = (
+        "openakita.core.agent",
+        "openakita.core.reasoning_engine",
+        "openakita.core.tool_executor",
+        "openakita.core.identity",
+        "openakita.core.permission",
+    )
+
+    assert all(importlib.util.find_spec(module_name) is None for module_name in removed)
+
+
+def test_removed_llm_adapter_does_not_resolve() -> None:
+    assert importlib.util.find_spec("openakita.llm.adapter") is None
+
+
+def test_core_package_does_not_export_agent_types() -> None:
+    import openakita.core as core
+
+    assert not hasattr(core, "Agent")
+    assert not hasattr(core, "Brain")
+    assert not hasattr(core, "ReasoningEngine")

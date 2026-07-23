@@ -16,7 +16,7 @@
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -33,7 +33,7 @@ class TestUserCancelledError:
 
     def test_basic_creation(self):
         """基本创建"""
-        from openakita.core.errors import UserCancelledError
+        from openakita.agent.errors import UserCancelledError
 
         err = UserCancelledError(reason="停止", source="llm_call")
         assert err.reason == "停止"
@@ -43,7 +43,7 @@ class TestUserCancelledError:
 
     def test_default_values(self):
         """默认值"""
-        from openakita.core.errors import UserCancelledError
+        from openakita.agent.errors import UserCancelledError
 
         err = UserCancelledError()
         assert err.reason == ""
@@ -51,7 +51,7 @@ class TestUserCancelledError:
 
     def test_is_exception(self):
         """是 Exception 子类"""
-        from openakita.core.errors import UserCancelledError
+        from openakita.agent.errors import UserCancelledError
 
         assert issubclass(UserCancelledError, Exception)
 
@@ -149,7 +149,6 @@ class TestCancellableLlmCall:
     @pytest.mark.asyncio
     async def test_normal_completion(self):
         """LLM 正常返回时 _cancellable_llm_call 返回结果"""
-        from openakita.core.errors import UserCancelledError
 
         mock_response = MagicMock()
         mock_response.content = [MagicMock(type="text", text="回复内容")]
@@ -173,7 +172,7 @@ class TestCancellableLlmCall:
     @pytest.mark.asyncio
     async def test_cancel_interrupts(self):
         """cancel_event 触发时 _cancellable_llm_call 抛出 UserCancelledError"""
-        from openakita.core.errors import UserCancelledError
+        from openakita.agent.errors import UserCancelledError
 
         async def slow_llm(**kwargs):
             await asyncio.sleep(10)
@@ -323,7 +322,7 @@ class TestReasonWithHeartbeatCancel:
     @pytest.mark.asyncio
     async def test_cancel_during_reason(self):
         """LLM 推理期间取消应抛出 UserCancelledError"""
-        from openakita.core.errors import UserCancelledError
+        from openakita.agent.errors import UserCancelledError
         from openakita.core.agent_state import AgentState, TaskStatus
 
         agent_state = AgentState()
@@ -380,8 +379,8 @@ class TestStreamCancelFarewell:
     @pytest.mark.asyncio
     async def test_farewell_yields_text_deltas(self):
         """流式收尾产出 text_delta 事件"""
-        from openakita.core.agent_state import TaskState, TaskStatus
         from openakita.agent.reasoning import ReasoningEngine
+        from openakita.core.agent_state import TaskState, TaskStatus
 
         farewell_response = MagicMock()
         farewell_block = MagicMock()
@@ -408,13 +407,12 @@ class TestStreamCancelFarewell:
 
         assert len(events) > 0
         assert all(e["type"] == "text_delta" for e in events)
-        full_text = "".join(e["content"] for e in events)
 
     @pytest.mark.asyncio
     async def test_farewell_timeout_yields_default(self):
         """LLM 超时时产出默认文本"""
-        from openakita.core.agent_state import TaskState, TaskStatus
         from openakita.agent.reasoning import ReasoningEngine
+        from openakita.core.agent_state import TaskState, TaskStatus
 
         def slow_llm(**kwargs):
             import time
@@ -435,8 +433,8 @@ class TestStreamCancelFarewell:
         state.cancel("停止")
 
         with patch(
-            "openakita.core._reasoning_engine_legacy.asyncio.wait_for",
-            side_effect=asyncio.TimeoutError(),
+            "openakita.core._reasoning_runtime.asyncio.wait_for",
+            side_effect=TimeoutError(),
         ):
             events = []
             async for ev in engine._stream_cancel_farewell([], "", "test-model", state):

@@ -236,7 +236,7 @@ class FilesystemHandler:
         if result.ok:
             return None
         try:
-            from ...core.audit_logger import get_audit_logger
+            from openakita.agent.audit import get_audit_logger
 
             get_audit_logger().log_event(
                 "path_denial",

@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from ..core.persona import PersonaManager
+    from openakita.agent.persona import PersonaManager
+
     from ..memory import MemoryManager
 
 logger = logging.getLogger(__name__)

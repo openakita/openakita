@@ -1,9 +1,9 @@
 from pathlib import Path
 
-import openakita.core.identity as identity_mod
+import openakita.agent.identity as identity_mod
+from openakita.agent import Agent
+from openakita.agent.identity import Identity, _file_hash, _save_hashes
 from openakita.agents.identity_resolver import ProfileIdentityResolver
-from openakita.core.agent import Agent
-from openakita.core.identity import Identity, _file_hash, _save_hashes
 
 
 def test_agent_materializes_mixed_profile_identity(monkeypatch, tmp_path: Path):

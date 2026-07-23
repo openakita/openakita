@@ -186,7 +186,7 @@ async def test_web_fetch_respects_session_domain_block(_fake_httpx):
 
     from types import SimpleNamespace
 
-    from openakita.core.domain_allowlist import get_domain_allowlist
+    from openakita.agent.domain_allowlist import get_domain_allowlist
 
     al = get_domain_allowlist()
     al.clear()

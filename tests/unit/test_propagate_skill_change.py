@@ -85,7 +85,7 @@ def patched_env(monkeypatch, tmp_path):
         collect_skills_mock,
     )
     monkeypatch.setattr(
-        "openakita.core._agent_legacy.Agent.notify_pools_skills_changed",
+        "openakita.core._agent_runtime.Agent.notify_pools_skills_changed",
         staticmethod(notify_pools_mock),
     )
     monkeypatch.setattr("openakita.skills.events.notify_skills_changed", notify_changed_mock)

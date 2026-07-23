@@ -224,6 +224,9 @@
   "/api/v2/orgs/{org_id}/start": [
     "POST"
   ],
+  "/api/v2/orgs/{org_id}/start-readiness": [
+    "GET"
+  ],
   "/api/v2/orgs/{org_id}/stats": [
     "GET"
   ],

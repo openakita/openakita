@@ -12,7 +12,7 @@ the prefix alternation in a non-capturing group, so all known prefixes match a
 full tool name.
 """
 
-from openakita.core._reasoning_engine_legacy import (
+from openakita.core._reasoning_runtime import (
     _detect_text_toolcall_block,
     _guard_text_toolcall_block,
 )

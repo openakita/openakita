@@ -6,8 +6,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from openakita.agent.domain_allowlist import DomainAllowlist, get_domain_allowlist
 from openakita.api.routes import health
-from openakita.core.domain_allowlist import DomainAllowlist, get_domain_allowlist
 
 
 @pytest.fixture(autouse=True)

@@ -8,7 +8,7 @@ claim is anchored by a timestamp (`[17:30]`) or an explicit recap adverb
 (之前 / 刚才 / 历史 / 上文 / 上次 / 先前 / 此前 / ...).
 """
 
-from openakita.core._reasoning_engine_legacy import (
+from openakita.core._reasoning_runtime import (
     _extract_unbacked_verbs,
     _guard_unbacked_action_claim,
     _is_recap_context,

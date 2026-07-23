@@ -1,14 +1,12 @@
 """Historical-recap detector.
 
-Extracted from ``core/reasoning_engine.py`` (P-RC-5 P5.4) into its
-own guard module. Detects whether a verb / tool mention in the
+Detects whether a verb / tool mention in the
 LLM’s final-answer text sits inside a "I previously did X" recap
 window (timestamp, ``之前`` / ``刚才`` / ``历史`` / ``上文``...) so
 the unbacked-action-claim guard does not flag legitimate
 summaries of past tool runs as fresh hallucinations.
 
-The compiled regex literal and the ±48-character window are
-byte-identical to the legacy version; the parity tests pin this.
+The parity tests pin the compiled regex and the ±48-character window.
 """
 
 from __future__ import annotations
@@ -51,5 +49,3 @@ def is_recap_context(text: str, verb_or_tool: str) -> bool:
         if RECAP_NEAR_RE.search(window):
             return True
     return False
-
-

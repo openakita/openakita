@@ -1,10 +1,5 @@
 """Identity loader for SOUL.md / AGENT.md / USER.md / MEMORY.md.
 
-Ported byte-for-byte from ``openakita.core.identity`` per ADR-0003 and
-the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``.
-Behaviour unchanged. The legacy path is now a re-export shim until
-Phase 8 mechanically removes the legacy ``core/`` tree.
-
 Responsibilities:
 
 * load the four identity documents (SOUL, AGENT, USER, MEMORY) from

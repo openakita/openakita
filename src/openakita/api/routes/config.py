@@ -315,7 +315,7 @@ def _write_profile_event(profile: str, *, previous: str | None = None) -> None:
     disabled normal audit config cannot hide off-mode transitions.
     """
     try:
-        from openakita.core.audit_logger import AuditLogger
+        from openakita.agent.audit import AuditLogger
 
         AuditLogger(enabled=True).log_event(
             "security_profile_change",
@@ -1362,7 +1362,7 @@ async def read_skill_external_allowlist():
     This is intentionally separate from the security user_allowlist in
     identity/POLICIES.yaml and from IM channel group allowlists.
     """
-    from openakita.core.security_actions import list_skill_external_allowlist
+    from openakita.agent.security_actions import list_skill_external_allowlist
 
     return list_skill_external_allowlist()
 
@@ -1379,7 +1379,7 @@ async def write_skills_config(body: SkillsWriteRequest, request: Request):
 
     若 request 中尚无 agent（启动前调用），则仅写盘，刷新将在 Agent 初始化时自然发生。
     """
-    from openakita.core.security_actions import maybe_refresh_skills, set_skill_external_allowlist
+    from openakita.agent.security_actions import maybe_refresh_skills, set_skill_external_allowlist
 
     content = body.content if isinstance(body.content, dict) else {}
     al = content.get("external_allowlist") if isinstance(content, dict) else None
@@ -2242,7 +2242,7 @@ async def read_security_audit():
     SecurityView can render this as a badge.
     """
     try:
-        from openakita.core.audit_logger import get_audit_logger
+        from openakita.agent.audit import get_audit_logger
         from openakita.core.policy_v2.audit_chain import (
             verify_chain_with_rotation,
         )
@@ -2369,9 +2369,9 @@ async def security_confirm_batch(body: SecurityConfirmBatchRequest):
             },
         ) from e
     try:
+        from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
         from openakita.core.policy_v2.global_engine import get_config_v2
         from openakita.core.security_confirmation import resolve_security_confirmation
-        from openakita.core.ui_confirm_bus import get_ui_confirm_bus
 
         bus = get_ui_confirm_bus()
 
@@ -2439,10 +2439,10 @@ async def security_confirm_batch(body: SecurityConfirmBatchRequest):
 async def reset_death_switch():
     """Reset the death switch (exit read-only mode)."""
     try:
-        from openakita.core.security_actions import (
+        from openakita.agent.security_actions import (
             maybe_broadcast_death_switch_reset,
         )
-        from openakita.core.security_actions import (
+        from openakita.agent.security_actions import (
             reset_death_switch as reset_death_switch_action,
         )
 
@@ -2656,7 +2656,7 @@ async def write_self_protection(body: _SelfProtectionUpdate):
 async def read_user_allowlist():
     """Read the persistent security user_allowlist."""
     try:
-        from openakita.core.security_actions import list_security_allowlist
+        from openakita.agent.security_actions import list_security_allowlist
 
         return list_security_allowlist()
     except Exception:
@@ -2675,7 +2675,7 @@ async def add_allowlist_entry(body: dict):
     entry_type = body.get("type", "command")
     entry = {k: v for k, v in body.items() if k != "type"}
     try:
-        from openakita.core.security_actions import add_security_allowlist_entry
+        from openakita.agent.security_actions import add_security_allowlist_entry
 
         return add_security_allowlist_entry(entry_type, entry)
     except Exception as e:
@@ -2692,7 +2692,7 @@ async def add_security_user_allowlist_entry(body: dict):
 async def delete_allowlist_entry(entry_type: str, index: int):
     """Remove an entry from the persistent security user_allowlist."""
     try:
-        from openakita.core.security_actions import remove_security_allowlist_entry
+        from openakita.agent.security_actions import remove_security_allowlist_entry
 
         return remove_security_allowlist_entry(entry_type, index)
     except Exception as e:

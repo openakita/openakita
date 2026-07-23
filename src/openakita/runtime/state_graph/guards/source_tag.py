@@ -1,15 +1,6 @@
 """Source-tag consistency guard.
 
-Extracted from ``core/reasoning_engine.py`` (P-RC-5 P5.2) as a
-self-contained reasoning-engine guard. The legacy module-level
-helper ``_check_source_tag_consistency`` lived next to the giant
-``ReasoningEngine`` class for historical reasons; pulling it into
-``runtime/state_graph/guards/`` is the first concrete step toward
-the StateGraph-driven post-Decision routing the continuation plan
-calls for in section 6.
-
-The guard detects two hallucination patterns the legacy engine
-flagged inline before yielding the LLM response:
+The guard detects two hallucination patterns before yielding the LLM response:
 
 1. **Mislabelled tool source.** The LLM appended a
    ``[来源:工具]`` tag ("source: tool") to its answer but no tool
@@ -25,14 +16,8 @@ the caller appends. This preserves the original wording so the
 user can see what the model claimed vs. what the system actually
 observed.
 
-The banner strings are intentionally byte-identical to the legacy
-strings; the parity harness asserts ``check_source_tag_consistency``
-returns the same bytes as the legacy private alias.
-
-Public entry point: :func:`check_source_tag_consistency`. The
-legacy private name ``_check_source_tag_consistency`` is
-re-exported from ``core/reasoning_engine.py`` for backward
-compatibility (the function object is shared, not duplicated).
+The parity harness pins the banner strings returned by
+:func:`check_source_tag_consistency`.
 """
 
 from __future__ import annotations
@@ -42,9 +27,7 @@ from ._text_patterns import action_done_re, source_tag_re
 __all__ = ["check_source_tag_consistency"]
 
 
-def check_source_tag_consistency(
-    text: str, tools_executed_count: int
-) -> str | None:
+def check_source_tag_consistency(text: str, tools_executed_count: int) -> str | None:
     """检查回答中的来源标签与实际工具调用次数是否一致。
 
     P0-2 阶段 3：后置一致性检测。
@@ -70,6 +53,6 @@ def check_source_tag_consistency(
             return (
                 "\n\n---\n"
                 "⚠️ **系统提示**：本轮未实际调用任何工具，上述"
-                "\"已查到/已执行/已读到\"等动作完成短语可能不准确，请你核实。"
+                '"已查到/已执行/已读到"等动作完成短语可能不准确，请你核实。'
             )
     return None

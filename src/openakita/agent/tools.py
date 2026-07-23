@@ -1,35 +1,16 @@
-"""V2 tool execution surface -- canonical home for ``ToolExecutor``.
+"""Canonical public tool-execution surface.
 
-This module replaces the P-RC-0..3 facade. After P-RC-4 the canonical
-import path for the agent tool-execution layer is
-:mod:`openakita.agent.tools`; the legacy
-``openakita.core.tool_executor.ToolExecutor`` will be a thin
-re-export shim once P4.11 lands.
-
-The v2 :class:`ToolExecutor` composes the focused helpers extracted
-in P4.8 (:mod:`runtime.io.truncate` / :mod:`runtime.io.overflow`) and
-P4.9 (:mod:`runtime.retry_policy.is_retriable_tool_error` /
-:func:`default_tool_retry_policy`). To preserve byte-faithful
-behaviour for the ~30 existing ``openakita.core.tool_executor.ToolExecutor``
-callers during the P4.11 cutover, it currently inherits the deep
-methods (``execute_tool``, ``execute_batch``, ``execute_tool_with_policy``,
-``check_permission``, ...) from the legacy class. Those will be
-re-implemented inline in P-RC-7 once the legacy ``core/`` tree is
-removed.
-
-Migration:
-
-* New code: ``from openakita.agent.tools import ToolExecutor``
-* Old code (still allowed during cutover): ``from openakita.core.tool_executor import ToolExecutor``
+``ToolExecutor`` combines the internal runtime base with focused retry,
+truncation, overflow, and result-budget helpers.
 """
 
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from openakita.core._tool_executor_legacy import ToolExecutor as _LegacyToolExecutorImpl
-from openakita.core._tool_executor_legacy import ToolResultWithHint as _LegacyToolResultWithHint
-from openakita.core._tool_executor_legacy import ToolSkipped as _LegacyToolSkipped
+from openakita.core._tool_runtime import ToolExecutor as _RuntimeToolExecutorBase
+from openakita.core._tool_runtime import ToolResultWithHint as _RuntimeToolResultWithHint
+from openakita.core._tool_runtime import ToolSkipped as _RuntimeToolSkipped
 from openakita.runtime.io import (
     DEFAULT_TOOL_RESULT_MAX_CHARS as _V2_DEFAULT_TOOL_RESULT_MAX_CHARS,
 )
@@ -82,20 +63,18 @@ MAX_TOOL_RESULT_CHARS: int = _V2_MAX_TOOL_RESULT_CHARS
 OVERFLOW_MARKER: str = _V2_OVERFLOW_MARKER
 
 #: Public type alias for the ``(text, hint)`` tuple every tool returns.
-ToolResultWithHint = _LegacyToolResultWithHint
+ToolResultWithHint = _RuntimeToolResultWithHint
 
-# Re-anchored leaf helpers; direct re-exports of the runtime.io functions.
+# Public leaf helpers backed by ``runtime.io``.
 save_overflow = _v2_save_overflow
 smart_truncate = _v2_smart_truncate
 cleanup_overflow_files = _v2_cleanup_overflow_files
 
 
-class ToolSkipped(_LegacyToolSkipped):
+class ToolSkipped(_RuntimeToolSkipped):
     """User-initiated skip of the current tool execution.
 
-    Re-anchored under :mod:`openakita.agent.tools`. Inherits from the
-    legacy class so existing ``except ToolSkipped`` clauses keep
-    catching both v1 and v2 instances.
+    Published under :mod:`openakita.agent.tools` and backed by the runtime type.
     """
 
 
@@ -103,22 +82,18 @@ class ToolSkipped(_LegacyToolSkipped):
 class ToolExecutorProtocol(Protocol):
     """Minimal v2 surface that agent.* callers depend on.
 
-    The legacy class exposes ~40 public + private methods; the
+    The runtime base exposes ~40 public and private methods; the
     Protocol below names the handful that v2 callers inside
     ``agent.*`` actually depend on so concrete v2 executors can
-    satisfy it without inheriting the deep legacy class.
+    satisfy it without inheriting the full runtime implementation.
     """
 
     handler_registry: Any
 
-    async def execute_tool(
-        self, tool_name: str, tool_input: dict
-    ) -> ToolResultWithHint:
+    async def execute_tool(self, tool_name: str, tool_input: dict) -> ToolResultWithHint:
         """Execute one tool and return ``(text, hint)``."""
 
-    async def execute_batch(
-        self, tool_calls: list[dict], *, agent: Any = None
-    ) -> list[Any]:
+    async def execute_batch(self, tool_calls: list[dict], *, agent: Any = None) -> list[Any]:
         """Execute a batch of tool calls; honours concurrency policy."""
 
     def get_handler_name(self, tool_name: str) -> str | None:
@@ -134,11 +109,10 @@ class ToolExecutorProtocol(Protocol):
         """Drop any cached confirm prompts."""
 
 
-class ToolExecutor(_LegacyToolExecutorImpl):
-    """V2 ToolExecutor with v2-flavoured composition.
+class ToolExecutor(_RuntimeToolExecutorBase):
+    """Canonical ToolExecutor with focused runtime composition.
 
-    Inherits the legacy 1818-LOC implementation for byte-faithful
-    behaviour during the P4.11 cutover. Adds:
+    Inherits the complete private runtime implementation and adds:
 
     * a public :attr:`retry_policy` accessor that returns the v2
       :class:`runtime.retry_policy.RetryPolicy` built from
@@ -150,7 +124,7 @@ class ToolExecutor(_LegacyToolExecutorImpl):
 
     Deep methods (``execute_tool``, ``execute_batch``,
     ``execute_tool_with_policy``, ``check_permission``, ...) are
-    inherited unchanged from the legacy class.
+    inherited from the runtime base.
     """
 
     def __init__(
@@ -174,9 +148,7 @@ class ToolExecutor(_LegacyToolExecutorImpl):
     @retry_policy.setter
     def retry_policy(self, value: RetryPolicy) -> None:
         if not isinstance(value, RetryPolicy):
-            raise TypeError(
-                f"retry_policy must be a RetryPolicy instance, got {type(value)}"
-            )
+            raise TypeError(f"retry_policy must be a RetryPolicy instance, got {type(value)}")
         self._retry_policy = value
 
     @staticmethod
@@ -209,7 +181,7 @@ class ToolExecutor(_LegacyToolExecutorImpl):
     ) -> ToolResultWithHint:
         """Execute one tool through the v2 retry policy.
 
-        The legacy :meth:`execute_tool` does NOT retry by itself; the
+        The previous :meth:`execute_tool` does NOT retry by itself; the
         ``ReasoningEngine`` decides at a higher level. The v2 contract
         is simpler: each tool call gets one trip through the configured
         :class:`RetryPolicy`. Non-retriable exceptions
@@ -304,13 +276,13 @@ class ToolExecutor(_LegacyToolExecutorImpl):
     async def aclose(self) -> None:
         """V2 lifecycle hook for clean shutdown.
 
-        The legacy ToolExecutor has no explicit close path; resources
+        The previous ToolExecutor has no explicit close path; resources
         are reclaimed by GC. The v2 contract is more explicit: callers
         should ``await tool_exec.aclose()`` when the owning agent is
         torn down so the confirm-cache is dropped deterministically
         and any background dispatch hooks finish their work.
 
-        Inherits no super().aclose() because the legacy class doesn't
+        Inherits no super().aclose() because the previous class doesn't
         define one; this is a forward-looking hook for the P-RC-7
         rewrite that will own real resources (timers, semaphores).
         """

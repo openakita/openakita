@@ -1,11 +1,10 @@
 """L1 Unit Tests: UserProfileManager and profile state."""
 
 import pytest
-from pathlib import Path
 
-from openakita.core.user_profile import (
-    UserProfileManager,
+from openakita.agent.user_profile import (
     UserProfileItem,
+    UserProfileManager,
     UserProfileState,
 )
 

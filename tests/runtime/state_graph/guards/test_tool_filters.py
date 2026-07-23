@@ -12,7 +12,7 @@ from openakita.runtime.state_graph.guards import tool_filters as tf
 @pytest.fixture
 def legacy_aliases():
     """Pin parity against the legacy private aliases in reasoning_engine."""
-    from openakita.core import _reasoning_engine_legacy as re_module
+    from openakita.core import _reasoning_runtime as re_module
 
     return {
         "get_mode_ruleset": re_module._get_mode_ruleset,

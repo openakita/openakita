@@ -18,7 +18,7 @@ Specifically, they cover:
 
 from __future__ import annotations
 
-from openakita.core.loop_budget_guard import LoopBudgetDecision, LoopBudgetGuard
+from openakita.agent.loop_budget import LoopBudgetDecision, LoopBudgetGuard
 
 
 def _seed_with_tool_calls(guard: LoopBudgetGuard, n: int) -> None:

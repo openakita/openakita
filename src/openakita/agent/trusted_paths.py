@@ -1,9 +1,5 @@
 """Session/workspace trusted-path policy (Fix-11).
 
-Ported from :mod:`openakita.core.trusted_paths` per ADR-0003 and
-the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy path stays as a re-export shim until Phase 8.
-
 Reduces risk-gate friction for two common, low-risk situations without
 loosening the high-risk path itself:
 

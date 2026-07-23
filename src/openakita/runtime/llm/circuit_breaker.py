@@ -1,17 +1,14 @@
-"""Compiler-LLM circuit breaker extracted from ``core.brain``.
+"""Compiler-LLM circuit breaker.
 
-The legacy :class:`openakita.core.brain.Brain` carried a small but
-nuanced state machine that kept the *Prompt Compiler* LLM endpoint
+This state machine keeps the *Prompt Compiler* LLM endpoint
 out of the request path after repeated failures: a 5-strike count
 plus an auth-aware reset window (5 minutes for transient failures,
 30 minutes for auth failures so a hot-swap of ``api_key`` does not
 require a process restart). The state was sprayed across four
 instance fields and three methods, all welded to Brain.
 
-This module lifts that state machine into a small, well-typed class
-that the v2 :mod:`openakita.agent.brain` rewrite composes alongside
-:class:`runtime.llm.failover.EndpointFailoverView`. Brain delegates
-to one of these instances so behaviour stays byte-faithful; tests
+The public :mod:`openakita.agent.brain` composes this class alongside
+:class:`runtime.llm.failover.EndpointFailoverView`. Tests
 can drive the breaker directly without instantiating a real LLM
 client.
 """
@@ -24,8 +21,7 @@ import time
 logger = logging.getLogger(__name__)
 
 # Keywords whose presence in an error string flips the breaker into
-# the long auth-failure cooldown. The list mirrors the legacy
-# ``_compiler_on_failure`` literal.
+# the long auth-failure cooldown.
 _AUTH_FAILURE_KEYWORDS: tuple[str, ...] = (
     "invalid_api_key",
     "authentication",
@@ -102,9 +98,7 @@ class CompilerCircuitBreaker:
     def on_failure(self, error_str: str = "") -> None:
         """Record a failed compiler call; may open the breaker."""
         self.fail_count += 1
-        is_auth = bool(error_str) and any(
-            kw in error_str.lower() for kw in _AUTH_FAILURE_KEYWORDS
-        )
+        is_auth = bool(error_str) and any(kw in error_str.lower() for kw in _AUTH_FAILURE_KEYWORDS)
         if is_auth:
             self.auth_failed = True
             self.circuit_open = True

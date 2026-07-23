@@ -6,7 +6,7 @@ Each module under this package contributes one template via the
 enough to enqueue every built-in for registration; the registry's
 ``bootstrap`` then drains the queue.
 
-Module-per-template is deliberate. The legacy world had a single
+Module-per-template is deliberate. The pre-v2 implementation had a single
 1234-line ``orgs/templates.py`` that mixed 7 unrelated organisation
 shapes together, which made every change a merge-conflict magnet and
 made it impossible to diff a single template's evolution. We keep

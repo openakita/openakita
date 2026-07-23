@@ -57,8 +57,22 @@ INPUTS = {
 
 
 def _tracked_files(inputs: tuple[str, ...]) -> list[Path]:
-    output = subprocess.check_output(["git", "-C", str(ROOT), "ls-files", "-z", "--", *inputs])
-    return sorted((ROOT / item.decode()).resolve() for item in output.split(b"\0") if item)
+    output = subprocess.check_output(
+        [
+            "git",
+            "-C",
+            str(ROOT),
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            *inputs,
+        ]
+    )
+    files = ((ROOT / item.decode()).resolve() for item in output.split(b"\0") if item)
+    return sorted(path for path in files if path.is_file())
 
 
 def _add_file(digest: Any, path: Path) -> None:

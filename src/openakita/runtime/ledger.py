@@ -9,7 +9,7 @@ Implements ADR-0004's dual-ledger model:
   Produced by the LLM on every inner turn. Five required keys, each
   with both ``answer`` and ``reason``. Strict JSON parsing with retry.
 
-Together they replace the legacy `max_task_seconds` wall-clock cancel
+Together they replace the former `max_task_seconds` wall-clock cancel
 that produced the duplicate-delegate cascade. Stall detection
 (:mod:`stall_detector`) consumes ``ProgressLedger`` to decide whether
 the supervisor should advance, replan, or give up.
@@ -248,9 +248,7 @@ def _extract_first_json_object(raw: str) -> str:
             depth -= 1
             if depth == 0:
                 return raw[start : i + 1]
-    raise ProgressLedgerParseError(
-        "response contains an unterminated JSON object"
-    )
+    raise ProgressLedgerParseError("response contains an unterminated JSON object")
 
 
 def parse_progress_ledger_json(
@@ -284,9 +282,7 @@ def parse_progress_ledger_json(
 
     missing = [k for k in REQUIRED_PROGRESS_KEYS if k not in payload]
     if missing:
-        raise ProgressLedgerParseError(
-            f"missing required keys: {missing}"
-        )
+        raise ProgressLedgerParseError(f"missing required keys: {missing}")
 
     def _coerce_entry(key: str, *, kind: str) -> ProgressLedgerEntry:
         value = payload[key]
@@ -306,9 +302,7 @@ def parse_progress_ledger_json(
             # the strict contract for malformed objects is unchanged.
             value = {"answer": value, "reason": ""}
         if "answer" not in value or "reason" not in value:
-            raise ProgressLedgerParseError(
-                f"{key!r} must have both 'answer' and 'reason'"
-            )
+            raise ProgressLedgerParseError(f"{key!r} must have both 'answer' and 'reason'")
         answer = value["answer"]
         if kind == "bool":
             answer = _coerce_bool(answer, key)

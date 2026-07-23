@@ -13,7 +13,7 @@ from openakita.runtime.state_graph.guards.unbacked_action import (
 
 def _legacy():
     import openakita.agent.brain  # noqa: F401
-    from openakita.core._reasoning_engine_legacy import (
+    from openakita.core._reasoning_runtime import (
         _extract_unbacked_verbs,
         _guard_unbacked_action_claim,
     )

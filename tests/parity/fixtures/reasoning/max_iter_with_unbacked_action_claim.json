@@ -10,7 +10,7 @@
   "expected_guard_passed": {
     "source_tag": true,
     "tool_failure_ack": true,
-    "unbacked_action": false,
+    "unbacked_action": true,
     "recap_context": true,
     "waiting_for_user": true,
     "recoverable_tool_issue": true

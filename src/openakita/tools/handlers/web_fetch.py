@@ -243,7 +243,7 @@ class WebFetchHandler:
             or ""
         )
         if conv_id:
-            from ...core.domain_allowlist import get_domain_allowlist
+            from openakita.agent.domain_allowlist import get_domain_allowlist
 
             host = parsed.hostname or ""
             if get_domain_allowlist().decide(conv_id, host) == "deny":

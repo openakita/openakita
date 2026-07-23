@@ -100,21 +100,21 @@ def _make_runtime() -> MagicMock:
 
 _TRIVIAL_DONE_LEDGER = json.dumps(
     {
-        "is_request_satisfied":    {"answer": True,  "reason": "done"},
-        "is_progress_being_made":  {"answer": True,  "reason": "-"},
-        "is_in_loop":              {"answer": False, "reason": "-"},
-        "instruction_or_question": {"answer": "ok",  "reason": "-"},
-        "next_speaker":            {"answer": "root", "reason": "-"},
+        "is_request_satisfied": {"answer": True, "reason": "done"},
+        "is_progress_being_made": {"answer": True, "reason": "-"},
+        "is_in_loop": {"answer": False, "reason": "-"},
+        "instruction_or_question": {"answer": "ok", "reason": "-"},
+        "next_speaker": {"answer": "root", "reason": "-"},
     }
 )
 
 _PROCEED_LEDGER = json.dumps(
     {
-        "is_request_satisfied":    {"answer": False, "reason": "still working"},
-        "is_progress_being_made":  {"answer": True,  "reason": "-"},
-        "is_in_loop":              {"answer": False, "reason": "-"},
+        "is_request_satisfied": {"answer": False, "reason": "still working"},
+        "is_progress_being_made": {"answer": True, "reason": "-"},
+        "is_in_loop": {"answer": False, "reason": "-"},
         "instruction_or_question": {"answer": "do x", "reason": "-"},
-        "next_speaker":            {"answer": "root", "reason": "-"},
+        "next_speaker": {"answer": "root", "reason": "-"},
     }
 )
 
@@ -232,9 +232,7 @@ async def test_t_a_cancel_event_reaches_llm_client_chat() -> None:
 
     assert captured.get("calls"), "brain.messages_create_async was not called"
     seen = captured["calls"][0].get("cancel_event")
-    assert seen is sentinel_event, (
-        f"agent.run did not forward cancel_event verbatim: got {seen!r}"
-    )
+    assert seen is sentinel_event, f"agent.run did not forward cancel_event verbatim: got {seen!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -287,9 +285,7 @@ class _SlowDeliverProductionShape:
         self.entered = asyncio.Event()
         self.cancel_event_seen: asyncio.Event | None = None
 
-    async def __call__(
-        self, speaker: str, instruction: str, progress: Any
-    ) -> DelegationResult:
+    async def __call__(self, speaker: str, instruction: str, progress: Any) -> DelegationResult:
         # This closure mimics the executor + agent + brain path
         # collapsed for the test -- ``_make_executor_deliver`` will
         # wrap this when we go through ``build_supervisor_for_command``,
@@ -350,9 +346,18 @@ async def test_t_b_high_concurrency_cancel_no_drain_warning(
 
         return _aware
 
-    def _factory(*, org_id: str, command_id: str, root_node_id: str, task: str,
-                 executor: Any = None, brain: Any = None, stream: Any = None,
-                 checkpointer: Any = None, cancel_token: Any = None) -> Any:
+    def _factory(
+        *,
+        org_id: str,
+        command_id: str,
+        root_node_id: str,
+        task: str,
+        executor: Any = None,
+        brain: Any = None,
+        stream: Any = None,
+        checkpointer: Any = None,
+        cancel_token: Any = None,
+    ) -> Any:
         token = cancel_token or CancellationToken()
         evt = asyncio.Event()
         token.add_callback(evt.set)
@@ -394,9 +399,7 @@ async def test_t_b_high_concurrency_cancel_no_drain_warning(
         assert dt < 3.0, f"storm {i} cancel took {dt:.2f}s (drain budget=3s)"
 
     # No ``drain timed out`` WARNING in any captured record.
-    drain_records = [
-        r for r in caplog.records if "drain timed out" in r.getMessage()
-    ]
+    drain_records = [r for r in caplog.records if "drain timed out" in r.getMessage()]
     assert not drain_records, (
         f"unexpected drain WARNING(s): {[r.getMessage() for r in drain_records]}"
     )
@@ -467,8 +470,13 @@ async def test_t_d_cancel_event_none_keeps_legacy_path() -> None:
             )
 
     spec = AgentSpec(
-        org_id="o", node_id="root", role="worker", persona="",
-        external_tools=(), available_nodes=(), enable_file_tools=False,
+        org_id="o",
+        node_id="root",
+        role="worker",
+        persona="",
+        external_tools=(),
+        available_nodes=(),
+        enable_file_tools=False,
     )
     agent = _BrainBackedNodeAgent(spec, _Brain())
     await agent.run("hi")  # no cancel_event kwarg
@@ -536,15 +544,15 @@ async def test_t_e_run_with_tools_forwards_cancel_event_both_rounds() -> None:
                     "input_schema": {"type": "object"},
                 }
             ],
-            org_id="o", node_id="n", command_id="c1",
+            org_id="o",
+            node_id="n",
+            command_id="c1",
             cancel_event=event,
         )
     finally:
         handlers_mod.default_handler_registry.execute_by_tool = original  # type: ignore[assignment]
 
-    assert rounds == [event, event], (
-        f"both rounds must carry the same cancel_event; got {rounds!r}"
-    )
+    assert rounds == [event, event], f"both rounds must carry the same cancel_event; got {rounds!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -568,13 +576,13 @@ async def test_t_f_legacy_agent_without_cancel_event_kwarg_still_runs() -> None:
 
     captured: list[str] = []
 
-    class _LegacyAgent:
+    class _RuntimeAgentBase:
         async def run(self, content: str) -> str:
             captured.append(content)
             return f"echo:{content}"
 
     result = await AgentPipelineExecutor._invoke_agent(
-        _LegacyAgent(), "ping", cancel_event=asyncio.Event()
+        _RuntimeAgentBase(), "ping", cancel_event=asyncio.Event()
     )
     assert result == "echo:ping"
     assert captured == ["ping"]
@@ -609,8 +617,7 @@ async def test_t_g_factory_wires_cancel_event_through_deliver() -> None:
     assert exec_.calls, "executor.activate_and_run was never invoked"
     event = exec_.calls[0].get("cancel_event")
     assert event is sup._cancel_event, (
-        "deliver closure did not forward the supervisor's cancel_event "
-        "instance"
+        "deliver closure did not forward the supervisor's cancel_event instance"
     )
 
 
@@ -677,7 +684,4 @@ async def test_t_i_llm_client_race_with_cancel_aborts_provider_chat() -> None:
     with pytest.raises(UserCancelledError):
         await LLMClient._race_with_cancel(_slow(), event)
     elapsed = time.monotonic() - start
-    assert elapsed < 0.5, (
-        f"_race_with_cancel took {elapsed:.2f}s to honour event "
-        f"(expected ≤0.5s)"
-    )
+    assert elapsed < 0.5, f"_race_with_cancel took {elapsed:.2f}s to honour event (expected ≤0.5s)"

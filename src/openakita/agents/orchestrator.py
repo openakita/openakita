@@ -112,6 +112,7 @@ _SUB_STREAM_EVENT_TYPES = frozenset(
 class _SubAgentStreamingUnavailable(TypeError):
     """Raised when an agent does not expose the streaming chat contract."""
 
+
 # Defaults — overridden at runtime by settings when available.
 # 默认全部 0 = 不做"agent 自检自杀"，对齐 Claude Code 哲学；卡死由用户主动停止。
 _DEFAULT_IDLE_TIMEOUT = 0  # 0 = 禁用无进展超时检测
@@ -184,9 +185,10 @@ async def _broadcast_sub_stream_event(meta: dict[str, Any], event: dict[str, Any
         if event_type == "security_confirm":
             promoted_confirm = dict(event)
             promoted_confirm["conversation_id"] = payload["chat_id"] or payload["session_id"]
-            if event.get("conversation_id") and event.get("conversation_id") != promoted_confirm[
-                "conversation_id"
-            ]:
+            if (
+                event.get("conversation_id")
+                and event.get("conversation_id") != promoted_confirm["conversation_id"]
+            ):
                 promoted_confirm["backend_conversation_id"] = event.get("conversation_id")
             await broadcast_event(
                 "security_confirm_promoted",
@@ -1332,7 +1334,7 @@ class AgentOrchestrator:
                 _guarded_text = result or ""
                 if is_sub_agent:
                     try:
-                        from openakita.core.agent_output_guard import (
+                        from openakita.agent.output_guard import (
                             validate_no_fabricated_numbers,
                         )
 

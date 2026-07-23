@@ -348,7 +348,7 @@ class StreamAccumulator:
 
         返回 Decision（延迟导入，避免循环依赖）。
         """
-        from ._reasoning_engine_legacy import Decision, DecisionType
+        from ._reasoning_runtime import Decision, DecisionType
 
         # 防御性 flush：通常 message_stop 已经触发过，这里兜底以防上游
         # 未发 message_stop（异常 / 取消）就直接构建 Decision。flush 顺序
@@ -813,7 +813,7 @@ def post_process_streamed_decision(decision) -> None:
             logger.warning(f"[post_process] Stripped bare tool name '{last}'")
 
     # ── 6) 更新 decision type ──
-    from ._reasoning_engine_legacy import DecisionType
+    from ._reasoning_runtime import DecisionType
 
     if decision.tool_calls:
         decision.type = DecisionType.TOOL_CALLS

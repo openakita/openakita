@@ -259,11 +259,17 @@ def _make_executor(
     )
 
 
-def test_parity_agent_pipeline_happy() -> None:
-    """fixture id: agent_pipeline.activate_and_run.happy"""
+def test_parity_agent_pipeline_requires_delivery_manifest() -> None:
+    """A root run without a delivery manifest remains explicitly incomplete."""
     exe, _bus = _make_executor(agent=_StubAgent())
     r = asyncio.run(exe.activate_and_run(org_id="o1", node_id="n1", content="hi", command_id="c1"))
-    assert r == {"status": "ok", "command_id": "c1", "output": "ECHO:hi", "reason": None}
+    assert r == {
+        "status": "incomplete",
+        "command_id": "c1",
+        "output": "ECHO:hi",
+        "reason": "delivery_manifest_missing",
+        "artifact_role": "intermediate",
+    }
 
 
 def test_parity_agent_pipeline_missing_org() -> None:

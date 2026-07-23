@@ -1,6 +1,6 @@
 """Node addressing and routing for the v2 runtime.
 
-The legacy ``orgs/messenger.py`` (552 lines) handled message envelope
+The former ``orgs/messenger.py`` handled message envelope
 formatting, agent activation, broadcast coalescing, and a half-dozen
 ad-hoc retry / dedup heuristics. The v2 messenger is much smaller
 because the supervisor (ADR-0004) and the StreamBus (ADR-0006) own
@@ -81,9 +81,7 @@ class NodeAddress:
         if "::" in text:
             plugin, _, mode = text.partition("::")
             if not plugin or not mode:
-                raise NodeAddressResolveError(
-                    f"qualified address {text!r} must be 'plugin::mode'"
-                )
+                raise NodeAddressResolveError(f"qualified address {text!r} must be 'plugin::mode'")
             return cls(raw=text, plugin=plugin, mode=mode)
         return cls(raw=text, role=text)
 
@@ -135,9 +133,7 @@ class NodeRegistry(Protocol):
 
     def get_by_id(self, node_id: str) -> MessengerNode | None: ...
     def find_by_role(self, role: str) -> MessengerNode | None: ...
-    def find_by_workbench(
-        self, plugin: str, mode: str
-    ) -> MessengerNode | None: ...
+    def find_by_workbench(self, plugin: str, mode: str) -> MessengerNode | None: ...
 
 
 class InMemoryNodeRegistry:
@@ -176,9 +172,7 @@ class InMemoryNodeRegistry:
     def find_by_role(self, role: str) -> MessengerNode | None:
         return self._by_role.get(role)
 
-    def find_by_workbench(
-        self, plugin: str, mode: str
-    ) -> MessengerNode | None:
+    def find_by_workbench(self, plugin: str, mode: str) -> MessengerNode | None:
         return self._by_workbench.get((plugin, mode))
 
 
@@ -237,9 +231,7 @@ class Messenger:
         elif addr.role is not None:
             node = self._registry.find_by_role(addr.role)
         if node is None:
-            raise NodeAddressResolveError(
-                f"no registered node matches address {raw!r}"
-            )
+            raise NodeAddressResolveError(f"no registered node matches address {raw!r}")
         return addr, node
 
     # ------------------------------------------------------------------
@@ -331,9 +323,7 @@ class Messenger:
         if cancel_token is None:
             return await node.on_message(message)
         # Race the node against the cancel token.
-        node_task: asyncio.Task[DelegationResult] = asyncio.create_task(
-            node.on_message(message)
-        )
+        node_task: asyncio.Task[DelegationResult] = asyncio.create_task(node.on_message(message))
 
         def _cancel_node() -> None:
             if not node_task.done():
@@ -349,8 +339,7 @@ class Messenger:
                 success=False,
                 speaker=node.node_id,
                 message=f"cancelled: {cancel_token.reason}",
-                metadata={"address": message.address.raw,
-                          "correlation_id": message.correlation_id},
+                metadata={"address": message.address.raw, "correlation_id": message.correlation_id},
             )
 
     # ------------------------------------------------------------------

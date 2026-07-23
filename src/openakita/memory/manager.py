@@ -1038,9 +1038,7 @@ class MemoryManager:
                 )
             except Exception as exc:  # noqa: BLE001
                 report["errors"] += 1
-                logger.warning(
-                    "[Manager] merge_owner_memories: failed on %s: %s", mem.id[:8], exc
-                )
+                logger.warning("[Manager] merge_owner_memories: failed on %s: %s", mem.id[:8], exc)
 
         if not dry_run and report["merged"] + report["superseded"] + report["skipped"] > 0:
             # Observer keeps _memories coherent per-write; a single defensive
@@ -1064,9 +1062,7 @@ class MemoryManager:
         existing = target_slots.get(slot)
         if existing is None:
             if not dry_run:
-                self._merge_move_memory(
-                    mem, to_user_id=to_user_id, to_workspace_id=to_workspace_id
-                )
+                self._merge_move_memory(mem, to_user_id=to_user_id, to_workspace_id=to_workspace_id)
             target_slots[slot] = mem
             report["merged"] += 1
             sample("merged", mem, slot=slot)
@@ -1077,9 +1073,7 @@ class MemoryManager:
             # Source is newer → it wins; save_user_memory supersedes the older
             # target slot value automatically.
             if not dry_run:
-                self._merge_move_memory(
-                    mem, to_user_id=to_user_id, to_workspace_id=to_workspace_id
-                )
+                self._merge_move_memory(mem, to_user_id=to_user_id, to_workspace_id=to_workspace_id)
             target_slots[slot] = mem
             report["superseded"] += 1
             sample("superseded", mem, slot=slot, superseded_target=existing.id)
@@ -1503,7 +1497,7 @@ class MemoryManager:
         if profile_mgr is None:
             return
         try:
-            from openakita.core.user_profile import resolve_profile_key
+            from openakita.agent.user_profile import resolve_profile_key
         except Exception:
             return
         key = resolve_profile_key((predicate or "").strip())

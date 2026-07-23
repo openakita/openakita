@@ -1,9 +1,5 @@
 """Skill installation / load / update manager.
 
-Ported from :mod:`openakita.core.skill_manager` per ADR-0003 and
-the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy path stays as a re-export shim until Phase 8.
-
 Originally extracted from ``Agent`` to keep skill install/load
 logic (`install_skill`, `load_installed_skills`, allowlist
 filtering, circuit breaker on git failures, shell-tool-description

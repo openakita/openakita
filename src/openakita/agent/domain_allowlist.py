@@ -1,9 +1,5 @@
 """Per-conversation domain allow / block lists for ``web_fetch``.
 
-Ported from :mod:`openakita.core.domain_allowlist` per ADR-0003
-and the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``.
-The legacy path stays as a re-export shim until Phase 8.
-
 The link-reliability work surfaces ``[OPENAKITA_SOURCE]`` events in the UI:
 users now see exactly which host was read. This module is the second half of
 that loop — letting the user say "never again from this host in this chat"

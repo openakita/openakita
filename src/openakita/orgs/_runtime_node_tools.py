@@ -859,7 +859,7 @@ def extract_tool_use_blocks(response: Any) -> list[dict[str, Any]]:
 
     Returns a list of ``{"id", "name", "input"}`` dicts in LLM-emit
     order. Mirrors the v1 ``_parse_decision`` walk in
-    ``core/_reasoning_engine_legacy.py`` but stripped to just what the
+    ``core/_reasoning_runtime.py`` but stripped to just what the
     second-round prompt needs. Robust to both Anthropic SDK objects
     (attribute access) and provider-shim dicts (``isinstance(content,
     list)`` -> nested ``.type`` / ``.name`` lookups).
@@ -1051,9 +1051,7 @@ async def execute_node_tool(
     # ``jianlai_points.md`` lands in data/orgs/<id>/commands/<cmd>/artifacts/
     # instead of the process CWD (repo root). Absolute paths still hit the
     # source-tree guard.
-    redirects = _redirect_relative_writes(
-        tool_name, tool_input, org_id, command_id, workspace_dir
-    )
+    redirects = _redirect_relative_writes(tool_name, tool_input, org_id, command_id, workspace_dir)
     if redirects:
         _LOGGER.info(
             "[node-tool] redirected %s relative write(s) into command workspace "
@@ -1662,9 +1660,7 @@ async def execute_node_tool(
                 "path": _wpath,
                 "size_bytes": _size,
                 "verified_plugin_asset": _wpath in _registered_artifact_paths,
-                "artifact_role": artifact_role_for_phase(
-                    current_execution_phase_var.get()
-                ).value,
+                "artifact_role": artifact_role_for_phase(current_execution_phase_var.get()).value,
             },
         )
 

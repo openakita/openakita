@@ -16,8 +16,8 @@ def test_clear_chat_runtime_state_cleans_policy_todo_and_orchestrator(monkeypatc
     """C8b-3: ``/api/chat/clear`` 路径迁移后由 bus.cleanup_session +
     SessionAllowlistManager.clear 取代 v1 ``pe.cleanup_session``。
     本测试守护：bus 与 session manager 都被正确清理。"""
+    from openakita.agent.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
     from openakita.core.policy_v2 import get_session_allowlist_manager
-    from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
     reset_ui_confirm_bus()
     bus = get_ui_confirm_bus()

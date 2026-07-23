@@ -30,17 +30,17 @@ import re
 
 import pytest
 
+from openakita.agent import ReasoningEngine
 from openakita.core.agent_state import (
     AgentState,
     IllegalReasoningEntry,
     TaskState,
     TaskStatus,
 )
-from openakita.core.reasoning_engine import ReasoningEngine
 
 # The reason_stream race-guard (``ensure_ready_for_reasoning`` +
 # ``IllegalReasoningEntry`` counter + content-safety ``agent_voice``) is ported
-# into ``core/_reasoning_engine_legacy`` after the ADR-0003 split (Batch C).
+# into ``core/_reasoning_runtime`` after the ADR-0003 split (Batch C).
 # Local ``ReasoningEngine`` keeps ``reason_stream`` as the single loop, while
 # ``run`` only consumes its events for non-streaming callers.
 

@@ -237,7 +237,7 @@ class AgentFactory:
         # ── 权限规则注入 (MA1) ──
         if profile.permission_rules:
             try:
-                from ..core.permission import from_config
+                from openakita.agent.permission import from_config
 
                 ruleset = from_config(
                     {

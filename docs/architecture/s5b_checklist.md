@@ -162,7 +162,7 @@ The exact 9 sites are tagged `# s5b-allow-force-write`. Locate
 them by token, not lineno (linenos drift):
 
 ```bash
-rg -n "# s5b-allow-force-write" src/openakita/core/reasoning_engine.py
+rg -n "# s5b-allow-force-write" src/openakita/core/_reasoning_runtime.py
 ```
 
 | # | Site | Target | Post-S5-B behaviour |
@@ -219,7 +219,7 @@ catch, same handling.)
 These are non-reasoning transition swallow sites in `_run_impl`:
 
 ```bash
-rg -n "except ValueError:" src/openakita/core/reasoning_engine.py \
+rg -n "except ValueError:" src/openakita/core/_reasoning_runtime.py \
   | rg -v "s5b-allow-force-write|cancel-idempotent-force-write"
 ```
 

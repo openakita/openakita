@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from openakita.agent.core import Agent
-from openakita.core._context_manager_legacy import _CancelledError as _CtxCancelledError
+from openakita.agent.errors import UserCancelledError
+from openakita.core._context_runtime import _CancelledError as _CtxCancelledError
 from openakita.core.agent_state import AgentState
-from openakita.core.errors import UserCancelledError
 
 
 class _FakeContextManager:
@@ -281,7 +281,7 @@ async def test_trait_mining_background_does_not_block_and_persists(monkeypatch) 
     agent.memory_manager = object()
     agent._trait_mining_tasks = set()
     monkeypatch.setattr(
-        "openakita.core.persona.persist_trait_to_memory",
+        "openakita.agent.persona.persist_trait_to_memory",
         lambda memory_manager, mined_trait: persisted.append((memory_manager, mined_trait)),
     )
 

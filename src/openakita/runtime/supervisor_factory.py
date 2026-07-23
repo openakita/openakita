@@ -370,7 +370,7 @@ def build_supervisor_for_command(
     """Build a fully-wired :class:`Supervisor` for one user command.
 
     Single composition root for HTTP and IM. Each injectable component
-    has a sensible default; callers (tests, IM legacy canary, HTTP
+    has a sensible default; callers (tests, IM canary, HTTP
     submit) override only what they need:
 
     * ``executor``: required. The v2 agent executor that owns node
@@ -387,7 +387,7 @@ def build_supervisor_for_command(
 
       - ``"passthrough"`` -> :class:`PassThroughSupervisorBrain` keyed on
         ``root_node_id`` (single-shot delegation, then DONE). This is the
-        zero-production-impact default; the legacy ``submit`` path never
+        zero-production-impact default; the existing ``submit`` path never
         passes ``brain_mode`` / ``llm_client`` so it always lands here.
       - ``"llm"`` -> RC-5 route-B :class:`LLMSupervisorBrain`, but **only
         when an ``llm_client`` is also supplied**. With the flag flipped but

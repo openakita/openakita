@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from openakita.agent.reasoning import Decision, DecisionType, ReasoningEngine
-from openakita.core._reasoning_engine_legacy import (
+from openakita.core._reasoning_runtime import (
     _looks_like_generic_task_completion,
     _looks_like_waiting_for_user_response,
 )

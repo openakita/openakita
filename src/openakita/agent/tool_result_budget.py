@@ -1,9 +1,5 @@
 """Tool result budget: oversize truncation and overflow spilling.
 
-Ported from :mod:`openakita.core.tool_result_budget` per ADR-0003
-and the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``.
-The legacy path stays as a re-export shim until Phase 8.
-
 Inspired by Claude Code's tool-result management:
 
 * limit a single tool-result by character count;

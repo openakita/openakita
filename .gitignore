@@ -23,6 +23,10 @@ wheels/
 .installed.cfg
 *.egg
 
+# Generated release artifacts
+dist-sdk/
+dist-plugins/
+
 # Virtual environments
 .venv/
 .venv-ci/

@@ -18,11 +18,11 @@ from pathlib import Path
 
 import pytest
 
+from openakita.agent.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 from openakita.core.policy_v2 import (
     apply_resolution,
     get_session_allowlist_manager,
 )
-from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
 
 @pytest.fixture(autouse=True)
@@ -205,7 +205,7 @@ class TestCallsiteMigrationStatic:
         assert "resolve_security_confirmation" in text
 
     def test_agent_cleanup_migrated(self) -> None:
-        text = self._read("core/_agent_legacy.py")
+        text = self._read("core/_agent_runtime.py")
         # _pe.cleanup_session no longer used
         assert "_pe.cleanup_session" not in text
         # New chain visible

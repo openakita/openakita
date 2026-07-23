@@ -1,16 +1,9 @@
 """Desktop / IM attachment runtime helpers.
 
-This package groups runtime-level helpers that classify, persist, and
-format attachments arriving via the desktop/IM channels.  The legacy
-module ``openakita.core.agent`` historically owned these as private
-module-level functions next to the 9000+ LOC ``Agent`` class. Per
-continuation plan section 7 (P-RC-6) the helpers are concrete
-runtime concerns -- HTTP upload routing, data URI base64 decoding,
-filesystem persistence, prompt-safe reference formatting -- and do
-not depend on any agent state, so they live under
-``openakita.runtime.desktop.*`` and the legacy module re-exports the
-public names with a leading underscore for backward compatibility
-during the cutover.
+This package groups runtime-level helpers that classify, persist, and format
+attachments arriving via desktop and IM channels. They own HTTP upload
+routing, data URI decoding, filesystem persistence, and prompt-safe reference
+formatting without depending on agent state.
 
 See :mod:`openakita.runtime.desktop.attachments` for the helpers.
 """

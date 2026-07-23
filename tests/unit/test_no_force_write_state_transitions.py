@@ -5,7 +5,7 @@ Why this exists
 ---------------
 The v1.27.13 hotfix (06c67221) and historical reason_stream code carry
 **8** ``except ValueError: state.status = TaskStatus.X`` force-write
-blocks (in ``_reasoning_engine_legacy.py`` post ADR-0003 split) that
+blocks (in ``_reasoning_runtime.py`` post ADR-0003 split) that
 paper over the ``completed -> reasoning`` (and similar) race exposed by
 issue #572.  Post v1.28 S1+S3+S4+S5-A the
 underlying race is architecturally prevented at the
@@ -60,7 +60,7 @@ SRC_ROOT = REPO_ROOT / "src" / "openakita"
 #   • ``s5b-allow-force-write`` — historical hot-fix / safety-net debt
 #     that S5-B will delete after 2 weeks of zero
 #     ``inc_illegal_reasoning_entry`` telemetry.  Lives only in
-#     ``_reasoning_engine_legacy.py``.  Pinned at exactly 8 occurrences.
+#     ``_reasoning_runtime.py``.  Pinned at exactly 8 occurrences.
 #
 #   • ``cancel-idempotent-force-write`` — ``TaskState.cancel()``'s
 #     architecturally-permanent escape hatch.  cancel() MUST succeed
@@ -71,13 +71,11 @@ SRC_ROOT = REPO_ROOT / "src" / "openakita"
 # ``TOKEN_PROXIMITY_LINES`` lines of its ``except ValueError:`` keyword.
 # A force-write in any other file fails the scan regardless of token.
 
-# NOTE (ADR-0003 split): the monolithic ``core/reasoning_engine.py`` is now a
-# thin compat shim; the real ReAct loop (and its force-write sites) live in
-# ``core/_reasoning_engine_legacy.py``. The pin therefore targets the legacy
-# module. Local ``_handle_llm_error`` guards the MODEL_SWITCHING transition
+# NOTE (ADR-0003 split): the ReAct loop and its force-write sites live in
+# ``core/_reasoning_runtime.py``. Local ``_handle_llm_error`` guards the MODEL_SWITCHING transition
 # with a logged skip (not a force-write), so the count is 8 (vs upstream's 9).
 S5B_BACKLOG_FILES = {
-    SRC_ROOT / "core" / "_reasoning_engine_legacy.py": 8,  # plan §5.3 + 5.4 + S5-A
+    SRC_ROOT / "core" / "_reasoning_runtime.py": 8,  # plan §5.3 + 5.4 + S5-A
 }
 
 ARCH_FORCE_WRITE_FILES = {
@@ -90,11 +88,11 @@ ALLOWED_FORCE_WRITE_FILES = set(S5B_BACKLOG_FILES) | set(ARCH_FORCE_WRITE_FILES)
 # each force-write has a token + correct count) and adjacent files
 # where we want to prevent new force-writes from sprouting.
 SCAN_FILES = [
-    SRC_ROOT / "core" / "_reasoning_engine_legacy.py",
+    SRC_ROOT / "core" / "_reasoning_runtime.py",
     SRC_ROOT / "core" / "agent_state.py",
-    SRC_ROOT / "core" / "_agent_legacy.py",
-    SRC_ROOT / "core" / "ralph.py",
-    SRC_ROOT / "core" / "pending_approvals.py",
+    SRC_ROOT / "core" / "_agent_runtime.py",
+    SRC_ROOT / "agent" / "ralph.py",
+    SRC_ROOT / "agent" / "pending_approvals.py",
 ]
 
 S5B_TOKEN = "s5b-allow-force-write"
@@ -176,7 +174,7 @@ def _opt_in_token_near(path: pathlib.Path, except_lineno: int) -> str | None:
 
 class TestNoForceWriteStateTransitions:
     """Plan §5.6 syntax guard: pin the force-write population at
-    8 S5-B-backlog hits in _reasoning_engine_legacy.py + 1
+    8 S5-B-backlog hits in _reasoning_runtime.py + 1
     architecturally-permanent hit in agent_state.py (TaskState.cancel())."""
 
     def test_force_writes_only_appear_in_allowlisted_files(self) -> None:
@@ -242,8 +240,8 @@ class TestNoForceWriteStateTransitions:
         missing: list[tuple[str, int, str]] = []
         wrong_kind: list[tuple[str, int, str, str]] = []
         for path, kind_count_expected in {
-            **{p: S5B_TOKEN for p in S5B_BACKLOG_FILES},
-            **{p: CANCEL_TOKEN for p in ARCH_FORCE_WRITE_FILES},
+            **dict.fromkeys(S5B_BACKLOG_FILES, S5B_TOKEN),
+            **dict.fromkeys(ARCH_FORCE_WRITE_FILES, CANCEL_TOKEN),
         }.items():
             findings = _find_force_writes(path)
             for lineno, surface in findings:
@@ -335,7 +333,7 @@ class TestNoForceWriteStateTransitions:
 def test_each_known_force_write_target_is_present(expected_target: str) -> None:
     """Inventory pin: the distinct TaskStatus values currently
     force-written (across the 8 force-write sites in
-    ``_reasoning_engine_legacy.py``).  When S5-B deletes a force-write,
+    ``_reasoning_runtime.py``).  When S5-B deletes a force-write,
     the corresponding parametrize entry should be removed from this list.
 
     Target inventory (post ADR-0003 split):
@@ -344,7 +342,7 @@ def test_each_known_force_write_target_is_present(expected_target: str) -> None:
     MODEL_SWITCHING is NOT force-written locally — ``_handle_llm_error``
     guards it with a logged skip instead.
     """
-    path = SRC_ROOT / "core" / "_reasoning_engine_legacy.py"
+    path = SRC_ROOT / "core" / "_reasoning_runtime.py"
     findings = _find_force_writes(path)
     surfaces = " ".join(s for _, s in findings)
     assert expected_target in surfaces, (

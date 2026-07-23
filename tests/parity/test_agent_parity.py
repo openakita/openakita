@@ -7,7 +7,7 @@ checklist, this suite pins three invariants across 12 fixtures
 1.  :func:`inspect.getfile` of the v1 and v2 ``Agent`` classes
     points at **different** files (the new
     ``openakita.agent.core`` module and the renamed
-    ``openakita.core._agent_legacy`` module respectively).
+    ``openakita.core._agent_runtime`` module respectively).
 2.  The v2 :class:`Agent` is a subclass of the legacy class, so
     ``isinstance(legacy_obj, Agent)`` keeps working and all
     inherited methods continue to resolve.
@@ -41,7 +41,7 @@ from openakita.agent.core import (
     RiskGateDecision,
     build_agent_lifecycle_graph,
 )
-from openakita.core._agent_legacy import Agent as V1Agent
+from openakita.core._agent_runtime import Agent as V1Agent
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "agent"
 
@@ -57,7 +57,7 @@ def test_v1_v2_module_files_differ() -> None:
     v1_file = inspect.getfile(V1Agent)
     v2_file = inspect.getfile(V2Agent)
     assert v1_file != v2_file
-    assert v1_file.endswith("_agent_legacy.py")
+    assert v1_file.endswith("_agent_runtime.py")
     assert v2_file.endswith("agent/core.py") or v2_file.endswith("agent\\core.py")
 
 
@@ -135,9 +135,7 @@ def test_agent_parity_probe(fixture: dict) -> None:
         classification = agent.classify_inbound_risk(message)
         decision = agent.should_skip_risk_gate(None, message, classification)
         target_kind_value = (
-            classification.target_kind.value
-            if classification.target_kind is not None
-            else None
+            classification.target_kind.value if classification.target_kind is not None else None
         )
         actual = {
             "risk_level": classification.risk_level.value,

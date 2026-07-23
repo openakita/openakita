@@ -122,7 +122,7 @@ def test_orchestrator_persist_uses_atomic_json_write(tmp_path, monkeypatch):
     [
         ("openakita.core.proactive", ["_load", "_save"]),
         # ADR-0003: the user-profile manager moved to ``openakita.agent.user_profile``;
-        # ``openakita.core.user_profile`` is now a thin re-export shim (no source-level
+        # ``openakita.agent.user_profile`` is now a thin re-export shim (no source-level
         # ``def _load_state(``), so point the source-scan at the canonical home.
         ("openakita.agent.user_profile", ["_load_state", "_save_state"]),
         ("openakita.sessions.user", ["_load_users", "_save_users"]),
@@ -131,7 +131,7 @@ def test_orchestrator_persist_uses_atomic_json_write(tmp_path, monkeypatch):
         ("openakita.llm.registries", ["load_custom_providers", "save_custom_providers"]),
         ("openakita.workspace.backup", ["read_backup_settings", "write_backup_settings"]),
         ("openakita.hub.device", ["get_or_create_device_id"]),
-        ("openakita.core.identity", ["_load_hashes", "_save_hashes"]),
+        ("openakita.agent.identity", ["_load_hashes", "_save_hashes"]),
         ("openakita.orgs.manager", ["load_state", "save_state"]),
     ],
 )
@@ -206,7 +206,7 @@ def test_backup_settings_roundtrip(tmp_path):
 
 
 def test_identity_hashes_roundtrip(tmp_path):
-    from openakita.core.identity import _load_hashes, _save_hashes
+    from openakita.agent.identity import _load_hashes, _save_hashes
 
     # _save_hashes / _load_hashes use ``identity_dir / 'runtime/.file_hashes.json'``.
     _save_hashes(tmp_path, {"SOUL.md": "abc123", "AGENT.md": "def456"})
@@ -216,7 +216,7 @@ def test_identity_hashes_roundtrip(tmp_path):
 
 
 def test_identity_hashes_recover_from_corruption(tmp_path):
-    from openakita.core.identity import _HASH_FILE, _load_hashes, _save_hashes
+    from openakita.agent.identity import _HASH_FILE, _load_hashes, _save_hashes
 
     _save_hashes(tmp_path, {"SOUL.md": "v1"})
     _save_hashes(tmp_path, {"SOUL.md": "v2"})

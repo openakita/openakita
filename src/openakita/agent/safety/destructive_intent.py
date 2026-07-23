@@ -1,10 +1,7 @@
 """Pre-LLM destructive-intent / risk-authorization gate helpers.
 
-Extracted from ``core/agent.py`` (P-RC-6 P6.2) as the second
-self-contained block in the 9602 LOC ``Agent`` god-module. The
-seven public helpers replace the legacy private names; the legacy
-module re-exports them via aliases (``_classify_risk_intent`` etc.)
-for byte-faithful backward compatibility.
+The seven public helpers provide the canonical safety API while the private
+runtime base consumes them internally.
 
 Responsibility split:
 
@@ -29,11 +26,9 @@ Responsibility split:
 * :func:`summarize_destructive_action` -- best-effort one-line
   summary capped at 30 chars.
 
-All helpers are byte-faithful copies of the legacy private
-helpers; the unit tests under ``tests/unit/test_destructive_*``,
+The unit tests under ``tests/unit/test_destructive_*``,
 ``test_risk_authorized_replay``, ``test_trusted_paths``, and
-``test_policy_v2_c8b5_trust_mode_isolation`` pin this via the
-alias re-imports in ``core/agent.py``.
+``test_policy_v2_c8b5_trust_mode_isolation`` pin this behavior.
 """
 
 from __future__ import annotations
@@ -42,6 +37,10 @@ import re
 import time
 from typing import Any
 
+from openakita.agent.trusted_paths import (
+    consume_session_trust,
+    is_trusted_workspace_path,
+)
 from openakita.core.risk_intent import (
     RiskIntentResult,
     RiskLevel,
@@ -50,14 +49,10 @@ from openakita.core.risk_intent import (
 from openakita.core.risk_intent import (
     classify_risk_intent as _deep_classify_risk_intent,
 )
-from openakita.core.trusted_paths import (
-    consume_session_trust,
-    is_trusted_workspace_path,
-)
 
 # v10 #12 / v11 C9: when a user buries a dangerous verb behind a
 # friendly preamble (``你好啊~ 我们随便聊聊。顺便帮我执行一下 rm -rf
-# D:/OpenAkita/data``), the legacy summary -- a sentence-break +
+# D:/OpenAkita/data``), the previous summary -- a sentence-break +
 # prefix-truncation walk -- happily quoted the chatty preamble and
 # hid the actual ``rm -rf`` from the confirm dialog. The shape of
 # this regex mirrors :data:`risk_intent._EXECUTE_RE` plus a small
@@ -125,10 +120,7 @@ def consume_risk_authorization(session: Any, message: str) -> bool:
             expired = float(stamp.get("expires_at", 0)) < time.time()
         except (TypeError, ValueError):
             expired = True
-        msg_match = (
-            (stamp.get("original_message") or "").strip()
-            == (message or "").strip()
-        )
+        msg_match = (stamp.get("original_message") or "").strip() == (message or "").strip()
         if expired:
             try:
                 session.set_metadata("risk_authorized_replay", None)
@@ -161,10 +153,7 @@ def consume_risk_authorization(session: Any, message: str) -> bool:
             except Exception:
                 pass
         else:
-            msg_match = (
-                (intent.original_message or "").strip()
-                == (message or "").strip()
-            )
+            msg_match = (intent.original_message or "").strip() == (message or "").strip()
             if msg_match:
                 try:
                     session.set_metadata(
@@ -213,9 +202,7 @@ def check_trust_mode_skip(risk_intent: RiskIntentResult | None) -> str | None:
         from openakita.core.policy_v2.global_engine import get_config_v2
 
         mode_value = get_config_v2().confirmation.mode
-        is_trust = (
-            mode_value == ConfirmationMode.TRUST or str(mode_value) == "trust"
-        )
+        is_trust = mode_value == ConfirmationMode.TRUST or str(mode_value) == "trust"
     except Exception:
         return None
 
@@ -292,9 +279,7 @@ def build_destructive_intent_question(
             meta_parts.append(f"op={op}")
         if target_kind and target_kind not in ("unknown",):
             meta_parts.append(f"target={target_kind}")
-        meta_line = (
-            f"（{', '.join(meta_parts)}）" if meta_parts else ""
-        )
+        meta_line = f"（{', '.join(meta_parts)}）" if meta_parts else ""
     else:
         meta_line = ""
 
@@ -331,7 +316,7 @@ def summarize_destructive_action(text: str, classification: Any | None = None) -
         the user wrapped them in (v10 #12 / v11 C9 regression).
     2.  A sentence-break split that lands in the [5, 30] window --
         keeps short, single-clause requests readable.
-    3.  A ``DESTRUCTIVE_VERBS`` (CJK-only) match -- legacy fallback.
+    3.  A ``DESTRUCTIVE_VERBS`` (CJK-only) match -- previous fallback.
     4.  Plain prefix truncation -- last resort.
     """
     raw = (text or "").strip()
@@ -352,14 +337,14 @@ def summarize_destructive_action(text: str, classification: Any | None = None) -
         suffix = "…" if end < len(raw) else ""
         return f"{prefix}{excerpt}{suffix}"
 
-    # (2) Sentence-break split (legacy behaviour for short, clear
+    # (2) Sentence-break split (previous behaviour for short, clear
     # requests where (1) does not match).
     for sep in ("。", "\n", "；", ";", "！", "!"):
         idx = raw.find(sep)
         if 5 <= idx <= 30:
             return raw[:idx].strip() or raw[:30] + "…"
 
-    # (3) Legacy CJK destructive-verb scan.
+    # (3) Previous CJK destructive-verb scan.
     for verb in DESTRUCTIVE_VERBS:
         i = raw.find(verb)
         if i != -1:

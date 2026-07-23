@@ -1,9 +1,6 @@
 """L1 Unit Tests: Ralph loop Task dataclass and TaskResult."""
 
-import pytest
-from datetime import datetime
-
-from openakita.core.ralph import Task, TaskResult, TaskStatus, StopHook
+from openakita.agent.ralph import StopHook, Task, TaskResult, TaskStatus
 
 
 class TestRalphTask:

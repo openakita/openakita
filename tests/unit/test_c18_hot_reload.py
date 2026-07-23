@@ -278,7 +278,7 @@ class TestAuditEmission:
         ``get_audit_logger`` so verify_chain catches tampering with the
         reload history."""
         # Point audit logger at a temp file.
-        from openakita.core import audit_logger as al
+        from openakita.agent import audit as al
 
         audit_path = tmp_path / "audit.jsonl"
         fake_logger = al.AuditLogger(path=str(audit_path), enabled=True, include_chain=False)

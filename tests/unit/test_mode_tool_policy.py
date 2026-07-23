@@ -1,4 +1,4 @@
-from openakita.core.permission import (
+from openakita.agent.permission import (
     ASK_MODE_RULESET,
     PLAN_MODE_RULESET,
     check_mode_permission,

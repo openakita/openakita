@@ -1,9 +1,5 @@
 """C17 Phase B — SSE Last-Event-ID 续传 + per-session ringbuffer.
 
-Ported from :mod:`openakita.core.sse_replay` per ADR-0003 and the
-Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy path stays as a re-export shim until Phase 8.
-
 设计目标
 ========
 

@@ -11,7 +11,6 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .adapter import LegacyContext, LegacyResponse, LLMAdapter, think
     from .client import LLMClient, chat, get_default_client
     from .config import get_default_config_path, load_endpoints_config
     from .types import (
@@ -49,10 +48,6 @@ __all__ = [
     "chat",
     "load_endpoints_config",
     "get_default_config_path",
-    "LLMAdapter",
-    "LegacyResponse",
-    "LegacyContext",
-    "think",
 ]
 
 _LAZY_IMPORTS = {
@@ -77,11 +72,6 @@ _LAZY_IMPORTS = {
     # Config
     "load_endpoints_config": (".config", "load_endpoints_config"),
     "get_default_config_path": (".config", "get_default_config_path"),
-    # Adapter
-    "LLMAdapter": (".adapter", "LLMAdapter"),
-    "LegacyResponse": (".adapter", "LegacyResponse"),
-    "LegacyContext": (".adapter", "LegacyContext"),
-    "think": (".adapter", "think"),
 }
 
 

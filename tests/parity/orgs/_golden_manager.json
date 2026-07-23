@@ -223,6 +223,7 @@
         "edges": [
           {
             "bandwidth_limit": 60,
+            "binding": {},
             "bidirectional": true,
             "edge_type": "hierarchy",
             "label": "",
@@ -377,6 +378,7 @@
         "edges": [
           {
             "bandwidth_limit": 60,
+            "binding": {},
             "bidirectional": true,
             "edge_type": "hierarchy",
             "label": "",

@@ -1,19 +1,11 @@
 """Compiled regex patterns shared by reasoning-engine guards.
 
-Extracted from ``core/reasoning_engine.py`` module-level helpers
-(``_get_source_tag_re``, ``_get_action_done_re``, ``_get_action_claim_re``)
-during the P-RC-5 slim-down. Each accessor compiles its pattern on
+Each accessor compiles its pattern on
 first call and caches it on the function object so repeat lookups
 across the reasoning loop stay O(1).
 
-The patterns themselves are intentionally identical to the legacy
-strings byte-for-byte so the new ``runtime/state_graph/guards/*``
-modules and the legacy ``core/reasoning_engine.py`` (which re-imports
-through this module) behave the same against any recorded fixture.
-The legacy aliases (``_get_source_tag_re`` etc.) are re-exported with
-their original private spelling so legacy callers (and the long tail
-of ``core.reasoning_engine.<private>`` access through the future shim)
-keep working.
+The guard modules share these accessors so recorded fixtures use one pattern
+implementation.
 """
 
 from __future__ import annotations

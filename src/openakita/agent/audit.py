@@ -1,12 +1,6 @@
 """Append-only JSONL audit logger for policy decisions.
 
-Ported from :mod:`openakita.core.audit_logger` per ADR-0003 and the
-Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy path keeps a re-export shim until Phase 8 mechanical
-cleanup so existing imports (API routes, agent task queue,
-``policy_v2`` glue) continue to work.
-
-Behaviour is unchanged from the legacy module:
+Runtime behavior:
 
 * :class:`AuditLogger` appends one JSON line per event.
 * When ``include_chain=True`` (the default), rows are written via
@@ -19,7 +13,7 @@ Behaviour is unchanged from the legacy module:
 * Operators who set ``audit.include_chain=false`` get the
   pre-C16 raw-append behaviour.
 
-The ``policy_v2`` sub-package stays at its legacy ``core/`` home
+The ``policy_v2`` sub-package stays at its previous ``core/`` home
 (it is in the "KEEP" bucket of ``core_audit.md``), so the
 ``from openakita.core.policy_v2.*`` imports here are deliberate.
 """
@@ -161,18 +155,14 @@ class AuditLogger:
                     async_w.enqueue(entry)
                     return
             except Exception as e:
-                logger.debug(
-                    "[Audit] async writer unavailable, using sync chain: %s", e
-                )
+                logger.debug("[Audit] async writer unavailable, using sync chain: %s", e)
             try:
                 from openakita.core.policy_v2.audit_chain import get_writer
 
                 get_writer(self._path).append(entry)
                 return
             except Exception as e:
-                logger.warning(
-                    "[Audit] Chain write failed, falling back to raw append: %s", e
-                )
+                logger.warning("[Audit] Chain write failed, falling back to raw append: %s", e)
         try:
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")

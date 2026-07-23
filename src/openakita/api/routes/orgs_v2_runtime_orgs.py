@@ -237,7 +237,7 @@ def patch_org(request: Request, org_id: str, body: OrgPatch) -> dict[str, Any]:
 
     Closes smoke F-5: without an explicit PATCH handler on this mint
     runtime route, FastAPI's first-match routing fell through to the
-    Group A 308 shim (``_orgs_v2_legacy_redirects._r_patch_org``), which
+    Group A 308 shim (``_orgs_v2_deprecated_redirects._r_patch_org``), which
     redirected the request to ``/api/v2/orgs-spec/{org_id}`` -- backed
     by a *different* persistence store -- producing apparent 404s on
     orgs that had just been created via this runtime mint ``POST``.

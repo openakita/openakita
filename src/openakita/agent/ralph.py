@@ -1,9 +1,5 @@
 """Ralph Wiggum 循环引擎。
 
-Ported from :mod:`openakita.core.ralph` per ADR-0003 and the
-Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy path stays as a re-export shim until Phase 8.
-
 参考来源:
 - https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum
 - https://claytonfarr.github.io/ralph-playbook/

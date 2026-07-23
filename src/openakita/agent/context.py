@@ -1,69 +1,36 @@
-"""V2 context management surface -- canonical home for ``ContextManager``.
+"""Canonical public context-management surface.
 
-This module replaces the P-RC-0..3 facade. After P-RC-4 the canonical
-import path for the agent's context compressor, token estimator, and
-pressure snapshot is :mod:`openakita.agent.context`; the legacy
-``openakita.core.context_manager`` will be a thin re-export shim once
-P4.15 lands.
-
-Architecture
-------------
-The legacy ``ContextManager`` was a 1799-LOC god-class that mixed
-message grouping, token estimation, budget computation, multi-tier
-compression (microcompact -> chunked summary -> hard truncation),
-boundary-aware rewrite, media-block scrubbing, and pressure tracing.
-P-RC-4 extracted the leaf-level pure concerns into focused modules:
-
-* :mod:`runtime.context.grouping` -- :func:`group_messages` rule
-  table for tool_use/tool_result pairing.
-* :mod:`runtime.context.budget_trace` -- :func:`calc_context_budget`,
-  :func:`estimate_tokens`, :func:`payload_size_bytes`,
-  :data:`DEFAULT_MAX_CONTEXT_TOKENS`.
-* :mod:`runtime.context.compress` -- :func:`pre_request_cleanup`,
-  :func:`sanitize_tool_pairs`.
-
-The v2 :class:`ContextManager` below composes those helpers from a
-fresh constructor. To preserve byte-faithful behaviour for the ~20
-existing callers (``ReasoningEngine``, ``Brain``, session turn
-handler), it currently inherits the deep methods
-(``compress_if_needed``, ``reactive_compact``,
-``_summarize_messages_chunked``, ``rewrite_after_compression``, ...)
-from the legacy class. Those will be re-implemented inline in
-P-RC-7 once the legacy ``core/`` tree is removed.
-
-Migration guidance
-------------------
-* New code: ``from openakita.agent.context import ContextManager``
-* Old code (still allowed during cutover): ``from openakita.core.context_manager import ContextManager``
+``ContextManager`` combines the internal runtime base with focused grouping,
+budgeting, compression, and sanitization helpers from ``openakita.runtime``.
 """
 
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from openakita.core._context_manager_legacy import (
-    CHARS_PER_TOKEN as _LEGACY_CHARS_PER_TOKEN,
+from openakita.core._context_runtime import (
+    CHARS_PER_TOKEN as _RUNTIME_CHARS_PER_TOKEN,
 )
-from openakita.core._context_manager_legacy import (
-    CHUNK_MAX_TOKENS as _LEGACY_CHUNK_MAX_TOKENS,
+from openakita.core._context_runtime import (
+    CHUNK_MAX_TOKENS as _RUNTIME_CHUNK_MAX_TOKENS,
 )
-from openakita.core._context_manager_legacy import (
-    CONTEXT_BOUNDARY_MARKER as _LEGACY_CONTEXT_BOUNDARY_MARKER,
+from openakita.core._context_runtime import (
+    CONTEXT_BOUNDARY_MARKER as _RUNTIME_CONTEXT_BOUNDARY_MARKER,
 )
-from openakita.core._context_manager_legacy import (
-    ContextManager as _LegacyContextManagerImpl,
+from openakita.core._context_runtime import (
+    ContextManager as _RuntimeContextBase,
 )
-from openakita.core._context_manager_legacy import (
-    ContextPressure as _LegacyContextPressure,
-)
-from openakita.core.context_utils import (
-    DEFAULT_MAX_CONTEXT_TOKENS as _LEGACY_DEFAULT_MAX_CONTEXT_TOKENS,
+from openakita.core._context_runtime import (
+    ContextPressure as _RuntimeContextPressure,
 )
 from openakita.core.context_utils import (
-    estimate_tokens as _legacy_estimate_tokens,
+    DEFAULT_MAX_CONTEXT_TOKENS as _RUNTIME_DEFAULT_MAX_CONTEXT_TOKENS,
 )
 from openakita.core.context_utils import (
-    get_max_context_tokens as _legacy_get_max_context_tokens,
+    estimate_tokens as _runtime_estimate_tokens,
+)
+from openakita.core.context_utils import (
+    get_max_context_tokens as _runtime_get_max_context_tokens,
 )
 from openakita.runtime.context import (
     calc_context_budget,
@@ -91,27 +58,27 @@ __all__ = [
 ]
 
 
-# ---- Re-anchored public surface ----
+# ---- Public surface ----
 
-CHARS_PER_TOKEN: int = _LEGACY_CHARS_PER_TOKEN
-CHUNK_MAX_TOKENS: int = _LEGACY_CHUNK_MAX_TOKENS
-CONTEXT_BOUNDARY_MARKER: str = _LEGACY_CONTEXT_BOUNDARY_MARKER
-DEFAULT_MAX_CONTEXT_TOKENS: int = _LEGACY_DEFAULT_MAX_CONTEXT_TOKENS
+CHARS_PER_TOKEN: int = _RUNTIME_CHARS_PER_TOKEN
+CHUNK_MAX_TOKENS: int = _RUNTIME_CHUNK_MAX_TOKENS
+CONTEXT_BOUNDARY_MARKER: str = _RUNTIME_CONTEXT_BOUNDARY_MARKER
+DEFAULT_MAX_CONTEXT_TOKENS: int = _RUNTIME_DEFAULT_MAX_CONTEXT_TOKENS
 
-ContextPressure = _LegacyContextPressure
-estimate_tokens = _legacy_estimate_tokens
-get_max_context_tokens = _legacy_get_max_context_tokens
+ContextPressure = _RuntimeContextPressure
+estimate_tokens = _runtime_estimate_tokens
+get_max_context_tokens = _runtime_get_max_context_tokens
 
 
 @runtime_checkable
 class ContextManagerProtocol(Protocol):
     """Minimal v2 surface that agent.* callers depend on.
 
-    The legacy class exposes ~40 public + private methods; the
+    The runtime base exposes ~40 public and private methods; the
     Protocol below names the handful that v2 callers inside
     ``agent.*`` (Brain, ReasoningEngine, session turn handler)
     actually depend on so concrete v2 managers can satisfy it
-    without inheriting the deep legacy class.
+    without inheriting the full runtime implementation.
     """
 
     def estimate_tokens(self, text: str) -> int:
@@ -135,17 +102,14 @@ class ContextManagerProtocol(Protocol):
     def pre_request_cleanup(self, messages: list[dict]) -> list[dict]:
         """Microcompact pass run before every LLM call."""
 
-    async def compress_if_needed(
-        self, messages: list[dict], **kwargs: Any
-    ) -> list[dict]:
+    async def compress_if_needed(self, messages: list[dict], **kwargs: Any) -> list[dict]:
         """Main compression entry point; returns rewritten history."""
 
 
-class ContextManager(_LegacyContextManagerImpl):
+class ContextManager(_RuntimeContextBase):
     """V2 ContextManager with v2-flavoured composition.
 
-    Inherits the legacy 1799-LOC implementation for byte-faithful
-    behaviour during the P4.15 cutover. Adds:
+    Inherits the complete runtime implementation and adds:
 
     * a public :meth:`group_messages_v2` that always routes through
       :func:`runtime.context.group_messages` so the leaf rule lives
@@ -193,7 +157,7 @@ class ContextManager(_LegacyContextManagerImpl):
         Equivalent to the inherited :meth:`pre_request_cleanup` but
         routed through the v2 helper so callers can rely on a single
         canonical implementation. The inherited method is preserved
-        for byte-faithful behaviour with the legacy class.
+        for byte-faithful behaviour with the previous class.
         """
         return pre_request_cleanup(messages)
 
@@ -219,7 +183,7 @@ class ContextManager(_LegacyContextManagerImpl):
         """V2 lifecycle hook for clean shutdown.
 
         Drops the token-estimation cache so memory is reclaimed
-        deterministically. The legacy class relies on GC; v2
+        deterministically. The previous class relies on GC; v2
         contracts callers to call ``await ctx.aclose()`` from the
         agent teardown path so a long-running session doesn't
         accumulate cache entries across hot reloads.
@@ -248,11 +212,11 @@ class ContextManager(_LegacyContextManagerImpl):
     def estimate_messages_tokens_v2(self, messages: list[dict]) -> int:
         """Total tokens for ``messages`` using the v2 estimator.
 
-        The legacy :meth:`estimate_messages_tokens` adds a fixed
+        The previous :meth:`estimate_messages_tokens` adds a fixed
         per-message structure overhead (role / tool_use_id ~ 10
         tokens). The v2 variant routes through the v2 estimator
         but preserves the same overhead so the returned number is
-        directly comparable to the legacy budget snapshot.
+        directly comparable to the previous budget snapshot.
         """
         total = 0
         for msg in messages:
@@ -288,10 +252,10 @@ class ContextManager(_LegacyContextManagerImpl):
     ) -> dict[str, int]:
         """Return a v2 pressure snapshot as a plain dict.
 
-        Differs from the legacy :meth:`calculate_context_pressure` in
+        Differs from the previous :meth:`calculate_context_pressure` in
         that the v2 variant returns a JSON-friendly dict instead of a
         dataclass. Useful for the setup-center UI panel which has no
-        runtime access to the legacy dataclass.
+        runtime access to the previous dataclass.
         """
         msg_tokens = self.estimate_messages_tokens_v2(messages)
         tool_tokens = self.estimate_tools_tokens_v2(tools)

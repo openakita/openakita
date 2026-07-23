@@ -39,13 +39,21 @@ def mock_agent():
 @pytest.fixture
 def app(mock_agent, monkeypatch):
     from openakita.api.routes import chat as chat_routes
+    from openakita.api.routes import conversation_lifecycle
 
+    conversation_lifecycle._instance = None
     monkeypatch.setattr(chat_routes, "_chat_endpoint_names", lambda: {"mock-main"})
     monkeypatch.setattr(chat_routes, "_resolve_agent", lambda agent: agent)
-    return create_app(
+    app = create_app(
         agent=mock_agent,
         shutdown_event=asyncio.Event(),
     )
+    yield app
+
+    force_exit_task = getattr(app.state, "_force_exit_task", None)
+    if force_exit_task is not None:
+        force_exit_task.cancel()
+    conversation_lifecycle._instance = None
 
 
 @pytest.fixture

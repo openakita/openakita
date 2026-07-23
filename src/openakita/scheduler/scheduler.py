@@ -287,7 +287,7 @@ class TaskScheduler:
             return
 
         try:
-            from ..core.pending_approvals import get_pending_approvals_store
+            from openakita.agent.pending_approvals import get_pending_approvals_store
 
             store = get_pending_approvals_store()
         except Exception as exc:  # noqa: BLE001

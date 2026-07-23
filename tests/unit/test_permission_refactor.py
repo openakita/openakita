@@ -20,9 +20,9 @@ from typing import Any
 
 import pytest
 
+from openakita.agent.permission import check_permission
 from openakita.agent.tools import ToolExecutor
-from openakita.core import _reasoning_engine_legacy as reasoning_engine_module
-from openakita.core.permission import check_permission
+from openakita.core import _reasoning_runtime as reasoning_engine_module
 from openakita.core.policy_v2 import (
     ApprovalClass,
     DecisionAction,

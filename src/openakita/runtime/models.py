@@ -42,7 +42,7 @@ CommandId = str
 def _new_id(prefix: str) -> str:
     """Return a short, prefixed identifier suitable for v2 records.
 
-    We use UUID4 hex truncated to 12 chars because the legacy schema used
+    We use UUID4 hex truncated to 12 chars because the pre-v2 schema used
     similar widths and the runtime never needs lexicographic ordering on
     these ids (ULIDs are reserved for checkpoints — see ADR-0005).
     """
@@ -62,7 +62,7 @@ def _utc_now() -> datetime:
 class OrgStatus(StrEnum):
     """High-level lifecycle of a v2 organization.
 
-    Refined from the legacy ``OrgStatus`` to drop ``DORMANT`` (replaced by
+    Refined from the pre-v2 ``OrgStatus`` to drop ``DORMANT`` (replaced by
     explicit pause/resume) and ``ARCHIVED`` (handled by the data
     migration policy in ADR-0010).
     """
@@ -87,7 +87,7 @@ class NodeType(StrEnum):
 class NodeStatus(StrEnum):
     """Per-node lifecycle state for the v2 runtime.
 
-    Replaces the legacy ``NodeStatus`` enum. ``SUSPECT`` is the new
+    Replaces the pre-v2 ``NodeStatus`` enum. ``SUSPECT`` is the new
     middle state introduced by the supervisor's stall detector
     (ADR-0004): a node that is busy but has not produced a stream
     update for the configured suspect window.
@@ -103,7 +103,7 @@ class NodeStatus(StrEnum):
 
 
 class EdgeKind(StrEnum):
-    """Edge semantics carried over from the legacy schema, narrowed."""
+    """Edge semantics carried over from the pre-v2 schema, narrowed."""
 
     HIERARCHY = "hierarchy"
     COLLABORATE = "collaborate"
@@ -176,7 +176,7 @@ class WorkbenchBinding:
 class NodeRuntimeOverrides:
     """Per-node runtime knobs supported by the v2 supervisor.
 
-    The legacy runtime had a free-form dict here; we replace it with a
+    The pre-v2 runtime had a free-form dict here; we replace it with a
     closed set of fields because that is the contract reviewed by the
     supervisor. Unknown keys deserialised from disk are *dropped*, which
     is intentional — it stops deprecated knobs like

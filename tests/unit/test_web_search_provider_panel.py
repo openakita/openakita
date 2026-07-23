@@ -324,8 +324,8 @@ class TestRuntimeAutoDetect:
 @pytest.mark.asyncio
 class TestToolExecutorPropagation:
     async def test_execute_tool_returns_tuple(self) -> None:
+        from openakita.agent.permission import PermissionDecision
         from openakita.agent.tools import ToolExecutor
-        from openakita.core.permission import PermissionDecision
 
         registry = MagicMock()
         registry.has_tool.return_value = True
@@ -341,8 +341,8 @@ class TestToolExecutorPropagation:
         assert hint is None
 
     async def test_executor_catches_tool_config_error(self) -> None:
+        from openakita.agent.permission import PermissionDecision
         from openakita.agent.tools import ToolExecutor
-        from openakita.core.permission import PermissionDecision
 
         async def _raise(_name, _input):
             raise ToolConfigError(
@@ -388,7 +388,7 @@ class TestToolExecutorPropagation:
 
         executor = ToolExecutor(handler_registry=registry, max_parallel=1)
         # bypass policy
-        from openakita.core.permission import PermissionDecision
+        from openakita.agent.permission import PermissionDecision
 
         executor.check_permission = MagicMock(return_value=PermissionDecision("allow"))
 
@@ -410,7 +410,7 @@ class TestToolExecutorPropagation:
 
 class TestReasoningEngineHelper:
     def test_builds_two_events_when_hint_present(self) -> None:
-        from openakita.core._reasoning_engine_legacy import _build_tool_end_events
+        from openakita.core._reasoning_runtime import _build_tool_end_events
 
         h = ConfigHint(
             scope="web_search",
@@ -436,7 +436,7 @@ class TestReasoningEngineHelper:
         assert evts[1]["actions"] == [{"id": "a", "label": "L"}]
 
     def test_builds_one_event_when_hint_none(self) -> None:
-        from openakita.core._reasoning_engine_legacy import _build_tool_end_events
+        from openakita.core._reasoning_runtime import _build_tool_end_events
 
         evts = _build_tool_end_events(
             tool_name="read_file",
@@ -449,7 +449,7 @@ class TestReasoningEngineHelper:
         assert evts[0]["type"] == "tool_call_end"
 
     def test_extra_kwarg_merges_into_tool_call_end(self) -> None:
-        from openakita.core._reasoning_engine_legacy import _build_tool_end_events
+        from openakita.core._reasoning_runtime import _build_tool_end_events
 
         evts = _build_tool_end_events(
             tool_name="x",
@@ -484,7 +484,6 @@ async def test_orgs_runtime_patch_returns_tuple_for_org_calls(
     # _touch_trackers_for_org / _broadcast_ws / _record_file_output) dropped.
     # v2 OrgRuntime delegates these surfaces to sibling Protocols; tracked for
     # P-RC-10 rewrite against the v2 contract.
-
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,4 @@
-"""C12 §14.5 — pending_approvals 持久化层.
-
-Ported from :mod:`openakita.core.pending_approvals` per ADR-0003
-and the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``.
-The legacy import path remains as a re-export shim until Phase 8
-mechanical cleanup. Behaviour is unchanged.
+"""C12 §14.5 — pending_approvals 持久化层。
 
 设计目标
 ========

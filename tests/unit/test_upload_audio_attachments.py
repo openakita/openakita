@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from openakita.api.routes import upload
-from openakita.core._agent_legacy import _format_desktop_attachment_reference
+from openakita.core._agent_runtime import _format_desktop_attachment_reference
 
 
 def _client(tmp_path, monkeypatch) -> TestClient:

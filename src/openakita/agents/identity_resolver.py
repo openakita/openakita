@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from ..core.identity import Identity
+from openakita.agent.identity import Identity
 
 logger = logging.getLogger(__name__)
 

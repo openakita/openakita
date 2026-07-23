@@ -20,7 +20,7 @@ The v2 runtime owns its own delivery transport (``runtime.messenger``
 gateway-supervisor handshake is wired. Returning a structured plan
 lets the gateway decide:
 
-* ``status == "skipped"`` → fall through to the legacy path.
+* ``status == "skipped"`` → fall through to the existing gateway path.
 * ``status == "routed"`` → emit a UI hint that v2 picked up the
   message; for now this is a no-op breadcrumb the channel writes back
   to the user. Phase 7 wires this into a real supervisor run.
@@ -60,7 +60,7 @@ class RoutingPlan:
             if the supervisor was cooperatively cancelled before it
             could finish (a final checkpoint is still written by the
             supervisor in this case). ``"skipped"`` if the gateway
-            should fall through to the legacy path -- reasons include
+            should fall through to the existing gateway path -- reasons include
             v2 disabled, no org bound, org not in the store, empty
             topology, no SupervisorBrain factory wired, or any
             unexpected dispatch-time failure.
@@ -81,7 +81,7 @@ class RoutingPlan:
             Optional payload set by the async dispatch path. When
             ``status == "routed"`` or ``"cancelled"`` this holds the
             :class:`SupervisorOutcome` returned by ``Supervisor.run``;
-            None for ``skipped`` and for the legacy sync helper.
+            None for ``skipped`` and for the synchronous fallback helper.
     """
 
     status: str
@@ -193,12 +193,12 @@ def route_inbound_message_to_v2(*, org_id: str | None) -> RoutingPlan:
 
     Returns:
         A :class:`RoutingPlan` whose ``status`` tells the gateway
-        whether v2 took the message (``"routed"``) or the legacy
+        whether v2 took the message (``"routed"``) or the existing gateway
         path should continue (``"skipped"``).
 
     The function never raises — every error is caught and turned
     into a ``"skipped"`` plan so the channel gateway is guaranteed
-    to fall through to the legacy code path on any v2-side hiccup.
+    to fall through to the existing gateway path on any v2-side hiccup.
     """
     try:
         from openakita.config import settings
@@ -235,7 +235,7 @@ def route_inbound_message_to_v2(*, org_id: str | None) -> RoutingPlan:
         # this read transparently routes through
         # ``OrgManager.as_orgv2`` so mint orgs (the v25 H2 case --
         # ``data/orgs/<id>/org.json``) finally resolve here. The
-        # legacy ``data/orgs_v2.json`` fallback is unioned in for
+        # Deprecated ``data/orgs_v2.json`` fallback is unioned in for
         # the duration of the deprecation soak. A future cleanup
         # will swap this for ``request.app.state.org_manager.get``
         # once channel_routing is taught to take the FastAPI app.
@@ -250,8 +250,6 @@ def route_inbound_message_to_v2(*, org_id: str | None) -> RoutingPlan:
         )
 
     return compute_v2_plan_for_org(org)
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +280,7 @@ async def dispatch_inbound_message_to_v2(
     ``result`` holds the :class:`SupervisorOutcome`.
 
     Contract: NEVER raises to the caller. Any failure becomes
-    ``status="skipped"`` so the gateway can always fall back to legacy.
+    ``status="skipped"`` so the gateway can always use its fallback path.
 
     Keyword Args:
         session_key, org_id, message, attachments: from the gateway.
@@ -352,7 +350,9 @@ async def dispatch_inbound_message_to_v2(
         messenger = Messenger(registry=resolved_registry, stream=resolved_stream)
         command_id = f"cmd_{_uuid.uuid4().hex[:12]}"
         deliver = messenger.bind_for_command(
-            command_id=command_id, org_id=org_id, cancel_token=resolved_token,
+            command_id=command_id,
+            org_id=org_id,
+            cancel_token=resolved_token,
         )
         if supervisor_cls is not None:
             supervisor = supervisor_cls(
@@ -385,7 +385,9 @@ async def dispatch_inbound_message_to_v2(
         except Exception as exc:  # noqa: BLE001 -- never leak supervisor crash
             logger.warning(
                 "[channel_routing] supervisor.run failed for org=%s session=%s: %s",
-                org_id, session_key, exc,
+                org_id,
+                session_key,
+                exc,
             )
             return RoutingPlan(
                 status="skipped",
@@ -408,7 +410,9 @@ async def dispatch_inbound_message_to_v2(
     except Exception as exc:  # noqa: BLE001 -- contract: never raise to caller
         logger.warning(
             "[channel_routing] dispatch failed for org=%s session=%s: %s",
-            org_id, session_key, exc,
+            org_id,
+            session_key,
+            exc,
         )
         return RoutingPlan(
             status="skipped",

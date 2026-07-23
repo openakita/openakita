@@ -508,7 +508,7 @@ class Supervisor:
         the checkpoint id is unknown, the higher-level dispatcher
         (``OrgCommandService.submit`` ``continue_previous=true`` path)
         is responsible for falling back to a fresh run with the
-        legacy ``_build_continue_content`` text concatenation. The
+        former ``_build_continue_content`` text concatenation. The
         method here is intentionally strict so the upstream caller
         sees the exact failure mode and decides the policy.
         """

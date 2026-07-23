@@ -241,7 +241,7 @@ def test_new_memory_immediately_recallable(tmp_path):
     ],
 )
 def test_agent_output_guard(task, output, tools, expected_trigger):
-    from openakita.core.agent_output_guard import (
+    from openakita.agent.output_guard import (
         DISCLAIMER_TEXT,
         validate_no_fabricated_numbers,
     )

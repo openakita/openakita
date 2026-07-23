@@ -26,7 +26,7 @@ Sixteen-node generic startup org — CEO + four C-level directors
     alignment), pm↔dev_a, pm↔dev_b (requirements), content_op↔seo
     (content tuning).
 
-Mirrors the legacy ``startup-company`` template (lines 19-355) but
+Mirrors the pre-v2 ``startup-company`` template (lines 19-355) but
 expressed in the v2 schema — no avatars / positions / departments
 in the spec because the supervisor never read them.
 """
@@ -144,7 +144,7 @@ def startup_company() -> TemplateSpec:
         description=(
             "Sixteen-node generic startup organisation: CEO + four C-level "
             "directors (CTO / CPO / CMO / CFO) each with their own "
-            "department. Mirrors the legacy startup-company template in the "
+            "department. Mirrors the pre-v2 startup-company template in the "
             "v2 schema."
         ),
         version=1,

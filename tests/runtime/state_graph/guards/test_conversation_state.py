@@ -1,4 +1,4 @@
-﻿"""Tests for runtime/state_graph/guards/conversation_state."""
+"""Tests for runtime/state_graph/guards/conversation_state."""
 
 from __future__ import annotations
 
@@ -16,10 +16,11 @@ from openakita.runtime.state_graph.guards.conversation_state import (
 
 def _legacy():
     import openakita.agent.brain  # noqa: F401
-    from openakita.core._reasoning_engine_legacy import (
+    from openakita.core._reasoning_runtime import (
         _has_recoverable_tool_issue,
         _looks_like_waiting_for_user_response,
     )
+
     return _looks_like_waiting_for_user_response, _has_recoverable_tool_issue
 
 
@@ -36,7 +37,9 @@ def test_looks_returns_false_for_empty_text() -> None:
 
 
 def test_looks_returns_true_for_chinese_blocker_marker() -> None:
-    assert looks_like_waiting_for_user_response("\u9700\u8981\u4f60\u63d0\u4f9b\u622a\u56fe") is True
+    assert (
+        looks_like_waiting_for_user_response("\u9700\u8981\u4f60\u63d0\u4f9b\u622a\u56fe") is True
+    )
     assert looks_like_waiting_for_user_response("\u8bf7\u624b\u52a8\u786e\u8ba4") is True
 
 
@@ -47,7 +50,12 @@ def test_looks_returns_true_for_english_blocker_phrase() -> None:
 
 def test_looks_returns_false_for_plain_progress_text() -> None:
     assert looks_like_waiting_for_user_response("Task complete; here is the output.") is False
-    assert looks_like_waiting_for_user_response("\u4efb\u52a1\u5b8c\u6210\u4e86\uff0c\u8be5\u6587\u4ef6\u5728\u8fd9\u91cc") is False
+    assert (
+        looks_like_waiting_for_user_response(
+            "\u4efb\u52a1\u5b8c\u6210\u4e86\uff0c\u8be5\u6587\u4ef6\u5728\u8fd9\u91cc"
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -72,21 +80,20 @@ def test_recoverable_returns_false_when_no_results() -> None:
 
 
 def test_recoverable_true_on_unknown_tool_error() -> None:
-    assert has_recoverable_tool_issue(
-        [{"content": "unknown_tool: foo", "is_error": True}]
-    ) is True
+    assert has_recoverable_tool_issue([{"content": "unknown_tool: foo", "is_error": True}]) is True
 
 
 def test_recoverable_false_on_hard_user_blocker() -> None:
-    assert has_recoverable_tool_issue(
-        [{"content": "\u6d4f\u89c8\u5668\u8fde\u63a5\u5df2\u65ad\u5f00", "is_error": True}]
-    ) is False
+    assert (
+        has_recoverable_tool_issue(
+            [{"content": "\u6d4f\u89c8\u5668\u8fde\u63a5\u5df2\u65ad\u5f00", "is_error": True}]
+        )
+        is False
+    )
 
 
 def test_recoverable_false_on_success() -> None:
-    assert has_recoverable_tool_issue(
-        [{"content": "ok", "is_error": False}]
-    ) is False
+    assert has_recoverable_tool_issue([{"content": "ok", "is_error": False}]) is False
 
 
 @pytest.mark.parametrize(

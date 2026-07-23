@@ -10,14 +10,14 @@ This module ships two implementations:
 * :class:`DegenerateSupervisorBrain` -- the original canary brain
   that reports ``is_request_satisfied = True`` on the first
   progress-ledger call, so the supervisor terminates DONE on turn 1
-  without delegating. Used by tests + the legacy IM canary that
+  without delegating. Used by tests + the previous IM canary that
   pre-dates real delegation.
 * :class:`PassThroughSupervisorBrain` -- single-delegation brain.
   Turn 1 emits ``next_speaker=<root_node_id>`` so the supervisor
   hands the verbatim user task to the root node via the injected
   ``deliver`` callable. Turn 2 observes the resulting
   :class:`DelegationResult` in ``history`` and emits
-  ``is_request_satisfied=True``. Semantic equivalent of the legacy
+  ``is_request_satisfied=True``. Semantic equivalent of the previous
   ``OrgCommandService._run_minimal`` single-shot dispatch: the node
   still owns multi-step orchestration internally via Sprint-4
   ``<dispatch>`` XML parsing inside
@@ -84,12 +84,12 @@ class DegenerateSupervisorBrain(SupervisorBrain):
         cancel_event: asyncio.Event | None = None,  # noqa: ARG002 -- protocol shape
     ) -> str:
         payload: dict[str, Any] = {
-            "is_request_satisfied":    {"answer": True,  "reason": self.ack_text},
-            "is_progress_being_made":  {"answer": True,  "reason": "degenerate"},
-            "is_in_loop":              {"answer": False, "reason": "single turn"},
+            "is_request_satisfied": {"answer": True, "reason": self.ack_text},
+            "is_progress_being_made": {"answer": True, "reason": "degenerate"},
+            "is_in_loop": {"answer": False, "reason": "single turn"},
             "instruction_or_question": {"answer": self.ack_text, "reason": "final"},
-            "next_speaker":            {"answer": "supervisor", "reason": "terminal"},
-            "execution_phase":         "execution",
+            "next_speaker": {"answer": "supervisor", "reason": "terminal"},
+            "execution_phase": "execution",
         }
         return json.dumps(payload)
 
@@ -165,12 +165,12 @@ class PassThroughSupervisorBrain(SupervisorBrain):
         turn_index = len(history)
         if turn_index == 0:
             payload: dict[str, Any] = {
-                "is_request_satisfied":    {"answer": False, "reason": "pending root delegation"},
-                "is_progress_being_made":  {"answer": True,  "reason": "initial dispatch"},
-                "is_in_loop":              {"answer": False, "reason": "turn 1 entry"},
-                "instruction_or_question": {"answer": task,    "reason": "verbatim user task"},
-                "next_speaker":            {"answer": self.root_node_id, "reason": "root entry"},
-                "execution_phase":         "planning",
+                "is_request_satisfied": {"answer": False, "reason": "pending root delegation"},
+                "is_progress_being_made": {"answer": True, "reason": "initial dispatch"},
+                "is_in_loop": {"answer": False, "reason": "turn 1 entry"},
+                "instruction_or_question": {"answer": task, "reason": "verbatim user task"},
+                "next_speaker": {"answer": self.root_node_id, "reason": "root entry"},
+                "execution_phase": "planning",
             }
             return json.dumps(payload)
         # After turn 1: terminate. The deliver callable's result is
@@ -178,18 +178,21 @@ class PassThroughSupervisorBrain(SupervisorBrain):
         # delegation_result event; the supervisor already wrote that
         # to checkpoint state in turn 1's _checkpoint call.
         payload = {
-            "is_request_satisfied":    {"answer": True,  "reason": f"root node {self.root_node_id} replied"},
-            "is_progress_being_made":  {"answer": True,  "reason": "single-shot delegation complete"},
-            "is_in_loop":              {"answer": False, "reason": "terminal turn"},
+            "is_request_satisfied": {
+                "answer": True,
+                "reason": f"root node {self.root_node_id} replied",
+            },
+            "is_progress_being_made": {"answer": True, "reason": "single-shot delegation complete"},
+            "is_in_loop": {"answer": False, "reason": "terminal turn"},
             "instruction_or_question": {"answer": "done", "reason": "no further work"},
-            "next_speaker":            {"answer": "supervisor", "reason": "terminal"},
-            "execution_phase":         "execution",
+            "next_speaker": {"answer": "supervisor", "reason": "terminal"},
+            "execution_phase": "execution",
         }
         return json.dumps(payload)
 
 
 def default_supervisor_brain() -> SupervisorBrain:
-    """Factory used by the legacy IM canary path when no brain is injected.
+    """Factory used by the previous IM canary path when no brain is injected.
 
     Pass-through HTTP path uses :class:`PassThroughSupervisorBrain`
     constructed by ``runtime.supervisor_factory.build_supervisor_for_command``

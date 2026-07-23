@@ -18,6 +18,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from openakita.agent.security_actions import execute_controlled_action
+from openakita.agent.trusted_paths import grant_session_trust
 from openakita.core.ask_user_context import AskUserReplyContext
 from openakita.core.confirmation_state import ConfirmationDecision, get_confirmation_store
 from openakita.core.context_stats import (
@@ -26,8 +28,6 @@ from openakita.core.context_stats import (
     merge_context_snapshot_into_usage,
 )
 from openakita.core.engine_bridge import engine_stream, is_dual_loop, to_engine
-from openakita.core.security_actions import execute_controlled_action
-from openakita.core.trusted_paths import grant_session_trust
 
 from ..schemas import (
     AttachmentInfo,
@@ -487,7 +487,7 @@ async def _handle_pending_risk_answer(
         result = execute_controlled_action(action, parameters)
 
     try:
-        from openakita.core.security_actions import (
+        from openakita.agent.security_actions import (
             maybe_broadcast_death_switch_reset,
             maybe_refresh_skills,
         )
@@ -665,8 +665,9 @@ def _cleanup_chat_runtime_state(request: Request, conversation_id: str) -> None:
         也是不论 sid 全清，C8b-3 暂保持一致）
     """
     try:
+        from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
+
         from ...core.policy_v2 import get_session_allowlist_manager
-        from ...core.ui_confirm_bus import get_ui_confirm_bus
 
         get_ui_confirm_bus().cleanup_session(conversation_id)
         get_session_allowlist_manager().clear()
@@ -1346,8 +1347,8 @@ async def _stream_chat(
     # 注意：``conversation_id`` 在下方 try 块里才会被赋值（包含 uuid 补全
     # 逻辑），这里直接读 ``chat_request.conversation_id``——足够当 session
     # key；如果用户传空字符串就降级回不带 ringbuffer 的旧行为。
-    from ...core.sse_replay import format_sse_frame
-    from ...core.sse_replay import (
+    from openakita.agent.sse_replay import format_sse_frame
+    from openakita.agent.sse_replay import (
         get_registry as _get_sse_registry,
     )
 
@@ -3670,8 +3671,8 @@ async def chat_resume(
             value.  Pass the highest seq the client has already rendered
             to avoid double-rendering after a reconnect.
     """
-    from ...core.sse_replay import format_sse_frame
-    from ...core.sse_replay import get_registry as _get_sse_registry
+    from openakita.agent.sse_replay import format_sse_frame
+    from openakita.agent.sse_replay import get_registry as _get_sse_registry
 
     sse_session = _get_sse_registry().get(conversation_id)
     if sse_session is None and wait_ms > 0:

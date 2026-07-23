@@ -32,7 +32,7 @@ import openakita._ensure_utf8  # noqa: F401  # Windows UTF-8 编码保护
 from .auth import WebAccessConfig, create_auth_middleware
 from .middleware_setup_gate import create_setup_gate_middleware
 from .routes import (
-    _orgs_v2_legacy_redirects,
+    _orgs_v2_deprecated_redirects,
     agents,
     bug_report,
     chat,
@@ -189,9 +189,7 @@ def _arm_force_exit_watchdog_sync(app: FastAPI) -> None:
         return
 
     if getattr(app.state, "_force_exit_task", None) is not None:
-        logger.debug(
-            "[Shutdown] Force-exit safety net already armed; skipping duplicate"
-        )
+        logger.debug("[Shutdown] Force-exit safety net already armed; skipping duplicate")
         return
 
     try:
@@ -212,9 +210,7 @@ def _arm_force_exit_watchdog_sync(app: FastAPI) -> None:
             grace_s,
         )
     except Exception as exc:  # noqa: BLE001 -- never break the shutdown route
-        logger.warning(
-            "[Shutdown] Failed to arm threading force-exit safety net: %s", exc
-        )
+        logger.warning("[Shutdown] Failed to arm threading force-exit safety net: %s", exc)
 
 
 def _arm_force_exit_watchdog_async(app: FastAPI) -> None:
@@ -233,9 +229,7 @@ def _arm_force_exit_watchdog_async(app: FastAPI) -> None:
         return
 
     if getattr(app.state, "_force_exit_task", None) is not None:
-        logger.debug(
-            "[Shutdown] Force-exit safety net already armed; skipping duplicate"
-        )
+        logger.debug("[Shutdown] Force-exit safety net already armed; skipping duplicate")
         return
 
     async def _force_exit() -> None:
@@ -256,9 +250,7 @@ def _arm_force_exit_watchdog_async(app: FastAPI) -> None:
             grace_s,
         )
     except Exception as exc:  # noqa: BLE001 -- never break the shutdown route
-        logger.warning(
-            "[Shutdown] Failed to arm asyncio force-exit safety net: %s", exc
-        )
+        logger.warning("[Shutdown] Failed to arm asyncio force-exit safety net: %s", exc)
 
 
 def _schedule_force_exit_after_grace(app: FastAPI) -> None:
@@ -275,9 +267,7 @@ def _schedule_force_exit_after_grace(app: FastAPI) -> None:
     try:
         from openakita.config import settings
 
-        use_threading = bool(
-            getattr(settings, "shutdown_force_exit_use_threading", True)
-        )
+        use_threading = bool(getattr(settings, "shutdown_force_exit_use_threading", True))
     except Exception:
         use_threading = True
 
@@ -537,9 +527,7 @@ def _build_on_stop_org_cancel_inflight_handler(
 
     async def _on_stop_org_cancel_inflight(org_id: str, reason: str) -> None:  # noqa: ARG001 -- protocol shape
         try:
-            cancelled = await org_command_service.cancel_all_for_org(
-                org_id, reason="stop_org"
-            )
+            cancelled = await org_command_service.cancel_all_for_org(org_id, reason="stop_org")
             if cancelled:
                 logger.info(
                     "stop_org cancelled %d in-flight orgs_v2 command(s) (org=%s)",
@@ -1085,9 +1073,7 @@ def create_app(
     # lifecycle ``on_stop_org`` callback so ``POST /api/v2/orgs/{id}/stop``
     # cancels every per-org in-flight task instead of just flipping
     # the spec to STOPPED while the LLM keeps burning tokens.
-    org_runtime.set_on_stop_org(
-        _build_on_stop_org_cancel_inflight_handler(org_command_service)
-    )
+    org_runtime.set_on_stop_org(_build_on_stop_org_cancel_inflight_handler(org_command_service))
 
     # Sprint-6 P0-1 (RCA ``_v17_p1_rca.md`` §1.5): mint a
     # :class:`NodeToolHost` from the desktop Agent if one is already
@@ -1161,7 +1147,7 @@ def create_app(
     # shim is tracked by ``docs/follow-ups/skipped-items-roadmap.md``
     # §A.3; monitor ``GET /api/diagnostics/legacy-shim-stats`` to
     # confirm the 30-day-zero-hits exit criterion before removal.
-    app.include_router(_orgs_v2_legacy_redirects.router)
+    app.include_router(_orgs_v2_deprecated_redirects.router)
     # P-RC-2 commit P2.8: GET /api/build-info for the frontend
     # stale-bundle banner. Always-mounted, unauthenticated.
     app.include_router(build_info_routes.router)
@@ -1309,8 +1295,8 @@ def create_app(
                 build_pending_approval_event_hook,
                 notify_pending_approval_im,
             )
+            from openakita.agent.pending_approvals import get_pending_approvals_store
             from openakita.api.routes.websocket import fire_event
-            from openakita.core.pending_approvals import get_pending_approvals_store
 
             api_loop = asyncio.get_running_loop()
 
@@ -1350,8 +1336,8 @@ def create_app(
         # confirm_revoked 广播绑到同一条 fire_event 通道，让多端 UI 共享
         # confirm 生命周期信号。
         try:
+            from openakita.agent.ui_confirm_bus import get_ui_confirm_bus
             from openakita.api.routes.websocket import fire_event
-            from openakita.core.ui_confirm_bus import get_ui_confirm_bus
 
             def _confirm_hook(event_type: str, payload: dict) -> None:
                 fire_event(event_type, payload)
@@ -1487,9 +1473,7 @@ def create_app(
         try:
             from openakita.config import settings as _settings
 
-            stage_timeout = float(
-                getattr(_settings, "lifespan_stage_timeout_s", 8) or 8
-            )
+            stage_timeout = float(getattr(_settings, "lifespan_stage_timeout_s", 8) or 8)
         except Exception:
             stage_timeout = 8.0
 
@@ -1500,9 +1484,7 @@ def create_app(
                 try:
                     await stop_loop(timeout=2.0)
                 except Exception as exc:  # noqa: BLE001 -- best-effort
-                    logger.debug(
-                        "OrgCommandService.stop_reconcile_loop error: %s", exc
-                    )
+                    logger.debug("OrgCommandService.stop_reconcile_loop error: %s", exc)
         # Sprint-9 supervisor takeover: close per-org sqlite
         # checkpointers so the file handles are released cleanly. The
         # legacy ``stop_watchdog()`` call is gone with the watchdog
@@ -1512,9 +1494,7 @@ def create_app(
                 aclose_all_checkpointers,
             )
 
-            await asyncio.wait_for(
-                aclose_all_checkpointers(), timeout=stage_timeout
-            )
+            await asyncio.wait_for(aclose_all_checkpointers(), timeout=stage_timeout)
         except TimeoutError:
             logger.warning(
                 "[Shutdown] aclose_all_checkpointers exceeded %.1fs, abandoning",
@@ -1579,7 +1559,7 @@ def create_app(
         being up.
         """
         try:
-            from openakita.core.audit_logger import DEFAULT_AUDIT_PATH
+            from openakita.agent.audit import DEFAULT_AUDIT_PATH
             from openakita.core.policy_v2.audit_writer import (
                 start_global_audit_writer,
             )
@@ -1620,9 +1600,7 @@ def create_app(
                 stop_global_audit_writer,
             )
 
-            stage_timeout = float(
-                getattr(_settings, "lifespan_stage_timeout_s", 8) or 8
-            )
+            stage_timeout = float(getattr(_settings, "lifespan_stage_timeout_s", 8) or 8)
             await asyncio.wait_for(stop_global_audit_writer(), timeout=stage_timeout)
             logger.info("[Shutdown] AsyncBatchAuditWriter stopped")
         except TimeoutError:
@@ -1728,9 +1706,7 @@ def create_app(
         try:
             from openakita.config import settings as _settings
 
-            stage_timeout = float(
-                getattr(_settings, "lifespan_stage_timeout_s", 8) or 8
-            )
+            stage_timeout = float(getattr(_settings, "lifespan_stage_timeout_s", 8) or 8)
         except Exception:
             stage_timeout = 8.0
 
@@ -1763,8 +1739,7 @@ def create_app(
             )
         else:
             logger.info(
-                "[Shutdown] Plugin aiosqlite workers closed "
-                "(loaded_before=%d, elapsed=%.2fs)",
+                "[Shutdown] Plugin aiosqlite workers closed (loaded_before=%d, elapsed=%.2fs)",
                 loaded_before,
                 time.monotonic() - t0,
             )
@@ -1804,13 +1779,9 @@ def create_app(
                 await asyncio.wait_for(close_fn(), timeout=3.0)
                 logger.info("[Shutdown] storage.Database (%s) closed", attr)
             except TimeoutError:
-                logger.warning(
-                    "[Shutdown] storage.Database (%s) close exceeded 3s", attr
-                )
+                logger.warning("[Shutdown] storage.Database (%s) close exceeded 3s", attr)
             except Exception as exc:  # noqa: BLE001
-                logger.debug(
-                    "[Shutdown] storage.Database (%s) close error: %s", attr, exc
-                )
+                logger.debug("[Shutdown] storage.Database (%s) close error: %s", attr, exc)
 
     # ------------------------------------------------------------
     # Sprint 15 / v32 Phase B Task C: lifespan→process-exit hang RCA.
@@ -1826,9 +1797,7 @@ def create_app(
 
             if not bool(getattr(_settings, "shutdown_diagnostics_enabled", True)):
                 return
-            interval = float(
-                getattr(_settings, "shutdown_diagnostics_interval_s", 1.0) or 1.0
-            )
+            interval = float(getattr(_settings, "shutdown_diagnostics_interval_s", 1.0) or 1.0)
         except Exception:
             interval = 1.0
 
@@ -1938,8 +1907,7 @@ async def start_api_server(
         from openakita.config import settings as _serve_settings
 
         graceful_s = float(
-            getattr(_serve_settings, "uvicorn_graceful_shutdown_timeout_s", 3.0)
-            or 0.0
+            getattr(_serve_settings, "uvicorn_graceful_shutdown_timeout_s", 3.0) or 0.0
         )
     except Exception:
         graceful_s = 3.0
@@ -2078,9 +2046,7 @@ def _refresh_node_tool_host(app: FastAPI) -> None:
     try:
         from openakita.orgs._runtime_agent_host import build_node_tool_host
     except Exception:  # noqa: BLE001 -- defensive against import-cycle
-        logger.debug(
-            "Could not import build_node_tool_host; skipping bind", exc_info=True
-        )
+        logger.debug("Could not import build_node_tool_host; skipping bind", exc_info=True)
         return
     host = build_node_tool_host(agent=agent)
     setter(host)

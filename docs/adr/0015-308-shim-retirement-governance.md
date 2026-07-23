@@ -11,7 +11,7 @@
 P9.7a-2a (commit ``31332276``) relocated the P-RC-3 Group A v2
 routers from ``/api/v2/orgs[/...]`` to ``/api/v2/orgs-spec[/...]``
 and installed a thin 308 Permanent Redirect router
-(``src/openakita/api/routes/_orgs_v2_legacy_redirects.py``,
+(``src/openakita/api/routes/_orgs_v2_deprecated_redirects.py``,
 **9 routes**) at the original ``/api/v2/orgs`` paths so existing
 callers (frontend, IM channels, manual curl users, admin scripts,
 webhooks) keep working through the v2.0.x release window.
@@ -40,7 +40,7 @@ Two consecutive audits independently raised when to retire the
   flagged ``ADR-0015 NOT filed`` and listed shim retirement as
   the candidate trigger.
 * **G-RC-9.8** (P9.8 caller-migration mini-gate) section 8 reads:
-  ``Optional retirement of _orgs_v2_legacy_redirects.py (9 308
+  ``Optional retirement of _orgs_v2_deprecated_redirects.py (9 308
   shims; ~101 LOC) per P9.8 charter sec 8 recommendation -- defer
   to v2.1.0 to preserve the 1-release-window contract.`` Section
   13 concludes: ``P9.9 needs its own charter + ADR-0015 (308 shim
@@ -53,14 +53,14 @@ retire it in v2.1.0. This ADR ratifies that recommendation.
 ## Decision
 
 **Adopt option (b): retire the 308 shim at v2.1.0; P9.9 is a
-documented NO-OP for ``_orgs_v2_legacy_redirects.py``.**
+documented NO-OP for ``_orgs_v2_deprecated_redirects.py``.**
 
 Concretely:
 
 1. P9.9 (final P-RC-9 phase) deletes ``src/openakita/orgs/`` (v1
    subsystem), ``api/routes/orgs.py`` (v1 router; 410 Gone shim
    per Q-B), and ``tests/orgs/`` -- but leaves
-   ``api/routes/_orgs_v2_legacy_redirects.py`` and its 9 routes
+   ``api/routes/_orgs_v2_deprecated_redirects.py`` and its 9 routes
    **byte-level untouched**.
 2. The forthcoming **P-RC-9-P9.9-CHARTER section 8** (separate
    task; explicitly out of scope for this ADR) carries this
@@ -69,7 +69,7 @@ Concretely:
    sentinels #7 (REST contract / OpenAPI snapshot) and #8
    (frontend stale-path) continue to observe the shim at HEAD.
 3. A **new v2.1.0 milestone task** owns the physical retirement:
-   ``git rm src/openakita/api/routes/_orgs_v2_legacy_redirects.py``
+   ``git rm src/openakita/api/routes/_orgs_v2_deprecated_redirects.py``
    + drop its mount from ``src/openakita/api/server.py``
    + regenerate the OpenAPI snapshot at
    ``tests/parity/orgs/_openapi_snapshot.json`` to remove the 9
@@ -88,7 +88,7 @@ and dies cleanly at the v2.1.0 cut.
   ``api/routes/orgs.py`` (separate, Q-B governed) is unaffected
   -- it lands in P9.9 as planned.
 * **v2.1.0 milestone**: gains a single concrete task --
-  *"Retire 308 shim ``_orgs_v2_legacy_redirects.py`` (9 routes)
+  *"Retire 308 shim ``_orgs_v2_deprecated_redirects.py`` (9 routes)
   per ADR-0015"*. Scope: file deletion + ``server.py``
   registration drop + OpenAPI snapshot regeneration (9 fewer
   routes) + sentinel #8 sweep if Group C paths are impacted.
@@ -133,7 +133,7 @@ and dies cleanly at the v2.1.0 cut.
   adapters not on the P9.8 frontend swap path -- one full release
   earlier than the 1-release-window contract promises.
 * **Option (c) -- hybrid 410 Gone / 404**: REJECTED. Returning
-  410 from ``_orgs_v2_legacy_redirects.py`` instead of 308
+  410 from ``_orgs_v2_deprecated_redirects.py`` instead of 308
   inverts the shim's semantic (308 says ``moved permanently,
   retry here``; 410 says ``gone, do not retry``). 308 already
   encodes the migration signal correctly; layering a second
@@ -146,7 +146,7 @@ and dies cleanly at the v2.1.0 cut.
 ## Implementation notes
 
 The 9 shim routes (paths under prefix ``/api/v2/orgs`` in
-``_orgs_v2_legacy_redirects.py``): ``GET /templates``,
+``_orgs_v2_deprecated_redirects.py``): ``GET /templates``,
 ``GET /templates/{template_id}``,
 ``POST /templates/{template_id}/instantiate``, ``GET ""``
 (list orgs), ``POST ""`` (create org), ``GET /{org_id}``,

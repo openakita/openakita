@@ -1,12 +1,8 @@
 """Pre-LLM safety gates -- destructive-intent classifier + risk authorization.
 
-This package houses the v2 home for the pre-ReAct risk gate that was
-historically embedded in the 9602 LOC ``core/agent.py`` god-class.
-Per continuation plan section 7 (P-RC-6) the gate is a pure
-classification / book-keeping responsibility (not an Agent state
-machine concern), so it lives under ``openakita.agent.safety.*`` and
-the legacy module re-exports the private aliases for backward
-compatibility during the cutover.
+The pre-ReAct risk gate is a pure classification and bookkeeping
+responsibility rather than an Agent state-machine concern, so it lives under
+``openakita.agent.safety.*``.
 
 See :mod:`openakita.agent.safety.destructive_intent`.
 """

@@ -3,7 +3,7 @@
 The v2 dispatch path (``runtime.channel_routing.
 dispatch_inbound_message_to_v2``) needs to answer one tiny question
 on every inbound IM message: *which org is this session bound to,
-if any?* The legacy gateway already persists ``bound_org_id`` on
+if any?* The existing gateway already persists ``bound_org_id`` on
 ``Session.metadata`` (see ``channels/gateway.py`` ``/org bind``
 handling), but the runtime layer must not depend on
 ``openakita.sessions`` directly -- that would re-introduce the
@@ -18,8 +18,7 @@ The dependency-injection seam in this module solves that cleanly:
 * The runtime calls :func:`get_org_id_for_session` and gets either
   a string org id or ``None``. Any exception in the user-provided
   lookup is swallowed and reported as ``None`` so a misbehaving
-  session backend can never break the v2 dispatch fallback to
-  legacy.
+  session backend can never break the existing dispatch fallback.
 
 This module deliberately keeps no state apart from the registry
 slot, and has no internal imports outside the standard library.
@@ -93,7 +92,7 @@ def get_org_id_for_session(session_key: str) -> str | None:
     * the registered lookup raises -- the exception is logged at
       debug level and ``None`` is returned. The v2 dispatch path is
       a fallback layer; it must never let a session-store hiccup
-      break the legacy path.
+      break the existing gateway path.
 
     Args:
         session_key: the canonical session key produced by
@@ -122,8 +121,7 @@ def get_org_id_for_session(session_key: str) -> str | None:
         return None
     if not isinstance(result, str) or not result:
         logger.debug(
-            "[session_bridge] lookup for %s returned non-string %r; "
-            "treating as unbound",
+            "[session_bridge] lookup for %s returned non-string %r; treating as unbound",
             session_key,
             result,
         )

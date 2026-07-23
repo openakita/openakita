@@ -30,9 +30,9 @@ pytestmark = pytest.mark.asyncio
 
 async def test_memory_delete_by_query_reads_turn_scoped_authorization():
     """ToolExecutor enforces turn-scoped RiskGate authorization before memory deletion."""
+    from openakita.agent import ToolExecutor
     from openakita.core.risk_intent import TurnRiskAuthorization
     from openakita.core.tool_execution_context import ToolExecutionContext
-    from openakita.core.tool_executor import ToolExecutor
     from openakita.memory.types import MemoryType
     from openakita.tools.handlers import SystemHandlerRegistry
     from openakita.tools.handlers.memory import MemoryHandler

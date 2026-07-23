@@ -24,9 +24,7 @@ from .task import ScheduledTask
 logger = logging.getLogger(__name__)
 
 CHANNEL_UNAVAILABLE_MARKER = "[channel_unavailable]"
-CHANNEL_UNAVAILABLE_MESSAGE = (
-    "IM 通道不可投递：微信会话或 context_token 已失效，请在微信中发送一条新消息刷新会话，或重新扫码登录。"
-)
+CHANNEL_UNAVAILABLE_MESSAGE = "IM 通道不可投递：微信会话或 context_token 已失效，请在微信中发送一条新消息刷新会话，或重新扫码登录。"
 
 
 class TaskExecutor:
@@ -327,7 +325,7 @@ class TaskExecutor:
             from ..config import settings
 
             if settings.desktop_notify_enabled:
-                from ..core.desktop_notify import notify_task_completed_async
+                from openakita.agent.desktop_notify import notify_task_completed_async
 
                 await notify_task_completed_async(
                     f"⏰ {task.name}: {message[:100]}",
@@ -747,7 +745,7 @@ class TaskExecutor:
             from ..config import settings
 
             if settings.desktop_notify_enabled:
-                from ..core.desktop_notify import notify_task_completed_async
+                from openakita.agent.desktop_notify import notify_task_completed_async
 
                 await notify_task_completed_async(
                     task.name,

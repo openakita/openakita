@@ -39,8 +39,8 @@ class _FakeCatalog:
 
 @pytest.mark.asyncio
 async def test_skill_manager_passes_allowlist_filter_before_loading(tmp_path, monkeypatch):
+    from openakita.agent.skill_manager import SkillManager
     from openakita.config import settings
-    from openakita.core.skill_manager import SkillManager
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()

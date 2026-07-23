@@ -160,7 +160,7 @@ def _disable_desktop_notifications(monkeypatch):
     # fail-soft：模块未导入时静默跳过（pytest collection 阶段可能还没 import）
     modules: list = []
     try:
-        from openakita.core import desktop_notify as _dn_core
+        from openakita.agent import desktop_notify as _dn_core
 
         modules.append(_dn_core)
     except Exception:

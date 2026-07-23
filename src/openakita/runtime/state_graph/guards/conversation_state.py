@@ -1,7 +1,6 @@
 """Conversation-state guards.
 
-Extracted from ``core/reasoning_engine.py`` (P-RC-5 P5.7) as the
-post-Decision validators that decide whether the engine should
+These post-Decision validators decide whether the engine should
 keep running tools or hand back to the user.
 
 * :func:`looks_like_waiting_for_user_response` -- whether a final
@@ -14,12 +13,9 @@ keep running tools or hand back to the user.
   required argument missing) versus a hard user blocker (browser
   closed, captcha, permission denied).
 
-Both functions are byte-identical to their legacy counterparts;
-the four supporting word-list tuples (``USER_BLOCKED_MARKERS``,
+The four supporting word-list tuples (``USER_BLOCKED_MARKERS``,
 ``USER_BLOCKED_ACTIONS``, ``RECOVERABLE_TOOL_ERROR_MARKERS``,
-``HARD_USER_BLOCKER_TOOL_MARKERS``) are also byte-identical.
-``core/reasoning_engine.py`` re-imports all six symbols under
-their legacy private names for backward compatibility.
+``HARD_USER_BLOCKER_TOOL_MARKERS``) are kept beside the guards.
 """
 
 from __future__ import annotations
@@ -167,5 +163,3 @@ def has_recoverable_tool_issue(tool_results: list[dict] | None) -> bool:
         if is_error and any(marker in content for marker in RECOVERABLE_TOOL_ERROR_MARKERS):
             return True
     return False
-
-

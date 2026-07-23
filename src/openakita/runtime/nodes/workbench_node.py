@@ -9,7 +9,7 @@ like a first-class node type. It owns:
 * a :class:`ToolRunner` shared with the plugin so the brain can call
   the tools in its currently-active mode but no others.
 
-The node enforces three things the legacy implementation did not:
+The node enforces three things the previous implementation did not:
 
 1. Tool allow-list per mode. Brain requests a tool not in the
    active mode's allow-list -> rejection turn in transcript, runner
@@ -125,16 +125,12 @@ class WorkbenchNode(BaseNode):
     # Per-message reasoning loop
     # ------------------------------------------------------------------
 
-    async def handle_message(
-        self, ctx: NodeContext, msg: NodeMessage
-    ) -> DelegationResult:
+    async def handle_message(self, ctx: NodeContext, msg: NodeMessage) -> DelegationResult:
         # An explicit per-message mode override wins over the active mode.
         requested_mode = (msg.metadata or {}).get("mode")
         if isinstance(requested_mode, str) and requested_mode != self.active_mode.id:
             await self._switch_mode(requested_mode)
-        transcript: list[TranscriptTurn] = [
-            TranscriptTurn(speaker="user", content=msg.instruction)
-        ]
+        transcript: list[TranscriptTurn] = [TranscriptTurn(speaker="user", content=msg.instruction)]
         tool_calls = 0
         while True:
             ctx.cancel_token.raise_if_cancelled()
@@ -167,11 +163,7 @@ class WorkbenchNode(BaseNode):
                         "tool_calls": tool_calls,
                         "active_mode": self.active_mode.id,
                         "plugin_id": self.manifest.id,
-                        **{
-                            k: v
-                            for k, v in response.metadata.items()
-                            if k != "switch_to"
-                        },
+                        **{k: v for k, v in response.metadata.items() if k != "switch_to"},
                     },
                 )
             assert response.tool_call is not None
@@ -209,8 +201,7 @@ class WorkbenchNode(BaseNode):
             new_mode = self.manifest.mode(mode_id)
         except KeyError:
             logger.warning(
-                "WorkbenchNode %s: brain requested unknown mode %r; ignoring "
-                "(valid: %s)",
+                "WorkbenchNode %s: brain requested unknown mode %r; ignoring (valid: %s)",
                 self.node_id,
                 mode_id,
                 [m.id for m in self.manifest.modes],
@@ -341,9 +332,7 @@ class WorkbenchNode(BaseNode):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _budget_exhausted(
-        self, msg: NodeMessage, used: int
-    ) -> DelegationResult:
+    def _budget_exhausted(self, msg: NodeMessage, used: int) -> DelegationResult:
         return DelegationResult(
             success=False,
             speaker=self.node_id,

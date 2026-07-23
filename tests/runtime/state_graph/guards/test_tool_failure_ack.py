@@ -1,4 +1,4 @@
-﻿"""Tests for runtime/state_graph/guards/tool_failure_ack.
+"""Tests for runtime/state_graph/guards/tool_failure_ack.
 
 Covers the dual helpers:
 
@@ -25,10 +25,11 @@ from openakita.runtime.state_graph.guards.tool_failure_ack import (
 
 def _legacy():
     import openakita.agent.brain  # noqa: F401  (warm up)
-    from openakita.core._reasoning_engine_legacy import (
+    from openakita.core._reasoning_runtime import (
         _check_tool_failure_acknowledgement,
         _successful_tool_names,
     )
+
     return _check_tool_failure_acknowledgement, _successful_tool_names
 
 
@@ -41,14 +42,20 @@ def _legacy():
         ("\u4efb\u52a1\u5b8c\u6210", [{"tool_name": "x", "is_error": True}]),
         ("There was an error during execution", [{"tool_name": "x", "is_error": True}]),
         ("\u51fa\u9519\u4e86", [{"tool_name": "x", "is_error": True}]),
-        ("ok", [
-            {"tool_name": "x", "is_error": True},
-            {"tool_name": "x", "is_error": False},
-        ]),
-        ("success", [
-            {"tool_name": "x", "is_error": True},
-            {"tool_name": "y", "is_error": True},
-        ]),
+        (
+            "ok",
+            [
+                {"tool_name": "x", "is_error": True},
+                {"tool_name": "x", "is_error": False},
+            ],
+        ),
+        (
+            "success",
+            [
+                {"tool_name": "x", "is_error": True},
+                {"tool_name": "y", "is_error": True},
+            ],
+        ),
     ],
 )
 def test_check_parity_with_legacy(text, tool_results) -> None:
@@ -64,12 +71,7 @@ def test_check_returns_none_for_empty_text() -> None:
 
 
 def test_check_returns_none_when_no_failures() -> None:
-    assert (
-        check_tool_failure_acknowledgement(
-            "ok", [{"tool_name": "x", "is_error": False}]
-        )
-        is None
-    )
+    assert check_tool_failure_acknowledgement("ok", [{"tool_name": "x", "is_error": False}]) is None
 
 
 def test_check_returns_none_when_acknowledged_in_chinese() -> None:
@@ -112,10 +114,14 @@ def test_word_lists_have_expected_anchor_terms() -> None:
         (["a"], None, {"a"}),
         (["a", "b"], [{"tool_name": "a", "is_error": False}], {"a", "b"}),
         (["a"], [{"tool_name": "a", "is_error": True}], set()),
-        (["a"], [
-            {"tool_name": "a", "is_error": True},
-            {"tool_name": "a", "is_error": False},
-        ], {"a"}),
+        (
+            ["a"],
+            [
+                {"tool_name": "a", "is_error": True},
+                {"tool_name": "a", "is_error": False},
+            ],
+            {"a"},
+        ),
     ],
 )
 def test_successful_tool_names(names, tool_results, expected) -> None:

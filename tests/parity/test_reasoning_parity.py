@@ -10,7 +10,7 @@ guard-evaluation contexts):
 1. ``inspect.getfile(...)`` of the v1 and v2 ``ReasoningEngine``
    classes points at **different** files (the new
    ``openakita.agent.reasoning`` module and the renamed
-   ``openakita.core._reasoning_engine_legacy`` module
+   ``openakita.core._reasoning_runtime`` module
    respectively).
 2. For each fixture under ``tests/parity/fixtures/reasoning/``,
    the decision-routing label and the guard-verdict summary
@@ -32,7 +32,7 @@ import pytest
 
 from openakita.agent.reasoning import ReasoningEngine as V2Engine
 from openakita.agent.reasoning import build_reasoning_graph
-from openakita.core._reasoning_engine_legacy import (
+from openakita.core._reasoning_runtime import (
     ReasoningEngine as V1Engine,
 )
 
@@ -50,24 +50,22 @@ def test_v1_v2_module_files_differ() -> None:
     v1_file = inspect.getfile(V1Engine)
     v2_file = inspect.getfile(V2Engine)
     assert v1_file != v2_file
-    assert v1_file.endswith("_reasoning_engine_legacy.py")
-    assert v2_file.endswith("agent/reasoning.py") or v2_file.endswith(
-        "agent\\reasoning.py"
-    )
+    assert v1_file.endswith("_reasoning_runtime.py")
+    assert v2_file.endswith("agent/reasoning.py") or v2_file.endswith("agent\\reasoning.py")
 
 
 def test_v2_inherits_from_legacy() -> None:
     """Real parity invariant: v2 *is* a subclass of v1 for backward compat."""
     assert issubclass(V2Engine, V1Engine)
     # And ``__file__`` of v2 still resolves to agent/reasoning.py, not
-    # _reasoning_engine_legacy.py (sanity check against accidental
+    # _reasoning_runtime.py (sanity check against accidental
     # re-export).
     assert V2Engine.__module__ == "openakita.agent.reasoning"
 
 
 def test_routing_table_is_stable() -> None:
     """Real parity invariant: the v2 routing table covers every legacy DecisionType."""
-    from openakita.core._reasoning_engine_legacy import DecisionType
+    from openakita.core._reasoning_runtime import DecisionType
 
     graph = build_reasoning_graph()
     # Each entry-point successor list must be deterministic.
@@ -99,9 +97,7 @@ def test_decision_routing_parity(fixture: dict) -> None:
 
     class _D:
         def __init__(self, kind: str) -> None:
-            self.type = type(
-                "_DT", (), {"value": kind, "__str__": lambda s: kind}
-            )()
+            self.type = type("_DT", (), {"value": kind, "__str__": lambda s: kind})()
 
     decision = _D(fixture["decision_kind"]) if fixture["decision_kind"] else None
     actual = engine.classify_exit_reason(decision)
@@ -123,8 +119,7 @@ def test_guard_evaluation_parity(fixture: dict) -> None:
     actual = {v.guard: v.passed for v in verdicts}
     expected = fixture["expected_guard_passed"]
     assert actual == expected, (
-        f"guard verdict drift on fixture {fixture['name']!r}: "
-        f"v2={actual!r} expected={expected!r}"
+        f"guard verdict drift on fixture {fixture['name']!r}: v2={actual!r} expected={expected!r}"
     )
 
 

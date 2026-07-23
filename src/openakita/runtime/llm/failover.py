@@ -1,17 +1,11 @@
 """Multi-endpoint failover view over :class:`openakita.llm.client.LLMClient`.
 
-Extracted from the legacy ``openakita.core.brain.Brain`` god-class
-(continuation plan section 5, P-RC-4). The legacy Brain carried nine
-thin wrappers around its embedded ``LLMClient`` so the API server and
-CLI could drive failover from outside. Stapling that surface to Brain
-made it inaccessible to the v2 supervisor (which never owns a Brain)
-and noisy to unit-test (had to construct the whole Brain first).
+This view lets the API server, CLI, and supervisor drive failover without
+constructing or reaching through a complete Brain instance.
 
 This module is the borrow: construct it once with an ``LLMClient`` and
-call the view methods directly. The agent rewrite composes this view
-alongside the circuit-breaker, multimodal, and streaming helpers; the
-legacy Brain delegates to the same view so behaviour stays identical
-through the cutover.
+call the view methods directly. The public Brain composes this view alongside
+the circuit-breaker, multimodal, and streaming helpers.
 """
 
 from __future__ import annotations
@@ -41,7 +35,7 @@ class EndpointFailoverView:
 
         Falls back to the first configured endpoint when no provider
         is healthy, then to ``{"name": "none", ...}`` when the client
-        has no endpoints. Byte-faithful to the legacy
+        has no endpoints. This is the public
         ``Brain.get_current_endpoint_info`` contract.
         """
         for name, provider in self._client.providers.items():

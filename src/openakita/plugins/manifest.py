@@ -30,7 +30,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
-from ..core.capabilities import (
+from openakita.agent.capabilities import (
     CapabilityDescriptor,
     CapabilityKind,
     CapabilityOrigin,

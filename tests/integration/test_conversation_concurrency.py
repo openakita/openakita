@@ -26,6 +26,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from openakita import config as config_mod
+from openakita.agent import Agent
 from openakita.api.routes.conversation_lifecycle import (
     BusyInfo,
     ConversationLifecycleManager,
@@ -34,7 +35,6 @@ from openakita.api.routes.conversation_lifecycle import (
 from openakita.api.routes.double_texting import DoubleTextingPolicy, resolve_policy
 from openakita.api.routes.turn_registry import TurnRegistry
 from openakita.core import conversation_metrics as metrics
-from openakita.core.agent import Agent
 from openakita.core.agent_state import AgentState, TaskState, TaskStatus
 from openakita.sessions.session import SessionContext
 
@@ -87,7 +87,7 @@ def _allow_interrupt(monkeypatch):
 
 # The agent-layer preempt helper (``Agent._preempt_or_queue_prev_task`` +
 # ``_append_preempt_marker`` + conversation_id-first task lookup + QUEUE
-# timeout cancel/abandon) is ported into ``core/_agent_legacy`` after the
+# timeout cancel/abandon) is ported into ``core/_agent_runtime`` after the
 # ADR-0003 split (Batch C). All tests below are active.
 
 # ── S1.1: resolve_policy ──────────────────────────────────────────────

@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from openakita.agent.ui_confirm_bus import UIConfirmBus, get_ui_confirm_bus
+
 from .confirmation_state import (
     ApprovedRiskGateToolCall,
     PendingRiskConfirmation,
@@ -18,7 +20,6 @@ from .security_confirm_channel import (
     build_security_confirm_event,
     require_security_confirm_decision,
 )
-from .ui_confirm_bus import UIConfirmBus, get_ui_confirm_bus
 
 RISKGATE_SECURITY_CONFIRM_DECISIONS = frozenset({"allow_once", "deny", "timeout"})
 ALLOW_RISKGATE_CONFIRM_DECISIONS = frozenset({"allow_once"})

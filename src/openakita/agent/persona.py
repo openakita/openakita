@@ -5,13 +5,6 @@ Layer 2: 用户自定义叠加层 (identity/personas/user_custom.md + PERSONA_TR
 Layer 3: 上下文自适应层 (时间/任务/情绪)
 
 合并算法: 预设 -> 用户自定义覆盖 -> 上下文自适应调整
-
-.. note::
-
-    Originally lived at ``openakita.core.persona``; moved here as part
-    of the Phase 2 agent rewrite (see ``docs/revamp/core_audit.md``).
-    The legacy module is now a re-export shim so existing callers and
-    pickled records keep resolving the same classes/functions.
 """
 
 import logging
@@ -136,7 +129,7 @@ def persist_trait_to_memory(memory_manager: Any, trait: "PersonaTrait") -> bool:
     """将 PersonaTrait 持久化到 MemoryStore（按 dimension 去重 + 统一 content / tags 格式）。
 
     复用方：
-      - core/agent.py turn 处理（从用户消息挖掘出来的 trait）
+      - ``_agent_runtime.py`` turn 处理（从用户消息挖掘出来的 trait）
       - tools/handlers/persona.py update_persona_trait 工具
       - 任何 TraitMiner 后续接入点
 

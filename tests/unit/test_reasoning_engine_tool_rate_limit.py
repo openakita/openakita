@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from openakita.core._reasoning_engine_legacy import _tool_rate_limit_key
+from openakita.core._reasoning_runtime import _tool_rate_limit_key
 
 
 def test_update_todo_step_distinct_steps_have_distinct_rate_limit_keys():

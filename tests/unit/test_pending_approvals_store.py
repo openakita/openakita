@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from openakita.core.pending_approvals import (
+from openakita.agent.pending_approvals import (
     PendingApproval,
     PendingApprovalsStore,
 )

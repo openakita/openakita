@@ -35,7 +35,7 @@ router = APIRouter()
 
 
 def _store():
-    from openakita.core.pending_approvals import get_pending_approvals_store
+    from openakita.agent.pending_approvals import get_pending_approvals_store
 
     return get_pending_approvals_store()
 

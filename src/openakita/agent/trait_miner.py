@@ -1,9 +1,5 @@
 """人格偏好挖掘引擎 (Trait Miner)。
 
-Ported from :mod:`openakita.core.trait_miner` per ADR-0003 and
-the Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``.
-The legacy path stays as a re-export shim until Phase 8.
-
 负责从多种来源发现和提取用户的人格偏好:
 1. 对话内容中的显式/隐式偏好信号（由 LLM 分析）
 2. 用户反馈的信号分析

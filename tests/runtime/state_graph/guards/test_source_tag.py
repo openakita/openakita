@@ -1,4 +1,4 @@
-﻿"""Tests for runtime/state_graph/guards/source_tag.check_source_tag_consistency.
+"""Tests for runtime/state_graph/guards/source_tag.check_source_tag_consistency.
 
 Each case is also exercised against the legacy
 ``openakita.core.reasoning_engine._check_source_tag_consistency`` to
@@ -19,7 +19,8 @@ from openakita.runtime.state_graph.guards.source_tag import (
 def _legacy():
     """Import legacy alias lazily to avoid a circular import at test collection."""
     import openakita.agent.brain  # noqa: F401  (warm-up to break the cycle)
-    from openakita.core._reasoning_engine_legacy import _check_source_tag_consistency as legacy
+    from openakita.core._reasoning_runtime import _check_source_tag_consistency as legacy
+
     return legacy
 
 

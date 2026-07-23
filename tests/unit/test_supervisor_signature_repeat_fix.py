@@ -21,7 +21,7 @@ These tests pin the new behaviour so future refactors do not reopen the bug.
 
 from __future__ import annotations
 
-from openakita.core._supervisor_legacy import (
+from openakita.core._supervisor_runtime import (
     SIGNATURE_REPEAT_STRATEGY_SWITCH,
     SIGNATURE_REPEAT_TERMINATE,
     UNPRODUCTIVE_ADMIN_TOOLS,

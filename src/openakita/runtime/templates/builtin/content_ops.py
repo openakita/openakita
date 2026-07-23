@@ -1,7 +1,7 @@
 """Built-in template: Content Operations Team.
 
 Seven-node editorial team led by an editor-in-chief, mirroring the
-legacy ``content-ops`` template (lines 546-695):
+pre-v2 ``content-ops`` template (lines 546-695):
 
 ::
 
@@ -86,7 +86,7 @@ def content_ops() -> TemplateSpec:
             "Seven-node editorial team led by an editor-in-chief: a "
             "planning editor owns two writers and a visual designer; "
             "an SEO specialist and a data analyst close the loop with "
-            "data-driven topic suggestions. Mirrors the legacy content-ops "
+            "data-driven topic suggestions. Mirrors the pre-v2 content-ops "
             "template in the v2 schema."
         ),
         version=1,
@@ -157,28 +157,16 @@ def content_ops() -> TemplateSpec:
             ),
         ),
         edges=(
-            EdgeSpec(
-                src="editor_in_chief", dst="planner", kind=EdgeKind.HIERARCHY
-            ),
-            EdgeSpec(
-                src="editor_in_chief", dst="seo_opt", kind=EdgeKind.HIERARCHY
-            ),
-            EdgeSpec(
-                src="editor_in_chief", dst="data_analyst", kind=EdgeKind.HIERARCHY
-            ),
+            EdgeSpec(src="editor_in_chief", dst="planner", kind=EdgeKind.HIERARCHY),
+            EdgeSpec(src="editor_in_chief", dst="seo_opt", kind=EdgeKind.HIERARCHY),
+            EdgeSpec(src="editor_in_chief", dst="data_analyst", kind=EdgeKind.HIERARCHY),
             EdgeSpec(src="planner", dst="writer_a", kind=EdgeKind.HIERARCHY),
             EdgeSpec(src="planner", dst="writer_b", kind=EdgeKind.HIERARCHY),
             EdgeSpec(src="planner", dst="visual", kind=EdgeKind.HIERARCHY),
-            EdgeSpec(
-                src="writer_a", dst="seo_opt", kind=EdgeKind.COLLABORATE
-            ),
-            EdgeSpec(
-                src="writer_b", dst="seo_opt", kind=EdgeKind.COLLABORATE
-            ),
+            EdgeSpec(src="writer_a", dst="seo_opt", kind=EdgeKind.COLLABORATE),
+            EdgeSpec(src="writer_b", dst="seo_opt", kind=EdgeKind.COLLABORATE),
             EdgeSpec(src="writer_a", dst="visual", kind=EdgeKind.COLLABORATE),
             EdgeSpec(src="writer_b", dst="visual", kind=EdgeKind.COLLABORATE),
-            EdgeSpec(
-                src="data_analyst", dst="planner", kind=EdgeKind.COLLABORATE
-            ),
+            EdgeSpec(src="data_analyst", dst="planner", kind=EdgeKind.COLLABORATE),
         ),
     )

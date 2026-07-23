@@ -1,9 +1,4 @@
-"""Hook 扩展系统.
-
-Ported from :mod:`openakita.core.hooks` per ADR-0003 and the
-Phase 2 sub-commit plan in ``docs/revamp/core_audit.md``. The
-legacy import path remains as a re-export shim until Phase 8
-mechanical cleanup. Behaviour is unchanged.
+"""Hook 扩展系统。
 
 参考 Claude Code 的 28 种生命周期 Hook 事件设计。
 支持:

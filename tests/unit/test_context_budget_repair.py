@@ -5,8 +5,8 @@ import pytest
 
 from openakita.agent.brain import Brain
 from openakita.agent.context import ContextManager
+from openakita.agent.loop_budget import LoopBudgetGuard
 from openakita.agent.reasoning import ReasoningEngine
-from openakita.core.loop_budget_guard import LoopBudgetGuard
 from openakita.core.microcompact import microcompact
 from openakita.prompt.builder import _build_catalogs_section
 
@@ -217,10 +217,10 @@ def test_microcompact_dedupes_cached_and_repeated_tool_results():
 
 def test_token_anomaly_compaction_uses_configured_summary_chars(monkeypatch):
     monkeypatch.setattr(
-        "openakita.core._reasoning_engine_legacy.settings.context_token_anomaly_threshold", 100
+        "openakita.core._reasoning_runtime.settings.context_token_anomaly_threshold", 100
     )
     monkeypatch.setattr(
-        "openakita.core._reasoning_engine_legacy.settings.context_cached_summary_chars", 100
+        "openakita.core._reasoning_runtime.settings.context_cached_summary_chars", 100
     )
     engine = object.__new__(ReasoningEngine)
     working_messages = [

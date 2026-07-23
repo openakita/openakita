@@ -23,7 +23,7 @@ registry; the rest happens at plugin load time in Phase 6):
 Tool registry validation (every tool listed in ``modes[*].tools``
 must be registered) is the Phase 6 plugin loader's job, since
 running it here would create a tight coupling between the runtime
-and the legacy plugin tool registry. The :class:`WorkbenchNode`
+and the existing plugin tool registry. The :class:`WorkbenchNode`
 constructor accepts a callable ``tool_runner`` exactly so plugins
 can plug in whatever runtime they have.
 """
@@ -65,9 +65,7 @@ class WorkbenchUI:
             raise WorkbenchManifestError("`ui.icon` must be a string if provided")
         min_width = raw.get("min_width")
         if min_width is not None and not isinstance(min_width, int):
-            raise WorkbenchManifestError(
-                "`ui.min_width` must be an int if provided"
-            )
+            raise WorkbenchManifestError("`ui.min_width` must be an int if provided")
         return cls(url=url, min_width=min_width, icon=icon)
 
 
@@ -90,9 +88,7 @@ class WorkbenchMode:
             raise WorkbenchManifestError("mode.id must be a non-empty string")
         label = raw.get("label") or mode_id
         if not isinstance(label, str):
-            raise WorkbenchManifestError(
-                f"mode {mode_id!r}.label must be a string"
-            )
+            raise WorkbenchManifestError(f"mode {mode_id!r}.label must be a string")
         tools = raw.get("tools")
         if (
             not isinstance(tools, list)
@@ -104,9 +100,7 @@ class WorkbenchMode:
             )
         description = raw.get("description") or ""
         if not isinstance(description, str):
-            raise WorkbenchManifestError(
-                f"mode {mode_id!r}.description must be a string"
-            )
+            raise WorkbenchManifestError(f"mode {mode_id!r}.description must be a string")
         system_prompt = raw.get("system_prompt_override")
         if system_prompt is not None and not isinstance(system_prompt, str):
             raise WorkbenchManifestError(
@@ -116,14 +110,10 @@ class WorkbenchMode:
         if not isinstance(guardrails_raw, list) or not all(
             isinstance(g, dict) for g in guardrails_raw
         ):
-            raise WorkbenchManifestError(
-                f"mode {mode_id!r}.guardrails must be a list of dicts"
-            )
+            raise WorkbenchManifestError(f"mode {mode_id!r}.guardrails must be a list of dicts")
         ui_panel = raw.get("ui_panel")
         if ui_panel is not None and not isinstance(ui_panel, str):
-            raise WorkbenchManifestError(
-                f"mode {mode_id!r}.ui_panel must be a string if provided"
-            )
+            raise WorkbenchManifestError(f"mode {mode_id!r}.ui_panel must be a string if provided")
         return cls(
             id=mode_id,
             label=label,
@@ -171,12 +161,8 @@ class WorkbenchManifest:
         if not isinstance(version, int) or version < 1:
             raise WorkbenchManifestError("`version` must be a positive int")
         capabilities = raw.get("capabilities") or []
-        if not isinstance(capabilities, list) or not all(
-            isinstance(c, str) for c in capabilities
-        ):
-            raise WorkbenchManifestError(
-                "`capabilities` must be a list of strings"
-            )
+        if not isinstance(capabilities, list) or not all(isinstance(c, str) for c in capabilities):
+            raise WorkbenchManifestError("`capabilities` must be a list of strings")
         ui = WorkbenchUI.parse(raw.get("ui"))
         modes_raw = raw.get("modes")
         if not isinstance(modes_raw, list) or not modes_raw:
@@ -185,17 +171,14 @@ class WorkbenchManifest:
         seen: set[str] = set()
         for m in modes:
             if m.id in seen:
-                raise WorkbenchManifestError(
-                    f"duplicate mode id {m.id!r} in WORKBENCH"
-                )
+                raise WorkbenchManifestError(f"duplicate mode id {m.id!r} in WORKBENCH")
             seen.add(m.id)
         default_mode = raw.get("default_mode") or modes[0].id
         if not isinstance(default_mode, str):
             raise WorkbenchManifestError("`default_mode` must be a string")
         if default_mode not in seen:
             raise WorkbenchManifestError(
-                f"default_mode {default_mode!r} is not in modes; "
-                f"valid: {sorted(seen)}"
+                f"default_mode {default_mode!r} is not in modes; valid: {sorted(seen)}"
             )
         return cls(
             id=manifest_id,

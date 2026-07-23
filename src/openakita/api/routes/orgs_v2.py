@@ -36,7 +36,7 @@ P-RC-9 P9.7a-2 (Group A R3 LOCKED, see ``docs/revamp/P-RC-9-P9.7-DECISIONS.md`` 
 from ``/api/v2/orgs[/...]`` to ``/api/v2/orgs-spec[/...]`` so the
 P9.7 mint can claim the original ``/api/v2/orgs`` namespace.
 308 Permanent Redirect shims at the old paths ride v2.0.x via
-``_orgs_v2_legacy_redirects.router``.
+``_orgs_v2_deprecated_redirects.router``.
 
 Persistence layer: :mod:`openakita.orgs` (JSON file under
 ``data/orgs_v2.json``). Phase 7 upgrades this to the SQLite-backed
