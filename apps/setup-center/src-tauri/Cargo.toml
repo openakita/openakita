@@ -1,6 +1,6 @@
 [package]
 name = "openakita-setup-center"
-version = "1.27.30"
+version = "1.27.31"
 description = "OpenAkita Setup Center"
 authors = ["OpenAkita"]
 license = "AGPL-3.0-only"
