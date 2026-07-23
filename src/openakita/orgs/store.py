@@ -32,9 +32,7 @@ this module a manager-backed shim:
   unioned in via :meth:`_load_legacy_fallback` during the
   three-month soak period -- manager entries always win on
   id collision so the SSoT cannot be overshadowed by stale
-  legacy rows. A point-in-time backup of the file was taken
-  at commit time as ``data/orgs_v2.json.deprecated.20260528``
-  so callers can recover the pre-Sprint-13 view if needed.
+  legacy rows.
   Once metrics show fallback hit count = 0 (target: 2027 Q1)
   the fallback read can be deleted and ``data/orgs_v2.json``
   archived.
