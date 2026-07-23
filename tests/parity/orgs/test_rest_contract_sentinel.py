@@ -37,7 +37,9 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
@@ -81,11 +83,20 @@ def _build_app() -> FastAPI:
     return app
 
 
+def _iter_api_routes(app: FastAPI) -> Iterator[Any]:
+    """Yield effective API routes across eager and lazy FastAPI routers."""
+    for route in app.routes:
+        effective_route_contexts = getattr(route, "effective_route_contexts", None)
+        candidates = effective_route_contexts() if callable(effective_route_contexts) else (route,)
+        for candidate in candidates:
+            original_route = getattr(candidate, "original_route", candidate)
+            if isinstance(original_route, APIRoute):
+                yield candidate
+
+
 def _route_counts(app: FastAPI) -> Counter[str]:
     counts: Counter[str] = Counter()
-    for r in app.routes:
-        if not isinstance(r, APIRoute):
-            continue
+    for r in _iter_api_routes(app):
         # Methods on a route is a set; count each (path, method).
         n = len(r.methods or {"GET"})
         if r.path.startswith("/api/v2/orgs-spec"):
