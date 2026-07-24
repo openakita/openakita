@@ -11,7 +11,7 @@ use base64::Engine as _;
 use dirs_next::home_dir;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -59,6 +59,11 @@ enum UiLifecycle {
 
 static UI_LIFECYCLE: AtomicU8 = AtomicU8::new(UiLifecycle::Starting as u8);
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+const EXIT_CLEANUP_IDLE: u8 = 0;
+const EXIT_CLEANUP_RUNNING: u8 = 1;
+const EXIT_CLEANUP_COMPLETE: u8 = 2;
+static EXIT_CLEANUP_STATE: AtomicU8 = AtomicU8::new(EXIT_CLEANUP_IDLE);
 
 fn set_ui_lifecycle(state: UiLifecycle) {
     UI_LIFECYCLE.store(state as u8, Ordering::SeqCst);
@@ -4253,8 +4258,10 @@ fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<bool, String> {
         return Ok(true);
     }
 
+    let stop_started = Instant::now();
     let effective_port = port.unwrap_or(18900);
     // 第一步：尝试通过 HTTP API 触发优雅关闭
+    let http_started = Instant::now();
     let api_ok = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .no_proxy()
@@ -4268,6 +4275,14 @@ fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<bool, String> {
         })
         .map(|r| r.status().is_success())
         .unwrap_or(false);
+    log_to_file(&format!(
+        "[quit] http-shutdown pid={} port={} success={} elapsed_ms={} total_elapsed_ms={}",
+        pid,
+        effective_port,
+        api_ok,
+        http_started.elapsed().as_millis(),
+        stop_started.elapsed().as_millis()
+    ));
 
     if api_ok {
         // API 调用成功，给 Python 最多 10 秒优雅退出时间
@@ -4281,7 +4296,16 @@ fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<bool, String> {
 
     // 第二步：进程仍然存活，强制 kill
     if is_pid_running(pid) {
-        kill_pid(pid)?;
+        let force_kill_started = Instant::now();
+        let kill_result = kill_pid(pid);
+        log_to_file(&format!(
+            "[quit] force-kill pid={} success={} elapsed_ms={} total_elapsed_ms={}",
+            pid,
+            kill_result.is_ok(),
+            force_kill_started.elapsed().as_millis(),
+            stop_started.elapsed().as_millis()
+        ));
+        kill_result?;
         // 等待最多 3s 确认退出
         for _ in 0..15 {
             if !is_pid_running(pid) {
@@ -4473,6 +4497,8 @@ mod win {
     pub const PROCESS_TERMINATE: u32 = 0x0001;
     pub const SYNCHRONIZE: u32 = 0x0010_0000;
     pub const INFINITE: u32 = 0xFFFF_FFFF;
+    pub const WAIT_OBJECT_0: u32 = 0x0000_0000;
+    pub const WAIT_TIMEOUT: u32 = 0x0000_0102;
     pub const TH32CS_SNAPPROCESS: u32 = 0x00000002;
     pub const INVALID_HANDLE_VALUE: *mut std::ffi::c_void = -1_isize as *mut std::ffi::c_void;
 
@@ -4491,21 +4517,42 @@ mod win {
     }
 }
 
+#[cfg(windows)]
+fn is_windows_process_handle_running(handle: *mut std::ffi::c_void) -> bool {
+    // A terminated Windows process object can remain open while its parent
+    // retains a handle. OpenProcess succeeding therefore does not prove that
+    // the process is active; only an unsignalled process handle does.
+    match unsafe { win::WaitForSingleObject(handle, 0) } {
+        win::WAIT_OBJECT_0 => false,
+        win::WAIT_TIMEOUT => true,
+        // Preserve the conservative historical behaviour if Windows cannot
+        // query the handle rather than incorrectly declaring a live PID dead.
+        _ => true,
+    }
+}
+
 fn is_pid_running(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
     #[cfg(windows)]
     {
-        // 直接用 Windows API 检查——最可靠，无 GBK 编码问题。
-        let handle = unsafe { win::OpenProcess(win::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        // SYNCHRONIZE is required to query the process handle's signalled state.
+        let handle = unsafe {
+            win::OpenProcess(
+                win::PROCESS_QUERY_LIMITED_INFORMATION | win::SYNCHRONIZE,
+                0,
+                pid,
+            )
+        };
         if handle.is_null() {
             return false;
         }
+        let running = is_windows_process_handle_running(handle);
         unsafe {
             win::CloseHandle(handle);
         }
-        return true;
+        return running;
     }
     #[cfg(not(windows))]
     {
@@ -6275,31 +6322,40 @@ fn main() {
             }
         }
         if let tauri::RunEvent::Exit = event {
+            let exit_event_started = Instant::now();
             set_ui_lifecycle(UiLifecycle::Quiescing);
             SHUTDOWN.store(true, Ordering::SeqCst);
             mark_exit_handled();
             clear_frontend_session_marker();
-            // Safety-net: clean up backend processes on ANY exit path
-            // (SIGTERM, system shutdown, unexpected termination, etc.)
-            // Idempotent — harmless if tray-quit already stopped everything.
-            //
-            // 直接 kill 进程而非走 HTTP /api/shutdown：
-            //   1. 退出时要尽快完成清理，避免 Finder/macOS 等待超时后强杀本进程
-            //      导致后端沦为孤儿进程。
-            //   2. Python 后端已注册 SIGTERM handler，收到信号即可优雅关闭。
-            //   3. HTTP API 可能因代理、端口状态等原因不可达，增加不确定性。
-            // 应用退出兜底：杀掉所有 OpenAkita 后端进程（含 external 归属）。
-            // 启动阶段不动手动后端的保护由 startup_version_check 实现；
-            // 应用退出意味着用户已经主动结束会话，留任何后端都没用。
-            let entries = list_service_pids();
-            for ent in &entries {
-                if is_pid_running(ent.pid) {
-                    let _ = kill_pid(ent.pid);
-                }
-                let _ = fs::remove_file(std::path::PathBuf::from(&ent.pid_file));
-                remove_heartbeat_file(&ent.workspace_id);
+            let cleanup_state = EXIT_CLEANUP_STATE.load(Ordering::SeqCst);
+            if cleanup_state == EXIT_CLEANUP_COMPLETE {
+                log_to_file(&format!(
+                    "[quit] run-event-exit cleanup=skipped reason=tray-complete elapsed_ms={}",
+                    exit_event_started.elapsed().as_millis()
+                ));
+            } else if cleanup_state == EXIT_CLEANUP_RUNNING {
+                // A concurrent OS exit can race the tray worker. Do not run a
+                // second cleanup over the same PIDs while that worker owns it.
+                log_to_file(&format!(
+                    "[quit] run-event-exit cleanup=skipped reason=cleanup-running elapsed_ms={}",
+                    exit_event_started.elapsed().as_millis()
+                ));
+            } else if EXIT_CLEANUP_STATE
+                .compare_exchange(
+                    EXIT_CLEANUP_IDLE,
+                    EXIT_CLEANUP_RUNNING,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .is_ok()
+            {
+                cleanup_backends_on_run_event_exit();
+                EXIT_CLEANUP_STATE.store(EXIT_CLEANUP_COMPLETE, Ordering::SeqCst);
+                log_to_file(&format!(
+                    "[quit] run-event-exit cleanup=complete elapsed_ms={}",
+                    exit_event_started.elapsed().as_millis()
+                ));
             }
-            kill_openakita_orphans();
             set_ui_lifecycle(UiLifecycle::Exited);
         }
     });
@@ -7494,6 +7550,142 @@ fn set_tray_backend_status(
     Ok(())
 }
 
+fn scan_openakita_orphans_with_timing(context: &str, total_started: Instant) -> Vec<u32> {
+    let scan_started = Instant::now();
+    let killed = kill_openakita_orphans();
+    log_to_file(&format!(
+        "[quit] orphan-scan context={} killed_count={} elapsed_ms={} total_elapsed_ms={}",
+        context,
+        killed.len(),
+        scan_started.elapsed().as_millis(),
+        total_started.elapsed().as_millis()
+    ));
+    killed
+}
+
+fn run_tray_quit_cleanup(app: tauri::AppHandle) {
+    let quit_started = Instant::now();
+    let mut handled_pids = HashSet::new();
+
+    // Stop the directly managed child first so its Child handle can be reaped.
+    {
+        let mut guard = MANAGED_CHILD.lock().unwrap();
+        if let Some(mut mp) = guard.take() {
+            handled_pids.insert(mp.pid);
+            let port = read_workspace_api_port(&mp.workspace_id);
+            let _ = graceful_stop_pid(mp.pid, port);
+            if is_pid_running(mp.pid) {
+                let force_kill_started = Instant::now();
+                let kill_result = mp.child.kill();
+                log_to_file(&format!(
+                    "[quit] force-kill pid={} source=managed-child success={} elapsed_ms={} total_elapsed_ms={}",
+                    mp.pid,
+                    kill_result.is_ok(),
+                    force_kill_started.elapsed().as_millis(),
+                    quit_started.elapsed().as_millis()
+                ));
+                let _ = mp.child.wait();
+            }
+            let _ = fs::remove_file(service_pid_file(&mp.workspace_id));
+            remove_heartbeat_file(&mp.workspace_id);
+        }
+    }
+
+    // A managed child normally also has a PID file. HashSet keeps that PID from
+    // receiving a second HTTP shutdown/kill if the file survived the first step.
+    for ent in list_service_pids() {
+        if handled_pids.insert(ent.pid) {
+            let port = read_workspace_api_port(&ent.workspace_id);
+            let _ = stop_service_pid_entry(&ent, port);
+        } else {
+            let _ = fs::remove_file(PathBuf::from(&ent.pid_file));
+            remove_heartbeat_file(&ent.workspace_id);
+            log_to_file(&format!(
+                "[quit] pid-deduplicated pid={} workspace={} total_elapsed_ms={}",
+                ent.pid,
+                ent.workspace_id,
+                quit_started.elapsed().as_millis()
+            ));
+        }
+    }
+
+    scan_openakita_orphans_with_timing("tray-cleanup", quit_started);
+    thread::sleep(Duration::from_millis(600));
+
+    let mut verified_pids = HashSet::new();
+    let still_pid = list_service_pids()
+        .into_iter()
+        .filter(|entry| verified_pids.insert(entry.pid) && is_pid_running(entry.pid))
+        .collect::<Vec<_>>();
+    let still_orphans = scan_openakita_orphans_with_timing("tray-verify", quit_started);
+
+    if still_pid.is_empty() && still_orphans.is_empty() {
+        EXIT_CLEANUP_STATE.store(EXIT_CLEANUP_COMPLETE, Ordering::SeqCst);
+        set_ui_lifecycle(UiLifecycle::Quiescing);
+        log_to_file(&format!(
+            "[quit] app.exit code=0 elapsed_ms={}",
+            quit_started.elapsed().as_millis()
+        ));
+        app.exit(0);
+        return;
+    }
+
+    SHUTDOWN.store(false, Ordering::SeqCst);
+    EXIT_CLEANUP_STATE.store(EXIT_CLEANUP_IDLE, Ordering::SeqCst);
+    log_to_file(&format!(
+        "[quit] cleanup-failed tracked_count={} orphan_count={} elapsed_ms={}",
+        still_pid.len(),
+        still_orphans.len(),
+        quit_started.elapsed().as_millis()
+    ));
+    show_main_window(&app, "quit-failed", false);
+    let mut detail = Vec::new();
+    for entry in &still_pid {
+        detail.push(format!("{} (PID={})", entry.workspace_id, entry.pid));
+    }
+    for pid in &still_orphans {
+        detail.push(format!("orphan PID={}", pid));
+    }
+    let msg = format!(
+        "\u{9000}\u{51fa}\u{5931}\u{8d25}\u{ff1a}\u{540e}\u{53f0}\u{670d}\u{52a1}\u{4ecd}\u{5728}\u{8fd0}\u{884c}\u{3002}\n\n\u{8bf7}\u{5148}\u{5728}\u{201c}\u{72b6}\u{6001}\u{9762}\u{677f}\u{201d}\u{70b9}\u{51fb}\u{201c}\u{505c}\u{6b62}\u{670d}\u{52a1}\u{201d}\u{ff0c}\u{786e}\u{8ba4}\u{72b6}\u{6001}\u{53d8}\u{4e3a}\u{201c}\u{672a}\u{8fd0}\u{884c}\u{201d}\u{540e}\u{518d}\u{9000}\u{51fa}\u{3002}\n\n\u{4ecd}\u{5728}\u{8fd0}\u{884c}\u{7684}\u{8fdb}\u{7a0b}\u{ff1a}{}",
+        detail.join("; ")
+    );
+    emit_if_ui_live(&app, "open_status", serde_json::json!({}));
+    emit_if_ui_live(&app, "quit_failed", serde_json::json!({ "message": msg }));
+}
+
+fn cleanup_backends_on_run_event_exit() {
+    let cleanup_started = Instant::now();
+    let mut handled_pids = HashSet::new();
+    for ent in list_service_pids() {
+        if !handled_pids.insert(ent.pid) {
+            let _ = fs::remove_file(PathBuf::from(&ent.pid_file));
+            remove_heartbeat_file(&ent.workspace_id);
+            log_to_file(&format!(
+                "[quit] pid-deduplicated pid={} workspace={} source=run-event-exit total_elapsed_ms={}",
+                ent.pid,
+                ent.workspace_id,
+                cleanup_started.elapsed().as_millis()
+            ));
+            continue;
+        }
+        if is_pid_running(ent.pid) {
+            let force_kill_started = Instant::now();
+            let kill_result = kill_pid(ent.pid);
+            log_to_file(&format!(
+                "[quit] force-kill pid={} source=run-event-exit success={} elapsed_ms={} total_elapsed_ms={}",
+                ent.pid,
+                kill_result.is_ok(),
+                force_kill_started.elapsed().as_millis(),
+                cleanup_started.elapsed().as_millis()
+            ));
+        }
+        let _ = fs::remove_file(PathBuf::from(&ent.pid_file));
+        remove_heartbeat_file(&ent.workspace_id);
+    }
+    scan_openakita_orphans_with_timing("run-event-exit", cleanup_started);
+}
+
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -7511,91 +7703,95 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .tooltip("OpenAkita")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(move |app: &tauri::AppHandle, event| match event.id.as_ref() {
-            "quit" => {
-                // ── 退出前根据所有权标记决定是否停止后端 ──
+        .on_menu_event(
+            move |app: &tauri::AppHandle, event| match event.id.as_ref() {
+                "quit" => {
+                    if EXIT_CLEANUP_STATE
+                        .compare_exchange(
+                            EXIT_CLEANUP_IDLE,
+                            EXIT_CLEANUP_RUNNING,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_err()
+                    {
+                        log_to_file(
+                            "[quit] quit-started ignored: cleanup already active elapsed_ms=0",
+                        );
+                        return;
+                    }
 
-                // 1. 先停 MANAGED_CHILD（Tauri 自己启动的进程）
-                {
-                    let mut guard = MANAGED_CHILD.lock().unwrap();
-                    if let Some(mut mp) = guard.take() {
-                        let port = read_workspace_api_port(&mp.workspace_id);
-                        let _ = graceful_stop_pid(mp.pid, port);
-                        if is_pid_running(mp.pid) {
-                            let _ = mp.child.kill();
-                            let _ = mp.child.wait();
+                    let quit_clicked = Instant::now();
+                    if let Some(window) = app.get_webview_window("main") {
+                        if let Err(error) = window.hide() {
+                            log_to_file(&format!(
+                                "[quit] window-hide failed error={} elapsed_ms={}",
+                                error,
+                                quit_clicked.elapsed().as_millis()
+                            ));
+                        } else {
+                            log_to_file(&format!(
+                                "[quit] window-hidden elapsed_ms={}",
+                                quit_clicked.elapsed().as_millis()
+                            ));
                         }
-                        let _ = fs::remove_file(service_pid_file(&mp.workspace_id));
+                    }
+                    log_to_file(&format!(
+                        "[quit] quit-started source=tray elapsed_ms={}",
+                        quit_clicked.elapsed().as_millis()
+                    ));
+                    SHUTDOWN.store(true, Ordering::SeqCst);
+                    let app_handle = app.clone();
+                    if let Err(error) = thread::Builder::new()
+                        .name("openakita-tray-quit".into())
+                        .spawn(move || run_tray_quit_cleanup(app_handle))
+                    {
+                        SHUTDOWN.store(false, Ordering::SeqCst);
+                        EXIT_CLEANUP_STATE.store(EXIT_CLEANUP_IDLE, Ordering::SeqCst);
+                        log_to_file(&format!(
+                            "[quit] quit-worker-spawn failed error={} elapsed_ms={}",
+                            error,
+                            quit_clicked.elapsed().as_millis()
+                        ));
+                        show_main_window(app, "quit-worker-spawn-failed", false);
                     }
                 }
-
-                // 2. 按 PID 文件逐一处理：tauri / external 都停掉
-                //    托盘 Quit 是用户明确意图，留任何后端进程都没有意义。
-                //    启动阶段的「不杀手动后端」由 startup_version_check 单独保证。
-                let entries = list_service_pids();
-                for ent in &entries {
-                    let port = read_workspace_api_port(&ent.workspace_id);
-                    let _ = stop_service_pid_entry(ent, port);
+                "show" => {
+                    show_main_window(app, "tray-show", false);
                 }
-
-                // 3. 兜底扫描孤儿进程（dev/release 都执行）
-                kill_openakita_orphans();
-
-                std::thread::sleep(std::time::Duration::from_millis(600));
-
-                // 4. 最终确认
-                let still_pid = list_service_pids()
-                    .into_iter()
-                    .filter(|x| is_pid_running(x.pid))
-                    .collect::<Vec<_>>();
-                let still_orphans = kill_openakita_orphans();
-
-                if still_pid.is_empty() && still_orphans.is_empty() {
-                    // 全部清理干净，安全退出
-                    app.exit(0);
-                } else {
-                    // 仍有残留：阻止退出，提示用户
-                    show_main_window(app, "quit-failed", false);
-                    let mut detail = Vec::new();
-                    for x in &still_pid {
-                        detail.push(format!("{} (PID={})", x.workspace_id, x.pid));
+                "hide" => {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.hide();
                     }
-                    for p in &still_orphans {
-                        detail.push(format!("orphan PID={}", p));
+                }
+                "open_web" => {
+                    let state = read_state_file();
+                    let ws_id = state
+                        .current_workspace_id
+                        .unwrap_or_else(|| "default".into());
+                    let port = read_workspace_api_port(&ws_id).unwrap_or(18900);
+                    let url = format!("http://127.0.0.1:{}/web", port);
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = std::process::Command::new("cmd")
+                            .args(["/c", "start", &url])
+                            .spawn();
                     }
-                    let msg = format!(
-                        "\u{9000}\u{51fa}\u{5931}\u{8d25}\u{ff1a}\u{540e}\u{53f0}\u{670d}\u{52a1}\u{4ecd}\u{5728}\u{8fd0}\u{884c}\u{3002}\n\n\u{8bf7}\u{5148}\u{5728}\u{201c}\u{72b6}\u{6001}\u{9762}\u{677f}\u{201d}\u{70b9}\u{51fb}\u{201c}\u{505c}\u{6b62}\u{670d}\u{52a1}\u{201d}\u{ff0c}\u{786e}\u{8ba4}\u{72b6}\u{6001}\u{53d8}\u{4e3a}\u{201c}\u{672a}\u{8fd0}\u{884c}\u{201d}\u{540e}\u{518d}\u{9000}\u{51fa}\u{3002}\n\n\u{4ecd}\u{5728}\u{8fd0}\u{884c}\u{7684}\u{8fdb}\u{7a0b}\u{ff1a}{}",
-                        detail.join("; ")
-                    );
-                    emit_if_ui_live(app, "open_status", serde_json::json!({}));
-                    emit_if_ui_live(app, "quit_failed", serde_json::json!({ "message": msg }));
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = std::process::Command::new("open").arg(&url).spawn();
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+                    }
                 }
-            }
-            "show" => {
-                show_main_window(app, "tray-show", false);
-            }
-            "hide" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.hide();
+                "open_status" => {
+                    show_main_window(app, "tray-open-status", true);
                 }
-            }
-            "open_web" => {
-                let state = read_state_file();
-                let ws_id = state.current_workspace_id.unwrap_or_else(|| "default".into());
-                let port = read_workspace_api_port(&ws_id).unwrap_or(18900);
-                let url = format!("http://127.0.0.1:{}/web", port);
-                #[cfg(target_os = "windows")]
-                { let _ = std::process::Command::new("cmd").args(["/c", "start", &url]).spawn(); }
-                #[cfg(target_os = "macos")]
-                { let _ = std::process::Command::new("open").arg(&url).spawn(); }
-                #[cfg(target_os = "linux")]
-                { let _ = std::process::Command::new("xdg-open").arg(&url).spawn(); }
-            }
-            "open_status" => {
-                show_main_window(app, "tray-open-status", true);
-            }
-            _ => {}
-        })
+                _ => {}
+            },
+        )
         .on_tray_icon_event(move |tray: &tauri::tray::TrayIcon, event| match event {
             TrayIconEvent::Click {
                 button: MouseButton::Left,
@@ -11779,6 +11975,39 @@ mod tests {
         );
         assert!(started.elapsed() < Duration::from_secs(3));
         let _ = fs::remove_file(log_path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_process_handle_reports_exit_while_parent_retains_handle() {
+        use std::os::windows::io::AsRawHandle;
+
+        let mut child = Command::new("cmd")
+            .args(["/C", "exit", "0"])
+            .spawn()
+            .expect("short-lived child should start");
+        let handle = child.as_raw_handle() as *mut std::ffi::c_void;
+        let deadline = Instant::now() + Duration::from_secs(3);
+
+        loop {
+            if child
+                .try_wait()
+                .expect("short-lived child status should be readable")
+                .is_some()
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "short-lived child did not exit before the test deadline"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(
+            !is_windows_process_handle_running(handle),
+            "a signalled process handle must not be treated as a running process"
+        );
     }
 
     #[test]
