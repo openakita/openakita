@@ -39,6 +39,11 @@ struct ManagedProcess {
 
 static MANAGED_CHILD: Lazy<Mutex<Option<ManagedProcess>>> = Lazy::new(|| Mutex::new(None));
 
+/// Serializes a watchdog restart against an explicit user stop. The manual-stop
+/// marker is persistent, but without this lock the watchdog could pass its last
+/// marker check just before the UI records the stop intent and still spawn.
+static BACKEND_LIFECYCLE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
 /// Rust 自动启动后端时置 true，启动完成（成功/失败）后置 false。
 /// 前端可查询该标记以显示"正在自动启动服务"并禁用启动/重启按钮。
 static AUTO_START_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
@@ -3938,6 +3943,36 @@ fn service_pid_file(workspace_id: &str) -> PathBuf {
     run_dir().join(format!("openakita-{}.pid", workspace_id))
 }
 
+fn backend_manual_stop_marker(workspace_id: &str) -> PathBuf {
+    workspace_dir(workspace_id)
+        .join("data")
+        .join("backend.manual-stop")
+}
+
+fn backend_was_manually_stopped(workspace_id: &str) -> bool {
+    backend_manual_stop_marker(workspace_id).exists()
+}
+
+fn set_backend_manual_stop_marker(marker: &Path, stopped: bool) -> Result<(), String> {
+    if stopped {
+        if let Some(parent) = marker.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("create backend state directory failed: {e}"))?;
+        }
+        fs::write(marker, b"user-requested\n")
+            .map_err(|e| format!("record manual backend stop failed: {e}"))?;
+    } else if let Err(e) = fs::remove_file(marker) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            return Err(format!("clear manual backend stop failed: {e}"));
+        }
+    }
+    Ok(())
+}
+
+fn set_backend_manually_stopped(workspace_id: &str, stopped: bool) -> Result<(), String> {
+    set_backend_manual_stop_marker(&backend_manual_stop_marker(workspace_id), stopped)
+}
+
 fn last_clean_shutdown_marker(workspace_id: &str) -> PathBuf {
     workspace_dir(workspace_id)
         .join("data")
@@ -5882,53 +5917,71 @@ fn main() {
             //   - Upgraded    → 旧版后端已被终止，需要启动新版
             let state = read_state_file();
             if let Some(ref ws_id) = state.current_workspace_id {
-                let port = read_workspace_api_port(ws_id).unwrap_or(18900);
-                if cfg!(debug_assertions) {
-                    if let Some(pid) = healthy_backend_pid(port) {
-                        let should_adopt = read_pid_file(ws_id)
-                            .map(|data| !is_pid_file_valid(&data))
-                            .unwrap_or(true);
-                        if should_adopt {
-                            match write_pid_file(ws_id, pid, "external") {
-                                Ok(()) => log_to_file(&format!(
-                                    "[auto-start] adopted dev backend pid={} for ws={}",
-                                    pid, ws_id
-                                )),
-                                Err(e) => log_to_file(&format!(
-                                    "[auto-start] failed to adopt dev backend pid={}: {}",
-                                    pid, e
-                                )),
+                if backend_was_manually_stopped(ws_id) {
+                    log_to_file(&format!(
+                        "[auto-start] skipped: backend was manually stopped for ws={}",
+                        ws_id
+                    ));
+                } else {
+                    let port = read_workspace_api_port(ws_id).unwrap_or(18900);
+                    if cfg!(debug_assertions) {
+                        if let Some(pid) = healthy_backend_pid(port) {
+                            let should_adopt = read_pid_file(ws_id)
+                                .map(|data| !is_pid_file_valid(&data))
+                                .unwrap_or(true);
+                            if should_adopt {
+                                match write_pid_file(ws_id, pid, "external") {
+                                    Ok(()) => log_to_file(&format!(
+                                        "[auto-start] adopted dev backend pid={} for ws={}",
+                                        pid, ws_id
+                                    )),
+                                    Err(e) => log_to_file(&format!(
+                                        "[auto-start] failed to adopt dev backend pid={}: {}",
+                                        pid, e
+                                    )),
+                                }
                             }
                         }
                     }
-                }
 
-                let check_result = startup_version_check(ws_id, &app_version, port);
-                let need_start = !matches!(check_result, VersionCheckResult::RunningOk);
-                log_to_file(&format!(
-                    "[auto-start] app_version={}, ws_id={}, port={}, need_start={}",
-                    app_version, ws_id, port, need_start
-                ));
-                if need_start {
-                    AUTO_START_IN_PROGRESS.store(true, Ordering::SeqCst);
-                    AUTO_START_STARTED_AT_MS.store(now_ms(), Ordering::SeqCst);
-                    let venv_dir = openakita_root_dir().join("venv").to_string_lossy().to_string();
-                    let ws_clone = ws_id.clone();
-                    std::thread::spawn(move || {
-                        match openakita_service_start_impl(venv_dir.clone(), ws_clone.clone()) {
-                            Ok(status) => {
+                    let check_result = startup_version_check(ws_id, &app_version, port);
+                    let need_start = !matches!(check_result, VersionCheckResult::RunningOk);
+                    log_to_file(&format!(
+                        "[auto-start] app_version={}, ws_id={}, port={}, need_start={}",
+                        app_version, ws_id, port, need_start
+                    ));
+                    if need_start {
+                        AUTO_START_IN_PROGRESS.store(true, Ordering::SeqCst);
+                        AUTO_START_STARTED_AT_MS.store(now_ms(), Ordering::SeqCst);
+                        let venv_dir = openakita_root_dir()
+                            .join("venv")
+                            .to_string_lossy()
+                            .to_string();
+                        let ws_clone = ws_id.clone();
+                        std::thread::spawn(move || {
+                            let _lifecycle_guard = BACKEND_LIFECYCLE_LOCK.lock().unwrap();
+                            if backend_was_manually_stopped(&ws_clone) {
                                 log_to_file(&format!(
-                                    "[auto-start] success: running={}, pid={:?}",
-                                    status.running, status.pid
+                                    "[auto-start] cancelled by manual stop for ws={}",
+                                    ws_clone
                                 ));
+                            } else {
+                                match openakita_service_start_impl(venv_dir, ws_clone) {
+                                    Ok(status) => {
+                                        log_to_file(&format!(
+                                            "[auto-start] success: running={}, pid={:?}",
+                                            status.running, status.pid
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        log_to_file(&format!("[auto-start] FAILED: {}", e));
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                log_to_file(&format!("[auto-start] FAILED: {}", e));
-                            }
-                        }
-                        AUTO_START_IN_PROGRESS.store(false, Ordering::SeqCst);
-                        AUTO_START_STARTED_AT_MS.store(0, Ordering::SeqCst);
-                    });
+                            AUTO_START_IN_PROGRESS.store(false, Ordering::SeqCst);
+                            AUTO_START_STARTED_AT_MS.store(0, Ordering::SeqCst);
+                        });
+                    }
                 }
             } else {
                 log_to_file("[auto-start] skipped: no current_workspace_id in state");
@@ -5957,6 +6010,11 @@ fn main() {
                             Some(s) => s,
                             None => continue,
                         };
+                        if backend_was_manually_stopped(&ws_id) {
+                            consecutive_failures = 0;
+                            last_status_was_healthy = None;
+                            continue;
+                        }
                         let port = read_workspace_api_port(&ws_id).unwrap_or(18900);
                         let healthy = is_backend_http_healthy(Some(port));
                         if SHUTDOWN.load(Ordering::SeqCst) {
@@ -6021,6 +6079,12 @@ fn main() {
                         }
                         if external_backend_dev_mode() {
                             consecutive_failures = 0;
+                            continue;
+                        }
+                        let _lifecycle_guard = BACKEND_LIFECYCLE_LOCK.lock().unwrap();
+                        if backend_was_manually_stopped(&ws_id) {
+                            consecutive_failures = 0;
+                            last_status_was_healthy = None;
                             continue;
                         }
                         let venv_dir = openakita_root_dir().join("venv");
@@ -6108,6 +6172,7 @@ fn main() {
             autostart_set_enabled,
             openakita_service_status,
             openakita_service_start,
+            prepare_backend_manual_stop,
             openakita_service_stop,
             openakita_service_log,
             openakita_check_pid_alive,
@@ -6676,6 +6741,10 @@ async fn openakita_service_start(
     venv_dir: String,
     workspace_id: String,
 ) -> Result<ServiceStatus, String> {
+    {
+        let _lifecycle_guard = BACKEND_LIFECYCLE_LOCK.lock().unwrap();
+        set_backend_manually_stopped(&workspace_id, false)?;
+    }
     let task_started = Instant::now();
     let log_workspace_id = workspace_id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -7033,7 +7102,20 @@ fn openakita_service_start_impl(
 }
 
 #[tauri::command]
+fn prepare_backend_manual_stop(workspace_id: String) -> Result<(), String> {
+    let _lifecycle_guard = BACKEND_LIFECYCLE_LOCK.lock().unwrap();
+    set_backend_manually_stopped(&workspace_id, true)?;
+    log_to_file(&format!(
+        "[service_stop] recorded manual stop intent for ws={}",
+        workspace_id
+    ));
+    Ok(())
+}
+
+#[tauri::command]
 fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String> {
+    let _lifecycle_guard = BACKEND_LIFECYCLE_LOCK.lock().unwrap();
+    set_backend_manually_stopped(&workspace_id, true)?;
     let pid_file = service_pid_file(&workspace_id);
     let port = read_workspace_api_port(&workspace_id);
     let effective_port = port.unwrap_or(18900);
@@ -7806,7 +7888,11 @@ fn export_workspace_backup_native(
         {
             continue;
         }
-        if rel == "data/backend.heartbeat" || rel == "package.json" || rel == "package-lock.json" {
+        if rel == "data/backend.heartbeat"
+            || rel == "data/backend.manual-stop"
+            || rel == "package.json"
+            || rel == "package-lock.json"
+        {
             continue;
         }
 
@@ -11457,6 +11543,25 @@ fn open_external_url(url: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_backend_stop_marker_persists_until_explicit_start() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "openakita-manual-stop-test-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let marker = test_dir.join("backend.manual-stop");
+
+        assert!(!marker.exists());
+        set_backend_manual_stop_marker(&marker, true).expect("manual stop should be recorded");
+        assert!(marker.exists());
+        set_backend_manual_stop_marker(&marker, false)
+            .expect("explicit start should clear manual stop");
+        assert!(!marker.exists());
+
+        let _ = fs::remove_dir_all(test_dir);
+    }
 
     #[test]
     fn onboarding_marker_preserves_failures_after_workspace_creation() {

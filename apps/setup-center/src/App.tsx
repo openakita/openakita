@@ -3062,6 +3062,9 @@ function MainApp() {
     clearBackendStartingHold();
     const id = wsId || currentWorkspaceId || workspaces[0]?.id;
     if (!id) throw new Error("No workspace");
+    // Record user intent before the HTTP shutdown so the native watchdog cannot
+    // mistake the resulting health-check failures for a crash.
+    await invoke("prepare_backend_manual_stop", { workspaceId: id });
     // 1. Try graceful shutdown via HTTP API (works even for externally started services)
     let apiShutdownOk = false;
     try {
