@@ -12,8 +12,98 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      python_package: ${{ steps.filter.outputs.python_package }}
+      setup_center: ${{ steps.filter.outputs.setup_center }}
+      setup_center_rust: ${{ steps.filter.outputs.setup_center_rust }}
+      tauri_full_build: ${{ steps.filter.outputs.tauri_full_build }}
+      bootstrap: ${{ steps.filter.outputs.bootstrap }}
+      plugin_sdk: ${{ steps.filter.outputs.plugin_sdk }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Classify changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            python:
+              - '.github/workflows/ci.yml'
+              - 'src/**'
+              - 'tests/**'
+              - 'identity/**'
+              - 'skills/**'
+              - 'plugins/**'
+              - 'scripts/**'
+              - 'build/**'
+              - 'openakita-plugin-sdk/**'
+              - 'pyproject.toml'
+              - 'requirements.txt'
+              - 'uv.lock'
+              - 'hatch_build.py'
+              - 'VERSION'
+            python_package:
+              - '.github/workflows/ci.yml'
+              - 'src/**'
+              - 'identity/**'
+              - 'skills/**'
+              - 'plugins/**'
+              - 'build/**'
+              - 'apps/setup-center/dist-web/**'
+              - 'pyproject.toml'
+              - 'requirements.txt'
+              - 'uv.lock'
+              - 'hatch_build.py'
+              - 'VERSION'
+              - 'README.md'
+              - 'LICENSE'
+              - 'NOTICE'
+              - 'THIRD_PARTY_NOTICES.md'
+            setup_center:
+              - '.github/workflows/ci.yml'
+              - 'apps/setup-center/**'
+            setup_center_rust:
+              - '.github/workflows/ci.yml'
+              - 'apps/setup-center/src-tauri/**'
+              - 'identity/**'
+              - 'VERSION'
+            tauri_full_build:
+              - '.github/workflows/ci.yml'
+              - 'apps/setup-center/**'
+              - 'src/**'
+              - 'identity/**'
+              - 'skills/**'
+              - 'plugins/**'
+              - 'openakita-plugin-sdk/**'
+              - 'build/**'
+              - 'scripts/**'
+              - 'docs-site/**'
+              - 'pyproject.toml'
+              - 'requirements.txt'
+              - 'uv.lock'
+              - 'hatch_build.py'
+              - 'VERSION'
+            bootstrap:
+              - '.github/workflows/ci.yml'
+              - 'build/**'
+              - 'scripts/**'
+              - 'apps/setup-center/src-tauri/resources/bootstrap/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+            plugin_sdk:
+              - '.github/workflows/ci.yml'
+              - 'openakita-plugin-sdk/**'
+
   python_lint:
+    needs: [changes]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -49,6 +139,8 @@ jobs:
   # 任何静默退化（cache 不命中/记忆召回率回到 0/profile 卡白名单等）
   # 都会立刻 fail，避免 L1~L4 跑完才发现根因回归。
   smoke_tests:
+    needs: [changes]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -67,7 +159,8 @@ jobs:
 
   # ── L1 单元测试 (每次 Push/PR, <30s) ──
   unit_tests:
-    needs: [smoke_tests]
+    needs: [changes, smoke_tests]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -87,7 +180,8 @@ jobs:
   # ── L2 组件测试 (每次 Push/PR, <2min) ──
   component_tests:
     runs-on: ubuntu-latest
-    needs: [unit_tests]
+    needs: [changes, unit_tests]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Set up Python
@@ -106,7 +200,8 @@ jobs:
   # ── L3 集成测试 (每次 Push/PR, <3min) ──
   integration_tests:
     runs-on: ubuntu-latest
-    needs: [component_tests]
+    needs: [changes, component_tests]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Set up Python
@@ -124,9 +219,11 @@ jobs:
 
   # ── L4 E2E 测试 (仅 main / 手动触发 / 每日, 回放模式) ──
   e2e_tests:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.ref == 'refs/heads/main' && needs.changes.outputs.python == 'true')
     runs-on: ubuntu-latest
-    needs: [integration_tests]
+    needs: [changes, integration_tests]
     steps:
       - uses: actions/checkout@v6
       - name: Set up Python
@@ -146,9 +243,11 @@ jobs:
 
   # ── L5 质量评估测试 (仅 main / 手动触发) ──
   quality_tests:
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.ref == 'refs/heads/main' && needs.changes.outputs.python == 'true')
     runs-on: ubuntu-latest
-    needs: [e2e_tests]
+    needs: [changes, e2e_tests]
     steps:
       - uses: actions/checkout@v6
       - name: Set up Python
@@ -166,6 +265,8 @@ jobs:
 
   # ── 全量兼容性测试 (跨平台 + legacy) ──
   python_test:
+    needs: [changes]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.python == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -204,6 +305,8 @@ jobs:
           fail_ci_if_error: false
 
   tool_parallel:
+    needs: [changes]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -229,6 +332,8 @@ jobs:
         run: echo "tests/llm/unit/test_tool_parallel_execution.py not found; skipping."
 
   setup_center_build:
+    needs: [changes]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.setup_center == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -265,6 +370,8 @@ jobs:
         run: echo "apps/setup-center not present in repository; skipping."
 
   setup_center_rust_check:
+    needs: [changes]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.setup_center_rust == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -326,6 +433,8 @@ jobs:
 
   # ── Tauri 完整构建检查（仅 Linux） ──
   tauri_full_build_check:
+    needs: [changes]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.tauri_full_build == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -578,6 +687,8 @@ jobs:
   # macOS 跑 mac-x64（GitHub-hosted runner 默认 Intel）即可，arm64 由
   # release-dryrun 实地覆盖。
   bootstrap_unicode_path_smoke:
+    needs: [changes]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.bootstrap == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -694,6 +805,8 @@ jobs:
 
   # ── Plugin SDK: lint + build + test ──
   plugin_sdk:
+    needs: [changes]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.plugin_sdk == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -738,7 +851,13 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [python_lint, python_test, unit_tests, component_tests, integration_tests, tool_parallel, setup_center_build, setup_center_rust_check, plugin_sdk]
+    needs: [changes, python_lint, python_test, unit_tests, component_tests, integration_tests, tool_parallel]
+    if: >-
+      always() &&
+      (github.event_name == 'workflow_dispatch' || needs.changes.outputs.python_package == 'true') &&
+      needs.changes.result == 'success' &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
     steps:
       - uses: actions/checkout@v6
       
