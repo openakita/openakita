@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/openakita-openakita-badge.png)](https://mseep.ai/app/openakita-openakita)
+
 <p align="center">
   <img src="docs/assets/logo.png" alt="OpenAkita Logo" width="200" />
 </p>
