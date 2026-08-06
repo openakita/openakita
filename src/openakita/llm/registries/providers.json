@@ -357,6 +357,17 @@
     "supports_model_list": true,
     "supports_capability_api": false,
     "registry_class": "OpenAIRegistry"
+  },
+  {
+    "name": "LiteLLM",
+    "slug": "litellm",
+    "api_type": "openai",
+    "default_base_url": "https://api.openai.com/v1",
+    "api_key_env_suggestion": "LITELLM_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": false,
+    "requires_api_key": false,
+    "registry_class": "LiteLLMRegistry",
+    "note": "provider.litellm.note"
   }
 ]
-
