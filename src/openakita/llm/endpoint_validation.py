@@ -56,6 +56,8 @@ def missing_api_key_message(endpoint: dict[str, Any]) -> str:
         if model in {"openrouter/free", "openrouter/auto"} or model.endswith(":free"):
             return "OpenRouter 免费/自动路由也需要 API Key，请在端点配置中填写 OPENROUTER_API_KEY。"
         return "OpenRouter 端点需要 API Key，请在端点配置中填写 OPENROUTER_API_KEY。"
+    if provider == "orcarouter" or "orcarouter.ai" in str(endpoint.get("base_url") or "").lower():
+        return "OrcaRouter 端点需要 API Key，请在端点配置中填写 ORCAROUTER_API_KEY。"
     return "远程模型端点需要 API Key；本地 Ollama/LM Studio 才可以留空。"
 
 
