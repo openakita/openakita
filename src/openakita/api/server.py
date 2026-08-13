@@ -28,11 +28,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import openakita._ensure_utf8  # noqa: F401  # Windows UTF-8 编码保护
+from openakita.account.config import AccountFeatureConfig
+from openakita.account.oidc import (
+    AccountOIDCManager,
+    KeyringTokenStore,
+    clear_disabled_account_credentials,
+)
+from openakita.account.status_store import AccountStatusStore
 
 from .auth import WebAccessConfig, create_auth_middleware
 from .middleware_setup_gate import create_setup_gate_middleware
 from .routes import (
     _orgs_v2_deprecated_redirects,
+    account_oidc,
     agents,
     bug_report,
     chat,
@@ -50,6 +58,7 @@ from .routes import (
     mcp,
     memory,
     memory_repair,
+    openakita_internal,
     optional_features,
     orgs_v2,
     orgs_v2_runtime,
@@ -751,6 +760,25 @@ def create_app(
         data_dir = Path.cwd() / "data"
     web_access_config = WebAccessConfig(data_dir)
     app.state.web_access_config = web_access_config
+    account_config = AccountFeatureConfig.from_env()
+    app.state.account_config = account_config
+    app.state.account_capability = account_config.capability()
+    if account_config.enabled:
+        account_status_store = AccountStatusStore(data_dir)
+        app.state.account_status_store = account_status_store
+        app.state.account_oidc_manager = AccountOIDCManager(
+            store=account_status_store,
+            token_store=KeyringTokenStore(username=account_config.credential_username),
+            account_base_url=account_config.base_url,
+            client_id=account_config.client_id,
+        )
+    else:
+        app.state.account_status_store = None
+        app.state.account_oidc_manager = None
+
+        @app.on_event("startup")
+        async def _clear_disabled_account_credentials() -> None:
+            await clear_disabled_account_credentials()
 
     auth_mw = create_auth_middleware(web_access_config)
     app.middleware("http")(auth_mw)
@@ -1091,6 +1119,9 @@ def create_app(
 
     # Mount routes
     app.include_router(auth_routes.router, tags=["认证"])
+    app.include_router(account_oidc.capability_router)
+    if account_config.enabled:
+        app.include_router(account_oidc.router)
     app.include_router(agents.router, tags=["智能体"])
     app.include_router(bug_report.router, tags=["反馈"])
     app.include_router(chat.router, tags=["对话"])
@@ -1112,6 +1143,8 @@ def create_app(
     app.include_router(scheduler.router, tags=["定时任务"])
     app.include_router(pending_approvals.router, tags=["待审批"])
     app.include_router(optional_features.router, tags=["可选功能"])
+    if account_config.enabled:
+        app.include_router(openakita_internal.router)
     app.include_router(sessions.router, tags=["会话"])
     app.include_router(skills.router, tags=["技能"])
     app.include_router(skill_categories.router, tags=["技能分类"])

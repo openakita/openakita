@@ -40,6 +40,7 @@ AUTH_EXEMPT_PATHS = frozenset(
     {
         "/",
         "/api/health",
+        "/api/account/capability",
         "/api/auth/login",
         "/api/auth/logout",
         "/api/auth/refresh",
@@ -47,6 +48,7 @@ AUTH_EXEMPT_PATHS = frozenset(
         "/api/auth/setup",
         "/api/auth/setup-status",
         "/api/logs/frontend",
+        "/api/internal/openakita/users/status",
     }
 )
 AUTH_EXEMPT_PREFIXES = ("/web/", "/web", "/ws/", "/docs", "/openapi.json", "/redoc", "/user-docs")

@@ -158,6 +158,7 @@ desktop = [
     "websockets>=15.0,<16.0",
     "psutil>=5.9.0",
     "pyperclip>=1.8.2",
+    "keyring>=24.0,<26.0",
     "mss>=9.0.0; platform_system == 'Windows'",
     "pyautogui>=0.9.54; platform_system == 'Windows'",
     "pywinauto>=0.6.8; platform_system == 'Windows'",
@@ -178,6 +179,7 @@ all = [
     "pyautogui>=0.9.54",
     "pywinauto>=0.6.8; platform_system == 'Windows'",
     "pyperclip>=1.8.2",
+    "keyring>=24.0,<26.0",
     "psutil>=5.9.0",
     # -- AI 媒体插件脚手架（保持与 [project.optional-dependencies].plugins 同步）--
     "openakita-plugin-sdk>=0.7.0",

@@ -505,7 +505,8 @@ function MainApp() {
     return (IS_WEB || IS_CAPACITOR) ? "chat" : "wizard";
   });
   const [appInitializing, setAppInitializing] = useState(!(IS_WEB || IS_CAPACITOR));
-  const [configExpanded, setConfigExpanded] = useState(false);
+  const [configMode, setConfigMode] = useState(() => view === "wizard" || view === "identity");
+  const lastAppViewRef = useRef<ViewId>(view === "wizard" || view === "identity" ? "chat" : view);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const sidebarAutoCollapsed = useRef(false);
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 768);
@@ -595,6 +596,15 @@ function MainApp() {
       history.replaceState(null, "", window.location.pathname + window.location.search);
     }
   }, [isMobile]);
+
+  useEffect(() => {
+    if (view === "wizard" || view === "identity") {
+      setConfigMode(true);
+      return;
+    }
+    lastAppViewRef.current = view;
+    setConfigMode(false);
+  }, [view]);
 
   useEffect(() => {
     if (stepId === "workspace") {
@@ -5019,24 +5029,27 @@ function MainApp() {
         view={view}
         onViewChange={(v) => navigateToView(v)}
         mobileOpen={mobileSidebarOpen}
-        configExpanded={configExpanded}
-        onToggleConfig={() => {
-          if (sidebarCollapsed) { setSidebarCollapsed(false); setConfigExpanded(true); }
-          else { setConfigExpanded((v) => !v); }
+        configMode={configMode}
+        onEnterConfig={() => {
+          if (view !== "wizard" && view !== "identity") lastAppViewRef.current = view;
+          setSidebarCollapsed(false);
+          setConfigMode(true);
+          navigateToView("wizard", stepId);
+        }}
+        onExitConfig={() => {
+          setConfigMode(false);
+          navigateToView(lastAppViewRef.current);
         }}
         steps={steps}
         stepId={stepId}
         onStepChange={(s: StepId) => {
           setStepId(s);
-          if (view === "wizard") navigateToView("wizard", s);
+          navigateToView("wizard", s);
         }}
         disabledViews={disabledViews}
         storeVisible={storeVisible}
-        desktopVersion={desktopVersion}
-        backendVersion={backendVersion}
         serviceRunning={serviceStatus?.running ?? false}
         onRefreshStatus={async () => { await refreshStatus(undefined, undefined, true); }}
-        isWeb={IS_WEB}
         httpApiBase={httpApiBase()}
         unreadFeedbackCount={unreadFeedbackCount}
         pendingApprovalsCount={pendingApprovalsCount}

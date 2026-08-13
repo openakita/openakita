@@ -1,35 +1,45 @@
 import { Fragment, useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { LogOut } from "lucide-react";
+import { toast } from "sonner";
 import type { StepId, Step, ViewId, PluginUIApp } from "../types";
 import {
   IconChat, IconIM, IconSkills, IconStatus, IconConfig,
-  IconChevronDown, IconChevronRight, IconGlobe,
+  IconChevronDown, IconChevronRight,
   IconZap, IconPlug, IconCalendar,
-  IconBug, IconBrain, IconGitHub, IconGitee, IconUsers, IconBot,
+  IconBug, IconBrain, IconUsers, IconBot,
   IconGear, IconBook, IconStorefront, IconPuzzle, IconFingerprint, IconLayoutGrid,
-  IconShield, IconRadar, IconBuilding, IconBarChart, IconRefresh,
+  IconShield, IconRadar, IconBuilding, IconBarChart, IconRefresh, IconHelp,
+  IconAlertCircle,
 } from "../icons";
 import logoUrl from "../assets/logo.png";
-import { openExternalUrl } from "../platform";
-import { ReleaseNotesDialog, normalizeReleaseVersion } from "./ReleaseNotesDialog";
+import {
+  ACCOUNT_STATUS_CHANGED_EVENT,
+  type AccountStatusSummary,
+} from "../utils/accountStatusEvents";
+import {
+  connectOpenAkitaAccount,
+  disconnectOpenAkitaAccount,
+  loadAccountCapability,
+  refreshOpenAkitaAccountEntitlements,
+  type AccountCapability,
+} from "../utils/accountLogin";
 
 export type SidebarProps = {
   collapsed: boolean;
   onToggleCollapsed: () => void;
   view: ViewId;
   onViewChange: (v: ViewId) => void;
-  configExpanded: boolean;
-  onToggleConfig: () => void;
+  configMode: boolean;
+  onEnterConfig: () => void;
+  onExitConfig: () => void;
   steps: Step[];
   stepId: StepId;
   onStepChange: (id: StepId) => void;
   disabledViews: string[];
   storeVisible: boolean;
-  desktopVersion: string;
-  backendVersion: string | null;
   serviceRunning: boolean;
   onRefreshStatus: () => Promise<void>;
-  isWeb?: boolean;
   mobileOpen?: boolean;
   httpApiBase?: string;
   unreadFeedbackCount?: number;
@@ -47,12 +57,12 @@ const stepIcons: Partial<Record<StepId, React.ReactNode>> = {
   advanced: <IconGear size={14} />,
 };
 
-function StepDot({ stepId: sid }: { stepId: StepId }) {
-  return <div className="stepDot">{stepIcons[sid]}</div>;
-}
-
 type NavGroupId = "capabilities" | "apps" | "monitor" | "multiAgent" | "store";
 const GROUP_ICON_SIZE = 16;
+const CAPABILITY_VIEWS: ViewId[] = ["skills", "mcp", "plugins", "memory", "scheduler"];
+const MONITOR_VIEWS: ViewId[] = ["token_stats", "skill_usage", "security", "pending_approvals"];
+const MULTI_AGENT_VIEWS: ViewId[] = ["dashboard", "org_editor", "pixel_office", "agent_manager"];
+const STORE_VIEWS: ViewId[] = ["agent_store", "skill_store"];
 
 const BETA_SUP = <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup>;
 
@@ -91,12 +101,12 @@ function NavGroupHeader({
 export function Sidebar({
   collapsed, onToggleCollapsed,
   view, onViewChange,
-  configExpanded, onToggleConfig,
+  configMode, onEnterConfig, onExitConfig,
   steps, stepId, onStepChange,
   disabledViews,
   storeVisible,
-  desktopVersion, backendVersion, serviceRunning,
-  onRefreshStatus, isWeb, mobileOpen, httpApiBase,
+  serviceRunning,
+  onRefreshStatus, mobileOpen, httpApiBase,
   unreadFeedbackCount, pendingApprovalsCount,
   onCheckForUpdate, updateCheckPending = false,
 }: SidebarProps) {
@@ -131,8 +141,81 @@ export function Sidebar({
   }, []);
 
   const [pluginApps, setPluginApps] = useState<PluginUIApp[]>([]);
-  const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
-  const releaseNotesVersion = normalizeReleaseVersion(desktopVersion);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [accountCapability, setAccountCapability] = useState<AccountCapability | null>(null);
+  const [accountSnapshot, setAccountSnapshot] = useState<AccountStatusSummary | null>(null);
+  const [accountLoginPending, setAccountLoginPending] = useState(false);
+  const [accountActionPending, setAccountActionPending] = useState<"refresh" | "logout" | null>(null);
+  const [accountLoginError, setAccountLoginError] = useState<string | null>(null);
+  const accountAreaRef = useRef<HTMLDivElement>(null);
+
+  const refreshAccountCapability = useCallback(async () => {
+    if (!httpApiBase || !serviceRunning) {
+      setAccountCapability(null);
+      setAccountSnapshot(null);
+      return;
+    }
+    try {
+      const capability = await loadAccountCapability(httpApiBase);
+      setAccountCapability(capability);
+      if (!capability.enabled) {
+        setAccountSnapshot(null);
+        setAccountLoginError(null);
+      }
+    } catch {
+      setAccountCapability(null);
+      setAccountSnapshot(null);
+    }
+  }, [httpApiBase, serviceRunning]);
+
+  useEffect(() => {
+    void refreshAccountCapability();
+  }, [refreshAccountCapability]);
+
+  const refreshAccountSnapshot = useCallback(async () => {
+    if (!httpApiBase || !serviceRunning || !accountCapability?.enabled) {
+      setAccountSnapshot(null);
+      return;
+    }
+    try {
+      const response = await fetch(`${httpApiBase}/api/account/status`);
+      if (response.ok) setAccountSnapshot(await response.json() as AccountStatusSummary);
+    } catch {
+      setAccountSnapshot(null);
+    }
+  }, [accountCapability?.enabled, httpApiBase, serviceRunning]);
+
+  useEffect(() => {
+    void refreshAccountSnapshot();
+  }, [refreshAccountSnapshot]);
+
+  useEffect(() => {
+    const onAccountStatusChanged = (event: Event) => {
+      if (!accountCapability?.enabled) return;
+      const snapshot = (event as CustomEvent<AccountStatusSummary>).detail;
+      if (snapshot?.status) setAccountSnapshot(snapshot);
+      else void refreshAccountSnapshot();
+    };
+    window.addEventListener(ACCOUNT_STATUS_CHANGED_EVENT, onAccountStatusChanged);
+    return () => window.removeEventListener(ACCOUNT_STATUS_CHANGED_EVENT, onAccountStatusChanged);
+  }, [accountCapability?.enabled, refreshAccountSnapshot]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    void refreshAccountSnapshot();
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!accountAreaRef.current?.contains(event.target as Node)) setAccountMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAccountMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [accountMenuOpen, refreshAccountSnapshot]);
 
   // Refetch the Apps sidebar list. Triggered initially, when backend
   // availability changes, and on the global "openakita:plugin-apps-changed"
@@ -190,20 +273,15 @@ export function Sidebar({
     };
   }, [httpApiBase, serviceRunning]);
 
-  const capViews: ViewId[] = ["skills", "mcp", "plugins", "memory", "scheduler"];
-  const monViews: ViewId[] = ["token_stats", "skill_usage", "security", "pending_approvals"];
-  const maViews: ViewId[] = ["dashboard", "org_editor", "pixel_office", "agent_manager"];
-  const stViews: ViewId[] = ["agent_store", "skill_store"];
-
   const prevViewRef = useRef(view);
   useEffect(() => {
     if (prevViewRef.current === view) return;
     prevViewRef.current = view;
     const groupOf = (v: ViewId): NavGroupId | null =>
-      capViews.includes(v) ? "capabilities"
-        : monViews.includes(v) ? "monitor"
-        : maViews.includes(v) ? "multiAgent"
-        : stViews.includes(v) ? "store"
+      CAPABILITY_VIEWS.includes(v) ? "capabilities"
+        : MONITOR_VIEWS.includes(v) ? "monitor"
+        : MULTI_AGENT_VIEWS.includes(v) ? "multiAgent"
+        : STORE_VIEWS.includes(v) ? "store"
         : (typeof v === "string" && v.startsWith("plugin_app:")) ? "apps"
         : null;
     const g = groupOf(view);
@@ -215,10 +293,95 @@ export function Sidebar({
   const monExpanded = expandedGroups.monitor;
   const maExpanded = expandedGroups.multiAgent;
   const stExpanded = expandedGroups.store;
+  const accountEnabled = accountCapability?.enabled === true;
+  const accountUsesOpenAkitaBrand = accountCapability?.provider === "openakita";
+  const accountProviderName = accountCapability?.display_name || t("sidebar.account");
+  const accountEmail = accountSnapshot?.profile?.email;
+  const accountSignedIn = Boolean(
+    accountEnabled && accountSnapshot?.status && accountSnapshot.status !== "signed_out",
+  );
+  const accountNeedsSync = accountSignedIn && accountSnapshot?.status !== "active";
+  const accountName = accountSignedIn
+    ? accountSnapshot?.profile?.name
+      || accountSnapshot?.profile?.preferred_username
+      || accountEmail?.split("@")[0]
+      || accountProviderName
+    : t("sidebar.signedOut");
+  const accountDetail = accountSignedIn
+    ? accountEmail || accountProviderName
+    : accountLoginPending
+      ? t("account.waitingForAuthorization")
+      : accountLoginError
+        ? t("account.retrySignIn")
+        : t("sidebar.connectAccount");
+
+  const selectAccountMenuItem = (action: () => void) => {
+    setAccountMenuOpen(false);
+    action();
+  };
+
+  const startAccountLogin = useCallback(async () => {
+    if (!accountEnabled) return;
+    if (!serviceRunning || !httpApiBase) {
+      toast.error(t("account.serviceRequired"));
+      return;
+    }
+
+    setAccountMenuOpen(false);
+    setAccountLoginPending(true);
+    setAccountLoginError(null);
+    const notification = toast.loading(t("account.waitingForAuthorization"));
+    try {
+      const snapshot = await connectOpenAkitaAccount(httpApiBase);
+      setAccountSnapshot(snapshot);
+      toast.success(t("account.connected"), { id: notification });
+    } catch (reason) {
+      const rawMessage = reason instanceof Error ? reason.message : String(reason);
+      const message = rawMessage === "account_login_expired" ? t("account.loginExpired") : rawMessage;
+      setAccountLoginError(message);
+      toast.error(t("account.loginFailed"), { id: notification, description: message });
+      setAccountMenuOpen(true);
+    } finally {
+      setAccountLoginPending(false);
+    }
+  }, [accountEnabled, httpApiBase, serviceRunning, t]);
+
+  const refreshAccountEntitlements = useCallback(async () => {
+    if (!accountEnabled || !httpApiBase) return;
+    setAccountActionPending("refresh");
+    const notification = toast.loading(t("account.syncingEntitlements"));
+    try {
+      const snapshot = await refreshOpenAkitaAccountEntitlements(httpApiBase);
+      setAccountSnapshot(snapshot);
+      toast.success(t("account.entitlementsSynced"), { id: notification });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      toast.error(t("account.entitlementsSyncFailed"), { id: notification, description: message });
+    } finally {
+      setAccountActionPending(null);
+    }
+  }, [accountEnabled, httpApiBase, t]);
+
+  const logoutAccount = useCallback(async () => {
+    if (!accountEnabled || !httpApiBase) return;
+    setAccountActionPending("logout");
+    const notification = toast.loading(t("account.signingOut"));
+    try {
+      const snapshot = await disconnectOpenAkitaAccount(httpApiBase);
+      setAccountSnapshot(snapshot);
+      setAccountLoginError(null);
+      toast.success(t("account.signedOutSuccess"), { id: notification });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      toast.error(t("account.signOutFailed"), { id: notification, description: message });
+    } finally {
+      setAccountActionPending(null);
+    }
+  }, [accountEnabled, httpApiBase, t]);
 
   return (
-    <aside className={`sidebar ${collapsed ? "sidebarCollapsed" : ""}${mobileOpen ? " sidebarOpen" : ""}`}>
-      <div className="sidebarHeader">
+    <aside className={`sidebar ${collapsed ? "sidebarCollapsed" : ""}${configMode ? " sidebarConfigMode" : ""}${mobileOpen ? " sidebarOpen" : ""}`}>
+      {!configMode && <div className="sidebarHeader">
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <img
             src={logoUrl}
@@ -235,9 +398,49 @@ export function Sidebar({
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
-      <div className="sidebarNav">
+      {configMode ? (
+        <div className="configModeNav">
+          <button type="button" className="configBackButton" onClick={onExitConfig}>
+            <span className="configBackIcon"><IconChevronRight size={14} /></span>
+            <span>{t("sidebar.backToApp")}</span>
+          </button>
+          <div className="configModeDivider" />
+          <div className="configModeLabel">{t("sidebar.config")}</div>
+          <div className="configModeItems">
+            {steps.map((s) => {
+              const isActive = view === "wizard" && s.id === stepId;
+              return (
+                <Fragment key={s.id}>
+                  <div
+                    className={`navItem configModeItem ${isActive ? "navItemActive" : ""}`}
+                    onClick={() => onStepChange(s.id)}
+                    role="button"
+                    tabIndex={0}
+                    title={s.title}
+                  >
+                    {stepIcons[s.id]}
+                    <span>{s.title}</span>
+                  </div>
+                  {s.id === "agent" && (
+                    <div
+                      className={`navItem configModeItem ${view === "identity" ? "navItemActive" : ""}`}
+                      onClick={() => onViewChange("identity")}
+                      role="button"
+                      tabIndex={0}
+                      title={t("sidebar.identity")}
+                    >
+                      <IconFingerprint size={14} />
+                      <span>{t("sidebar.identity")}</span>
+                    </div>
+                  )}
+                </Fragment>
+              );
+            })}
+          </div>
+        </div>
+      ) : <div className="sidebarNav">
         {/* ── Primary: always visible ── */}
         <div className={`navItem ${view === "chat" ? "navItemActive" : ""}`} onClick={() => onViewChange("chat")} role="button" tabIndex={0} title={t("sidebar.chat")}>
           <IconChat size={16} /> {!collapsed && <span>{t("sidebar.chat")}</span>}
@@ -250,7 +453,6 @@ export function Sidebar({
         <div className={`navItem ${view === "status" ? "navItemActive" : ""}`} onClick={async () => { onViewChange("status"); try { await onRefreshStatus(); } catch { /* ignore */ } }} role="button" tabIndex={0} title={t("sidebar.status")}>
           <IconStatus size={16} /> {!collapsed && <span>{t("sidebar.status")}</span>}
         </div>
-
         {/* ── Group: Capabilities ── */}
         <NavGroupHeader collapsed={collapsed} icon={<IconPuzzle size={GROUP_ICON_SIZE} />} label={t("sidebar.groupCapabilities")} expanded={capExpanded} onToggle={() => toggleGroup("capabilities")} />
         {(collapsed || capExpanded) && (
@@ -371,219 +573,182 @@ export function Sidebar({
             )}
           </>
         )}
-      </div>
+      </div>}
 
-      {/* Collapsible Config section */}
-      <div className="configSection">
-        <div className="configHeader" onClick={onToggleConfig} role="button" tabIndex={0} title={t("sidebar.config")}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <IconConfig size={16} />
-            {!collapsed && <span>{t("sidebar.config")}</span>}
-          </div>
-          {!collapsed && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {configExpanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-            </div>
-          )}
-        </div>
-        {!collapsed && configExpanded && (
-          <div className="stepList">
-            {steps.map((s) => {
-              const isActive = view === "wizard" && s.id === stepId;
-              return (
-                <Fragment key={s.id}>
-                  <div
-                    className={`stepItem ${isActive ? "stepItemActive" : ""}`}
-                    onClick={() => { onViewChange("wizard"); onStepChange(s.id); }}
-                    role="button" tabIndex={0}
-                  >
-                    <StepDot stepId={s.id} />
-                    <div className="stepMeta"><div className="stepTitle">{s.title}</div></div>
-                  </div>
-                  {s.id === "agent" && (
-                    <div
-                      className={`stepItem ${view === "identity" ? "stepItemActive" : ""}`}
-                      onClick={() => onViewChange("identity")}
-                      role="button" tabIndex={0}
-                      title={t("sidebar.identity")}
-                    >
-                      <div className="stepDot"><IconFingerprint size={14} /></div>
-                      <div className="stepMeta"><div className="stepTitle">{t("sidebar.identity")}</div></div>
-                    </div>
+      <div className="sidebarAccountArea" ref={accountAreaRef}>
+        {accountMenuOpen && (
+          <div
+            className="sidebarAccountMenu"
+            role="menu"
+            aria-label={t(accountEnabled ? "sidebar.accountMenu" : "sidebar.appMenu")}
+          >
+            {accountEnabled && (accountSignedIn ? (
+              <div className="sidebarAccountMenuProfile">
+                {accountUsesOpenAkitaBrand ? (
+                  <img src={logoUrl} alt="" className="sidebarAccountMenuAvatar" />
+                ) : (
+                  <span className="sidebarAccountMenuAvatar sidebarAccountAvatarPlaceholder" aria-hidden="true">
+                    <IconUsers size={18} />
+                  </span>
+                )}
+                <span className="sidebarAccountMenuIdentity">
+                  <strong>{accountName}</strong>
+                  <small>{accountDetail}</small>
+                  {accountNeedsSync && (
+                    <span className="sidebarAccountStatus">
+                      <IconAlertCircle size={11} aria-hidden="true" />
+                      {t("account.syncRequired")}
+                    </span>
                   )}
-                </Fragment>
-              );
-            })}
+                </span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="sidebarAccountMenuProfile sidebarAccountMenuProfileAction"
+                onClick={() => { void startAccountLogin(); }}
+                disabled={accountLoginPending}
+                aria-busy={accountLoginPending}
+                role="menuitem"
+              >
+                {accountLoginPending ? (
+                  <span className="sidebarAccountMenuAvatar sidebarAccountAvatarPlaceholder" aria-hidden="true">
+                    <IconRefresh size={18} className="spinIcon" />
+                  </span>
+                ) : (
+                  <span className="sidebarAccountMenuAvatar sidebarAccountAvatarPlaceholder" aria-hidden="true">
+                    <IconHelp size={18} />
+                  </span>
+                )}
+                <span className="sidebarAccountMenuIdentity">
+                  <strong>{accountName}</strong>
+                  <small>{accountDetail}</small>
+                </span>
+              </button>
+            ))}
+            {accountEnabled && !accountSignedIn && accountLoginError && (
+              <div className="sidebarAccountMenuError" role="alert">
+                <IconAlertCircle size={15} aria-hidden="true" />
+                <span>{accountLoginError}</span>
+              </div>
+            )}
+            {accountEnabled && accountNeedsSync && accountSnapshot?.status_reason && (
+              <div className="sidebarAccountMenuNotice" role="status">
+                <IconAlertCircle size={15} aria-hidden="true" />
+                <span>{accountSnapshot.status_reason}</span>
+              </div>
+            )}
+            {accountEnabled && <div className="sidebarAccountMenuDivider" />}
+            {accountNeedsSync && (
+              <button
+                type="button"
+                className="sidebarAccountMenuItem"
+                onClick={() => { void refreshAccountEntitlements(); }}
+                disabled={accountActionPending !== null}
+                role="menuitem"
+              >
+                <IconRefresh size={17} className={accountActionPending === "refresh" ? "spinIcon" : undefined} />
+                <span>{t("account.syncEntitlements")}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              className="sidebarAccountMenuItem"
+              onClick={() => selectAccountMenuItem(onEnterConfig)}
+              role="menuitem"
+            >
+              <IconConfig size={17} />
+              <span>{t("sidebar.config")}</span>
+              <IconChevronRight size={14} className="sidebarAccountMenuChevron" />
+            </button>
+            <button
+              type="button"
+              className="sidebarAccountMenuItem"
+              onClick={() => selectAccountMenuItem(() => onViewChange("my_feedback"))}
+              disabled={!serviceRunning}
+              role="menuitem"
+            >
+              <span className="sidebarAccountMenuIconWrap">
+                <IconBug size={17} />
+                {(unreadFeedbackCount ?? 0) > 0 && <span className="sidebarMenuUnreadDot" />}
+              </span>
+              <span>{t("sidebar.myFeedback")}</span>
+            </button>
+            {onCheckForUpdate && (
+              <button
+                type="button"
+                className="sidebarAccountMenuItem"
+                onClick={() => selectAccountMenuItem(() => { void onCheckForUpdate(); })}
+                disabled={updateCheckPending}
+                role="menuitem"
+              >
+                <IconRefresh size={17} className={updateCheckPending ? "spinIcon" : undefined} />
+                <span>{updateCheckPending ? t("version.checking") : t("version.checkNow")}</span>
+              </button>
+            )}
+            {accountSignedIn && (
+              <>
+                <div className="sidebarAccountMenuDivider" />
+                <button
+                  type="button"
+                  className="sidebarAccountMenuItem sidebarAccountMenuDanger"
+                  onClick={() => { void logoutAccount(); }}
+                  disabled={accountActionPending !== null}
+                  role="menuitem"
+                >
+                  {accountActionPending === "logout"
+                    ? <IconRefresh size={17} className="spinIcon" />
+                    : <LogOut size={17} aria-hidden="true" />}
+                  <span>{accountActionPending === "logout" ? t("account.signingOut") : t("account.signOut")}</span>
+                </button>
+              </>
+            )}
           </div>
         )}
+        <button
+          type="button"
+          className={`sidebarAccountButton ${accountMenuOpen ? "sidebarAccountButtonActive" : ""}`}
+          onClick={() => {
+            if (collapsed) onToggleCollapsed();
+            setAccountMenuOpen((open) => !open);
+          }}
+          aria-haspopup="menu"
+          aria-expanded={accountMenuOpen}
+          aria-busy={accountEnabled && accountLoginPending}
+          title={accountEnabled ? accountName : t("sidebar.appMenu")}
+        >
+          {!accountEnabled ? (
+            <span className="sidebarAccountAvatar sidebarAccountAvatarPlaceholder" aria-hidden="true">
+              <IconConfig size={18} />
+            </span>
+          ) : accountLoginPending ? (
+            <span className="sidebarAccountAvatar sidebarAccountAvatarPlaceholder" aria-hidden="true">
+              <IconRefresh size={18} className="spinIcon" />
+            </span>
+          ) : accountSignedIn && accountUsesOpenAkitaBrand ? (
+            <img src={logoUrl} alt="" className="sidebarAccountAvatar" />
+          ) : accountSignedIn ? (
+            <span className="sidebarAccountAvatar sidebarAccountAvatarPlaceholder" aria-hidden="true">
+              <IconUsers size={18} />
+            </span>
+          ) : (
+            <span className="sidebarAccountAvatar sidebarAccountAvatarPlaceholder" aria-hidden="true">
+              <IconHelp size={18} />
+            </span>
+          )}
+          {!collapsed && (
+            <>
+              <span className="sidebarAccountIdentity">
+                <strong>{accountEnabled ? accountName : t("sidebar.appMenu")}</strong>
+                <small>{accountEnabled ? accountDetail : t("sidebar.appMenuHint")}</small>
+              </span>
+              <span className="sidebarAccountToggle">
+                <IconChevronDown size={14} />
+              </span>
+            </>
+          )}
+        </button>
       </div>
-
-      {/* Version info + website and feedback links at sidebar bottom */}
-      {!collapsed && (
-        <div style={{
-          padding: "10px 16px",
-          borderTop: "1px solid var(--line)",
-          fontSize: 11,
-          lineHeight: 1.6,
-          flexShrink: 0,
-        }}>
-          <div className="sidebarVersionRow">
-            <div
-              onClick={() => setReleaseNotesOpen(true)}
-              title={t("version.releaseNotesButton")}
-              className="sidebarVersionText sidebarVersionLink"
-            >
-              {isWeb ? "Web" : "Desktop"} v{desktopVersion}{import.meta.env.VITE_PREVIEW_BUILD === "true" && <span style={{ marginLeft: 6, color: "#e8a735", fontWeight: 600, opacity: 1 }}>预览版</span>}
-            </div>
-            {onCheckForUpdate && (
-              <button
-                type="button"
-                className="sidebarUpdateButton"
-                onClick={() => { void onCheckForUpdate(); }}
-                disabled={updateCheckPending}
-                title={updateCheckPending ? t("version.checking") : t("version.checkNow")}
-                aria-label={updateCheckPending ? t("version.checking") : t("version.checkNow")}
-              >
-                <IconRefresh size={14} className={updateCheckPending ? "spinIcon" : undefined} />
-              </button>
-            )}
-          </div>
-          {backendVersion && <div className="sidebarVersionText">Backend v{backendVersion}</div>}
-          {!backendVersion && serviceRunning && <div className="sidebarVersionText">Backend: -</div>}
-          <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            <span
-              onClick={() => openExternalUrl("https://openakita.ai")}
-              style={{ color: "var(--accent, #5B8DEF)", textDecoration: "none", opacity: 1, display: "inline-flex", alignItems: "center", gap: 3, cursor: "pointer" }}
-              onMouseEnter={(e) => (e.currentTarget.style.textDecoration = "underline")}
-              onMouseLeave={(e) => (e.currentTarget.style.textDecoration = "none")}
-            >
-              <IconGlobe size={11} />
-              openakita.ai
-            </span>
-            {serviceRunning && (
-              <span
-                onClick={() => onViewChange("my_feedback")}
-                title={t("sidebar.myFeedback")}
-                style={{ cursor: "pointer", opacity: 1, color: view === "my_feedback" ? "var(--fg)" : "var(--accent, #5B8DEF)", display: "inline-flex", alignItems: "center", gap: 2, position: "relative" }}
-                onMouseEnter={(e) => { const s = e.currentTarget.querySelector<HTMLElement>(".myFeedbackText"); if (s) s.style.textDecoration = "underline"; }}
-                onMouseLeave={(e) => { const s = e.currentTarget.querySelector<HTMLElement>(".myFeedbackText"); if (s) s.style.textDecoration = "none"; }}
-              >
-                <IconBug size={12} />
-                <span className="myFeedbackText" style={{ fontSize: 11 }}>{t("sidebar.myFeedback")}</span>
-                {(unreadFeedbackCount ?? 0) > 0 && (
-                  <span style={{
-                    position: "absolute", top: -4, right: -6,
-                    width: 7, height: 7, borderRadius: "50%",
-                    background: "#ef4444",
-                  }} />
-                )}
-              </span>
-            )}
-            <span
-              onClick={() => onViewChange("docs")}
-              style={{ color: "var(--accent, #5B8DEF)", textDecoration: "none", opacity: 1, display: "inline-flex", alignItems: "center", gap: 3, cursor: "pointer" }}
-              onMouseEnter={(e) => (e.currentTarget.style.textDecoration = "underline")}
-              onMouseLeave={(e) => (e.currentTarget.style.textDecoration = "none")}
-              title={t("sidebar.docs")}
-            >
-              <IconBook size={12} />
-              {t("sidebar.docs")}
-            </span>
-            <span
-              onClick={() => openExternalUrl("https://github.com/openakita/openakita")}
-              title="GitHub"
-              style={{ color: "var(--accent, #5B8DEF)", opacity: 1, display: "inline-flex", alignItems: "center", cursor: "pointer" }}
-            >
-              <IconGitHub size={13} />
-            </span>
-            <span
-              onClick={() => openExternalUrl("https://gitee.com/zacon365/openakita")}
-              title="Gitee"
-              style={{ color: "var(--accent, #5B8DEF)", opacity: 1, display: "inline-flex", alignItems: "center", cursor: "pointer" }}
-            >
-              <IconGitee size={13} />
-            </span>
-          </div>
-        </div>
-      )}
-      {releaseNotesOpen && (
-        <ReleaseNotesDialog
-          version={releaseNotesVersion}
-          onClose={() => setReleaseNotesOpen(false)}
-        />
-      )}
-      {collapsed && (
-        <div style={{
-          padding: "8px 0",
-          borderTop: "1px solid var(--line)",
-          flexShrink: 0,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 6,
-        }}>
-          <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
-            {onCheckForUpdate && (
-              <button
-                type="button"
-                className="sidebarCollapsedUpdateButton"
-                onClick={() => { void onCheckForUpdate(); }}
-                disabled={updateCheckPending}
-                title={updateCheckPending ? t("version.checking") : t("version.checkNow")}
-                aria-label={updateCheckPending ? t("version.checking") : t("version.checkNow")}
-              >
-                <IconRefresh size={14} className={updateCheckPending ? "spinIcon" : undefined} />
-              </button>
-            )}
-            <span
-              onClick={() => openExternalUrl("https://openakita.ai")}
-              title="openakita.ai"
-              style={{ color: "var(--accent, #5B8DEF)", opacity: 0.5, display: "flex", cursor: "pointer" }}
-            >
-              <IconGlobe size={14} />
-            </span>
-            {serviceRunning && (
-              <span
-                onClick={() => onViewChange("my_feedback")}
-                title={t("sidebar.myFeedback")}
-                style={{ color: view === "my_feedback" ? "var(--fg)" : "var(--accent, #5B8DEF)", opacity: view === "my_feedback" ? 1 : 0.5, display: "flex", cursor: "pointer", position: "relative" }}
-              >
-                <IconBug size={14} />
-                {(unreadFeedbackCount ?? 0) > 0 && (
-                  <span style={{
-                    position: "absolute", top: -2, right: -2,
-                    width: 6, height: 6, borderRadius: "50%",
-                    background: "#ef4444",
-                  }} />
-                )}
-              </span>
-            )}
-          </div>
-          <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
-            <span
-              onClick={() => onViewChange("docs")}
-              title={t("sidebar.docs")}
-              style={{ color: "var(--accent, #5B8DEF)", opacity: 0.5, display: "flex", cursor: "pointer" }}
-            >
-              <IconBook size={14} />
-            </span>
-            <span
-              onClick={() => openExternalUrl("https://github.com/openakita/openakita")}
-              title="GitHub"
-              style={{ color: "var(--accent, #5B8DEF)", opacity: 0.5, display: "flex", cursor: "pointer" }}
-            >
-              <IconGitHub size={14} />
-            </span>
-            <span
-              onClick={() => openExternalUrl("https://gitee.com/zacon365/openakita")}
-              title="Gitee"
-              style={{ color: "var(--accent, #5B8DEF)", opacity: 0.5, display: "flex", cursor: "pointer" }}
-            >
-              <IconGitee size={14} />
-            </span>
-          </div>
-        </div>
-      )}
     </aside>
   );
 }
