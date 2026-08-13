@@ -87,6 +87,12 @@ _BUILTIN_PRICES: dict[str, dict[str, _BuiltinPrice]] = {
         "gpt-4o": _BuiltinPrice(2.5, 10.0, "USD"),
         "llama-3.1-70b": _BuiltinPrice(0.5, 0.75, "USD"),
     },
+    "orcarouter": {
+        # OrcaRouter 的 /models 会返回真实定价，此处只放常用模型兜底（按家族前缀子串匹配）
+        "gpt-4o": _BuiltinPrice(2.5, 10.0, "USD"),
+        "claude-sonnet-4.6": _BuiltinPrice(3.0, 15.0, "USD"),
+        "deepseek-v4-pro": _BuiltinPrice(0.442, 0.884, "USD"),
+    },
 }
 
 
