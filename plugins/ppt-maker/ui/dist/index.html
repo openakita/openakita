@@ -2288,7 +2288,7 @@
               <div className="setting-section">
                 <h3 className="setting-title">图片资源（独立配置，与其它插件不联动）</h3>
                 <div className="deps-help">
-                  <strong>三选一：免费图库 Pexels / Pixabay，或自配百炼 DashScope Key 直接调用 AI 生图。</strong>
+                  <strong>可选免费图库 Pexels / Pixabay，或使用 DashScope / Atlas Cloud 直接调用 AI 生图。</strong>
                   <div>选择 “none” 时只渲染图标 / 占位，导出仍可正常完成。Key 仅保存在本机 settings.json 中，不会上传到主程序。</div>
                 </div>
                 <div className="form-row">
@@ -2298,6 +2298,7 @@
                     <option value="pexels">Pexels（免费图库）</option>
                     <option value="pixabay">Pixabay（免费图库）</option>
                     <option value="dashscope">百炼 DashScope（AI 生成）</option>
+                    <option value="atlascloud">Atlas Cloud（AI 生成）</option>
                   </select>
                 </div>
                 <div className="form-row">
@@ -2311,6 +2312,14 @@
                 <div className="form-row">
                   <div className="text-xs text-muted">百炼 DashScope API Key</div>
                   <input type="password" className="input" placeholder="https://dashscope.console.aliyun.com 申请" value={settings.dashscope_api_key || ""} onChange={(e) => setSettings({ ...settings, dashscope_api_key: e.target.value })} onBlur={(e) => saveSettings({ dashscope_api_key: e.target.value }).catch(setError)} />
+                </div>
+                <div className="form-row">
+                  <div className="text-xs text-muted">Atlas Cloud API Key</div>
+                  <input type="password" className="input" placeholder="https://www.atlascloud.ai/console/api-key" value={settings.atlascloud_api_key || ""} onChange={(e) => setSettings({ ...settings, atlascloud_api_key: e.target.value })} onBlur={(e) => saveSettings({ atlascloud_api_key: e.target.value }).catch(setError)} />
+                </div>
+                <div className="form-row">
+                  <div className="text-xs text-muted">Atlas Cloud 图像模型</div>
+                  <input className="input" value={settings.atlascloud_image_model || "z-image/turbo"} onChange={(e) => setSettings({ ...settings, atlascloud_image_model: e.target.value })} onBlur={(e) => saveSettings({ atlascloud_image_model: e.target.value.trim() }).catch(setError)} />
                 </div>
                 <div className="form-row">
                   <div className="text-xs text-muted">共享中转站名称（可选）</div>

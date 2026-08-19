@@ -1,10 +1,11 @@
 """Image / icon resolution for ppt-maker.
 
-Three image paths (chosen via the ``image_provider`` setting), all independent
+Four image paths (chosen via the ``image_provider`` setting), all independent
 of any other plugin:
   - ``pexels``    — `Pexels <https://www.pexels.com/api/>`_ free stock photos.
   - ``pixabay``   — `Pixabay <https://pixabay.com/api/docs/>`_ free stock photos.
   - ``dashscope`` — Alibaba 百炼 image generation (T2I task) for synthetic art.
+  - ``atlascloud`` — Atlas Cloud image generation for synthetic art.
   - ``none``      — disabled; falls back to icon-only or plain layout.
 
 Icons are resolved deterministically: a small in-memory ``ICON_TABLE`` maps
@@ -50,6 +51,10 @@ PIXABAY_ENDPOINT = "https://pixabay.com/api/"
 DASHSCOPE_DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com"
 DASHSCOPE_T2I_SUBMIT_PATH = "/api/v1/services/aigc/text2image/image-synthesis"
 DASHSCOPE_TASK_QUERY_PATH = "/api/v1/tasks/{task_id}"
+ATLASCLOUD_DEFAULT_BASE_URL = "https://api.atlascloud.ai"
+ATLASCLOUD_IMAGE_SUBMIT_PATH = "/api/v1/model/generateImage"
+ATLASCLOUD_PREDICTION_PATH = "/api/v1/model/prediction/{prediction_id}"
+ATLASCLOUD_POLL_DELAYS = (1, 2, 4, 8, 15, 30)
 
 # Kept as module-level constants for backwards compat — callers that
 # don't override base_url still see the official endpoints.
@@ -105,11 +110,13 @@ class PptAssetProvider:
     """Resolve image/icon queries to local files / shapes.
 
     Settings keys (all stored in the plugin's ``settings.json``):
-      - ``image_provider``   ∈ {none, pexels, pixabay, dashscope}
+      - ``image_provider``   ∈ {none, pexels, pixabay, dashscope, atlascloud}
       - ``pexels_api_key``
       - ``pixabay_api_key``
       - ``dashscope_api_key``
       - ``dashscope_image_model`` (default ``wanx-v1``)
+      - ``atlascloud_api_key``
+      - ``atlascloud_image_model`` (default ``z-image/turbo``)
     """
 
     def __init__(self, *, settings: dict[str, str], data_root: str | Path) -> None:
@@ -122,7 +129,8 @@ class PptAssetProvider:
     @property
     def provider(self) -> str:
         raw = (self._settings.get("image_provider") or "none").strip().lower()
-        return raw if raw in {"none", "pexels", "pixabay", "dashscope"} else "none"
+        supported = {"none", "pexels", "pixabay", "dashscope", "atlascloud"}
+        return raw if raw in supported else "none"
 
     # ── Image ──────────────────────────────────────────────────────────
 
@@ -141,6 +149,8 @@ class PptAssetProvider:
                 return await self._fetch_pixabay(query, out_dir)
             if provider == "dashscope":
                 return await self._gen_dashscope(query, out_dir)
+            if provider == "atlascloud":
+                return await self._gen_atlascloud(query, out_dir)
         except Exception as exc:  # noqa: BLE001
             logger.info("ppt-maker image resolve failed (%s/%s): %s", provider, query, exc)
             return None
@@ -276,6 +286,65 @@ class PptAssetProvider:
                 if status in {"FAILED", "UNKNOWN", "CANCELED"}:
                     return None
             return None
+
+    async def _gen_atlascloud(self, query: str, out_dir: Path) -> str | None:
+        api_key = (self._settings.get("atlascloud_api_key") or "").strip()
+        if not api_key:
+            return None
+        model = (self._settings.get("atlascloud_image_model") or "z-image/turbo").strip()
+        base_url = (self._settings.get("atlascloud_base_url") or "").strip().rstrip(
+            "/"
+        ) or ATLASCLOUD_DEFAULT_BASE_URL
+        submit_url = f"{base_url}{ATLASCLOUD_IMAGE_SUBMIT_PATH}"
+        prediction_url = f"{base_url}{ATLASCLOUD_PREDICTION_PATH}"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        import httpx
+
+        async with httpx.AsyncClient(timeout=60) as client:
+            # Generation submission is intentionally attempted exactly once.
+            submit = await client.post(
+                submit_url,
+                headers=headers,
+                json={"model": model, "prompt": query, "size": "1536*1024"},
+            )
+            submit.raise_for_status()
+            submit_body = submit.json()
+            payload = submit_body.get("data") or submit_body
+            output_url = self._atlascloud_output_url(payload)
+            if output_url:
+                return await self._download(client, output_url, out_dir, suffix=".png")
+            prediction_id = payload.get("id")
+            if not prediction_id:
+                return None
+
+            for delay in ATLASCLOUD_POLL_DELAYS:
+                await asyncio.sleep(delay)
+                poll = await client.get(
+                    prediction_url.format(prediction_id=prediction_id),
+                    headers=headers,
+                )
+                poll.raise_for_status()
+                poll_body = poll.json()
+                result = poll_body.get("data") or poll_body
+                status = str(result.get("status") or "").lower()
+                if status in {"completed", "succeeded"}:
+                    output_url = self._atlascloud_output_url(result)
+                    if not output_url:
+                        return None
+                    return await self._download(client, output_url, out_dir, suffix=".png")
+                if status in {"failed", "canceled", "cancelled"}:
+                    return None
+            return None
+
+    @staticmethod
+    def _atlascloud_output_url(payload: dict[str, Any]) -> str | None:
+        outputs = payload.get("outputs") or payload.get("output") or []
+        if isinstance(outputs, str):
+            outputs = [outputs]
+        return outputs[0] if outputs and isinstance(outputs[0], str) else None
 
     @staticmethod
     async def _download(client: Any, url: str, out_dir: Path, *, suffix: str) -> str | None:

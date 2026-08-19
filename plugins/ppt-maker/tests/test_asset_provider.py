@@ -1,4 +1,4 @@
-"""Tests for PptAssetProvider (Pexels / Pixabay / DashScope + icon resolver)."""
+"""Tests for PptAssetProvider image backends and icon resolver."""
 
 from __future__ import annotations
 
@@ -8,6 +8,9 @@ from typing import Any
 import httpx
 import pytest
 from ppt_asset_provider import (
+    ATLASCLOUD_IMAGE_SUBMIT_PATH,
+    ATLASCLOUD_POLL_DELAYS,
+    ATLASCLOUD_PREDICTION_PATH,
     DASHSCOPE_T2I_SUBMIT,
     PEXELS_ENDPOINT,
     PIXABAY_ENDPOINT,
@@ -194,6 +197,85 @@ async def test_resolve_image_dashscope_succeeds_after_polling(tmp_path, monkeypa
 
     assert path and path.endswith(".png")
     assert state["poll_count"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_resolve_image_atlascloud_posts_once_then_polls(tmp_path, monkeypatch) -> None:
+    download_url = "https://atlas-result.example/img.png"
+    state = {"post_count": 0, "poll_count": 0, "delays": []}
+
+    async def handler(method, url, *, params, headers, json):
+        if method == "POST" and url.endswith(ATLASCLOUD_IMAGE_SUBMIT_PATH):
+            state["post_count"] += 1
+            assert headers and headers["Authorization"] == "Bearer atlas-key"
+            assert json == {
+                "model": "z-image/turbo",
+                "prompt": "editorial illustration",
+                "size": "1536*1024",
+            }
+            return _make_response(payload={"data": {"id": "prediction-1"}})
+        if method == "GET" and url.endswith(
+            ATLASCLOUD_PREDICTION_PATH.format(prediction_id="prediction-1")
+        ):
+            state["poll_count"] += 1
+            if state["poll_count"] == 1:
+                return _make_response(payload={"data": {"status": "processing"}})
+            return _make_response(
+                payload={
+                    "data": {
+                        "status": "completed",
+                        "outputs": [download_url],
+                    }
+                }
+            )
+        if url == download_url:
+            return _make_response(content=b"atlas-png")
+        raise AssertionError(f"unexpected url {url}")
+
+    async def fast_sleep(seconds):
+        state["delays"].append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+    _patch_async_client(monkeypatch, handler)
+    provider = _provider(
+        tmp_path,
+        image_provider="atlascloud",
+        atlascloud_api_key="atlas-key",
+    )
+
+    path = await provider.resolve_image(query="editorial illustration", project_id="p5")
+
+    assert path and path.endswith(".png")
+    assert state["post_count"] == 1
+    assert state["poll_count"] == 2
+    assert state["delays"] == list(ATLASCLOUD_POLL_DELAYS[:2])
+
+
+@pytest.mark.asyncio
+async def test_resolve_image_atlascloud_stops_after_bounded_polling(tmp_path, monkeypatch) -> None:
+    state = {"post_count": 0, "poll_count": 0}
+
+    async def handler(method, url, *, params, headers, json):
+        if method == "POST":
+            state["post_count"] += 1
+            return _make_response(payload={"data": {"id": "prediction-2"}})
+        state["poll_count"] += 1
+        return _make_response(payload={"data": {"status": "processing"}})
+
+    async def fast_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", fast_sleep)
+    _patch_async_client(monkeypatch, handler)
+    provider = _provider(
+        tmp_path,
+        image_provider="atlascloud",
+        atlascloud_api_key="atlas-key",
+    )
+
+    assert (await provider.resolve_image(query="x", project_id="p6")) is None
+    assert state["post_count"] == 1
+    assert state["poll_count"] == len(ATLASCLOUD_POLL_DELAYS)
 
 
 @pytest.mark.asyncio
