@@ -1521,6 +1521,8 @@ def _default_settings() -> dict[str, str]:
         "pixabay_api_key": "",
         "dashscope_api_key": "",
         "dashscope_image_model": "wanx-v1",
+        "atlascloud_api_key": "",
+        "atlascloud_image_model": "z-image/turbo",
         # Optional relay-station overrides — empty string keeps the
         # official DashScope endpoint. See src/openakita/relay/.
         "dashscope_relay_endpoint": "",
