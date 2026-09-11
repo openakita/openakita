@@ -273,6 +273,7 @@ async def test_build_system_prompt_compiled_includes_ask_user_reply_context() ->
     class _PromptAssembler:
         async def build_system_prompt_compiled(self, *_args, **kwargs):
             captured.update(kwargs)
+            captured["builds"] = captured.get("builds", 0) + 1
             return "system prompt"
 
     agent.prompt_assembler = _PromptAssembler()
@@ -313,6 +314,12 @@ async def test_build_system_prompt_compiled_includes_ask_user_reply_context() ->
         "answer": "选择方案 A",
         "message_id": "ask-msg-1",
     }
+    # The same structural inputs still need fresh retrieval and runtime data.
+    await agent._build_system_prompt_compiled(
+        task_description="another request",
+        ask_user_reply=SimpleNamespace(answer="选择方案 A", message_id="ask-msg-1"),
+    )
+    assert captured["builds"] == 2
 
 
 @pytest.mark.asyncio

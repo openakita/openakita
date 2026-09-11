@@ -20,6 +20,8 @@ from functools import lru_cache
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "<!-- DYNAMIC_BOUNDARY -->"
+SYSTEM_PROMPT_CONTEXT_BOUNDARY = "<!-- TURN_CONTEXT_BOUNDARY -->"
+SYSTEM_PROMPT_CONTEXT_END = "<!-- TURN_CONTEXT_END -->"
 
 
 def build_cached_system_blocks(system_prompt: str) -> list[dict]:

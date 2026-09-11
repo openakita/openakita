@@ -6,6 +6,7 @@
 
 import json
 
+from ..cache import SYSTEM_PROMPT_CONTEXT_BOUNDARY, SYSTEM_PROMPT_CONTEXT_END
 from ..types import (
     AudioBlock,
     AudioContent,
@@ -177,6 +178,23 @@ def convert_messages_to_openai(
             会被替换为 "[图片：因当前模型不支持视觉，已隐藏 N 张图片]" 占位文本。
     """
     result = []
+    turn_context = ""
+    if (
+        provider == "deepseek"
+        and SYSTEM_PROMPT_CONTEXT_BOUNDARY in system
+        and SYSTEM_PROMPT_CONTEXT_END in system
+    ):
+        # Only data crosses this boundary. System instructions stay in the
+        # leading system message: later system messages can replace, rather
+        # than supplement, it on some DeepSeek models.
+        prefix, context_and_suffix = system.split(SYSTEM_PROMPT_CONTEXT_BOUNDARY, 1)
+        # The builder's closing delimiter is last, even when a retrieved text
+        # contains a literal copy. Appended plan/agent/plugin policies remain
+        # system instructions rather than becoming part of the data snapshot.
+        context, closing_marker, suffix = context_and_suffix.rpartition(SYSTEM_PROMPT_CONTEXT_END)
+        if closing_marker:
+            system = prefix.rstrip() + suffix
+            turn_context = context.strip()
 
     if system:
         result.append(
@@ -200,7 +218,22 @@ def convert_messages_to_openai(
             else:
                 result.append(converted)
 
-    return _repair_openai_tool_message_sequence(result)
+    result = _repair_openai_tool_message_sequence(result)
+    if turn_context:
+        # Place the snapshot before the latest user input, including during
+        # tool continuations, without splitting assistant/tool result groups.
+        insert_at = next(
+            (i for i in range(len(result) - 1, -1, -1) if result[i].get("role") == "user"),
+            len(result),
+        )
+        result.insert(
+            insert_at,
+            {
+                "role": "user",
+                "content": "[OpenAkita runtime context]\n" + turn_context,
+            },
+        )
+    return result
 
 
 def _repair_openai_tool_message_sequence(messages: list[dict]) -> list[dict]:

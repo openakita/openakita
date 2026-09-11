@@ -883,11 +883,8 @@ class Agent:
         self._knowledge_priority_active = False
         self._knowledge_priority_status = "inactive"
 
-        # Per-session system prompt cache (hermes-style).
-        # Key includes the prompt inputs that can vary across turns.
-        # Invalidated by _invalidate_system_prompt_cache() on memory/mode/
-        # compression events.  Avoids re-running the full prompt assembly
-        # pipeline every turn when only the user message changes.
+        # Compatibility state for existing invalidation hooks. Full prompts
+        # are no longer reused across turns; only builder assets are cached.
         self._system_prompt_cache: dict[tuple, str] = {}
         self._system_prompt_cache_dirty = True
 
@@ -3192,95 +3189,33 @@ class Agent:
         _prompt_profile = _strategy.profile
         _intent_tool_hints = list(getattr(intent, "tool_hints", []) or [])
 
-        # Session-level system prompt cache: reuse when the structural
-        # parameters (mode, catalogs, profile) haven't changed.  Memory
-        # keywords and intent tool hints vary per turn so the cache key includes them.
-        _conv_id = model_lookup_id or (session.id if session else "")
-        try:
-            _working_facts_cache_key = json.dumps(
-                (session_context or {}).get("working_facts", {}),
-                sort_keys=True,
-                ensure_ascii=False,
-                default=str,
-            )
-        except Exception:
-            _working_facts_cache_key = ""
-        # 矛盾守卫命中信号纳入缓存 key：命中/未命中必须产出不同的 system prompt，
-        # 且不同证据内容也应各自缓存，避免上一轮命中缓存串到本轮未命中。
-        try:
-            _contradiction_cache_key = json.dumps(
-                (session_context or {}).get("contradiction_alert", None),
-                sort_keys=True,
-                ensure_ascii=False,
-                default=str,
-            )
-        except Exception:
-            _contradiction_cache_key = ""
-        try:
-            _ask_user_reply_cache_key = json.dumps(
-                (session_context or {}).get("ask_user_reply", None),
-                sort_keys=True,
-                ensure_ascii=False,
-                default=str,
-            )
-        except Exception:
-            _ask_user_reply_cache_key = ""
+        # Rebuild current-turn context even when the structural inputs match.
+        # The builder caches compiled assets; caching the entire result freezes
+        # time, session metadata and retrieval results from an earlier turn.
         _resolved_voice = self._resolve_agent_voice()
         _identity_dir = self._prepare_prompt_identity_dir()
-        _cache_key = (
-            _conv_id,
-            _effective_mode,
-            _prompt_profile,
-            _prompt_tier,
-            _strategy.prompt_mode,
-            _strategy.memory_scope,
-            tuple(sorted(_strategy.catalog_scope)),
-            _strategy.include_project_guidelines,
-            getattr(_strategy, "include_runtime_env_policy", True),
-            getattr(_strategy, "include_multi_agent", True),
-            model_info.get("name", "") if isinstance(model_info, dict) else "",
-            model_display,
-            model_info.get("provider", "") if isinstance(model_info, dict) else "",
-            bool(model_info.get("is_override")) if isinstance(model_info, dict) else False,
-            tuple(sorted(_intent_tool_hints)),
-            tuple(sorted(_mem_keywords)) if _mem_keywords else (),
-            _working_facts_cache_key,
-            str((session_context or {}).get("working_directory", "")),
-            bool((session_context or {}).get("evidence_recommended", False)),
-            _contradiction_cache_key,
-            _ask_user_reply_cache_key,
-            _resolved_voice,
-            str(_identity_dir),
+        prompt = await self.prompt_assembler.build_system_prompt_compiled(
+            task_description,
+            session_type=session_type,
+            context_window=ctx_window,
+            is_sub_agent=self._is_sub_agent_call,
+            tools_enabled=tools_enabled,
+            memory_keywords=_mem_keywords,
+            model_display_name=model_display,
+            session_context=session_context,
+            mode=_effective_mode,
+            model_id=_model_id,
+            user_input_tokens=_user_input_tokens,
+            prompt_profile=_prompt_profile,
+            prompt_tier=_prompt_tier,
+            prompt_mode=_strategy.prompt_mode,
+            memory_scope=_strategy.memory_scope,
+            catalog_scope=_strategy.catalog_scope,
+            include_project_guidelines=_strategy.include_project_guidelines,
+            intent_tool_hints=_intent_tool_hints,
+            agent_voice=_resolved_voice,
+            identity_dir=_identity_dir,
         )
-
-        if not self._system_prompt_cache_dirty and _cache_key in self._system_prompt_cache:
-            prompt = self._system_prompt_cache[_cache_key]
-            logger.debug("[Agent] system prompt cache HIT (key=%s)", _cache_key[:3])
-        else:
-            prompt = await self.prompt_assembler.build_system_prompt_compiled(
-                task_description,
-                session_type=session_type,
-                context_window=ctx_window,
-                is_sub_agent=self._is_sub_agent_call,
-                tools_enabled=tools_enabled,
-                memory_keywords=_mem_keywords,
-                model_display_name=model_display,
-                session_context=session_context,
-                mode=_effective_mode,
-                model_id=_model_id,
-                user_input_tokens=_user_input_tokens,
-                prompt_profile=_prompt_profile,
-                prompt_tier=_prompt_tier,
-                prompt_mode=_strategy.prompt_mode,
-                memory_scope=_strategy.memory_scope,
-                catalog_scope=_strategy.catalog_scope,
-                include_project_guidelines=_strategy.include_project_guidelines,
-                intent_tool_hints=_intent_tool_hints,
-                agent_voice=_resolved_voice,
-                identity_dir=_identity_dir,
-            )
-            self._system_prompt_cache[_cache_key] = prompt
-            self._system_prompt_cache_dirty = False
 
         self._last_effective_mode = _effective_mode
         self._last_tool_policy_source = "prompt_build"

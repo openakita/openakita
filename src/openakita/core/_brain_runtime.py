@@ -737,8 +737,14 @@ class Brain:
 
             ep_name = response.endpoint_name or self.get_current_endpoint_info().get("name", "")
             cost = 0.0
-            for ep in self._llm_client.endpoints:
+            input_includes_cache = False
+            endpoints = list(self._llm_client.endpoints)
+            compiler_client = getattr(self, "_compiler_client", None)
+            if compiler_client is not None:
+                endpoints.extend(compiler_client.endpoints)
+            for ep in endpoints:
                 if ep.name == ep_name:
+                    input_includes_cache = ep.api_type in {"openai", "openai_responses"}
                     cost = ep.calculate_cost(
                         input_tokens=usage.input_tokens,
                         output_tokens=usage.output_tokens,
@@ -752,6 +758,7 @@ class Brain:
                 output_tokens=usage.output_tokens,
                 cache_creation_tokens=usage.cache_creation_input_tokens,
                 cache_read_tokens=usage.cache_read_input_tokens,
+                input_tokens_include_cache=input_includes_cache,
                 estimated_cost=cost,
             )
         except Exception as e:

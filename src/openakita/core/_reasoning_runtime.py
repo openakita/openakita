@@ -2548,8 +2548,13 @@ class ReasoningEngine:
                         _ep_info = self._brain.get_current_endpoint_info() or {}
                         _ep_name = _ep_info.get("name", "")
                         _cost = 0.0
+                        _input_includes_cache = False
                         for _ep in self._brain._llm_client.endpoints:
                             if _ep.name == _ep_name:
+                                _input_includes_cache = _ep.api_type in {
+                                    "openai",
+                                    "openai_responses",
+                                }
                                 _cost = _ep.calculate_cost(
                                     input_tokens=_in_tokens,
                                     output_tokens=_out_tokens,
@@ -2576,6 +2581,7 @@ class ReasoningEngine:
                                 output_tokens=_out_tokens,
                                 cache_creation_tokens=_cache_create,
                                 cache_read_tokens=_cache_read,
+                                input_tokens_include_cache=_input_includes_cache,
                                 estimated_cost=_cost,
                             )
                         finally:

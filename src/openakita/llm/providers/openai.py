@@ -64,6 +64,32 @@ logger = logging.getLogger(__name__)
 REMOTE_STREAM_READ_TIMEOUT_CAP_SECONDS = 90.0
 
 
+def _parse_openai_usage(data: dict) -> dict[str, int]:
+    """Keep total input tokens and cache subsets consistent across response paths."""
+
+    def count(value: object) -> int:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
+    details = data.get("prompt_tokens_details")
+    details = details if isinstance(details, dict) else {}
+    if "prompt_cache_hit_tokens" in data:
+        cached = count(data["prompt_cache_hit_tokens"])
+    else:
+        cached = count(details.get("cached_tokens")) or count(data.get("cached_tokens"))
+    total_input = count(data.get("prompt_tokens"))
+    if "prompt_tokens" not in data and "prompt_cache_miss_tokens" in data:
+        total_input = cached + count(data["prompt_cache_miss_tokens"])
+    return {
+        "input_tokens": total_input,
+        "output_tokens": count(data.get("completion_tokens")),
+        "cache_read_input_tokens": min(cached, total_input),
+        "cache_creation_input_tokens": count(details.get("cache_creation_input_tokens")),
+    }
+
+
 def _safe_dig(data: object, *keys: str) -> object:
     """Walk nested dicts safely; returns ``None`` if any key is missing."""
     cur = data
@@ -1524,25 +1550,7 @@ class OpenAIProvider(LLMProvider):
             }
             stop_reason = stop_reason_map.get(finish_reason, StopReason.END_TURN)
 
-        # 解析使用统计（usage_data 已在前面 empty-content fallback 链中提取）
-        # OpenAI 兼容协议（DashScope/OpenAI/部分 OpenAI 兼容网关）通过
-        # prompt_tokens_details.cached_tokens 暴露 prompt cache 命中数。
-        # 部分模型（如 DashScope 新加坡区 / qwen3-vl-*）直接放在 usage.cached_tokens。
-        _details = usage_data.get("prompt_tokens_details") or {}
-        _cached = 0
-        if isinstance(_details, dict):
-            _cached = int(_details.get("cached_tokens") or 0)
-        if not _cached:
-            _cached = int(usage_data.get("cached_tokens") or 0)
-        _cache_creation = 0
-        if isinstance(_details, dict):
-            _cache_creation = int(_details.get("cache_creation_input_tokens") or 0)
-        usage = Usage(
-            input_tokens=usage_data.get("prompt_tokens", 0),
-            output_tokens=usage_data.get("completion_tokens", 0),
-            cache_read_input_tokens=_cached,
-            cache_creation_input_tokens=_cache_creation,
-        )
+        usage = Usage(**_parse_openai_usage(usage_data))
 
         return LLMResponse(
             id=data.get("id", ""),
@@ -1588,24 +1596,10 @@ class OpenAIProvider(LLMProvider):
         if not choices:
             usage = event.get("usage")
             if usage:
-                _det = usage.get("prompt_tokens_details") or {}
-                _cached = 0
-                if isinstance(_det, dict):
-                    _cached = int(_det.get("cached_tokens") or 0)
-                if not _cached:
-                    _cached = int(usage.get("cached_tokens") or 0)
-                _create = 0
-                if isinstance(_det, dict):
-                    _create = int(_det.get("cache_creation_input_tokens") or 0)
                 return {
                     "type": "message_delta",
                     "delta": {},
-                    "usage": {
-                        "input_tokens": usage.get("prompt_tokens", 0),
-                        "output_tokens": usage.get("completion_tokens", 0),
-                        "cache_read_input_tokens": _cached,
-                        "cache_creation_input_tokens": _create,
-                    },
+                    "usage": _parse_openai_usage(usage),
                 }
             return {"type": "ping"}
 
@@ -1669,21 +1663,7 @@ class OpenAIProvider(LLMProvider):
             }
             chunk_usage = event.get("usage")
             if chunk_usage:
-                _det2 = chunk_usage.get("prompt_tokens_details") or {}
-                _cached2 = 0
-                if isinstance(_det2, dict):
-                    _cached2 = int(_det2.get("cached_tokens") or 0)
-                if not _cached2:
-                    _cached2 = int(chunk_usage.get("cached_tokens") or 0)
-                _create2 = 0
-                if isinstance(_det2, dict):
-                    _create2 = int(_det2.get("cache_creation_input_tokens") or 0)
-                stop_evt["usage"] = {
-                    "input_tokens": chunk_usage.get("prompt_tokens", 0),
-                    "output_tokens": chunk_usage.get("completion_tokens", 0),
-                    "cache_read_input_tokens": _cached2,
-                    "cache_creation_input_tokens": _create2,
-                }
+                stop_evt["usage"] = _parse_openai_usage(chunk_usage)
             events.append(stop_evt)
 
         if not events:

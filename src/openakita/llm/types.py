@@ -710,7 +710,13 @@ class EndpointConfig:
         ip = matched.get("input_price", 0)
         op = matched.get("output_price", 0)
         crp = matched.get("cache_read_price", ip * 0.1) if cache_read_tokens else 0
-        cost = (input_tokens * ip + output_tokens * op + cache_read_tokens * crp) / 1_000_000
+        # Chat Completions / Responses report total input, including cache hits.
+        # Anthropic reports uncached input separately. Keep tier selection above
+        # based on the original input count, but never charge a hit twice.
+        uncached_input = input_tokens
+        if self.api_type in {"openai", "openai_responses"}:
+            uncached_input = max(0, input_tokens - cache_read_tokens)
+        cost = (uncached_input * ip + output_tokens * op + cache_read_tokens * crp) / 1_000_000
         return round(cost, 8)
 
     def calculate_cost_or_none(
