@@ -731,6 +731,16 @@ The `OpenAkita` name, logos, icons, screenshots, and other brand assets are not 
 
 Third-party licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
+## Star History
+
+<a href="https://star-history.dera.page/#openakita/openakita&type=date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=openakita/openakita&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=openakita/openakita&type=Date" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=openakita/openakita&type=Date" />
+ </picture>
+</a>
+
 ---
 
 <p align="center">
