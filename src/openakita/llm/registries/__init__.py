@@ -28,6 +28,7 @@ from .anthropic import AnthropicRegistry
 from .base import ModelInfo, ProviderInfo, ProviderRegistry
 from .dashscope import DashScopeRegistry
 from .openrouter import OpenRouterRegistry
+from .orcarouter import OrcaRouterRegistry
 from .siliconflow import SiliconFlowRegistry
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     "DashScopeRegistry",
     "ModelInfo",
     "OpenRouterRegistry",
+    "OrcaRouterRegistry",
     "ProviderInfo",
     "ProviderRegistry",
     "SiliconFlowRegistry",
@@ -58,6 +60,7 @@ _CLASS_MODULE_MAP: dict[str, str] = {
     "MiniMaxInternationalRegistry": ".minimax",
     "DeepSeekRegistry": ".deepseek",
     "OpenRouterRegistry": ".openrouter",
+    "OrcaRouterRegistry": ".orcarouter",
     "SiliconFlowRegistry": ".siliconflow",
     "SiliconFlowInternationalRegistry": ".siliconflow",
     "VolcEngineRegistry": ".volcengine",

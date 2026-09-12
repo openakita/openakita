@@ -120,6 +120,16 @@
     "registry_class": "OpenRouterRegistry"
   },
   {
+    "name": "OrcaRouter",
+    "slug": "orcarouter",
+    "api_type": "openai",
+    "default_base_url": "https://api.orcarouter.ai/v1",
+    "api_key_env_suggestion": "ORCAROUTER_API_KEY",
+    "supports_model_list": true,
+    "supports_capability_api": true,
+    "registry_class": "OrcaRouterRegistry"
+  },
+  {
     "name": "硅基流动 SiliconFlow（中国区）",
     "slug": "siliconflow",
     "api_type": "openai",

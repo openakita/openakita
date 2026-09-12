@@ -756,6 +756,9 @@ MODEL_CAPABILITIES = {
     "openrouter": {
         # OpenRouter 会从 API 返回能力信息，此处为备用
     },
+    "orcarouter": {
+        # OrcaRouter 会从 API 返回 input_modalities，此处为备用
+    },
     "siliconflow": {
         # 硅基流动 - 主要提供开源模型
         # 天然思考模型（始终思考，不支持 enable_thinking 切换）
@@ -983,6 +986,7 @@ URL_TO_PROVIDER = {
     "api.z.ai": "zhipu",
     "generativelanguage.googleapis.com": "google",
     "openrouter.ai": "openrouter",
+    "api.orcarouter.ai": "orcarouter",
     "api.siliconflow.cn": "siliconflow",
     "api.siliconflow.com": "siliconflow",
     "yunwu.ai": "yunwu",
