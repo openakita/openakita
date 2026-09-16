@@ -72,6 +72,9 @@ Generation-v2 artifacts:
   it looks more poster-like but is less editable.
 - `exporter`: `python-pptx` or `pptxgenjs`. `pptxgenjs` is optional and falls
   back to `python-pptx` when Node dependencies are not installed.
+- `image_provider`: `none`, `pexels`, `pixabay`, `dashscope`, or `atlascloud`.
+  Atlas Cloud is opt-in and uses `atlascloud_api_key` plus the configurable
+  `atlascloud_image_model` (default: `z-image/turbo`).
 
 ## Optional Dependencies
 
@@ -112,4 +115,3 @@ are unavailable, the plugin automatically uses the Python fallback exporter.
 - If export fails, check `audit_report.json`, `repair_plan.json`, `logs/`, and whether `python-pptx` is installed.
 - If `pptxgenjs` output falls back, install Node dependencies in
   `renderers/pptxgenjs/` or switch `exporter` back to `python-pptx`.
-
