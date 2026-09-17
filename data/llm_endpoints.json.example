@@ -2,7 +2,7 @@
   "_doc": "OpenAkita LLM 端点配置文件 - 复制为 llm_endpoints.json 后使用",
   "_doc_fields": {
     "name": "端点名称（唯一标识）",
-    "provider": "供应商标识：anthropic / openai / dashscope / dashscope-intl / kimi-cn / kimi-int / minimax-cn / minimax-int / deepseek / openrouter / siliconflow / siliconflow-intl / volcengine / zhipu-cn / zhipu-int 等",
+    "provider": "供应商标识：anthropic / openai / dashscope / dashscope-intl / kimi-cn / kimi-int / minimax-cn / minimax-int / deepseek / openrouter / orcarouter / siliconflow / siliconflow-intl / volcengine / zhipu-cn / zhipu-int 等",
     "api_type": "API 协议类型：anthropic 或 openai（OpenAI 兼容格式）",
     "base_url": "API 基地址",
     "api_key_env": "API Key 对应的环境变量名（在 .env 中配置实际值）",
