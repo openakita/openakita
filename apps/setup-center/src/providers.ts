@@ -88,6 +88,12 @@ export function isOpenRouterProvider(providerSlug: string | null, baseUrl: strin
   return slug === "openrouter" || base.includes("openrouter.ai");
 }
 
+export function isOrcaRouterProvider(providerSlug: string | null, baseUrl: string): boolean {
+  const slug = (providerSlug || "").toLowerCase();
+  const base = (baseUrl || "").toLowerCase();
+  return slug === "orcarouter" || base.includes("orcarouter.ai");
+}
+
 function openRouterRouterModels(): ListedModel[] {
   return [
     {
@@ -99,6 +105,21 @@ function openRouterRouterModels(): ListedModel[] {
       id: "openrouter/free",
       name: "OpenRouter Free Models Router",
       capabilities: { ...inferCapabilities("openrouter/free", "openrouter"), tools: true },
+    },
+  ];
+}
+
+function orcaRouterRouterModels(): ListedModel[] {
+  return [
+    {
+      id: "orcarouter/auto",
+      name: "OrcaRouter Auto Router",
+      capabilities: { ...inferCapabilities("orcarouter/auto", "orcarouter"), tools: true },
+    },
+    {
+      id: "orcarouter/free",
+      name: "OrcaRouter Free Models Router",
+      capabilities: { ...inferCapabilities("orcarouter/free", "orcarouter"), tools: true },
     },
   ];
 }
@@ -304,7 +325,11 @@ export async function fetchModelsDirectly(params: {
     throw new Error(`API ${resp.status}: ${resp.body.slice(0, 200)}`);
   }
   const data = JSON.parse(resp.body);
-  const routerModels = isOpenRouterProvider(providerSlug, baseUrl) ? openRouterRouterModels() : [];
+  const routerModels = isOpenRouterProvider(providerSlug, baseUrl)
+    ? openRouterRouterModels()
+    : isOrcaRouterProvider(providerSlug, baseUrl)
+      ? orcaRouterRouterModels()
+      : [];
   const seen = new Set(routerModels.map((m) => m.id));
   const apiModels = (data.data ?? [])
     .map((m: any) => ({

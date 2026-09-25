@@ -79,6 +79,11 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
         b = (base_url or "").strip().lower()
         return slug == "openrouter" or "openrouter.ai" in b
 
+    def _is_orcarouter_provider() -> bool:
+        slug = (provider_slug or "").strip().lower()
+        b = (base_url or "").strip().lower()
+        return slug == "orcarouter" or "orcarouter.ai" in b
+
     def _openrouter_router_models() -> list[dict]:
         return [
             {
@@ -91,6 +96,22 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
                 "id": "openrouter/free",
                 "name": "OpenRouter Free Models Router",
                 "capabilities": infer_capabilities("openrouter/free", provider_slug="openrouter")
+                | {"tools": True},
+            },
+        ]
+
+    def _orcarouter_router_models() -> list[dict]:
+        return [
+            {
+                "id": "orcarouter/auto",
+                "name": "OrcaRouter Auto Router",
+                "capabilities": infer_capabilities("orcarouter/auto", provider_slug="orcarouter")
+                | {"tools": True},
+            },
+            {
+                "id": "orcarouter/free",
+                "name": "OrcaRouter Free Models Router",
+                "capabilities": infer_capabilities("orcarouter/free", provider_slug="orcarouter")
                 | {"tools": True},
             },
         ]
@@ -290,7 +311,13 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
                 return _minimax_fallback_models()
             raise
 
-    out: list[dict] = _openrouter_router_models() if _is_openrouter_provider() else []
+    out: list[dict] = (
+        _openrouter_router_models()
+        if _is_openrouter_provider()
+        else _orcarouter_router_models()
+        if _is_orcarouter_provider()
+        else []
+    )
     seen = {str(m.get("id") or "") for m in out}
     for m in data.get("data", []):
         mid = str(m.get("id", "")).strip()
