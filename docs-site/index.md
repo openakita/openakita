@@ -17,6 +17,11 @@ hero:
       link: https://github.com/openakita/openakita
 
 features:
+  - icon: 📋
+    title: 版本更新
+    details: 当前版本 v1.27.20 · 最后更新 2026-06-11 · 查看完整版本历史。
+    link: /versions
+    linkText: 版本历史
   - icon: 💬
     title: 多通道对话
     details: 接入 Telegram、飞书、钉钉、企业微信、QQ 等主流 IM，在你常用的聊天软件里直接与 AI 对话。
