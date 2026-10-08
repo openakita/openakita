@@ -1,0 +1,22 @@
+{
+  "serverIdentifier": "baizhi-agent-toolkit",
+  "serverName": "百智云工具包 (Baizhi Cloud Agent Toolkit)",
+  "serverDescription": "使用自备百智云 API Key 连接托管 Agent 工具；可用工具与权限以当前账号的 tools/list 为准。",
+  "transport": "streamable_http",
+  "url": "https://agent-toolkit.app.baizhi.cloud/mcp",
+  "headers": {
+    "Authorization": "Bearer ${BAIZHI_API_KEY}"
+  },
+  "autoConnect": false,
+  "configSchema": [
+    {
+      "key": "BAIZHI_API_KEY",
+      "label": "Baizhi Cloud API Key",
+      "type": "secret",
+      "required": true,
+      "placeholder": "填写自己的 API Key，无需 Bearer 前缀",
+      "help": "在百智云工具包控制台获取。调用可能消耗额度，输入将发送到百智云。",
+      "helpUrl": "https://agent-toolkit.app.baizhi.cloud/"
+    }
+  ]
+}
