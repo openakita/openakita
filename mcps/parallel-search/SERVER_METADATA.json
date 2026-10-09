@@ -1,0 +1,11 @@
+{
+  "serverIdentifier": "parallel-search",
+  "serverName": "Parallel Search",
+  "serverDescription": "免费、无需 API Key 的网页搜索与内容提取 (Parallel Search MCP)",
+  "transport": "streamable_http",
+  "url": "https://search.parallel.ai/mcp",
+  "headers": {
+    "User-Agent": "OpenAkita (https://github.com/openakita/openakita)"
+  },
+  "autoConnect": false
+}
