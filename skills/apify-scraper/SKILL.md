@@ -71,12 +71,12 @@ Apify 平台上有数千个 Actor（即预构建的爬虫/自动化程序）。�
 | Instagram | Hashtag Scraper | `apify/instagram-hashtag-scraper` | 标签下的帖子 |
 | Instagram | Comment Scraper | `apify/instagram-comment-scraper` | 帖子评论 |
 | TikTok | Scraper | `clockworks/free-tiktok-scraper` | 视频、用户、标签 |
-| YouTube | Scraper | `bernardo/youtube-scraper` | 视频信息、评论 |
+| YouTube | Scraper | `streamers/youtube-scraper` | 视频信息、评论 |
 | YouTube | Channel Scraper | `streamers/youtube-channel-scraper` | 频道数据 |
 | Facebook | Posts Scraper | `apify/facebook-posts-scraper` | 页面帖子 |
 | Facebook | Comments Scraper | `apify/facebook-comments-scraper` | 帖子评论 |
 | Twitter/X | Scraper | `apidojo/tweet-scraper` | 推文搜索 |
-| LinkedIn | Profile Scraper | `anchor/linkedin-profile-scraper` | 用户资料 |
+| LinkedIn | Profile API | `johnvc/linkedin-profile-api` | 用户资料 |
 
 #### 搜索引擎
 
@@ -87,15 +87,15 @@ Apify 平台上有数千个 Actor（即预构建的爬虫/自动化程序）。�
 | Google | Trends | `emastra/google-trends-scraper` | 搜索趋势 |
 | Google | News | `lhotanova/google-news-scraper` | 新闻搜索 |
 | Google | Shopping | `epctex/google-shopping-scraper` | 商品价格 |
-| Bing | Search | `nicefellow/bing-search-scraper` | Bing 搜索结果 |
+| Bing | Search | `tri_angle/bing-search-scraper` | Bing 搜索结果 |
 
 #### 电商平台
 
 | 平台 | Actor | Actor ID | 主要功能 |
 |------|-------|----------|---------|
-| Amazon | Product Scraper | `junglee/amazon-scraper` | 商品详情、评价 |
+| Amazon | Product Scraper | `junglee/Amazon-crawler` | 商品详情、评价 |
 | Amazon | Review Scraper | `junglee/amazon-reviews-scraper` | 商品评论 |
-| eBay | Scraper | `drobnikj/ebay-scraper` | 商品搜索 |
+| eBay | Scraper | `memo23/ebay-search-scraper-ppe` | 商品搜索 |
 | AliExpress | Scraper | `epctex/aliexpress-scraper` | 商品数据 |
 
 #### 通用工具
@@ -104,8 +104,6 @@ Apify 平台上有数千个 Actor（即预构建的爬虫/自动化程序）。�
 |------|-------|----------|---------|
 | 网页抓取 | Web Scraper | `apify/web-scraper` | 通用网页数据提取 |
 | 网页截图 | Screenshot | `apify/screenshot-url` | 网页截图 |
-| 链接提取 | Link Extractor | `apify/link-extractor` | 页面链接收集 |
-| RSS 解析 | RSS Feed | `drobnikj/rss-feed-reader` | RSS 源数据 |
 | AI 提取 | GPT Scraper | `drobnikj/gpt-scraper` | AI 驱动智能提取 |
 
 ### Actor 自动选择策略
