@@ -111,6 +111,7 @@ _IMMEDIATE_FIELDS = frozenset(
         "bocha_api_key",
         "tavily_api_key",
         "jina_api_key",
+        "keenable_api_key",
         "searxng_base_url",
     }
 )

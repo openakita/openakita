@@ -136,7 +136,8 @@ class WebSearchProvider(Protocol):
             credential. False for DuckDuckGo (uses ddgs lib) and Jina (free
             tier).
         auto_detect_order: Lower = higher priority during auto-detect fallback.
-            Recommended: bocha=10, tavily=20, searxng=30, jina=40, ddg=100.
+            Recommended: bocha=10, tavily=20, searxng=30, jina=40, keenable=45,
+            ddg=100.
         signup_url: Where the user should go to register and get a key
             (rendered as a "申请 Key" button in the settings panel).
         docs_url: Provider documentation URL (rendered as a small link).

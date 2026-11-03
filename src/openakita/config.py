@@ -408,7 +408,7 @@ class Settings(BaseSettings):
     web_search_provider: str = Field(
         default="",
         description=(
-            "激活的搜索源 ID（bocha / tavily / searxng / jina / duckduckgo）；"
+            "激活的搜索源 ID（bocha / tavily / searxng / jina / keenable / duckduckgo）；"
             "留空=按优先级自动检测可用源"
         ),
     )
@@ -423,6 +423,10 @@ class Settings(BaseSettings):
     jina_api_key: str = Field(
         default="",
         description="Jina 搜索 API Key（可选，无 Key 也能用但限速）",
+    )
+    keenable_api_key: str = Field(
+        default="",
+        description="Keenable 搜索 API Key（可选，无 Key 走公共端点但限速，申请：https://keenable.ai）",
     )
     searxng_base_url: str = Field(
         default="",
