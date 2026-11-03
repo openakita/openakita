@@ -501,7 +501,7 @@ def test_providers_endpoint_lists_all() -> None:
     assert r.status_code == 200
     data = r.json()
     ids = {p["id"] for p in data["providers"]}
-    assert {"bocha", "tavily", "searxng", "jina", "duckduckgo"}.issubset(ids)
+    assert {"bocha", "tavily", "searxng", "jina", "keenable", "duckduckgo"}.issubset(ids)
     # Each entry has the contract fields the panel uses
     for p in data["providers"]:
         for k in ("id", "label", "requires_credential", "is_available", "auto_detect_order"):

@@ -6,6 +6,7 @@ Each module in this package registers itself on import:
     tavily      — Tavily（海外推荐，需要 TAVILY_API_KEY）
     searxng     — 自部署 SearXNG（需要 SEARXNG_BASE_URL）
     jina        — Jina Reader（无 Key 走免费额度，可选 JINA_API_KEY）
+    keenable    — Keenable（无 Key 走公共端点，可选 KEENABLE_API_KEY）
     duckduckgo  — DuckDuckGo（无 Key，国内常不可达，作为 auto-detect 兜底）
 
 To add a new provider: drop ``providers/<id>.py`` with a module-level

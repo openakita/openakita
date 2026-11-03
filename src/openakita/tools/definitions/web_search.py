@@ -35,8 +35,8 @@ WEB_SEARCH_TOOLS = [
         "detail": """通过当前激活的搜索源进行网页搜索。
 
 **搜索源（Provider）**：
-- 用户在「配置 → 工具与技能 → 搜索源」面板配置激活源（博查/Tavily/SearXNG/Jina/DuckDuckGo）
-- 留空时按优先级自动检测可用源（bocha → tavily → searxng → jina → duckduckgo）
+- 用户在「配置 → 工具与技能 → 搜索源」面板配置激活源（博查/Tavily/SearXNG/Jina/Keenable/DuckDuckGo）
+- 留空时按优先级自动检测可用源（bocha → tavily → searxng → jina → keenable → duckduckgo）
 - DuckDuckGo 在国内常无法访问，请用户配置博查/Tavily 等替代源
 
 **适用场景**：
@@ -77,7 +77,7 @@ WEB_SEARCH_TOOLS = [
                 },
                 "provider": {
                     "type": "string",
-                    "description": "可选：显式指定搜索源 ID（bocha/tavily/searxng/jina/duckduckgo）；不传则按配置/auto-detect",
+                    "description": "可选：显式指定搜索源 ID（bocha/tavily/searxng/jina/keenable/duckduckgo）；不传则按配置/auto-detect",
                 },
                 "timeout_seconds": {
                     "type": "number",
@@ -100,7 +100,7 @@ WEB_SEARCH_TOOLS = [
 
 **搜索源**：
 - 不是所有 provider 都支持独立的新闻接口；不支持的会被自动跳过
-- 当前内置源中：DuckDuckGo 支持 news；博查/Tavily/SearXNG/Jina 当前不暴露独立 news 端点
+- 当前内置源中：DuckDuckGo 支持 news；博查/Tavily/SearXNG/Jina/Keenable 当前不暴露独立 news 端点
 - 国内场景下若 DuckDuckGo 不可达，news_search 可能没有可用源；建议改用 web_search + 关键词限定
 
 **适用场景**：

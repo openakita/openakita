@@ -112,6 +112,11 @@ const PROVIDER_UI: Record<string, ProviderUIConfig> = {
     envType: "password",
     envPlaceholder: "jina_... (可选)",
   },
+  keenable: {
+    envKey: "KEENABLE_API_KEY",
+    envType: "password",
+    envPlaceholder: "(可选，无 Key 走公共端点)",
+  },
   exa: {
     envKey: "EXA_API_KEY",
     envType: "password",
@@ -294,7 +299,7 @@ export default function WebSearchProviderPanel({
       <div className="rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
         {t(
           "toolsWebSearch.intro",
-          "DuckDuckGo 在国内常无法访问，建议配置博查（国内）或 Tavily（海外）等替代源。留空「激活源」走自动检测，按优先级（博查 → Tavily → SearXNG → Jina → DuckDuckGo）尝试已配置的可用源。",
+          "DuckDuckGo 在国内常无法访问，建议配置博查（国内）或 Tavily（海外）等替代源。留空「激活源」走自动检测，按优先级（博查 → Tavily → SearXNG → Jina → Keenable → DuckDuckGo）尝试已配置的可用源。",
         )}
       </div>
 

@@ -5,7 +5,7 @@
                             ↓
                           web_search/runtime.run_web_search
                             ↓
-                          web_search/providers/{bocha,tavily,searxng,jina,duckduckgo}
+                          web_search/providers/{bocha,tavily,searxng,jina,keenable,duckduckgo}
 
 错误约定：
     - 配置/认证类失败 → raise :class:`ToolConfigError` (被 ToolExecutor 转成 SSE config_hint)
@@ -280,7 +280,7 @@ class WebSearchHandler:
             # provider_id 显式给的但不存在
             return (
                 f"错误：未知的搜索源 ID {provider_id!r}。"
-                "请用 bocha / tavily / searxng / jina / duckduckgo，"
+                "请用 bocha / tavily / searxng / jina / keenable / duckduckgo，"
                 "或在设置中查看已注册源。"
             )
         except NetworkUnreachableError as exc:
@@ -365,7 +365,7 @@ class WebSearchHandler:
         except KeyError:
             return (
                 f"错误：未知的搜索源 ID {provider_id!r}。"
-                "请用 bocha / tavily / searxng / jina / duckduckgo。"
+                "请用 bocha / tavily / searxng / jina / keenable / duckduckgo。"
             )
         except NetworkUnreachableError as exc:
             logger.warning("[news_search] %s", exc)
