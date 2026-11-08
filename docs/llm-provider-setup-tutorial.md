@@ -567,6 +567,13 @@ HTTPS_PROXY=http://127.0.0.1:7890
 | `o3-mini` | text, thinking, tools | 推理 + 工具 |
 | `gpt-5` | text, tools, vision, thinking | 最新旗舰 |
 
+使用 OpenAI 服务商的 Chat Completions 接口时，OpenAkita 会为 o1/o3/o4 和 GPT-5
+系列自动使用 `max_completion_tokens`，无需手动添加参数；该预算包含输出和推理 token。
+o 系列及初代 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 会忽略自定义温度，使用模型默认值。
+GPT-5.1/5.2 在 `reasoning_effort=none`（默认）时保留自定义温度，启用推理时不发送温度参数。
+详见 [Chat Completions 参数](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
+和 [GPT-5.2 参数兼容性](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.2)。
+
 ### 6.3 配置方式
 
 #### OpenAkita Desktop
