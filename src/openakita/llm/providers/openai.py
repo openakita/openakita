@@ -13,6 +13,7 @@ OpenAI Provider
 
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from json import JSONDecodeError
 
@@ -915,12 +916,12 @@ class OpenAIProvider(LLMProvider):
         # - 未显式给值时用模型默认输出预算；
         # - 未知模型保留历史 16k 兜底，避免对中转/自定义模型过度限制。
         #
-        # 特殊情况 — OpenAI o1/o3/o4 推理模型：
-        # 这些模型拒绝 max_tokens 参数，要求使用 max_completion_tokens。
-        # 检测方式：模型名含 "o1-"/"o3-"/"o4-" 且 provider 为 openai。
-        _model_lower = self.config.model.lower()
-        _is_openai_reasoning = self.config.provider == "openai" and any(
-            tag in _model_lower for tag in ("o1-", "o3-", "o4-", "/o1", "/o3", "/o4")
+        # OpenAI o-series and GPT-5 require max_completion_tokens. Match the
+        # base model, including bare names and snapshots, without matching
+        # unrelated names such as custom-o1-model or vendor/o13.
+        _model_base = self.config.model.lower().rsplit("/", 1)[-1]
+        _is_openai_reasoning = self.config.provider == "openai" and (
+            re.match(r"(?:o[134](?:$|-)|gpt-5(?:$|[-.]))", _model_base) is not None
         )
         _token_key = "max_completion_tokens" if _is_openai_reasoning else "max_tokens"
 
@@ -944,10 +945,14 @@ class OpenAIProvider(LLMProvider):
             body["stop"] = request.stop_sequences
 
         # 额外参数（服务商特定）
-        if self.config.extra_params:
-            body.update(self.config.extra_params)
-        if request.extra_params:
-            body.update(request.extra_params)
+        for extra_params in (self.config.extra_params, request.extra_params):
+            if extra_params:
+                body.update(extra_params)
+                if _is_openai_reasoning and "max_tokens" in extra_params:
+                    body["max_completion_tokens"] = extra_params.get(
+                        "max_completion_tokens", extra_params["max_tokens"]
+                    )
+                    body.pop("max_tokens", None)
 
         is_minimax = is_minimax_endpoint(
             self.config.provider,
@@ -1113,6 +1118,18 @@ class OpenAIProvider(LLMProvider):
         if getattr(self, "_thinking_params_unsupported", False):
             for _tp in ("thinking", "reasoning_effort", "enable_thinking", "thinking_budget"):
                 body.pop(_tp, None)
+
+        if _is_openai_reasoning:
+            # o-series and the original GPT-5/mini/nano models only accept the
+            # default temperature. Later GPT-5 models allow sampling with
+            # reasoning_effort=none (their default). Check after extra params
+            # and thinking-depth handling so the effective effort wins.
+            _fixed_temperature = (
+                re.match(r"(?:o[134](?:$|-)|gpt-5(?:-(?:mini|nano))?(?:$|-\d{4}-))", _model_base)
+                is not None
+            )
+            if _fixed_temperature or body.get("reasoning_effort") not in (None, "none"):
+                body.pop("temperature", None)
 
         # ── 请求体卫生检查 ──
         # extra_params 的 body.update() 是盲覆盖，可能将精心计算的参数（如 max_tokens）
