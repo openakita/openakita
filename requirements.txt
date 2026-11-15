@@ -9,6 +9,7 @@
 # === Core LLM ===
 anthropic>=0.40.0          # Claude API official client
 openai>=1.0.0              # OpenAI-compatible API (backup endpoint support)
+llm-prices>=1.2.0          # Dated per-token prices for built-in cost fallback
 
 # === MCP (Model Context Protocol) ===
 mcp>=1.0.0                 # MCP protocol support

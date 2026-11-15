@@ -1477,6 +1477,15 @@ wheels = [
 ]
 
 [[package]]
+name = "llm-prices"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/52/054d17ca60249694a8faa5fd586fd4ddbd959d44430b6077983fd4ad9bb5/llm_prices-1.2.0.tar.gz", hash = "sha256:a86aafe2bcfbdcf653e7e4b9fb63bfc4de3630fbd3f827b6adfa22c6023ef931", size = 24991, upload-time = "2026-11-15T16:09:51.759Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/8b/a8e0bb805bc8b01af71db39a00418965bf5b90c463a5eff0798468b0faff/llm_prices-1.2.0-py3-none-any.whl", hash = "sha256:06d9f067dd07ce6925582381c65e16849787a2365e57fb86053afe5cc48f992c", size = 19180, upload-time = "2026-11-15T16:09:50.587Z" },
+]
+
+[[package]]
 name = "lxml"
 version = "6.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1958,6 +1967,7 @@ dependencies = [
     { name = "filelock" },
     { name = "gitpython" },
     { name = "httpx", extra = ["socks"] },
+    { name = "llm-prices" },
     { name = "mcp" },
     { name = "nest-asyncio" },
     { name = "openai" },
@@ -2086,6 +2096,7 @@ requires-dist = [
     { name = "keyring", marker = "extra == 'finance-auto'", specifier = ">=24.0,<26.0" },
     { name = "lark-oapi", marker = "extra == 'all'", specifier = ">=1.6.2" },
     { name = "lark-oapi", marker = "extra == 'feishu'", specifier = ">=1.6.2" },
+    { name = "llm-prices", specifier = ">=1.2.0" },
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "mss", marker = "sys_platform == 'win32' and extra == 'desktop'", specifier = ">=9.0.0" },
     { name = "mss", marker = "extra == 'all'", specifier = ">=9.0.0" },

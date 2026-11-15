@@ -155,3 +155,53 @@ def test_list_builtin_prices_has_known_providers():
         assert required in table
         assert isinstance(table[required], list)
         assert all("input_price" in row and "output_price" in row for row in table[required])
+
+
+def test_lookup_current_claude_opus_not_priced_as_opus_4():
+    """claude-opus-4-5/4-6/4-7 used to substring-match 'claude-opus-4' ($15/$75)."""
+    for model in ("claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7-20260101"):
+        tier = lookup_builtin_price("anthropic", model)
+        assert tier is not None, model
+        assert tier["currency"] == "USD"
+        assert tier["input_price"] == 5.0
+        assert tier["output_price"] == 25.0
+
+
+def test_lookup_newer_openai_and_gemini_models_are_priced():
+    for provider, model in (
+        ("openai", "gpt-5"),
+        ("openai", "gpt-5.1"),
+        ("gemini", "gemini-2.5-pro"),
+        ("some-proxy", "gpt-5-mini"),
+    ):
+        tier = lookup_builtin_price(provider, model)
+        assert tier is not None, (provider, model)
+        assert tier["currency"] == "USD"
+        assert tier["input_price"] > 0 and tier["output_price"] > 0
+
+
+def test_lookup_uses_published_cache_read_price():
+    """gpt-4o cached input is 50% of input, not the 10% default guess."""
+    tier = lookup_builtin_price("openai", "gpt-4o-2024-08-06")
+    assert tier is not None
+    assert tier["cache_read_price"] == tier["input_price"] / 2
+
+
+def test_cny_providers_keep_local_table():
+    tier = lookup_builtin_price("deepseek", "deepseek-chat")
+    assert tier is not None
+    assert tier["currency"] == "CNY"
+    assert tier["matched_key"] == "deepseek-chat"
+
+
+def test_endpoint_calculate_cost_or_none_for_gpt_5():
+    ep = EndpointConfig(
+        name="test",
+        provider="openai",
+        api_type="openai",
+        base_url="x",
+        model="gpt-5",
+        pricing_tiers=None,
+    )
+    cost = ep.calculate_cost_or_none(1_000_000, 1_000_000)
+    assert cost is not None and cost > 0

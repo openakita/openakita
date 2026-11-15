@@ -22,6 +22,8 @@ dependencies = [
     # Core LLM
     "anthropic>=0.40.0",
     "openai>=1.0.0",
+    # Built-in per-token price fallback (llm/pricing.py)
+    "llm-prices>=1.2.0",
 
     # MCP (Model Context Protocol)
     "mcp>=1.0.0",
