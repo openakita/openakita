@@ -14,6 +14,12 @@ Design constraints (intentionally restrained):
   We do NOT auto-convert currencies — the caller knows the endpoint currency.
 - Matching is fuzzy (substring on ``model`` lowercased), provider-scoped to
   reduce cross-provider collisions.
+- For USD-priced model makers (Anthropic, OpenAI, Google Gemini, ...) the
+  dated ``llm-prices`` table is consulted first: it resolves exact model ids
+  (``claude-opus-4-5``, ``gpt-5.1``, ``gemini-2.5-pro``, dated snapshots,
+  ``provider/`` prefixes) and carries the published cache-read rate. The local
+  table below stays the source for CNY-priced providers and for anything
+  ``llm-prices`` does not list.
 
 Returned shape mirrors a single ``pricing_tiers`` entry::
 
@@ -24,6 +30,11 @@ Returned shape mirrors a single ``pricing_tiers`` entry::
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+try:
+    import llm_prices as _llm_prices
+except ImportError:  # pragma: no cover - keep the local table usable without it
+    _llm_prices = None
 
 
 @dataclass(frozen=True)
@@ -90,13 +101,47 @@ _BUILTIN_PRICES: dict[str, dict[str, _BuiltinPrice]] = {
 }
 
 
+# Local buckets quoted in CNY: these providers keep using the table above.
+_LOCAL_ONLY_PROVIDERS = frozenset({"dashscope", "deepseek", "moonshot", "zhipuai"})
+
+# For provider slugs ``llm-prices`` doesn't know (proxies, ``custom``), only
+# trust rows from first-party model makers, never from open-weight hosts.
+_LLM_PRICES_MAKERS = frozenset({"anthropic", "openai", "google", "mistral", "xai", "cohere"})
+
+
+def _lookup_llm_prices(provider_key: str, model: str) -> dict | None:
+    """Resolve ``model`` through the ``llm-prices`` table (USD per 1M tokens)."""
+    if _llm_prices is None or provider_key in _LOCAL_ONLY_PROVIDERS:
+        return None
+    known = _llm_prices.Provider.parse(provider_key) if provider_key else None
+    if known is not None:
+        price = known.lookup(model)
+    else:
+        price = _llm_prices.lookup(model)
+        if price is not None and price.provider not in _LLM_PRICES_MAKERS:
+            price = None
+    if price is None or price.input is None or price.output is None:
+        return None
+    cache_read = price.cache_read if price.cache_read is not None else round(price.input * 0.1, 6)
+    return {
+        "max_input": -1,
+        "input_price": price.input,
+        "output_price": price.output,
+        "cache_read_price": cache_read,
+        "currency": "USD",
+        "source": "builtin",
+        "matched_key": price.model,
+    }
+
+
 def lookup_builtin_price(
     provider: str | None,
     model: str | None,
 ) -> dict | None:
     """Return a single ``pricing_tiers``-shaped dict, or ``None`` if unknown.
 
-    Selection rule: within the matched provider, prefer the **longest**
+    Selection rule: exact model ids listed by ``llm-prices`` win; otherwise,
+    within the matched provider, prefer the **longest**
     substring key that appears in the lowercased model name. Returns ``None``
     if no provider entry matches or no model substring matches. Callers should
     treat ``None`` as "do not display 0; render '-' in UI".
@@ -105,6 +150,10 @@ def lookup_builtin_price(
         return None
     provider_key = (provider or "").strip().lower()
     model_lc = model.strip().lower()
+
+    listed = _lookup_llm_prices(provider_key, model_lc)
+    if listed is not None:
+        return listed
 
     candidate_buckets: list[dict[str, _BuiltinPrice]] = []
     if provider_key and provider_key in _BUILTIN_PRICES:
