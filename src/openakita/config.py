@@ -408,7 +408,7 @@ class Settings(BaseSettings):
     web_search_provider: str = Field(
         default="",
         description=(
-            "激活的搜索源 ID（bocha / tavily / searxng / jina / duckduckgo）；"
+            "激活的搜索源 ID（bocha / tavily / specstream / searxng / jina / duckduckgo）；"
             "留空=按优先级自动检测可用源"
         ),
     )
@@ -419,6 +419,10 @@ class Settings(BaseSettings):
     tavily_api_key: str = Field(
         default="",
         description="Tavily 搜索 API Key（海外推荐，申请：https://app.tavily.com/home）",
+    )
+    specstream_api_key: str = Field(
+        default="",
+        description="SpecStream 搜索 API Key（申请：https://specstream.ai）",
     )
     jina_api_key: str = Field(
         default="",

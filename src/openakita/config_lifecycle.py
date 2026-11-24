@@ -110,6 +110,7 @@ _IMMEDIATE_FIELDS = frozenset(
         "web_search_provider",
         "bocha_api_key",
         "tavily_api_key",
+        "specstream_api_key",
         "jina_api_key",
         "searxng_base_url",
     }
