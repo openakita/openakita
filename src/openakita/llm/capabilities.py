@@ -1000,10 +1000,16 @@ _IMAGE_GENERATION_MODEL_PREFIXES = (
 )
 
 
+def is_h3_image_model(model_name: str) -> bool:
+    return model_name.strip().lower() in {"minimax-h3-image", "minimax-h3-image-highspeed"}
+
+
 def is_image_generation_model(model_name: str) -> bool:
     """Return True for models that use image-generation APIs, not chat APIs."""
     model_lower = (model_name or "").strip().lower()
-    return any(model_lower.startswith(prefix) for prefix in _IMAGE_GENERATION_MODEL_PREFIXES)
+    return is_h3_image_model(model_lower) or model_lower.startswith(
+        _IMAGE_GENERATION_MODEL_PREFIXES
+    )
 
 
 def infer_capabilities(
