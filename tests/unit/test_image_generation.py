@@ -207,3 +207,117 @@ async def test_generate_image_falls_back_and_saves_base64_result(tmp_path, monke
     saved_path = Path(result["saved_to"])
     assert saved_path == (tmp_path / "gpt-image-1_img-fallback.png").resolve()
     assert saved_path.read_bytes() == b"png-bytes"
+
+
+@pytest.mark.parametrize(
+    ("region", "model"),
+    [("io", "MiniMax-H3-Image"), ("cn", "MiniMax-H3-Image-Highspeed")],
+)
+@pytest.mark.asyncio
+async def test_generate_h3_image(tmp_path, monkeypatch, region: str, model: str) -> None:
+    from openakita.llm.capabilities import is_image_generation_model
+
+    assert is_image_generation_model(model)
+    base = f"https://api.minimax.{region}/v1"
+    endpoint = _endpoint(
+        provider="custom",
+        base_url=base,
+        model=model,
+        timeout=30,
+        extra_params={"request_params": {"response_format": "b64_json"}},
+    )
+    payload = b"generated png"
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        assert request.method == "POST"
+        assert request.headers["authorization"] == "Bearer sk-test"
+        assert request.extensions["timeout"]["read"] == 600
+        body = json.loads(request.content)
+        expected = {
+            "model": model,
+            "prompt": "a red kite",
+            "n": 1,
+            "size": "1024x1024",
+            "output_format": "png",
+            "response_format": "b64_json",
+            "disable_prompt_enhanced": True,
+        }
+        if region == "cn":
+            expected["aigc_watermark"] = True
+        assert body == expected
+        return httpx.Response(
+            200,
+            json={"request_id": "h3-1", "data": [{"b64_json": base64.b64encode(payload).decode()}]},
+        )
+
+    monkeypatch.setattr("openakita.llm.image_generation.load_image_endpoints", lambda _: [endpoint])
+    monkeypatch.setattr(
+        "openakita.llm.providers.proxy_utils.get_httpx_client_kwargs",
+        lambda **_: {"transport": httpx.MockTransport(handler)},
+    )
+    ctx = PolicyContext(
+        session_id="image-h3", working_directory=tmp_path, workspace_roots=(tmp_path,)
+    )
+    token = set_current_context(ctx)
+    try:
+        result = json.loads(
+            await SystemHandler(SimpleNamespace()).handle(
+                "generate_image",
+                {"prompt": "a red kite", "prompt_extend": False, "watermark": True},
+            )
+        )
+    finally:
+        reset_current_context(token)
+    assert result["ok"]
+    assert result["model"] == model
+    assert Path(result["saved_to"]).read_bytes() == payload
+    assert seen == [f"{base}/images/generations"]
+
+
+def test_parse_h3_partial_success() -> None:
+    endpoint = _endpoint(model="MiniMax-H3-Image")
+    failed = {"error": {"code": "1027", "message": "image rejected"}}
+    result = parse_image_response(
+        endpoint, {"data": [failed, {"url": "https://cdn.example/art.png"}]}
+    )
+    assert result.image_url == "https://cdn.example/art.png"
+    with pytest.raises(ImageGenerationError, match="image rejected"):
+        parse_image_response(endpoint, {"data": [failed]})
+
+
+@pytest.mark.parametrize("failure", ["timeout", "http_error", "redirect"])
+@pytest.mark.asyncio
+async def test_h3_failure_does_not_submit_another_generation(monkeypatch, failure: str) -> None:
+    endpoint = _endpoint(name="h3", model="MiniMax-H3-Image", base_url="https://api.minimax.io/v1")
+    backup = _endpoint(name="backup")
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        if failure == "timeout":
+            raise httpx.ReadTimeout("generation timed out", request=request)
+        if failure == "redirect":
+            return httpx.Response(307, headers={"Location": "https://api.minimax.io/redirect"})
+        return httpx.Response(
+            422,
+            json={
+                "type": "error",
+                "error": {"type": "unprocessable_entity_error", "message": "image rejected"},
+            },
+        )
+
+    monkeypatch.setattr(
+        "openakita.llm.image_generation.load_image_endpoints", lambda _: [endpoint, backup]
+    )
+    monkeypatch.setattr(
+        "openakita.llm.providers.proxy_utils.get_httpx_client_kwargs",
+        lambda **_: {"transport": httpx.MockTransport(handler)},
+    )
+    output = await SystemHandler(SimpleNamespace()).handle(
+        "generate_image", {"prompt": "a red kite"}
+    )
+    if failure == "http_error":
+        assert "image rejected" in output
+    assert requests == ["https://api.minimax.io/v1/images/generations"]

@@ -226,6 +226,7 @@ class SystemHandler:
             load_image_endpoints,
             request_image,
             select_image_endpoints,
+            uses_h3_image,
         )
         from ...llm.types import EndpointConfig
 
@@ -354,6 +355,9 @@ class SystemHandler:
                     )
                     failures.append(f"{endpoint.name}: {detail}")
                     logger.warning("generate_image endpoint failed: %s", failures[-1])
+                    if uses_h3_image(endpoint, model):
+                        # A timed-out generation or failed download may already have been billed.
+                        break
                     continue
 
                 elapsed_ms = int((time.time() - t0) * 1000)

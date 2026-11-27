@@ -514,6 +514,15 @@ When the policy engine classifies a shell command as **HIGH risk**, it automatic
 
 **Smart failover**: One model goes down, the next picks up seamlessly.
 
+### MiniMax H3 image generation
+
+In Setup Center, add a custom image endpoint using the Images protocol. Enter
+`https://api.minimax.io/v1` or `https://api.minimax.cn/v1` for your credential
+region and select `MiniMax-H3-Image` or `MiniMax-H3-Image-Highspeed` as the model.
+Pass the endpoint name and a prompt to `generate_image` to save one PNG.
+Generation allows at least 600 seconds. An interrupted request may still complete and be billed,
+so the tool stops before trying another endpoint.
+
 ### Recommended Models
 
 **International Models (in order of recommendation):**

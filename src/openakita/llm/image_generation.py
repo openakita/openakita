@@ -9,6 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from .capabilities import is_h3_image_model
 from .endpoint_manager import EndpointManager
 from .types import EndpointConfig
 
@@ -81,6 +82,13 @@ def image_endpoint_url(endpoint: EndpointConfig) -> str:
     raise ImageGenerationError(f"Unsupported image API type: {endpoint.api_type}")
 
 
+def uses_h3_image(endpoint: EndpointConfig, model: str = "") -> bool:
+    configured = _request_overrides(endpoint).get("model", model.strip() or endpoint.model)
+    return endpoint.api_type.strip().lower() == "openai_images" and is_h3_image_model(
+        str(configured)
+    )
+
+
 def _request_overrides(endpoint: EndpointConfig) -> dict:
     extra = endpoint.extra_params or {}
     value = extra.get("request_params", {})
@@ -139,6 +147,30 @@ def build_image_request(
             "n": 1,
             "size": effective_size.replace("*", "x"),
         }
+        if uses_h3_image(endpoint, effective_model):
+            overrides = _request_overrides(endpoint)
+            body["disable_prompt_enhanced"] = not prompt_extend
+            if urlsplit(endpoint.base_url).hostname == "api.minimax.cn":
+                body["aigc_watermark"] = overrides.get("aigc_watermark", bool(watermark))
+            for key in (
+                "model",
+                "size",
+                "aspect_ratio",
+                "area",
+                "disable_prompt_enhanced",
+                "response_format",
+            ):
+                if key in overrides:
+                    body[key] = overrides[key]
+            if (
+                ("aspect_ratio" in overrides or "area" in overrides)
+                and not size
+                and "size" not in overrides
+            ):
+                body.pop("size", None)
+            # The tool saves a single PNG and consumes a non-streaming response.
+            body["output_format"] = "png"
+            return body
         effective_quality = str(_effective_option(endpoint, "quality", quality, ""))
         effective_style = str(_effective_option(endpoint, "style", style, ""))
         if effective_quality:
@@ -151,7 +183,9 @@ def build_image_request(
     raise ImageGenerationError(f"Unsupported image API type: {endpoint.api_type}")
 
 
-def parse_image_response(endpoint: EndpointConfig, data: dict) -> ImageGenerationResult:
+def parse_image_response(
+    endpoint: EndpointConfig, data: dict, *, model: str = ""
+) -> ImageGenerationResult:
     """Normalize DashScope and OpenAI Images responses."""
     api_type = endpoint.api_type.strip().lower()
     request_id = data.get("request_id") or data.get("requestId") or data.get("id")
@@ -177,6 +211,19 @@ def parse_image_response(endpoint: EndpointConfig, data: dict) -> ImageGeneratio
             item = data["data"][0]
         except (KeyError, IndexError, TypeError) as exc:
             raise ImageGenerationError("OpenAI Images response did not contain data[0]") from exc
+        if uses_h3_image(endpoint, model):
+            # A partial success can contain both failed and successful entries.
+            errors = []
+            for entry in data["data"]:
+                if not isinstance(entry, dict):
+                    continue
+                if isinstance(error := entry.get("error"), dict):
+                    errors.append(str(error.get("message") or error.get("code") or "image failed"))
+                elif entry.get("url") or entry.get("b64_json"):
+                    item = entry
+                    break
+            else:
+                raise ImageGenerationError("; ".join(errors) or "H3 returned no image")
         image_url = item.get("url") if isinstance(item, dict) else None
         image_b64 = item.get("b64_json") if isinstance(item, dict) else None
         if image_url:
@@ -213,13 +260,17 @@ async def request_image(
         raise ImageGenerationError(
             f"API key is missing for image endpoint {endpoint.name!r} ({endpoint.api_key_env or 'no env var'})"
         )
+    model = str(kwargs.get("model") or endpoint.model)
+    h3 = uses_h3_image(endpoint, model)
+    body = build_image_request(endpoint, **kwargs)
     response = await client.post(
         image_endpoint_url(endpoint),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-        json=build_image_request(endpoint, **kwargs),
-        timeout=max(1, endpoint.timeout),
+        json=body,
+        timeout=max(600 if h3 else 1, endpoint.timeout),
+        follow_redirects=False if h3 else httpx.USE_CLIENT_DEFAULT,
     )
-    if response.status_code >= 400:
+    if response.status_code >= 400 or (h3 and response.is_redirect):
         raise ImageGenerationError(
             f"{endpoint.name}: HTTP {response.status_code}: {(response.text or '')[:800]}"
         )
@@ -231,11 +282,10 @@ async def request_image(
         ) from exc
     if not isinstance(data, dict):
         raise ImageGenerationError(f"{endpoint.name}: provider returned a non-object JSON response")
-    result = parse_image_response(endpoint, data)
-    effective_model = str(kwargs.get("model") or endpoint.model)
+    result = parse_image_response(endpoint, data, model=model)
     return ImageGenerationResult(
         endpoint_name=result.endpoint_name,
-        model=effective_model,
+        model=body["model"] if h3 else model,
         request_id=result.request_id,
         image_url=result.image_url,
         image_bytes=result.image_bytes,
